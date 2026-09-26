@@ -36,7 +36,8 @@ documents. `<repo>`/`<sha>`/`<tip>`/`<remote>` are the runner's own values;
 | a readable state, with `--force-unreadable` | RESET-17 | RESET-17 |
 | that local ref's own deletion fails | — | RESET-13 |
 | an argument this command does not define | RESET-10 | RESET-10 |
-| `--repo`, or a non-GitHub canonical remote | RESET-11 | RESET-11 |
+| `--repo OWNER/REPO`, or a non-GitHub canonical remote | RESET-11 | RESET-11 |
+| a `--repo` that names no OWNER/REPO | OUT-08 | OUT-08 |
 | `--export-dir` omitted | RESET-12 | RESET-12 |
 
 ## Before any ref exists

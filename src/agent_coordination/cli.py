@@ -3096,7 +3096,7 @@ def _state_ref_board(context: RunContext) -> state_board.StateRefBoard:
     return cast(state_board.StateRefBoard, context.forge)
 
 
-def _run_context(repo: str | None) -> RunContext:
+def _run_context(repo: forge.RepositoryId | None) -> RunContext:
     """This run's root context, built once the command is known to need a
     repository at all (after the workspace and `protect` dispatch)."""
     return RunContext(repo, build_forge=_build_forge)
@@ -7472,6 +7472,11 @@ def main(arguments: list[str] | None = None) -> int:
     parser = _parser()
     try:
         parsed = parser.parse_args(given)
+        # Judged after the parse, not as an argparse `type=`: `--repo`
+        # precedes the subcommand, so a refusal raised while argparse reads
+        # it would fire before the parse reached the command that decides
+        # whether this run asked for JSON (issue #465).
+        parsed.repo = None if parsed.repo is None else github.repository_id(parsed.repo)
     except _UsageError as error:
         return _refuse_usage(error, as_json=_asked_for_json(parser, given))
     except protocol.ClaimError as error:

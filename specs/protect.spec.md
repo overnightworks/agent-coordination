@@ -49,7 +49,8 @@ canonical remote name.
 | a `cd` changes the resolution directory | — | — | — | PROT-34 | — |
 | a `cd` target cannot be resolved | — | — | — | PROT-35 (allow) | — |
 | a decoy path key the tool never sends | — | PROT-27 | — | — | — |
-| `--repo`, or a non-GitHub canonical remote | PROT-28 | PROT-28 | PROT-28 | PROT-28 | PROT-28 |
+| an OWNER/REPO `--repo`, or a non-GitHub canonical remote | PROT-28 | PROT-28 | PROT-28 | PROT-28 | PROT-28 |
+| `--repo` not shaped OWNER/REPO | OUT-08 | OUT-08 | OUT-08 | OUT-08 | OUT-08 |
 
 Every column resolves agent identity last (issue #448), only once a
 checkout, its live state, and a repository-relative path are already in
@@ -207,7 +208,7 @@ than a bare `claim first`.
 
 ## Forge-free
 
-- [ ] [PROT-28] `protect` never resolves an item forge: allow and deny alike are unaffected by `--repo` or a non-GitHub canonical remote.
+- [ ] [PROT-28] `protect` never resolves an item forge: an OWNER/REPO `--repo` or a non-GitHub canonical remote leaves allow and deny alike unaffected; any other `--repo` refuses first (OUT-08).
 
 ## Never
 
@@ -218,7 +219,7 @@ than a bare `claim first`.
 - The escape exists so a session can switch off a misconfigured hook in its own ignored `settings.local.json` without the operator; no claim can cover a file that never reaches a commit.
 - `protect` never defaults an unrecognized tool name to allowed: PROT-06 fails closed instead.
 - `protect` never trusts a relative payload path by joining it to the hook process's own cwd, even from the one cwd where that guess would happen to be correct.
-- `protect` never accepts `--json`: its output is the hook protocol of PROT-01/PROT-02 (a silent exit `0`, or the deny object on stdout plus the sentence on stderr, exit `2`), not the `--json` envelope (`specs/output.spec.md`).
+- `protect` never accepts `--json`: its output is the hook protocol of PROT-01/PROT-02 (a silent exit `0`, or the deny object on stdout plus the sentence on stderr, exit `2`), not the `--json` envelope (`specs/output.spec.md`) (a malformed `--repo` refuses first, OUT-08).
 - `protect` never writes a file: every denial and every allow leaves `$HOME` and the checkout untouched.
 - `protect` never reads working-tree dirtiness: a dirty checkout still allows a covered write, unlike `claim`'s own precondition.
 - `protect` never binds the resolved checkout's `HEAD` to a claim's own `base`: it judges the live claim's branch and scope alone.

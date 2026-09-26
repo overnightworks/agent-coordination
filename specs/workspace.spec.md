@@ -17,7 +17,8 @@ none of the three ever accepts `--json` (see `## Never`).
 
 | state \ trigger | `register` | `run` | `login enable`/`disable` | `login status` | `_run-at-login` |
 |---|---|---|---|---|---|
-| `--repo` given | WS-01 | WS-01 | WS-02 | WS-02 | n/a (WS-*, `## Never`) |
+| an OWNER/REPO `--repo` given | WS-01 | WS-01 | WS-02 | WS-02 | n/a (WS-*, `## Never`) |
+| `--repo` not shaped OWNER/REPO | OUT-08 | OUT-08 | OUT-08 | OUT-08 | OUT-08 |
 | mapping missing entirely | n/a (writes fresh) | WS-20 | WS-21 | WS-57 (`missing`) | WS-64 |
 | mapping wrong version | WS-22 | WS-22 | WS-22 | WS-57 (`malformed`) | WS-64 |
 | mapping project record malformed | WS-25..WS-28 | WS-25..WS-28 | WS-25..WS-28 | WS-57 (`malformed`) | WS-64 |
@@ -164,7 +165,7 @@ login-attempt record `login status` later reads.
 ## Never
 
 - None of `register`, `run`, `login enable`, `login disable`, or `login status` accepts `--json`: the flag does not exist on their parsers, so a refusal never gets `specs/output.spec.md`'s envelope (REL-24's shape belongs to commands that do carry `--json`; contrast, not shared).
-- `_run-at-login` never checks `--repo` at all, even given: it is dispatched before any workspace `--repo` guard runs.
+- `_run-at-login` never refuses an OWNER/REPO `--repo`: it is dispatched before any workspace `--repo` guard runs; only a malformed one refuses (OUT-08).
 - Beyond `${XDG_CONFIG_HOME:-~/.config}/aco/workspace.toml`, `${XDG_STATE_HOME:-~/.local/state}/aco/login-attempt.json`, and, only after `login enable`, `${XDG_CONFIG_HOME:-~/.config}/autostart/aco-workspace.desktop`, `register` also leaves the mapping's own `.lock` beside it, `run` leaves a `workspace.lock` inside the runtime directory, and `_run-at-login` leaves the login-attempt record's own `.lock`; none of the three is ever removed once created.
 - The login-attempt record never carries a provider UUID, workspace path, agent, model, configuration, environment, command line, or raw error text — only an attempt id, timestamps, completion state, project keys, and the public outcome names in `## Behavior table`.
 - `login disable` never deletes the mapping file, a provider's own history, claims, or a live console; it removes only the one desktop-entry file it owns.

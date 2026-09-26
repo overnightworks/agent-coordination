@@ -131,9 +131,7 @@ class FakeForge:
     board_open_pull_requests: tuple[board.PullRequest, ...] = ()
     board_merged_pull_requests: tuple[board.PullRequest, ...] = ()
     board_dependencies: dict[int, tuple[board.IssueDependency, ...]] = field(default_factory=dict)
-    repository: forge.RepositoryId = field(
-        default_factory=lambda: github._repository_id(REPOSITORY)
-    )
+    repository: forge.RepositoryId = field(default_factory=lambda: github.repository_id(REPOSITORY))
     default_branch_name: str = "main"
     landings: dict[int, forge.Landing] = field(default_factory=dict)
     parents: dict[int, board.ParentIssue] = field(default_factory=dict)
@@ -402,9 +400,7 @@ class _MinimalForgeReader:
 
     open_issues: tuple[board.Issue, ...] = ()
     children_by_number: dict[int, tuple[board.ChildItem, ...]] = field(default_factory=dict)
-    repository: forge.RepositoryId = field(
-        default_factory=lambda: github._repository_id(REPOSITORY)
-    )
+    repository: forge.RepositoryId = field(default_factory=lambda: github.repository_id(REPOSITORY))
     requests: int = 0
     observed_children_lookups: list[int] = field(default_factory=list)
     observed_merged_pull_request_floors: list[datetime] = field(default_factory=list)
@@ -562,7 +558,7 @@ def _board_fixture_environment(monkeypatch: pytest.MonkeyPatch) -> list[list[str
         },
     ]
     active = request("board-claim", issue=11, branch="codex/issue-11-claims")
-    repository = github._repository_id(REPOSITORY)
+    repository = github.repository_id(REPOSITORY)
     observed: list[list[str]] = []
 
     def run(arguments: list[str], *, input_data: bytes | None = None) -> str:
@@ -5997,9 +5993,7 @@ class _MinimalBoardSource:
     and the dependency fetch injectable -- for tests that exercise exactly
     one of `_load_board_config`/`_fetch_dependencies` in isolation."""
 
-    repository: forge.RepositoryId = field(
-        default_factory=lambda: github._repository_id(REPOSITORY)
-    )
+    repository: forge.RepositoryId = field(default_factory=lambda: github.repository_id(REPOSITORY))
     requests: int = 0
     capability_result: forge.Capability = forge.Capability.READ_ONLY
     dependencies_fetcher: Callable[[int], tuple[board.IssueDependency, ...]] = lambda _number: ()
@@ -11733,7 +11727,7 @@ def landing_pull_request(
         number,
         author,
         body,
-        github._repository_id(head_repository),
+        github.repository_id(head_repository),
         head_ref_name,
         base_ref_name,
         merged,
@@ -14897,7 +14891,7 @@ def test_check_json_reports_unavailable_on_a_real_forge_failure(
     def failing_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
         raise forge.ForgeTransientError("gh: simulated network failure")
 
-    real_client = GitHubForge(github._repository_id(REPOSITORY), run=failing_run)
+    real_client = GitHubForge(github.repository_id(REPOSITORY), run=failing_run)
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: real_client)
 
     status = issue_claim.main(["--repo", REPOSITORY, "check", "12", "--json"])

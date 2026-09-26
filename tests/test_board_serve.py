@@ -196,7 +196,8 @@ class ServedBoard:
 def _serving(client: FakeForge) -> Iterator[ServedBoard]:
     parsed = issue_claim._parser().parse_args(["--repo", REPOSITORY, "board", "--serve"])
     session = issue_claim._WriteSession(
-        forge=issue_claim._LazyForge(issue_claim._run_context(parsed.repo)), release_branch=None
+        forge=issue_claim._LazyForge(issue_claim._run_context(github.repository_id(parsed.repo))),
+        release_branch=None,
     )
     server = issue_claim._board_server(parsed, session)
     thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
