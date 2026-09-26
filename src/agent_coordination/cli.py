@@ -2989,8 +2989,8 @@ class _StoreItemWriter:
     writes it through one CAS transition -- an `ItemWriteIntent` (issue
     #279), or for a close an `ItemCloseIntent` (issue #459).
     `state_board.py` itself may not import `store` (Layers contract), so
-    every actual git call a state-ref item write makes funnels through
-    this class's `_commit`.
+    this class owns both git steps of a state-ref item write: `_item_write`
+    hashes the blob, `_commit` publishes it through the CAS transition.
     """
 
     worktree: Path
