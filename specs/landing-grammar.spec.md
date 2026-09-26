@@ -44,6 +44,7 @@ matching line.
 | valid `No-Item:` + lane claim | — | LAND-05 | LAND-37 | — |
 | no classification / no trailer | — | LAND-06, LAND-58 | LAND-32, LAND-52, LAND-62 | — |
 | contradictory trunk trailer (both, or repeated `No-Item:`) | — (lands nothing, LAND-42) | LAND-60 | LAND-61 | — |
+| state-ref `Work-Item:` trailer number past `aco-ffffff` | — | LAND-68 | — | — |
 | classification line inside a fenced block | — | LAND-07 | — | — |
 | two classification lines | — | LAND-08 | LAND-32 | — |
 | two `Work-Item:` lines | — | LAND-09 | LAND-32 | — |
@@ -82,6 +83,7 @@ matching line.
 - [ ] [LAND-58] A trunk `<sha>` carrying neither trailer refuses `<sha> carries no \`Work-Item:\` or \`No-Item:\` trailer`, exit `2`.
 - [ ] [LAND-60] A trunk `<sha>` whose trailer block is contradictory -- both `Work-Item:` and `No-Item:`, or `No-Item:` repeated -- makes `check <sha>` refuse `REFUSED: <sha> <that defect sentence>`, exit `2`.
 - [ ] [LAND-61] That same contradictory `<sha>` makes `release --merged <sha>` refuse `ERROR: <sha> <that defect sentence>`, exit `2`, before any write.
+- [ ] [LAND-68] Under state-ref `check <sha>` refuses a trunk `Work-Item: <n>` past `aco-ffffff`: `<sha> carries \`Work-Item:\` <n>, which names no state-ref item; an item id ends at aco-ffffff`, exit `2`.
 
 ## The pull request body's own grammar
 

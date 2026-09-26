@@ -12899,18 +12899,18 @@ _CONTRADICTORY_TRAILERS = (
 )
 
 
-def _contradictory_trailer_repository(
+def _refused_trailer_repository(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, trailer: str
 ) -> Path:
-    """A real trunk repository (issue #359, LAND-60/61) whose one commit
-    carries a contradictory trailer block: shared arrangement for both
-    `check <sha>`'s and `release --merged <sha>`'s own refusal proofs, which
-    read the identical classification."""
+    """A real trunk repository (issue #359, LAND-60/61, LAND-68) whose one
+    commit carries a trailer block `check <sha>` refuses: shared arrangement
+    for both `check <sha>`'s and `release --merged <sha>`'s own refusal
+    proofs, which read the identical classification."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo, _remote = _real_repository_with_bare_remote(tmp_path)
     (repo / "work.txt").write_text("work\n")
     _real_git(repo, "add", "work.txt")
-    _real_git(repo, "commit", "-q", "-m", "contradictory landing", "-m", trailer)
+    _real_git(repo, "commit", "-q", "-m", "refused landing", "-m", trailer)
     _push_repository_trunk(repo, "origin")
     monkeypatch.chdir(repo)
     return repo
@@ -12930,7 +12930,7 @@ def test_check_sha_refuses_a_contradictory_trailer(
     nothing the way `aco board`'s own trunk-trailer reading does (LAND-42).
     The `--json` form carries the same refusal through the one envelope,
     its `message` the line's own finding (issue #435)."""
-    repo = _contradictory_trailer_repository(monkeypatch, tmp_path, trailer)
+    repo = _refused_trailer_repository(monkeypatch, tmp_path, trailer)
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["check", sha])
@@ -12943,6 +12943,34 @@ def test_check_sha_refuses_a_contradictory_trailer(
     assert "one is required" not in printed.err
     finding = printed.err.removeprefix(f"REFUSED: {sha} ").strip()
     assert envelope == _expected_trunk_envelope(sha, "invalid_classification", finding)
+
+
+def test_check_sha_refuses_a_state_ref_trailer_number_past_the_id_space(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """LAND-68, issue #467 (#469 review finding 3): under `storage =
+    "state-ref"` a trailer's `#16777216` names no item -- six hex digits end
+    at 16777215 -- so `check <sha>` refuses it as an invalid classification
+    and never prints an id `aco` cannot take back."""
+    _write_state_ref_pin(tmp_path)
+    repo = _refused_trailer_repository(monkeypatch, tmp_path, "Work-Item: #16777216")
+    sha = _real_git(repo, "rev-parse", "main").stdout.strip()
+
+    status = issue_claim.main(["check", sha])
+    printed = capsys.readouterr()
+    json_status = issue_claim.main(["check", sha, "--json"])
+    envelope = json.loads(capsys.readouterr().out)
+
+    finding = (
+        "carries `Work-Item:` 16777216, which names no state-ref item; "
+        "an item id ends at aco-ffffff"
+    )
+    assert (status, printed.out, printed.err) == (2, "", f"REFUSED: {sha} {finding}\n")
+    assert re.search(r"aco-[0-9a-f]{7}", printed.err) is None
+    assert (json_status, envelope) == (
+        2,
+        _expected_trunk_envelope(sha, "invalid_classification", finding),
+    )
 
 
 @pytest.mark.parametrize("trailer", _CONTRADICTORY_TRAILERS)
@@ -12958,7 +12986,7 @@ def test_release_merged_by_sha_refuses_a_contradictory_trailer(
     exit `2`, before any write -- `_landed_commit_by_sha`'s own
     `ClassificationDefect` branch."""
     _write_state_ref_pin(tmp_path)
-    repo = _contradictory_trailer_repository(monkeypatch, tmp_path, trailer)
+    repo = _refused_trailer_repository(monkeypatch, tmp_path, trailer)
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["release", "20", "--agent", "Codex Sol", "--merged", sha])

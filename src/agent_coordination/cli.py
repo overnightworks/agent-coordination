@@ -3957,6 +3957,27 @@ def _refused_trunk_commit(sha: str, finding: str, reason: CheckReason) -> CheckO
     return CheckOutcome(TrunkSubject(sha), f"REFUSED: {sha} {finding}", reason, finding)
 
 
+STATE_REF_TRAILER_PAST_THE_ID_SPACE = (
+    "carries `Work-Item:` {number}, which names no state-ref item; an item id ends at aco-ffffff"
+)
+
+
+def _trailer_number_past_the_id_space(
+    classification: board.TrunkClassification, storage: body.Storage
+) -> int | None:
+    """LAND-68 (issue #467, #469 review): under `storage = "state-ref"` a
+    trailer number past `aco-ffffff` names no item, and its label would be
+    an id `board.parse_item_reference` refuses back -- the first such
+    number, or `None` when every number names an item."""
+    if storage is not body.Storage.STATE_REF or not isinstance(
+        classification, board.TrunkWorkItemClassification
+    ):
+        return None
+    return next(
+        (number for number in classification.numbers if not items.is_item_number(number)), None
+    )
+
+
 def _trunk_commit_outcome(
     sha: str, landing: checkout.TrunkLanding | None, storage: body.Storage
 ) -> CheckOutcome:
@@ -3977,6 +3998,13 @@ def _trunk_commit_outcome(
     if isinstance(classification, board.ClassificationDefect):
         return _refused_trunk_commit(
             sha, classification.message, CheckReason.INVALID_CLASSIFICATION
+        )
+    past = _trailer_number_past_the_id_space(classification, storage)
+    if past is not None:
+        return _refused_trunk_commit(
+            sha,
+            STATE_REF_TRAILER_PAST_THE_ID_SPACE.format(number=past),
+            CheckReason.INVALID_CLASSIFICATION,
         )
     return CheckOutcome(
         TrunkSubject(sha),
