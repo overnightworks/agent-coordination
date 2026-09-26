@@ -1907,8 +1907,8 @@ def test_rescope_admits_a_file_in_a_new_directory_that_protect_then_allows_writi
 ) -> None:
     """Issue #474: `rescope --add` of a file whose directories do not exist
     yet resolves the worktree from their nearest existing ancestor, the way
-    `protect` judges the same path (PROT-39), so the claim can grow before
-    the write the hook would otherwise deny with `claim first`."""
+    `protect` judges the same path (RESC-18, PROT-39), so the claim can grow
+    before the write the hook would otherwise deny with `claim first`."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
