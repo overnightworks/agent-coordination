@@ -72,11 +72,15 @@ marks each read-only: `ToolSearch`, `SendMessage`, `TaskStop`,
 `ScheduleWakeup`, `SendFeedback`, `Workflow`, and `Artifact` (issue #448).
 `Monitor` is the one session tool that runs a shell script, its own
 `command`, so it is judged exactly like `Bash`.
+The README's hook matcher names exactly the tools that can write a file --
+every mutating name plus `Bash` and `Monitor` -- so any other tool (MCP
+tools, plan mode, task lists) never reaches `protect` and never stalls a
+session; a new file-writing tool joins both the table and that matcher.
 
 - [ ] [PROT-03] Unreadable stdin, invalid JSON, or a payload that is not a JSON object denies `invalid hook payload` (PROT-02's shape).
 - [ ] [PROT-04] A payload naming no string tool name under either `toolName` or `tool_name` denies `invalid hook payload`.
 - [ ] [PROT-05] A tool name this table marks read-only allows `{"decision": "allow"}` without reading identity, git, the store, or GitHub (see E-PROT-05).
-- [ ] [PROT-37] Each read-only session tool named above allows like PROT-05, and `Monitor` is judged like `Bash` (PROT-30 to PROT-35), so a session is never stalled by the hook (see E-PROT-05).
+- [ ] [PROT-37] Each read-only session tool named above allows like PROT-05, `Monitor` is judged like `Bash`, and a tool outside the README's hook matcher never reaches `protect` (see E-PROT-05).
 - [ ] [PROT-06] A tool name in neither the read nor the mutating table denies `'<name>' is not in aco's hook tool table`, fix `add it there as read-only or mutating before use` (see E-PROT-06).
 
 ## The payload path and its own checkout

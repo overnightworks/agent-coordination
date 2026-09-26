@@ -1043,6 +1043,28 @@ def test_protect_unknown_tool_name_denies_with_a_repair_sentence(
     assert "238" in payload["reason"]
 
 
+def _documented_hook_matcher() -> str:
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    write_gate_section = readme.split("## PreToolUse write gate", 1)[1]
+    hook_json = write_gate_section.split("```json", 1)[1].split("```", 1)[0]
+    (entry,) = json.loads(hook_json)["hooks"]["PreToolUse"]
+    return entry["matcher"]
+
+
+def test_documented_hook_matcher_names_exactly_the_tools_that_can_write() -> None:
+    """PROT-37 (issue #448): the README's matcher keeps every other tool --
+    MCP tools, plan mode, task lists -- from reaching `protect`'s fail-closed
+    PROT-06, so it must name every tool the table does not clear as read-only,
+    and nothing else, or a new file-writing tool slips past the hook."""
+    writing_tools = {
+        name
+        for name, effect in protect.HOOK_TOOL_EFFECTS.items()
+        if effect is not protect.HookToolEffect.READ
+    }
+
+    assert set(_documented_hook_matcher().split("|")) == writing_tools
+
+
 def test_protect_primary_checkout_denies_not_main_without_github(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

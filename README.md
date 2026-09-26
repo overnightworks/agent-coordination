@@ -175,7 +175,7 @@ Copy this hook once into the file the provider actually loads. Skip when a
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "*",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|Monitor|write|search_replace|apply_patch|create_file|str_replace_editor",
         "hooks": [
           {
             "type": "command",
@@ -192,9 +192,14 @@ Copy this hook once into the file the provider actually loads. Skip when a
 Install this in the settings of the session that actually runs the
 subagents -- the orchestrating head's settings, not each worktree's own --
 since every dispatched subagent's tool calls share that one session's
-process, cwd included (issue #314). `protect` judges a write from the
-payload's own path, never from that shared process cwd, and fails closed on
-any tool name it does not recognize. A write outside every repository (the
+process, cwd included (issue #314). The matcher names exactly the tools
+that can write a file -- every name `HOOK_TOOL_EFFECTS` marks mutating, plus
+`Bash` and `Monitor`, whose command text it scans -- so every other tool
+(MCP tools, plan mode, task lists, worktree and cron tools) never reaches the
+hook and cannot stall the session; a new file-writing tool joins both that
+table and this matcher. `protect` judges a write from the payload's own path,
+never from that shared process cwd, and fails closed on any tool name that
+reaches it unrecognized. A write outside every repository (the
 session's memory, scratchpad, `/tmp`) and a git-ignored file under a
 checkout's `.claude/` allow -- unless the write goes through a file symlink
 into a checkout, which that checkout then judges; every other write inside
