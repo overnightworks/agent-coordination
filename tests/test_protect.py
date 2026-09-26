@@ -2379,6 +2379,30 @@ def test_rescope_denies_before_touching_the_store(
     assert expected_error_fragment in capsys.readouterr().err
 
 
+def test_rescope_json_reports_a_dotdot_path_through_a_missing_directory_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """RESC-17: a `..` path that leaves the worktree through a missing
+    directory is an unresolved checkout, so `--json` reports `unavailable`
+    with the sentence stderr printed."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    args = _rescope_args_add_dotdot_path_through_a_missing_directory_out_of_the_worktree(tmp_path)
+
+    status = issue_claim.main([*args, "--json"])
+
+    captured = capsys.readouterr()
+    refusal = json.loads(captured.out)
+    assert status == 2
+    assert (refusal["ok"], refusal["reason"]) == (False, "unavailable")
+    assert "not in a repository" in refusal["message"]
+    assert captured.err == f"ERROR: {refusal['message']}\n"
+
+
 # `protect.judge`'s own direct proofs (issue #394): a real bare-remote
 # repository with a real linked worktree, driven through `judge` itself --
 # never `main(["protect"])` -- so none of these needs `sys.stdin` or the
