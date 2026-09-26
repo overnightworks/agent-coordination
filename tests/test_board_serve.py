@@ -14,11 +14,13 @@ import html
 import http.client
 import io
 import os
+import re
 import socket
 import stat
 import sys
 import threading
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -33,6 +35,7 @@ from cli_fixtures import stub_board_config_tracked
 from test_cli import (
     FakeForge,
     _assert_json_refusal_object,
+    _lane,
     _patch_store_write,
     _single_item_board_environment,
 )
@@ -43,7 +46,16 @@ from test_state_board import (
     _state_ref_board,
 )
 
-from agent_coordination import board, board_serve, checkout, forge, github, protocol, workspace
+from agent_coordination import (
+    board,
+    board_serve,
+    checkout,
+    forge,
+    github,
+    metrics,
+    protocol,
+    workspace,
+)
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import expectation_lines, rule_expectation
 
@@ -179,9 +191,8 @@ class ServedBoard:
         return _request(self.server, "POST", "/rule", body=urlencode(fields))
 
 
-@pytest.fixture
-def served_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[ServedBoard]:
-    client = _served_board_environment(monkeypatch, tmp_path)
+@contextmanager
+def _serving(client: FakeForge) -> Iterator[ServedBoard]:
     parsed = issue_claim._parser().parse_args(["--repo", REPOSITORY, "board", "--serve"])
     session = issue_claim._WriteSession(
         forge=issue_claim._LazyForge(parsed.repo), release_branch=None
@@ -195,6 +206,12 @@ def served_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Se
         server.httpd.shutdown()
         server.httpd.server_close()
         thread.join(timeout=5)
+
+
+@pytest.fixture
+def served_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[ServedBoard]:
+    with _serving(_served_board_environment(monkeypatch, tmp_path)) as served:
+        yield served
 
 
 def test_the_server_binds_127_0_0_1_only(served_board: ServedBoard) -> None:
@@ -396,6 +413,148 @@ def test_the_reload_link_redirects_so_a_later_plain_refresh_does_not_rebuild(
     assert plain_response.status == 200
     assert "Plain item" in plain_body
     assert "Renamed item" not in plain_body
+
+
+def _arrange_sized_items(
+    client: FakeForge,
+    monkeypatch: pytest.MonkeyPatch,
+    lane_events: tuple[metrics.LaneEvent, ...],
+) -> None:
+    """Issue #299: the served board's forge carries one open item per
+    estimate state -- `M` (measured once `lane_events` fill its class), `S`
+    (at most weakly measured), and one with no `size` at all -- plus closed
+    items whose own sizes let a completed lane join its class, and the store
+    reads `lane_events` as the claim lifecycle."""
+    client.board_issues = (
+        board_issue(30, "Measured M", complete_contract("Ship #30.", size="M")),
+        board_issue(31, "Weak S", complete_contract("Ship #31.", size="S")),
+        board_issue(32, "Unsized", complete_contract("Ship #32.")),
+    )
+    closed_sizes = {33: "M", 34: "M", 35: "M", 36: "S"}
+    for number, size in closed_sizes.items():
+        client.issue_references[number] = forge.ItemReference(
+            forge.ItemState.CLOSED, body=complete_contract("Closed.", size=size)
+        )
+    _patch_store_write(monkeypatch, lane_events=lane_events)
+
+
+def _three_measured_m_lanes_and_one_s_lane() -> tuple[metrics.LaneEvent, ...]:
+    return (_lane("30", 10, 4), _lane("33", 11, 5), _lane("34", 12, 6), _lane("31", 15, 2))
+
+
+@pytest.fixture
+def served_estimates(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[ServedBoard]:
+    """A served board whose sized items and measured lanes (`request.param`)
+    are in place before the server starts, so its very first page already
+    reads them."""
+    client = _served_board_environment(monkeypatch, tmp_path)
+    _arrange_sized_items(client, monkeypatch, request.param)
+    with _serving(client) as served:
+        yield served
+
+
+def _estimate_beside(page: str, label: str) -> str:
+    """The estimate cell the served page shows right beside `label`'s own
+    item name -- what a person reads next to the item, not anywhere on the
+    page."""
+    match = re.search(
+        rf'<strong>{re.escape(label)}</strong>\s*<span class="t-estimate">([^<]*)</span>', page
+    )
+    assert match is not None, label
+    return html.unescape(match.group(1))
+
+
+def _measurements_section(page: str) -> str:
+    match = re.search(r'<h2 id="measurements">Messungen</h2>(.*?)</section>', page, re.DOTALL)
+    assert match is not None
+    return html.unescape(match.group(1))
+
+
+@pytest.mark.parametrize(
+    ("served_estimates", "estimates", "measurement_lines"),
+    [
+        pytest.param(
+            _three_measured_m_lanes_and_one_s_lane(),
+            {
+                "#30 Measured M": "~5h (M, n=3)",
+                "#31 Weak S": "schwach",
+                "#32 Unsized": "keine Größe",
+            },
+            (
+                r"<p>Messungen \(Stand \d{4}-\d{2}-\d{2}, seit 2026-08-10\)</p>",
+                r"<li>S: n=1, median 2h, p80 2h \(schwach\), 2026-08-15\.\.2026-08-15</li>",
+                r"<li>M: n=3, median 5h, p80 6h, 2026-08-10\.\.2026-08-12</li>",
+            ),
+            id="measured",
+        ),
+        pytest.param(
+            (),
+            {"#30 Measured M": "schwach", "#31 Weak S": "schwach", "#32 Unsized": "keine Größe"},
+            (r'<p class="empty">keine Messungen seit \d{4}-\d{2}-\d{2}</p>',),
+            id="nothing-measured",
+        ),
+    ],
+    indirect=["served_estimates"],
+)
+def test_the_served_page_shows_each_items_estimate_and_the_dated_measurements(
+    served_estimates: ServedBoard,
+    estimates: dict[str, str],
+    measurement_lines: tuple[str, ...],
+) -> None:
+    """Issue #299: the page `board --serve` serves shows beside every open
+    item its estimate from measured lanes -- the median with its size class
+    and `n`, `schwach` below three measured lanes, `keine Größe` without a
+    size -- and the measurements as their own dated section; with nothing
+    measured it shows no estimate and says since when nothing was measured.
+    A reload rebuilds from the same lanes and shows the same numbers."""
+    token = served_estimates.server.token
+
+    first = served_estimates.get(token=token).body.decode("utf-8")
+    assert served_estimates.get(token=token, reload=True).status == 303
+    reloaded = served_estimates.get(token=token).body.decode("utf-8")
+
+    for page in (first, reloaded):
+        assert {label: _estimate_beside(page, label) for label in estimates} == estimates
+        section = _measurements_section(page)
+        assert all(re.search(line, section) for line in measurement_lines), section
+
+
+@pytest.mark.parametrize(
+    ("added_lane", "measured_m_estimate"),
+    [
+        pytest.param(_lane("36", 16, 9), "~5h (M, n=3)", id="another-class-leaves-it"),
+        pytest.param(_lane("35", 16, 9), "~6h (M, n=4)", id="its-own-class-changes-it"),
+    ],
+)
+@pytest.mark.parametrize(
+    "served_estimates", [_three_measured_m_lanes_and_one_s_lane()], indirect=True
+)
+def test_a_served_estimate_changes_only_with_the_measured_lanes_of_its_own_class(
+    served_estimates: ServedBoard,
+    monkeypatch: pytest.MonkeyPatch,
+    added_lane: metrics.LaneEvent,
+    measured_m_estimate: str,
+) -> None:
+    """Issue #299 proof 4 on the served page: one more measured lane moves
+    an item's estimate only when it lands in that item's own size class --
+    a lane of another class leaves the reloaded cell exactly as it was."""
+    token = served_estimates.server.token
+    before = _estimate_beside(
+        served_estimates.get(token=token).body.decode("utf-8"), "#30 Measured M"
+    )
+
+    _patch_store_write(
+        monkeypatch, lane_events=(*_three_measured_m_lanes_and_one_s_lane(), added_lane)
+    )
+    served_estimates.get(token=token, reload=True)
+    after = _estimate_beside(
+        served_estimates.get(token=token).body.decode("utf-8"), "#30 Measured M"
+    )
+
+    assert before == "~5h (M, n=3)"
+    assert after == measured_m_estimate
 
 
 def test_post_rule_with_a_wrong_token_is_forbidden_and_writes_nothing(
