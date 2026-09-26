@@ -1754,7 +1754,7 @@ def test_repository_resolution_uses_github_quiet_environment(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    resolved = github.discover_repository(None, remote_url=_non_github_remote_url)
+    resolved = github.discover_repository(remote_url=_non_github_remote_url)
 
     assert resolved == forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repository")
     command = observed["command"]
@@ -1898,7 +1898,7 @@ def test_missing_gh_repository_resolution_is_a_controlled_error(
     monkeypatch.setattr(subprocess, "run", missing)
 
     with pytest.raises(ClaimError, match="gh is required"):
-        github.discover_repository(None, remote_url=_non_github_remote_url)
+        github.discover_repository(remote_url=_non_github_remote_url)
 
 
 def test_repository_resolution_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1908,7 +1908,7 @@ def test_repository_resolution_times_out(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(subprocess, "run", timed_out)
 
     with pytest.raises(ClaimError, match="gh timed out while resolving the repository"):
-        github.discover_repository(None, remote_url=_non_github_remote_url)
+        github.discover_repository(remote_url=_non_github_remote_url)
 
 
 def test_repository_resolution_refuses_when_no_remote_matches(
@@ -1920,7 +1920,7 @@ def test_repository_resolution_refuses_when_no_remote_matches(
     monkeypatch.setattr(subprocess, "run", failed_gh)
 
     with pytest.raises(ClaimError, match="cannot resolve GitHub repository"):
-        github.discover_repository(None, remote_url=lambda: "https://example.com/owner/repo")
+        github.discover_repository(remote_url=lambda: "https://example.com/owner/repo")
 
 
 @pytest.mark.parametrize(
@@ -1942,7 +1942,7 @@ def test_repository_resolves_from_a_standard_github_remote_without_asking_gh(
 
     monkeypatch.setattr(subprocess, "run", unused)
 
-    resolved = github.discover_repository(None, remote_url=lambda: remote)
+    resolved = github.discover_repository(remote_url=lambda: remote)
 
     assert resolved == forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repository")
 

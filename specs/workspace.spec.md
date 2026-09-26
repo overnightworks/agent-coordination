@@ -17,7 +17,8 @@ none of the three ever accepts `--json` (see `## Never`).
 
 | state \ trigger | `register` | `run` | `login enable`/`disable` | `login status` | `_run-at-login` |
 |---|---|---|---|---|---|
-| `--repo` given | WS-01 | WS-01 | WS-02 | WS-02 | n/a (WS-*, `## Never`) |
+| an OWNER/REPO `--repo` given | WS-01 | WS-01 | WS-02 | WS-02 | n/a (WS-*, `## Never`) |
+| `--repo` not shaped OWNER/REPO | OUT-08 | OUT-08 | OUT-08 | OUT-08 | OUT-08 |
 | mapping missing entirely | n/a (writes fresh) | WS-20 | WS-21 | WS-57 (`missing`) | WS-64 |
 | mapping wrong version | WS-22 | WS-22 | WS-22 | WS-57 (`malformed`) | WS-64 |
 | mapping project record malformed | WS-25..WS-28 | WS-25..WS-28 | WS-25..WS-28 | WS-57 (`malformed`) | WS-64 |

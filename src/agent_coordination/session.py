@@ -163,7 +163,11 @@ class RunContext:
                 )
             return forge.RepositoryId(self.remote_location.host, (), self.remote_location.path)
         refuse_unsupported_forge_host(self.remote_location)
-        target = github.discover_repository(self.repo, remote_url=self._origin_remote_url)
+        target = (
+            self.repo
+            if self.repo is not None
+            else github.discover_repository(remote_url=self._origin_remote_url)
+        )
         refuse_canonical_remote_mismatch(target, self.remote_location)
         return target
 

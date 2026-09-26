@@ -110,7 +110,7 @@ def test_repository_id_checks_erwartung_6_against_a_github_remote(
     monkeypatch.setattr(
         github,
         "discover_repository",
-        lambda repo, remote_url: forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
+        lambda remote_url: forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
     )
 
     target = _context().repository_id

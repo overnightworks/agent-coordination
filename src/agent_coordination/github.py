@@ -134,18 +134,17 @@ def github_command_environment() -> dict[str, str]:
 
 
 def repository_id(text: str) -> forge.RepositoryId:
-    """The one judge of the OWNER/REPO shape, for `--repo` as for a remote
-    URL's or `gh`'s answer: anything else -- a path, a bare owner, a third
-    segment -- is refused by name, never read as a place to look."""
+    """The one judge of the repository a run targets, whether `--repo`, the
+    remote URL, or `gh`'s answer names it: anything but OWNER/REPO -- a path,
+    a bare owner, a third segment -- is refused by name, never read as a
+    place to look."""
     if re.fullmatch(REPOSITORY_PATTERN, text) is None:
         raise ClaimError(f"repository must be OWNER/REPO, not {text}")
     namespace, _, name = text.partition("/")
     return forge.RepositoryId(GITHUB_HOST, (namespace,), name)
 
 
-def discover_repository(
-    explicit: forge.RepositoryId | None, *, remote_url: Callable[[], str]
-) -> forge.RepositoryId:
+def discover_repository(*, remote_url: Callable[[], str]) -> forge.RepositoryId:
     """Resolve the repository `--repo` did not name.
 
     Reads the git remote first (issue #245): almost every checkout's remote
@@ -154,8 +153,6 @@ def discover_repository(
     `gh` API call, `GH_TIMEOUT_SECONDS` long) only runs as a fallback, when
     the remote's own URL names no repository at all.
     """
-    if explicit is not None:
-        return explicit
     match = GITHUB_REMOTE_PATTERN.search(remote_url())
     if match is not None:
         return repository_id(f"{match.group(1)}/{match.group(2)}")

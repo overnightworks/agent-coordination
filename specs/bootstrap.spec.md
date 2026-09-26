@@ -22,7 +22,7 @@ those IDs rather than restating them. `<sha>` is the runner's own commit id.
 | `ls-remote`/`fetch` auth or transport failure | CAS-04, CAS-05 |
 | any store-level failure reaching this command's own sink | BOOT-01 |
 | an argument this command does not define | BOOT-02 |
-| `--repo` set, or the canonical remote names a non-GitHub host | BOOT-03 |
+| an OWNER/REPO `--repo` set, or the canonical remote names a non-GitHub host | BOOT-03 |
 | `--repo` not shaped OWNER/REPO | OUT-08 |
 
 ## The command's own argument shape
