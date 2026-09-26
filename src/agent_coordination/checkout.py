@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from collections.abc import Callable
@@ -267,8 +268,7 @@ def _scope_directories(
     (issue #472: its run context's, never a second git read), asked once
     and only for an entry that is no git tree."""
     directories: list[str] = []
-    checkout_root: Path | None = None
-    root_asked = False
+    checkout_root = functools.cache(lambda: _toplevel_or_none(toplevel))
     for path in paths:
         try:
             kind = _git_output(["cat-file", "-t", f"HEAD:{path}"], directory=directory)
@@ -277,10 +277,8 @@ def _scope_directories(
         if kind == "tree":
             directories.append(path)
             continue
-        if not root_asked:
-            checkout_root = _toplevel_or_none(toplevel)
-            root_asked = True
-        if checkout_root is not None and (checkout_root / path).is_dir():
+        root = checkout_root()
+        if root is not None and (root / path).is_dir():
             directories.append(path)
     return tuple(directories)
 
