@@ -220,11 +220,14 @@ def test_a_command_that_needs_no_repository_reads_no_context(
         pytest.param("/tmp/x", ["bootstrap"], "", id="absolute-path"),
         pytest.param("./x", ["bootstrap"], "", id="relative-path"),
         pytest.param("owner", ["status"], "", id="bare-owner"),
+        pytest.param("", ["status"], "", id="empty"),
+        pytest.param("o/.", ["status"], "", id="current-directory-name"),
+        pytest.param("o/..", ["status"], "", id="parent-directory-name"),
         pytest.param(
             "a/b/c",
             ["next", "--json"],
             '{"ok": false, "reason": "invalid_usage", '
-            '"message": "repository must be OWNER/REPO, not a/b/c"}\n',
+            '"message": "repository must be OWNER/REPO, not \'a/b/c\'"}\n',
             id="three-segments-under-json",
         ),
     ],
@@ -246,7 +249,8 @@ def test_a_repo_that_is_not_owner_slash_repo_refuses_before_any_git_or_gh_call(
     monkeypatch.setattr(subprocess, "Popen", no_process)
 
     assert _exit_code(["--repo", repo, *command]) == 2
-    assert capsys.readouterr() == (envelope, f"ERROR: repository must be OWNER/REPO, not {repo}\n")
+    refusal = f"ERROR: repository must be OWNER/REPO, not '{repo}'\n"
+    assert capsys.readouterr() == (envelope, refusal)
 
 
 def test_protect_judges_its_payload_without_ever_building_a_run_context(

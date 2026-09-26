@@ -133,15 +133,21 @@ def github_command_environment() -> dict[str, str]:
     return environment
 
 
+# GitHub reserves these as repository names; as a path segment they name the
+# current or parent directory, so a run would silently fall back to the
+# checkout it stands in (issue #465).
+RESERVED_REPOSITORY_NAMES = frozenset({".", ".."})
+
+
 def repository_id(text: str) -> forge.RepositoryId:
     """The one judge of the OWNER/REPO shape of whatever names the repository
     -- `--repo`, the remote URL, or `gh`'s answer: anything else -- a path,
-    a bare owner, a third segment -- is refused by name, never read as a
-    place to look. Which repository a run targets is
+    a bare owner, a third segment, a reserved `.` or `..` name -- is
+    refused by name, never read as a place to look. Which repository a run targets is
     `session.RunContext.repository_id`'s decision."""
-    if re.fullmatch(REPOSITORY_PATTERN, text) is None:
-        raise ClaimError(f"repository must be OWNER/REPO, not {text}")
     namespace, _, name = text.partition("/")
+    if re.fullmatch(REPOSITORY_PATTERN, text) is None or name in RESERVED_REPOSITORY_NAMES:
+        raise ClaimError(f"repository must be OWNER/REPO, not '{text}'")
     return forge.RepositoryId(GITHUB_HOST, (namespace,), name)
 
 
