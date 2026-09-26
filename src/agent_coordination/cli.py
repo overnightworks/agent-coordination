@@ -3401,11 +3401,11 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     CAS write over this process's own already-read oid, extending #287's
     record-owner rule by one field rather than composing a record here).
     Refuses under `storage = "github"` by name -- the forge closes its own
-    issues, aco never governs them -- and refuses a live claim on the item
-    first, before any other precondition (PIN-26 outranks an already-closed
-    item), then again on every write attempt, retries included
-    (`protocol.ItemCloseIntent`, issue #459), so a concurrent claim cannot
-    slip past the first check.
+    issues, aco never governs them -- and, once the state ref is readable,
+    refuses a live claim on the item before every item-state refusal
+    (missing, malformed, already closed), then again on every write
+    attempt, retries included (`protocol.ItemCloseIntent`, issue #459), so
+    a concurrent claim cannot slip past the first check.
     Existence is checked through the ordinary
     `item_reference` read before `close_item` is ever called, so an unknown
     id gets this command's own "does not exist" sentence rather than

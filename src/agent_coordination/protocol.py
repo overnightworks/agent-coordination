@@ -1256,8 +1256,8 @@ def require_no_live_claim(state: ClaimState, issue: IssueIdentity) -> None:
     """Refuses while `issue` still carries a live claim: a closed item with
     a live claim on it is the `RECOVERY` anomaly the board guards against,
     never a state `item close` creates (PIN-26). `apply` checks it on every
-    close attempt; `cli._cmd_item_close` also checks it before any other
-    precondition, so PIN-26 outranks every other refusal."""
+    close attempt; `cli._cmd_item_close` also checks it before every
+    item-state refusal (missing, malformed, already closed)."""
     live_claim = state.claims.get(claim_key(issue, ""))
     if live_claim is not None:
         raise ClaimUnavailableError(
