@@ -24,10 +24,10 @@ and `<ref>` are a parsed `Work-Item:` value or closing reference, always
 printed fully qualified as `<owner>/<repo>#n` -- even where the line or
 argument that named it used a bare `#n` -- because `IssueReference` resolves
 a bare number against the reading repository before printing it again.
-`<label>` is an item as every printed sentence names it (PIN-30):
+`<label>` is an item as every printed sentence names it:
 `#<n>` under `storage = "github"` (this file's default assumption unless a
-criterion says otherwise), `aco-xxxxxx` under `storage = "state-ref"`,
-`specs/storage-pin.spec.md` PIN-30 owning the `state-ref` form; a `--json` integer
+criterion says otherwise), `aco-xxxxxx` under `storage = "state-ref"`;
+`specs/storage-pin.spec.md` PIN-30 owns the `state-ref` form. A `--json` integer
 field never uses `<label>` -- it is always the bare number. `<sha>` is a commit id,
 `<branch>` a git branch name, `<author>` a pull request's author, `<kind>`
 `docs` or `fix`. A trailer block is read through git's own trailer parsing
@@ -84,7 +84,7 @@ matching line.
 - [ ] [LAND-58] A trunk `<sha>` carrying neither trailer refuses `<sha> carries no \`Work-Item:\` or \`No-Item:\` trailer`, exit `2`.
 - [ ] [LAND-60] A trunk `<sha>` whose trailer block is contradictory -- both `Work-Item:` and `No-Item:`, or `No-Item:` repeated -- makes `check <sha>` refuse `REFUSED: <sha> <that defect sentence>`, exit `2`.
 - [ ] [LAND-61] That same contradictory `<sha>` makes `release --merged <sha>` refuse `ERROR: <sha> <that defect sentence>`, exit `2`, before any write.
-- [ ] [LAND-68] Under state-ref `check <sha>` refuses a trunk `Work-Item: #<number>` past `aco-ffffff`: `<sha> carries \`Work-Item:\` <number>, which names no state-ref item; an item id ends at aco-ffffff`, exit `2`.
+- [ ] [LAND-68] State-ref `check <sha>` refuses a `Work-Item:` number, `#` or bare, past `aco-ffffff`: `<sha> carries \`Work-Item:\` <number>, which names no state-ref item; an item id ends at aco-ffffff`, exit `2`.
 
 ## The pull request body's own grammar
 

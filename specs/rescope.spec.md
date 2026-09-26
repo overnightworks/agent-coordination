@@ -18,7 +18,8 @@ that `rescope` shares verbatim, `protect`'s own docstring names the
 sharing; `specs/claim.spec.md` owns the issueless-lane branch refusal
 (CLM-07) `_resolved_identity` shares with `rescope` too. This file cites
 those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
-`<path>` a path, `<claim-id>` the selected claim's own id.
+`<path>` a path, `<claim-id>` the selected claim's own id; `<subject>` and
+`<identity>` are `specs/release.spec.md`'s own, naming an item `<label>`.
 
 ## Behavior table
 
@@ -54,7 +55,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 
 ## Selecting the live claim
 
-- [ ] [RESC-14] No live claim on this identity/branch, or a `--claim-id` not matching the one live claim, refuses `<subject> has no active build claim`, exit `2`; `rescope` and `release` share this lookup.
+- [ ] [RESC-14] No live claim on this identity/branch, or a `--claim-id` not matching the one live claim, refuses `<identity> has no active build claim`, exit `2`; `rescope` and `release` share this lookup.
 
 ## Combining the scope
 

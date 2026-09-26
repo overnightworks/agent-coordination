@@ -18,9 +18,8 @@ grammar `CLAIMED`/`RESCOPED` already print: `issue <label>` or `lane <branch>`
 (`<label>` is
 `specs/landing-grammar.spec.md`'s own convention -- `#<n>` under
 `storage = "github"`, `aco-xxxxxx` under `storage = "state-ref"`).
-`<identity>`, printed only by the no-live-claim refusal below, is a
-different, always-plain grammar: `issue #<n>` or `lane '<branch>'`, quoted,
-never storage-aware. A refusal reaching the shared collection point prints
+`<identity>`, printed only by the no-live-claim refusal below, differs only
+in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal reaching the shared collection point prints
 `ERROR: <sentence>` on stderr and exits `2`, exactly as
 `specs/claim-record.spec.md` already documents.
 

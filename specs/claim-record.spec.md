@@ -9,7 +9,9 @@ instead of restating them.
 
 A refusal reaching the shared collection point prints `ERROR: <sentence>` on
 stderr and exits `2`. `<claim-id>`, `<sha>`, `<oid>` and `<tip>` are the
-runner's own values; `<agent>` and `<role>` are the claimant's.
+runner's own values; `<agent>` and `<role>` are the claimant's. `<label>` is
+an item as `specs/landing-grammar.spec.md` names it: `#<n>` under
+`storage = "github"`, `aco-xxxxxx` under `storage = "state-ref"` (PIN-30).
 
 ## Behavior table
 
@@ -72,7 +74,7 @@ runner's own values; `<agent>` and `<role>` are the claimant's.
 
 ## Identity exclusivity
 
-- [ ] [CLAIM-11] A second claim on an already-claimed issue refuses `issue #42 is claimed by Ada (builder) on issue #42 branch ada/issue-42`, exit `2`, before anything is written (see E-CLAIM-03).
+- [ ] [CLAIM-11] A second claim on an already-claimed issue refuses `issue <label> is claimed by Ada (builder) on issue <label> branch ada/issue-42`, exit `2`, before anything is written (see E-CLAIM-03).
 - [ ] [CLAIM-12] A second claim on an already-claimed lane branch refuses `lane 'docs/tidy-readme' is claimed by Ada (builder) on lane 'docs/tidy-readme' branch docs/tidy-readme`, exit `2`.
 - [ ] [CLAIM-13] Repeating an interrupted claim with the same claim id, agent, role, branch and scope returns that same live claim and writes no second record, exit `0`.
 - [ ] [CLAIM-14] A claim id already on the ledger with different fields refuses `claim id '<claim-id>' is already on this ledger, active or released; release it, then claim again with a fresh claim id`.
@@ -101,7 +103,7 @@ runner's own values; `<agent>` and `<role>` are the claimant's.
 
 ## Overlap, advisory
 
-- [ ] [CLAIM-31] A claim prints its cost and its overlaps as one line, `2 of 40 versioned files (5%); overlaps issue #7 on docs/guide.md`, and claims anyway, exit `0`.
+- [ ] [CLAIM-31] A claim prints its cost and its overlaps as one line, `2 of 40 versioned files (5%); overlaps issue <label> on docs/guide.md`, and claims anyway, exit `0`.
 - [ ] [CLAIM-32] A scope meeting no live claim prints `overlaps no other open claims` on that same line, exit `0`.
 - [ ] [CLAIM-33] An overlap names the deeper path, so a live claim on `docs` met by a claim on `docs/guide.md` is named `on docs/guide.md`, never `on docs`.
 - [ ] [CLAIM-34] An overlap of more than three paths names the first three and counts the rest, `docs/a.md, docs/b.md, docs/c.md, and 2 more`.
@@ -118,7 +120,7 @@ runner's own values; `<agent>` and `<role>` are the claimant's.
 ## Resources
 
 - [ ] [CLAIM-41] `--resource <name>` holds the lowest positive integer that name never gave out, and `aco status` prints an indented `resource port=1` line, exit `0`.
-- [ ] [CLAIM-42] An explicit resource value another live claim holds refuses `port 1 is held by Ada (builder) on issue #42`, exit `2`.
+- [ ] [CLAIM-42] An explicit resource value another live claim holds refuses `port 1 is held by Ada (builder) on issue <label>`, exit `2`.
 - [ ] [CLAIM-43] A resource value a released claim once held refuses `port 1 was already consumed and cannot be reused`, exit `2`.
 - [ ] [CLAIM-44] A released resource value is never reassigned: after a release of `port 1`, the next `--resource port` claim succeeds and `aco status` prints its indented `resource port=2` line, exit `0`.
 - [ ] [CLAIM-45] A resource value without a resource name refuses `resource value requires a resource name`, exit `2`.
@@ -200,7 +202,7 @@ Setup: bare-remote, bootstrapped, issue `#42` held by `Ada (builder)` on `ada/is
 
 ```console
 $ aco claim 42 --scope README.md
-2> ERROR: issue #42 is claimed by Ada (builder) on issue #42 branch ada/issue-42
+2> ERROR: issue <label> is claimed by Ada (builder) on issue <label> branch ada/issue-42
 exit 2
 ```
 

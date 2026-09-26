@@ -65,6 +65,7 @@ the trailer grammar that mode reads and the sentences it refuses with
 | `<sha>` off the walked trunk (CHECK-13) | `not_on_trunk` | `2` |
 | no checkout, or another pre-dispatch failure (CHECK-10) | `unavailable` | `2` |
 | `--repo` given, `storage = "state-ref"` (CHECK-11) | `invalid_usage` | `2` |
+| `<n>` past `aco-ffffff`, `storage = "state-ref"` (PIN-31) | `invalid_usage` | `2` |
 
 ## A number in neither space
 
