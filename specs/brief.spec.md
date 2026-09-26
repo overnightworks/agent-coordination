@@ -14,8 +14,8 @@ record's own fields this command reads (CLAIM-01, CLAIM-05, CLAIM-47), and
 `specs/storage-pin.spec.md` owns the item-reference grammar `<item>`
 accepts (PIN-08) and the state-ref forge gate (PIN-04, PIN-05). `<item>`
 is the argument as given; `<n>` its resolved number; `<step>` is one of
-`build`, `review`, `fix`, `land`; `<trunk>` is the target the canonical
-remote `<remote>`'s `HEAD` records when `<remote>` records one -- taken as
+`build`, `review`, `fix`, `land`; `<trunk>` is `<remote>/HEAD`'s target, for the
+canonical remote `<remote>`, when this checkout records one -- taken as
 recorded, even when that target no longer resolves -- otherwise the first
 of `<remote>/main`, `<remote>/master`, the local `main`, and the local
 `master` that resolves in this checkout. A refusal reaching the shared
@@ -68,7 +68,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 - [ ] [BRIEF-07] `aco brief <item>` on a canonical remote whose host has no forge adapter refuses `no forge adapter for host <host>`, exit `2`, before any forge resolution (see E-BRIEF-05).
 - [ ] [BRIEF-09] Under `storage = "state-ref"`, `aco brief <item>` resolves the state-ref forge like `item show`/`edit`/`close`; `--repo` there refuses the same as those (PIN-04, PIN-05).
-- [ ] [BRIEF-17] `--json` on a dispatched refusal (see BRIEF-07/09/15/19/20) prints `specs/output.spec.md`'s envelope, the sentence as `message`, `reason` from the table below (see E-BRIEF-11).
+- [ ] [BRIEF-17] `--json` on a dispatched refusal (see BRIEF-07/09/15/18/19/20) prints `specs/output.spec.md`'s envelope, the sentence as `message`, `reason` from the table below (see E-BRIEF-11).
 - [ ] [BRIEF-19] A forge failure reading the item refuses `ERROR: <sentence>`, exit `2`, `--json` `reason: "unavailable"` (see E-BRIEF-13).
 
 `reason`, by which refusal fired:
@@ -76,7 +76,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | refusal | `reason` |
 |---|---|
 | PIN-04 (`--repo` under `storage = state-ref`) | `invalid_usage` |
-| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-19 (the item read fails), BRIEF-20 (no `<trunk>`) | `unavailable` |
+| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 (no `<trunk>`) | `unavailable` |
 
 ## Never
 
@@ -327,9 +327,9 @@ exit 0
 ### E-BRIEF-15 -- no `<trunk>`
 
 Setup: as E-BRIEF-04, but `origin`'s default branch is `trunk` and it
-carries no `main` or `master`, `origin/HEAD` is not recorded (`git remote
-set-head origin --delete`), and the work repository has no local `main` or
-`master`
+carries no `main` or `master`, the work repository has no local `main` or
+`master`, and after the claim and push `origin/HEAD` is no longer recorded
+(`git remote set-head origin --delete`)
 
 ```console
 $ aco brief 42
