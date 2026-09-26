@@ -2289,6 +2289,37 @@ def _real_state_ref_start_scenario(
     return repo, remote, seeded_oid
 
 
+@pytest.mark.parametrize(
+    "command",
+    [["status"], ["board", "--json"], ["next", "--json"]],
+    ids=["status", "board", "next"],
+)
+def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    command: list[str],
+) -> None:
+    """Issue #460: a read run from `src/` of a checkout, or of a linked
+    worktree, answers exactly as from the checkout root -- git lists and
+    archives a tree object relative to its own working directory, so the
+    state tree must be read from the checkout root, never the process cwd."""
+    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    linked = tmp_path / "linked"
+    _real_git(repo, "worktree", "add", "-q", "-b", "lane", str(linked))
+    answers: list[tuple[int, str]] = []
+    for toplevel, directory in ((repo, repo), (repo, repo / "src"), (linked, linked / "src")):
+        directory.mkdir(exist_ok=True)
+        _redirect_toplevel(monkeypatch, toplevel)
+        monkeypatch.chdir(directory)
+        status = issue_claim.main(command)
+        answers.append((status, capsys.readouterr().out))
+
+    root_answer = answers[0]
+    assert root_answer[0] == 0
+    assert answers == [root_answer] * 3
+
+
 def test_start_under_state_ref_claims_from_the_worktree_it_creates(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -6246,11 +6277,12 @@ def test_status_notes_a_scope_that_is_claimed_after_its_descendant(
     assert "CONFLICT" not in rendered
 
 
-def _write_state_ref_pin(tmp_path: Path) -> None:
-    """`.agent-claim/board.toml` pinned to `storage = "state-ref"`, in the
-    isolated toplevel `_isolate_git_toplevel` (conftest.py) already
-    redirects this process's `rev-parse --show-toplevel` to (issue #248)."""
-    config_dir = tmp_path / ".agent-claim"
+def _write_state_ref_pin(toplevel: Path) -> None:
+    """`.agent-claim/board.toml` pinned to `storage = "state-ref"` in
+    `toplevel`: the isolated toplevel `_isolate_git_toplevel` (conftest.py)
+    already redirects this process's `rev-parse --show-toplevel` to (issue
+    #248), or a repository `_redirect_toplevel` points it at."""
+    config_dir = toplevel / ".agent-claim"
     config_dir.mkdir()
     (config_dir / "board.toml").write_text('storage = "state-ref"\n')
 
@@ -6457,9 +6489,10 @@ def _landing_scenario(
     the board's own oids -- so `release --merged` (this module's own CLI
     path) and `prepare_landing`/`mark_landed` (`state_board.py`'s) are
     exercised together, exactly as a real run composes them."""
-    _write_state_ref_pin(tmp_path)
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo = _landing_repository(tmp_path)
+    _write_state_ref_pin(repo)
+    _redirect_toplevel(monkeypatch, repo)
     item_ids = {number: items.format_item_id(number) for number in _LANDING_ITEM_NUMBERS}
     item_files = {
         f"{item_id}.md": _landing_item_body(f"Item {number}").encode()
@@ -6603,10 +6636,11 @@ def _real_landing_scenario(
     unfaked, and `_state_ref_forge` is never stubbed, so `release --merged`
     below drives the exact git commits and CAS its own atomicity claim is
     about."""
-    _write_state_ref_pin(tmp_path)
     _use_real_store(monkeypatch)
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo = _landing_repository(tmp_path)
+    _write_state_ref_pin(repo)
+    _redirect_toplevel(monkeypatch, repo)
     remote = tmp_path / "remote.git"
     store.bootstrap(worktree=repo, remote=str(remote))
     for number in numbers:
@@ -6758,7 +6792,7 @@ def test_landing_intent_survives_an_unrelated_ref_move_with_no_half_state(
     The retry refetches, reapplies on top of the racer's own commit, and
     lands exactly one more commit: neither the racer's write nor this
     transition's is ever left half-applied."""
-    worktree, bare_remote = _reset_repository(tmp_path)
+    worktree, bare_remote = _reset_repository(monkeypatch, tmp_path)
     _use_real_store(monkeypatch)
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     claim, open_oid = _seed_real_claim_and_item(
@@ -6817,7 +6851,7 @@ def test_landing_intent_refuses_a_stale_item_oid_without_writing_anything(
     name, the same CAS discipline `ItemWriteIntent` already proves, and
     writes nothing -- the claim stays live and the item stays open on the
     real ref, not just in a fake's own state."""
-    worktree, bare_remote = _reset_repository(tmp_path)
+    worktree, bare_remote = _reset_repository(monkeypatch, tmp_path)
     _use_real_store(monkeypatch)
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     claim, open_oid = _seed_real_claim_and_item(
@@ -16721,13 +16755,11 @@ def _use_real_store(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(store, "claim_lifecycle", _REAL_STORE_CLAIM_LIFECYCLE)
 
 
-def _reset_repository(tmp_path: Path) -> tuple[Path, Path]:
+def _reset_repository(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
     """A real checkout with a real `origin` remote pointing at a real bare
-    repository. `board.toml` is never written: `_isolate_git_toplevel`
-    (conftest) resolves the repository's toplevel to `tmp_path`, where no
-    `.agent-claim/board.toml` exists, so `board.load_config` falls back to
-    its own default `canonical_remote = "origin"` -- exactly this remote's
-    name."""
+    repository, and the run's toplevel redirected onto it. `board.toml` is
+    never written, so `board.load_config` falls back to its own default
+    `canonical_remote = "origin"` -- exactly this remote's name."""
     bare_remote = tmp_path / "remote.git"
     _real_git(tmp_path, "init", "--bare", "-q", "-b", "main", str(bare_remote))
     repository = tmp_path / "repo"
@@ -16739,6 +16771,7 @@ def _reset_repository(tmp_path: Path) -> tuple[Path, Path]:
     _real_git(repository, "add", "README.md")
     _real_git(repository, "commit", "-q", "-m", "initial")
     _real_git(repository, "remote", "add", "origin", str(bare_remote))
+    _redirect_toplevel(monkeypatch, repository)
     return repository, bare_remote
 
 
@@ -16779,7 +16812,7 @@ def test_cli_reset_dry_run_prints_five_would_lines_and_changes_nothing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     tip = store.bootstrap(worktree=repository, remote=str(bare_remote))
     store.fetch_state(worktree=repository, remote=str(bare_remote))
     lineage_before = _lineage_observation(repository)
@@ -16825,7 +16858,7 @@ def test_cli_reset_confirm_exports_a_verifiable_bundle_and_bootstraps_a_fresh_re
     """A readable claim-free state resets the same with or without
     `--force-unreadable` (RESET-17)."""
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     tip = store.bootstrap(worktree=repository, remote=str(bare_remote))
     export_dir = tmp_path / "export"
     export_dir.mkdir()
@@ -16872,7 +16905,7 @@ def test_cli_reset_refuses_when_a_claim_is_live_and_touches_nothing(
     """`--force-unreadable` (issue #341) only lifts the refusal over a
     schema this aco cannot read; a readable tree's live claim still refuses."""
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     store.bootstrap(worktree=repository, remote=str(bare_remote))
     store.commit_transition(
         worktree=repository,
@@ -16940,7 +16973,7 @@ def unreadable_reset(
     """A checkout whose remote carries a schema-1 state, cwd inside it, the
     date fixed, and an empty export directory: repository, remote, tip, export."""
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     tip = _push_schema_one_state(tmp_path, bare_remote)
     export_dir = tmp_path / "export"
     export_dir.mkdir()
@@ -17016,7 +17049,7 @@ def test_cli_reset_no_export_skips_the_bundle_but_still_resets(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     tip = store.bootstrap(worktree=repository, remote=str(bare_remote))
     export_dir = tmp_path / "export"
     export_dir.mkdir()
@@ -17036,7 +17069,7 @@ def test_cli_reset_dry_run_reports_nothing_to_export_or_delete_when_the_ref_neve
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     _use_real_store(monkeypatch)
-    repository, _bare_remote = _reset_repository(tmp_path)
+    repository, _bare_remote = _reset_repository(monkeypatch, tmp_path)
     monkeypatch.chdir(repository)
 
     status = issue_claim.main(["reset"])
@@ -17051,7 +17084,7 @@ def test_cli_reset_confirm_deletes_a_local_ref_a_foreign_tool_left_behind(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     tip = store.bootstrap(worktree=repository, remote=str(bare_remote))
     _real_git(repository, "update-ref", store.STATE_REF, tip)
     export_dir = tmp_path / "export"
@@ -17072,7 +17105,7 @@ def test_cli_reset_export_failure_leaves_the_ref_untouched(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     tip = store.bootstrap(worktree=repository, remote=str(bare_remote))
     store.fetch_state(worktree=repository, remote=str(bare_remote))
     lineage_before = _lineage_observation(repository)
@@ -17099,7 +17132,7 @@ def test_cli_reset_a_moved_remote_tip_leaves_the_bundle_intact_and_names_the_rep
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     tip = store.bootstrap(worktree=repository, remote=str(bare_remote))
     export_dir = tmp_path / "export"
     export_dir.mkdir()
@@ -17153,7 +17186,7 @@ def test_cli_reset_restore_from_the_bundle_into_a_fresh_repository_recovers_stat
     equally-empty `aco status` a plain bootstrap would print too.
     """
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     store.bootstrap(worktree=repository, remote=str(bare_remote))
     store.commit_transition(
         worktree=repository,
@@ -17220,7 +17253,7 @@ def test_cli_reset_recovers_from_a_deleted_ref_this_worktree_had_already_observe
     next read. `reset` must still recover, and must clear the stale stamp
     so an ordinary read works again afterward."""
     _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(tmp_path)
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     store.bootstrap(worktree=repository, remote=str(bare_remote))
     store.fetch_state(worktree=repository, remote=str(bare_remote))
     assert store._read_lineage_stamp(repository) is not None

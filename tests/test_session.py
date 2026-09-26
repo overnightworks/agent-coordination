@@ -178,14 +178,13 @@ def _exit_code(command: list[str]) -> int | str | None:
 
 
 def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every fact a context holds starts from its toplevel or its worktree,
-    so forbidding both forbids every read a context could make."""
+    """Every fact a context holds starts from its toplevel, so forbidding it
+    forbids every read a context could make."""
 
     def unused(_context: RunContext) -> Path:
         pytest.fail("this command must not read the run's repository context")
 
     monkeypatch.setattr(RunContext, "toplevel", property(unused))
-    monkeypatch.setattr(RunContext, "worktree", property(unused))
 
 
 @pytest.mark.parametrize(

@@ -110,15 +110,13 @@ class RunContext:
         return RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
 
     @cached_property
-    def worktree(self) -> Path:
-        """The directory git runs in for this context's store reads."""
-        return Path.cwd() if self.directory is None else self.directory
-
-    @cached_property
     def toplevel(self) -> Path:
-        """The checkout's toplevel. Without a working tree there is no
-        configuration to read, so the command refuses rather than running
-        on guessed defaults (#178)."""
+        """The checkout's toplevel, and the directory every store read runs
+        git in: git lists and archives a state tree relative to its own
+        working directory, so a read from a subdirectory would see an empty
+        tree (#460). Without a working tree there is no configuration to
+        read, so the command refuses rather than running on guessed
+        defaults (#178)."""
         try:
             return Path(
                 checkout._git_output(["rev-parse", "--show-toplevel"], directory=self.directory)
