@@ -23,7 +23,8 @@ from .protocol import (
 ACO_AGENT_ENV = "ACO_AGENT"
 GROK_SESSION_ID_ENV = "GROK_SESSION_ID"
 CLAUDE_CODE_SESSION_ID_ENV = "CLAUDE_CODE_SESSION_ID"
-# The one order every identity sentence names, `session_agent`'s own.
+# `session_agent`'s own order, named by every identity sentence: `claim`'s,
+# `start`'s, `protect`'s (PROT-08), and `--agent`'s help.
 IDENTITY_ENVIRONMENT_ORDER = (
     f"{ACO_AGENT_ENV}, {GROK_SESSION_ID_ENV}, or {CLAUDE_CODE_SESSION_ID_ENV}"
 )

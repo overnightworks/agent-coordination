@@ -4,8 +4,9 @@ and returns a typed `Verdict` -- allow or deny, with the deny reason -- from
 the payload envelope checks (PROT-03..) through the shared Checkout/
 Default-Branch/Claim-Scope/Bash-pattern chain every mutating tool call runs.
 `cli` keeps only reading stdin, calling `judge`, and printing the verdict's
-own JSON envelope under one `except Exception` frame (PROT-17); this module
-never touches stdin or stdout itself. `specs/protect.spec.md` owns every
+own JSON envelope and, for a deny, its stderr sentence under one
+`except Exception` frame (PROT-17); this module never touches stdin, stdout,
+or stderr itself. `specs/protect.spec.md` owns every
 denial reason, the order they are judged in, and the JSON shape and exit
 codes `Verdict.to_json`/`Verdict.exit_code` produce -- this file cites those
 IDs rather than restating them.
@@ -61,6 +62,12 @@ class Verdict:
         if self.decision is Decision.ALLOW:
             return {"decision": "allow"}
         return {"decision": "deny", "reason": self.reason}
+
+    @property
+    def stderr_text(self) -> str | None:
+        """What stderr carries (PROT-01/PROT-02): nothing for an allow, the
+        deny's own sentence for the hosts that read it on exit 2."""
+        return self.reason
 
 
 _CanonicalRemoteFor = Callable[[Path], str]

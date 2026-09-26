@@ -3787,10 +3787,10 @@ def _protect() -> int:
     except Exception as error:
         verdict = protect.Verdict.deny(str(error))
     print(json.dumps(verdict.to_json()))
-    if verdict.reason is not None:
+    if verdict.stderr_text is not None:
         # Claude Code ignores stdout JSON outside its own schema on exit 2 and
         # hands its agent the stderr text as the blocking reason (PROT-02).
-        print(verdict.reason, file=sys.stderr)
+        print(verdict.stderr_text, file=sys.stderr)
     return verdict.exit_code
 
 
