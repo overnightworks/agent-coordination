@@ -47,8 +47,10 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 - [ ] [PIN-06] `aco item new --title TITLE` under `storage = "state-ref"` prints exactly one line, the minted id `aco-` plus six lowercase hex characters, exit `0` (see E-PIN-03).
 - [ ] [PIN-07] `aco item new --title TITLE --json` prints `specs/output.spec.md`'s envelope: `{"ok": true, "reason": "created", "item": "aco-xxxxxx", "number": n}`.
-- [ ] [PIN-30] Under `storage = "state-ref"` a printed sentence or string `--json` field names an item `aco-xxxxxx`, never `#<n>`, except the claim ledger's sentences (PIN-26) and `item show`'s header (ITEM-07).
+- [ ] [PIN-30] Under `storage = "state-ref"` a printed sentence or string `--json` field names an item `aco-xxxxxx`, never `#<n>`; the paragraph below names its exceptions.
 - [ ] [PIN-08] An id argument matching none of `aco-xxxxxx`, `#n`, or the bare number `n` refuses `'<value>' is not an item reference; use aco-xxxxxx, #n, or the bare number n` (see E-PIN-04).
+
+PIN-30's exceptions keep `#<n>`: until #471, the claim-ledger sentences `protocol.py` renders -- CLAIM-11 (and START-16 through it), CLAIM-42, REL-09/REL-10, RESC-14 and PIN-26 -- and `item show`'s header (ITEM-07).
 
 ## Commands refused by the wrong pin
 
