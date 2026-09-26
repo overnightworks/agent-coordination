@@ -51,7 +51,7 @@ brand-new id, never a stale or deterministic per-item one.
 
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.
-- [ ] [START-03] No identity signal resolves a prefix: refuses `branch prefix is required: set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID`, exit 2.
+- [ ] [START-03] No identity signal resolves a prefix: refuses `branch prefix is required: set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID`, exit 2; an unusable one (`ACO_AGENT=" Ada "`) refuses with `claim`'s own sentence, `agent must be one bounded non-empty line`, exit 2, before any worktree exists.
 - [ ] [START-04] `--scope`/`--whole`/`--out-of-order` pass through verbatim to the claim acquired inside the worktree, exactly as `aco claim <n>` reads them (CLM-06..CLM-18, CLAIM-53..CLAIM-55).
 - [ ] [START-05] `start` never changes the caller's own working directory: it stands wherever it started once `start` returns, whatever worktree it just built or claimed in.
 - [ ] [START-06] A worktree already at the computed path, clean, same branch, with a live claim already on it: looks it up by identity/branch and reprints it verbatim, never minting a second id (see E-START-02).
