@@ -3744,6 +3744,27 @@ class TestCliStateRefForge:
         decimals = [items.item_number(identifier) for identifier in named.values()]
         assert not any(f"#{n}" in output or f'"{n}"' in output for n in decimals)
 
+    def test_a_claim_overlapping_a_standing_claim_names_that_claim_by_its_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #467 (#469 review finding 4): the cost line a fresh claim
+        prints names the standing claim it overlaps by the id the next
+        command takes back, never `issue #<n>`."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        _stub_claim_checkout(monkeypatch)
+        claimant = ["--agent", "Codex Sol", "--base", "a" * 40, "--scope", "README"]
+        _run_ok(["claim", CHILD_A_ID, "--branch", "codex/issue-2-slice-a", *claimant], capsys)
+
+        overlapping = _run_ok(["claim", "--branch", "docs/overlap", *claimant], capsys)
+
+        assert f"overlaps issue {CHILD_A_ID} on README" in overlapping
+        assert f"#{CHILD_A_NUMBER}" not in overlapping
+
     def test_readme_week_without_a_forge_runs_end_to_end_against_a_fresh_bare_remote(
         self,
         monkeypatch: pytest.MonkeyPatch,

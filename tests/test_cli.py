@@ -10600,13 +10600,14 @@ def test_claim_cost_lists_an_overlapping_standing_claim_as_a_touch() -> None:
     )
 
     assert [claim.claim_id for claim in overlapping] == ["claim-a"]
-    assert issue_claim._touch_summary(narrow_scope, overlapping) == (
+    github = body.Storage.GITHUB
+    assert issue_claim._touch_summary(narrow_scope, overlapping, github) == (
         "overlaps issue #55 on src/widget.py"
     )
-    assert issue_claim._touch_summary(wide_scope, both) == (
+    assert issue_claim._touch_summary(wide_scope, both, github) == (
         "overlaps issue #55 on src, lane docs/foo on docs"
     )
-    assert issue_claim._touch_summary(wide_scope, ()) == "overlaps no other open claims"
+    assert issue_claim._touch_summary(wide_scope, (), github) == "overlaps no other open claims"
 
 
 def test_claim_cost_names_a_directory_scope_meeting_a_single_file_of_a_standing_claim() -> None:
@@ -10623,7 +10624,7 @@ def test_claim_cost_names_a_directory_scope_meeting_a_single_file_of_a_standing_
         (standing,), request("challenger", issue=1401, scope=own_scope)
     )
 
-    assert issue_claim._touch_summary(own_scope, touches) == (
+    assert issue_claim._touch_summary(own_scope, touches, body.Storage.GITHUB) == (
         "overlaps issue #1400 on tests/adapters/test_agent_claim_cli.py"
     )
 
@@ -10642,7 +10643,7 @@ def test_claim_cost_counts_overflow_when_many_paths_collide_in_one_claim() -> No
         (standing,), request("challenger", issue=56, scope=own_scope)
     )
 
-    assert issue_claim._touch_summary(own_scope, touches) == (
+    assert issue_claim._touch_summary(own_scope, touches, body.Storage.GITHUB) == (
         "overlaps issue #55 on docs/b.md, scripts/d.py, src/a.py, and 1 more"
     )
 
@@ -10659,7 +10660,7 @@ def test_claim_cost_lists_every_overlapping_claim_separately() -> None:
         (first, second, third), request("challenger", issue=56, scope=own_scope)
     )
 
-    assert issue_claim._touch_summary(own_scope, touches) == (
+    assert issue_claim._touch_summary(own_scope, touches, body.Storage.GITHUB) == (
         "overlaps issue #55 on src/a.py, issue #57 on docs/b.md, lane docs/foo on tests/c.py"
     )
 
