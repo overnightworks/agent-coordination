@@ -29,7 +29,9 @@ and `item close`'s live-claim re-check on every write attempt (CAS-52);
 ITEM-25, ITEM-32) and cites the others by ID. A refusal prints `ERROR: <sentence>`
 on stderr, exit `2`, and with `--json` also that envelope.
 `<item-id>` is a minted `aco-xxxxxx` id, `<n>` its number, `<oid>`/`<sha>` the
-runner's own git object ids.
+runner's own git object ids. A printed `#<n>` outside `item show`'s header
+is its `storage = "github"` form; under `storage = "state-ref"` it prints
+`<item-id>` (PIN-30).
 
 ## Behavior table
 

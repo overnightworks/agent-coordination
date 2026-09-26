@@ -16,7 +16,8 @@ malformed-body-target refusal the two commands share verbatim (ASK-05);
 this file cites it rather than restating it. `specs/storage-pin.spec.md`
 owns the state-ref forge gate (PIN-04) `rule` shares with `ask` and
 `brief`; this file cites it rather than restating it. `<n>` is the item's
-own number; `<k>` the 1-based line index `--line` names, the same index
+own number, a printed `#<n>` its `storage = "github"` form and the item id
+under `storage = "state-ref"` (PIN-30); `<k>` the 1-based line index `--line` names, the same index
 `aco ask`'s own `ASKED` line and `rulings` print.
 
 ## Behavior table
@@ -68,7 +69,6 @@ the same sentence; RULE-07's sentence is identical for both commands.
 - `aco rule` never accepts two outcome flags, or none: `--yes`/`--no`/`--later` are one mutually exclusive, required group.
 - `aco rule` never changes a ruled line's own `ruling`: RULE-04 refuses before any write reaches it.
 - `aco rule` never rewrites a byte outside the ruled entry: the body's surrounding bytes stay exactly as written.
-- The `RULED` line is always the bare `#<n>`, never the storage-aware `<label>` form `specs/landing-grammar.spec.md` defines for `aco next`/`release`'s own narrative lines.
 - `aco rule` reaches the same checkout-less refusal `specs/check.spec.md` owns (CHECK-10) before it ever resolves the forge or the item.
 - `board --serve`'s own `POST /rule` form is transport only: it calls this exact write, never a second one, so a line already ruled through the served board refuses the same RULE-04 sentence a CLI `aco rule` would.
 
@@ -89,7 +89,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-id>` o
 
 ```console
 $ aco rule <item-id> --line 1 --yes
-RULED #<n> line 1 yes; 1 line(s) still open
+RULED <item-id> line 1 yes; 1 line(s) still open
 exit 0
 $ aco rule <item-id> --line 2 --later --json
 {"ok": true, "reason": "ruled", "item": <n>, "index": 2, "ruling": "later", "ruled_on": "<ruled-on>", "open": 0}
@@ -102,7 +102,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-id>` o
 
 ```console
 $ aco rule <item-id> --line 1 --yes --note "Ja, sofort."
-RULED #<n> line 1 yes; 0 line(s) still open
+RULED <item-id> line 1 yes; 0 line(s) still open
 exit 0
 ```
 

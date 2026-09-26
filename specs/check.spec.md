@@ -13,8 +13,10 @@ owns the exact `body malformed:`/`body incomplete:` sentences an issue's own
 shape can carry (BODY-01..BODY-52); `specs/storage-pin.spec.md` owns the
 `'<value>' is not an item reference` refusal for `<n>` itself (PIN-08) and
 gates this command like any other resolving the item forge (PIN-04, PIN-05)
-under `storage = "state-ref"`. `<n>` is the argument as given, `<repository>`
-the checked repository's own `owner/repo` path. A refusal that never even
+under `storage = "state-ref"`. `<n>` is the argument as given, an issue's
+printed `#<n>` its `storage = "github"` form and the item id under
+`storage = "state-ref"` (PIN-30), `<repository>` the checked repository's
+own `owner/repo` path. A refusal that never even
 reaches this command's own dispatch (no checkout, an untracked storage pin,
 an unreachable forge) prints `ERROR: <sentence>` on stderr and, with
 `--json`, the envelope with `reason: "unavailable"`; exit `2` either way.

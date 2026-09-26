@@ -23,11 +23,11 @@ and `<ref>` are a parsed `Work-Item:` value or closing reference, always
 printed fully qualified as `<owner>/<repo>#n` -- even where the line or
 argument that named it used a bare `#n` -- because `IssueReference` resolves
 a bare number against the reading repository before printing it again.
-`<label>` is an item as `aco next`/`release`'s own narrative lines print it:
+`<label>` is an item as every printed sentence names it (PIN-30):
 `#<n>` under `storage = "github"` (this file's default assumption unless a
 criterion says otherwise), `aco-xxxxxx` under `storage = "state-ref"`
-(README "What is still different under `state-ref`"); `--json` output never
-uses `<label>` -- it is always the bare number. `<sha>` is a commit id,
+(README "What is still different under `state-ref`"); a `--json` integer
+field never uses `<label>` -- it is always the bare number. `<sha>` is a commit id,
 `<branch>` a git branch name, `<author>` a pull request's author, `<kind>`
 `docs` or `fix`. A trailer block is read through git's own trailer parsing
 (`%(trailers:key=...,valueonly)`), never by scanning the message body for a

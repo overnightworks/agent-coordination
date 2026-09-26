@@ -19,7 +19,9 @@ it. `specs/body-block.spec.md` owns the picture's own content grammar
 field-by-field (BODY-37..BODY-42) and the question/example length and
 non-empty rules (BODY-34..BODY-36): appending a card checks each field by
 the same rule the body parser applies. `<n>` is the item's own number,
-always the argument given; `<k>` the fresh line's 1-based index.
+always the argument given, a printed `#<n>` its `storage = "github"` form
+and the item id under `storage = "state-ref"` (PIN-30); `<k>` the fresh
+line's 1-based index.
 
 ## Behavior table
 
@@ -100,7 +102,6 @@ text (BODY-01..BODY-50); a picture's own content rules are BODY-37..BODY-42.
 - `aco ask` never rules a line: `--default` only proposes an outcome; only `aco rule` moves a line from proposed to ruled.
 - `aco ask` never overwrites an existing line: every call appends a fresh entry at the next index, even when an identical `text` already exists.
 - `aco ask` never rewrites a byte outside the appended entry: the body's surrounding bytes stay exactly as written.
-- The `ASKED` line is always the bare `#<n>`, never the storage-aware `<label>` form `specs/landing-grammar.spec.md` defines for `aco next`/`release`'s own narrative lines.
 - `aco ask` reaches the same checkout-less refusal `specs/check.spec.md` owns (CHECK-10) before it ever resolves the forge or the item.
 - `--picture`'s own file read (ASK-06) never depends on the item, the forge, or a checkout: a missing checkout still lets a missing or invalid picture file refuse first.
 - `--default` can never print the "must be one of yes, no, or later" refusal through this CLI: only `yes`, `no`, or `later` ever reach the command; any other value is refused by the parser itself.
@@ -121,7 +122,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-id>` o
 
 ```console
 $ aco ask <item-id> --text "New question?"
-ASKED #<n> line 1: New question?
+ASKED <item-id> line 1: New question?
 exit 0
 $ aco ask <item-id> --text "Ship on Friday?" --json
 {"ok": true, "reason": "asked", "item": <n>, "index": 2, "text": "Ship on Friday?", "default": "yes"}
@@ -147,7 +148,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-00
 
 ```console
 $ aco ask aco-000001 --text "New question?"
-2> ERROR: #<n> body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
+2> ERROR: aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
 exit 2
 ```
 
@@ -167,8 +168,8 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-00
 
 ```console
 $ aco ask aco-000001 --text "New question?" --json
-2> ERROR: #<n> body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
-{"ok": false, "reason": "invalid_item", "message": "#<n> body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block"}
+2> ERROR: aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
+{"ok": false, "reason": "invalid_item", "message": "aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block"}
 exit 2
 ```
 
