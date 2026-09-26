@@ -2237,7 +2237,7 @@ def _parent_checks(
     if match is None:
         return None
     slice_number, parent_issue = match
-    if storage is body.Storage.STATE_REF and not items.is_item_number(parent_issue):
+    if board.names_no_item(parent_issue, storage):
         return None
     parent = client.parent_issue(issue)
     if parent is not None and parent.reference == board.IssueReference(repository, parent_issue):
@@ -3957,9 +3957,7 @@ def _refused_trunk_commit(sha: str, finding: str, reason: CheckReason) -> CheckO
     return CheckOutcome(TrunkSubject(sha), f"REFUSED: {sha} {finding}", reason, finding)
 
 
-STATE_REF_TRAILER_PAST_THE_ID_SPACE = (
-    "carries `Work-Item:` {number}, which names no state-ref item; an item id ends at aco-ffffff"
-)
+STATE_REF_TRAILER_PAST_THE_ID_SPACE = "carries `Work-Item:` {number}, which " + board.NAMES_NO_ITEM
 
 
 def _trailer_number_past_the_id_space(
@@ -3969,12 +3967,11 @@ def _trailer_number_past_the_id_space(
     trailer number past `aco-ffffff` names no item, and its label would be
     an id `board.parse_item_reference` refuses back -- the first such
     number, or `None` when every number names an item."""
-    if storage is not body.Storage.STATE_REF or not isinstance(
-        classification, board.TrunkWorkItemClassification
-    ):
+    if not isinstance(classification, board.TrunkWorkItemClassification):
         return None
     return next(
-        (number for number in classification.numbers if not items.is_item_number(number)), None
+        (number for number in classification.numbers if board.names_no_item(number, storage)),
+        None,
     )
 
 
@@ -4151,7 +4148,7 @@ def _emit_json(ok: bool, reason: StrEnum, **payload: object) -> None:
     print(json.dumps(envelope))
 
 
-STATE_REF_ITEM_PAST_THE_ID_SPACE = "{number} names no state-ref item; an item id ends at aco-ffffff"
+STATE_REF_ITEM_PAST_THE_ID_SPACE = "{number} " + board.NAMES_NO_ITEM
 
 
 class PreDispatchReason(StrEnum):
@@ -7550,14 +7547,17 @@ def _refuse_item_past_the_id_space(
     pin is read only for such a number; a pin that cannot be read is left to
     the command, which meets the same refusal and reports it in its own
     envelope."""
-    past = [
-        number
-        for number in _item_arguments(root, given, parsed)
-        if not items.is_item_number(number)
-    ]
-    if not past or not _pins_state_ref(context):
+    past = next(
+        (
+            number
+            for number in _item_arguments(root, given, parsed)
+            if board.names_no_item(number, body.Storage.STATE_REF)
+        ),
+        None,
+    )
+    if past is None or not _pins_state_ref(context):
         return None
-    error = protocol.ClaimUnavailableError(STATE_REF_ITEM_PAST_THE_ID_SPACE.format(number=past[0]))
+    error = protocol.ClaimUnavailableError(STATE_REF_ITEM_PAST_THE_ID_SPACE.format(number=past))
     return _refuse(PreDispatchReason.INVALID_USAGE, error, as_json=_asked_for_json(root, given))
 
 

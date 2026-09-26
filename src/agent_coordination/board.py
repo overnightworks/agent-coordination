@@ -2222,6 +2222,17 @@ def item_label(number: int, storage: Storage) -> str:
     return f"#{number}"
 
 
+NAMES_NO_ITEM = "names no state-ref item; an item id ends at aco-ffffff"
+
+
+def names_no_item(number: int, storage: Storage) -> bool:
+    """Whether `number` names no item under `storage` (issue #467): under
+    `storage = STATE_REF` a number past `aco-ffffff`, whose `item_label`
+    would be an id `parse_item_reference` refuses back; under `GITHUB` every
+    number stays a forge number. `NAMES_NO_ITEM` is the refusal's tail."""
+    return storage is Storage.STATE_REF and not items.is_item_number(number)
+
+
 def relation_label(reference: IssueReference, storage: Storage) -> str:
     """How a forge relation's other end (a parent, say) is named: always
     the qualified `owner/repo#n` under `storage = GITHUB`, where such a

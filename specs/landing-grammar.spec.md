@@ -18,7 +18,8 @@ once it has the merge commit's own sha from the forge: the trunk's trailer
 block is that release's authority for which item it closes, never the pull
 request's own -- separately mutable -- body.
 
-`<n>` is a bare issue or pull request number, always printed `#<n>`. `<item>`
+`<n>` is a bare issue or pull request number, always printed `#<n>`;
+`<number>` is a trailer's number printed bare, without `#`. `<item>`
 and `<ref>` are a parsed `Work-Item:` value or closing reference, always
 printed fully qualified as `<owner>/<repo>#n` -- even where the line or
 argument that named it used a bare `#n` -- because `IssueReference` resolves
@@ -83,7 +84,7 @@ matching line.
 - [ ] [LAND-58] A trunk `<sha>` carrying neither trailer refuses `<sha> carries no \`Work-Item:\` or \`No-Item:\` trailer`, exit `2`.
 - [ ] [LAND-60] A trunk `<sha>` whose trailer block is contradictory -- both `Work-Item:` and `No-Item:`, or `No-Item:` repeated -- makes `check <sha>` refuse `REFUSED: <sha> <that defect sentence>`, exit `2`.
 - [ ] [LAND-61] That same contradictory `<sha>` makes `release --merged <sha>` refuse `ERROR: <sha> <that defect sentence>`, exit `2`, before any write.
-- [ ] [LAND-68] Under state-ref `check <sha>` refuses a trunk `Work-Item: <n>` past `aco-ffffff`: `<sha> carries \`Work-Item:\` <n>, which names no state-ref item; an item id ends at aco-ffffff`, exit `2`.
+- [ ] [LAND-68] Under state-ref `check <sha>` refuses a trunk `Work-Item: #<number>` past `aco-ffffff`: `<sha> carries \`Work-Item:\` <number>, which names no state-ref item; an item id ends at aco-ffffff`, exit `2`.
 
 ## The pull request body's own grammar
 

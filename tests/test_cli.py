@@ -12945,14 +12945,42 @@ def test_check_sha_refuses_a_contradictory_trailer(
     assert envelope == _expected_trunk_envelope(sha, "invalid_classification", finding)
 
 
-def test_check_sha_refuses_a_state_ref_trailer_number_past_the_id_space(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+_PAST_THE_ID_SPACE_FINDING = (
+    "carries `Work-Item:` 16777216, which names no state-ref item; an item id ends at aco-ffffff"
+)
+
+
+@pytest.mark.parametrize(
+    ("pin_state_ref", "exit_code", "line", "reason", "message"),
+    [
+        (
+            True,
+            2,
+            "REFUSED: {sha} " + _PAST_THE_ID_SPACE_FINDING,
+            "invalid_classification",
+            _PAST_THE_ID_SPACE_FINDING,
+        ),
+        (False, 0, "{sha} declares Work-Item: #16777216", "valid", None),
+    ],
+    ids=["state-ref-refuses", "github-declares"],
+)
+def test_check_sha_refuses_a_trailer_number_past_the_id_space_only_under_state_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    pin_state_ref: bool,
+    exit_code: int,
+    line: str,
+    reason: str,
+    message: str | None,
 ) -> None:
-    """LAND-68, issue #467 (#469 review finding 3): under `storage =
-    "state-ref"` a trailer's `#16777216` names no item -- six hex digits end
-    at 16777215 -- so `check <sha>` refuses it as an invalid classification
-    and never prints an id `aco` cannot take back."""
-    _write_state_ref_pin(tmp_path)
+    """LAND-68, issue #467 (#469 review): under `storage = "state-ref"` a
+    trailer's `#16777216` names no item -- six hex digits end at 16777215 --
+    so `check <sha>` refuses it as an invalid classification and never
+    prints an id `aco` cannot take back; under `storage = "github"` the same
+    trailer names a forge issue and declares as before."""
+    if pin_state_ref:
+        _write_state_ref_pin(tmp_path)
     repo = _refused_trailer_repository(monkeypatch, tmp_path, "Work-Item: #16777216")
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
@@ -12961,16 +12989,11 @@ def test_check_sha_refuses_a_state_ref_trailer_number_past_the_id_space(
     json_status = issue_claim.main(["check", sha, "--json"])
     envelope = json.loads(capsys.readouterr().out)
 
-    finding = (
-        "carries `Work-Item:` 16777216, which names no state-ref item; "
-        "an item id ends at aco-ffffff"
-    )
-    assert (status, printed.out, printed.err) == (2, "", f"REFUSED: {sha} {finding}\n")
-    assert re.search(r"aco-[0-9a-f]{7}", printed.err) is None
-    assert (json_status, envelope) == (
-        2,
-        _expected_trunk_envelope(sha, "invalid_classification", finding),
-    )
+    expected_line = line.format(sha=sha) + "\n"
+    expected_streams = ("", expected_line) if message is not None else (expected_line, "")
+    assert (status, printed.out, printed.err) == (exit_code, *expected_streams)
+    assert re.search(r"aco-[0-9a-f]{7}", printed.out + printed.err) is None
+    assert (json_status, envelope) == (exit_code, _expected_trunk_envelope(sha, reason, message))
 
 
 @pytest.mark.parametrize("trailer", _CONTRADICTORY_TRAILERS)
