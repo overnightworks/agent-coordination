@@ -325,8 +325,10 @@ exit 0
 
 ### E-BRIEF-15 -- no `<trunk>` resolves
 
-Setup: as E-BRIEF-04, but the work repository has no remote and its only
-branches are `trunk` and `ada/issue-42`
+Setup: as E-BRIEF-04, but `origin`'s default branch is `trunk` and it
+carries no `main` or `master`, `origin/HEAD` is not recorded (`git remote
+set-head origin --delete`), and the work repository has no local `main` or
+`master`
 
 ```console
 $ aco brief 42
