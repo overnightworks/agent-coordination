@@ -5573,7 +5573,10 @@ def _land_release(
     `_land_step` can convert it into its own ruled `MERGED ... follow-up
     incomplete: release` line, not `_cmd_release`'s own caught-and-printed
     `--json` refusal, which `land` never uses (`json=False` above) and
-    would otherwise print its sentence a second time."""
+    would otherwise print its sentence a second time. The release reads
+    through a fresh `context` (issue #457 proof 6): the fast-forward just
+    wrote the landed trunk into this very checkout, so the configuration
+    and forge read before it no longer answer for it."""
     release_parsed = argparse.Namespace(
         issue=issue,
         agent=parsed.agent,
@@ -5590,7 +5593,7 @@ def _land_release(
         json=False,
         repo=parsed.repo,
     )
-    release_session = _WriteSession(forge=_LazyForge(context), release_branch=branch)
+    release_session = _WriteSession(forge=_LazyForge(context.fresh()), release_branch=branch)
     _release_transition(release_parsed, release_session)
 
 

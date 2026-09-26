@@ -17319,6 +17319,18 @@ def _release_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Counte
     return _read_once(argv, toplevel=repo)
 
 
+def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    """Proof 6: `land`'s fast-forward writes the landed trunk into this very
+    checkout, so its release reads the toplevel and configuration once more,
+    afterwards -- as it did before #457."""
+    repo, _client = _land_scenario(monkeypatch, tmp_path)
+    return _CountedRun(
+        ["--repo", REPOSITORY, "land", "12"],
+        toplevel_reads={None: 2},
+        config_reads={repo: 2},
+    )
+
+
 def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     """The one named exception to proof 3 (head ruling 26.09.2026): the
     created worktree's second toplevel read is `checkout._scope_directories`'
@@ -17345,6 +17357,7 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
         pytest.param(_release_command, id="release"),
         pytest.param(_cut_command, id="two-write-cut"),
         pytest.param(_start_command, id="two-directory-state-ref-start"),
+        pytest.param(_land_command, id="land-rereads-after-its-fast-forward"),
     ],
 )
 def test_a_command_reads_its_toplevel_and_board_config_once_per_directory(
@@ -17355,7 +17368,8 @@ def test_a_command_reads_its_toplevel_and_board_config_once_per_directory(
     """Issue #457 proof 3: a run's static facts are read the first time a
     command asks and held after that -- one toplevel and one board
     configuration read per directory the command works in, however many of
-    its steps ask again."""
+    its steps ask again, unless the command itself wrote that directory's
+    checkout in between (proof 6, `land`)."""
     run = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
 
