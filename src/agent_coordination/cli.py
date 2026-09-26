@@ -3057,6 +3057,15 @@ def _build_forge(context: RunContext) -> forge.ForgeReader:
     return github.GitHubForge(context.repository_id)
 
 
+def _state_ref_board(context: RunContext) -> state_board.StateRefBoard:
+    """`context`'s own forge as the state-ref board, for an item command
+    that has already refused every other storage pin: under `state-ref`
+    `_build_forge` builds exactly `_state_ref_forge`'s board, so the cast is
+    honest, not a suppression -- the same narrowing `_LazyForge.writer`
+    performs for the generic writing surface."""
+    return cast(state_board.StateRefBoard, context.forge)
+
+
 def _run_context(repo: str | None) -> RunContext:
     """This run's root context, built once the command is known to need a
     repository at all (after the workspace and `protect` dispatch)."""
@@ -3141,7 +3150,7 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     if defects:
         return _refuse_item_body_invalid(defects, as_json=parsed.json)
     new_body = _item_new_body(parsed, raw_body)
-    client = github.GitHubForge(context.repository_id)
+    client = _LazyForge(context).writer()
     open_issues = client.list_open_board_issues()
     if parsed.parent is not None:
         _open_container(open_issues, parsed.parent)
@@ -3180,11 +3189,11 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
     an optional parent and origin -- so this module never grows a second
     way to create one. `--origin` binds the fresh item to a foreign forge
     issue (`items.parse_origin`'s own grammar, refused by `argparse` before
-    this ever runs) without aco governing that forge at all. Never resolves
-    the generic `_LazyForge` (issue #248) -- it calls `_state_ref_forge`
-    directly, since `create_item` is not part of the generic `ForgeWriter`
-    port every other write command narrows to."""
-    client = _state_ref_forge(context)
+    this ever runs) without aco governing that forge at all. Narrows the
+    context's forge to the state-ref board (`_state_ref_board`), since
+    `create_item` is not part of the generic `ForgeWriter` port every other
+    write command narrows to."""
+    client = _state_ref_board(context)
     parent_missing = (
         parsed.parent is not None
         and client.item_reference(parsed.parent).state is forge.ItemState.MISSING
@@ -3242,7 +3251,7 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
     that names no item, a malformed item or the item itself, refuses before
     any write (ITEM-43, ITEM-44). Refuses under
     `storage = "github"`: forge issues are edited on the forge, never
-    governed by aco. Calls `_state_ref_forge` directly,
+    governed by aco. Narrows the context's forge to the state-ref board,
     as `item new`'s state-ref path does. A malformed piped body reports through
     the shared envelope as `body_invalid`, with `body --check`'s own
     `defects`; every other refusal is `precondition_failed` (issue #425)."""
@@ -3258,7 +3267,7 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
         defects = _body_shape_defects(new_body, storage=body.Storage.STATE_REF)
         if defects:
             return _refuse_item_body_invalid(defects, as_json=as_json)
-        client = _state_ref_forge(context)
+        client = _state_ref_board(context)
         number = parsed.item
         if not client.holds(number):
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))
@@ -3398,7 +3407,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
                 f"({protocol._claimant_text(live_claim.agent, live_claim.role)}); "
                 "release the claim first"
             )
-        client = _state_ref_forge(context)
+        client = _state_ref_board(context)
         if client.item_reference(number).state is forge.ItemState.MISSING:
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))
         client.require_well_formed()

@@ -16578,6 +16578,86 @@ def test_item_refuses_through_the_shared_precondition_failed_envelope(
     _assert_json_refusal_object(captured.err, captured.out, reason="precondition_failed")
 
 
+def _github_item_new(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[FakeForge, list[str]]:
+    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    return client, ["item", "new", "--title", "Write the docs", "--kind", "feature"]
+
+
+def _state_ref_item_client(tmp_path: Path) -> FakeForge:
+    _write_state_ref_pin(tmp_path)
+    client = FakeForge(repository=forge.RepositoryId("file", (), str(tmp_path)))
+    client.issue_references[42] = forge.ItemReference(
+        forge.ItemState.OPEN, "Title", "Body text.\n", False
+    )
+    return client
+
+
+def _state_ref_item_new(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[FakeForge, list[str]]:
+    client = _state_ref_item_client(tmp_path)
+    monkeypatch.setattr(
+        client, "create_item", lambda **_kwargs: items.format_item_id(43), raising=False
+    )
+    monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
+    return client, ["item", "new", "--title", "Fresh Item"]
+
+
+def _state_ref_item_edit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[FakeForge, list[str]]:
+    client = _state_ref_item_client(tmp_path)
+    monkeypatch.setattr(client, "holds", lambda _number: True, raising=False)
+    monkeypatch.setattr(client, "item_oid", lambda _number: "a" * 40, raising=False)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_state_ref_item_body("Edited Title")))
+    return client, ["item", "edit", "42"]
+
+
+def _state_ref_item_close(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[FakeForge, list[str]]:
+    client = _state_ref_item_client(tmp_path)
+    monkeypatch.setattr(client, "close_item", lambda _number: "2026-09-16T12:00:00Z", raising=False)
+    monkeypatch.setattr(client, "require_well_formed", lambda: None, raising=False)
+    return client, ["item", "close", "42"]
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_github_item_new, id="github-new"),
+        pytest.param(_state_ref_item_new, id="state-ref-new"),
+        pytest.param(_state_ref_item_edit, id="state-ref-edit"),
+        pytest.param(_state_ref_item_close, id="state-ref-close"),
+    ],
+)
+def test_an_item_command_works_through_the_one_forge_its_run_context_builds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], tuple[FakeForge, list[str]]],
+) -> None:
+    """Issue #457 proof 7: `_build_forge`, asked through `RunContext.forge`,
+    is the one place a run's forge is constructed -- an item command never
+    builds a `GitHubForge` or a state-ref board of its own beside it."""
+    client, argv = arrange(monkeypatch, tmp_path)
+    built: list[RunContext] = []
+
+    def build_forge(context: RunContext) -> forge.ForgeReader:
+        built.append(context)
+        return client
+
+    def unused(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("an item command built a forge beside its run context")
+
+    monkeypatch.setattr(issue_claim, "_build_forge", build_forge)
+    monkeypatch.setattr(github, "GitHubForge", unused)
+    monkeypatch.setattr(issue_claim, "_state_ref_forge", unused)
+
+    assert (issue_claim.main(argv), len(built)) == (0, 1)
+
+
 def test_item_edit_json_reports_body_invalid_with_defects(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
