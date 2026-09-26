@@ -207,8 +207,10 @@ write against the claim of the agent it resolves there -- `ACO_AGENT`, else
 uses. Start the session with the name the head claims under
 (`ACO_AGENT="Claude head" claude`), or pin it in the hook line
 (`"command": "ACO_AGENT='Claude head' aco protect"`). Without one, a write
-that reaches a claim check denies `agent identity is required: ...`; reads,
-session tools, and writes outside every repository need no identity.
+that reaches a claim check -- a recognized write in a `Bash` or `Monitor`
+command included -- denies `agent identity is required: ...`; reads, the
+read-only session tools, and writes outside every repository need no
+identity.
 
 Way out: install the hook in the git-ignored `.claude/settings.local.json`,
 never a tracked settings file. A session whose hook misbehaves removes the
