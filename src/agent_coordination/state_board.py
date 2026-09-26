@@ -573,9 +573,10 @@ class StateRefBoard:
         re-read -- so a second writer holding the same stale oid refuses
         with issue #279's own sentence rather than merging or overwriting.
         Every blocker the write adds must resolve to another readable item,
-        and none may repeat, before the write (issue #450), since either
-        would stop every later `board`/`next` (PIN-17); a write that carries
-        the stored record through never re-judges it.
+        and none may repeat, before the write (issue #450): a missing one
+        would stop every later `board`/`next` (PIN-17), a repeated one trip
+        `cli._validated_dependencies`' malformed blocked-by list refusal; a
+        write that carries the stored record through never re-judges it.
         A malformed item (issue #447) has no stored record to merge into:
         `body`'s own complete `[record]` repairs it once its relations
         resolve (`_refuse_unresolved_repair`), else it refuses by name."""

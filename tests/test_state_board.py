@@ -615,6 +615,13 @@ class TestMalformedItem:
                 id="missing-blocker",
             ),
             pytest.param(
+                _record(
+                    title="Repaired", state="open", kind="task", blocked_by=(CHILD_A_ID, CHILD_A_ID)
+                ),
+                f"item {MALFORMED_ID} lists blocker {CHILD_A_ID} more than once",
+                id="repeated-blocker",
+            ),
+            pytest.param(
                 _record(title="Repaired", state="open", kind="task", parent=MALFORMED_ID),
                 _malformed_item_refusal(),
                 id="itself-as-parent",
@@ -1900,8 +1907,12 @@ class TestCliStateRefForge:
         assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
 
     @pytest.mark.parametrize(
-        "stored_blocker",
-        [pytest.param(CONTAINER_ID, id="itself"), pytest.param("aco-ffffff", id="unknown")],
+        "stored_blockers",
+        [
+            pytest.param((CONTAINER_ID,), id="itself"),
+            pytest.param(("aco-ffffff",), id="unknown"),
+            pytest.param(("aco-ffffff", "aco-ffffff"), id="repeated"),
+        ],
     )
     def test_cut_row_links_the_row_on_a_container_whose_stored_blocker_does_not_resolve(
         self,
@@ -1910,14 +1921,14 @@ class TestCliStateRefForge:
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
-        stored_blocker: str,
+        stored_blockers: tuple[str, ...],
     ) -> None:
-        """Issue #450: ITEM-44 refuses only a blocker a write adds, so a
-        container already carrying a self or unknown blocker still has its
-        cut row removed -- never CUT-18's partial write that a re-run could
-        not finish."""
+        """Issue #450: ITEM-43/44 never re-judge a stored list delivered
+        unchanged, so a container already carrying a self, unknown or
+        repeated blocker still has its cut row removed -- never CUT-18's
+        partial write that a re-run could not finish."""
         item_files = _item_files_with_container_slices(
-            ((1, "Slice C"), (2, "Slice D")), blocked_by=(stored_blocker,)
+            ((1, "Slice C"), (2, "Slice D")), blocked_by=stored_blockers
         )
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
