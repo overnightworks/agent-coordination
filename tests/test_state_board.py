@@ -3791,7 +3791,7 @@ class TestCliStateRefForge:
         bare_remote: Path,
         worktree: Path,
     ) -> None:
-        """Issue #467 (#469 review finding 3): a title's `#16777216` names no
+        """CLM-28, issue #467 (#469 review finding 3): a title's `#16777216` names no
         state-ref item -- six hex digits end at 16777215 -- so `claim` has no
         parent to warn about and never prints an id it cannot take back."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())

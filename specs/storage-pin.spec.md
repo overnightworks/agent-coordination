@@ -51,7 +51,7 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 - [ ] [PIN-08] An id argument matching none of `aco-xxxxxx`, `#n`, or the bare number `n` refuses `'<value>' is not an item reference; use aco-xxxxxx, #n, or the bare number n` (see E-PIN-04).
 - [ ] [PIN-31] Under `storage = "state-ref"` an id argument past `aco-ffffff` refuses `<n> names no state-ref item; an item id ends at aco-ffffff` before any lookup, under `--json` OUT-06's envelope.
 
-PIN-30's exceptions keep `#<n>`: until #471, the claim-ledger sentences `protocol.py` renders -- CLAIM-11 (and START-16 through it), CLAIM-42, REL-09/REL-10, RESC-14 and PIN-26 -- and `item show`'s header (ITEM-07).
+PIN-30's exceptions keep `#<n>`: `item show`'s header (ITEM-07), and until #471 the claim-ledger sentences whose `issue #<n>`/`#<n>` comes from `protocol.py` -- CLAIM-11 (START-16), CLAIM-42, REL-09/REL-10, RESC-14, PIN-26.
 
 ## Commands refused by the wrong pin
 
