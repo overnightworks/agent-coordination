@@ -65,8 +65,10 @@ could answer for it.
 
 Who reads which channel: Claude Code blocks on exit `2` and hands its agent
 the stderr sentence, since the stdout object is not its own hook schema
-(Claude Code hooks reference, "Exit code 2"); Grok reads the stdout object.
-Both see the same sentence, so no tool's agent is left without a reason.
+(Claude Code hooks reference, "Exit code 2"); Codex does the same ("You can
+also use exit code 2 and write the blocking reason to stderr", Codex hooks
+reference, PreToolUse); Grok reads the stdout object. All three see the same
+sentence, so no tool's agent is left without a reason.
 
 ## The hook payload
 
