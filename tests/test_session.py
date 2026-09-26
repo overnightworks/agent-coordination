@@ -38,7 +38,9 @@ def _write_board_config(toplevel: Path, text: str) -> None:
 def test_remote_location_parses_the_canonical_remote_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "git@github.com:owner/repo.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: "git@github.com:owner/repo.git"
+    )
 
     location = _context().remote_location
 
@@ -83,7 +85,9 @@ def test_repository_id_refuses_before_asking_gh_on_a_non_github_host(
     """The GitHub repository gates on the canonical remote's own host
     before it ever calls `discover_repository` (issue #245): a `gh` call
     here would fail the test outright."""
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "file:///srv/git/repo.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: "file:///srv/git/repo.git"
+    )
 
     def unused(*_args: object, **_kwargs: object) -> forge.RepositoryId:
         pytest.fail("a non-GitHub canonical remote must refuse before discover_repository runs")
@@ -98,7 +102,9 @@ def test_repository_id_refuses_before_asking_gh_on_a_non_github_host(
 def test_repository_id_checks_erwartung_6_against_a_github_remote(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "git@github.com:owner/repo.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: "git@github.com:owner/repo.git"
+    )
     monkeypatch.setattr(
         github,
         "discover_repository",
@@ -132,6 +138,34 @@ def test_default_branch_under_state_ref_reads_origin_head_of_the_context_directo
     branch = _context().for_directory(worktree).default_branch
 
     assert (branch, read_from) == ("main", [worktree])
+
+
+def test_a_context_for_another_directory_reads_its_remotes_there(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #457 proof 7: `for_directory` answers the canonical remote and
+    the repository it names from its own checkout, never from the calling
+    process's cwd, so a child context never pairs its own configuration
+    with another checkout's remote."""
+    worktree = tmp_path / "worktree"
+    _write_board_config(worktree, "")
+    monkeypatch.setattr(
+        checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
+    )
+    read_from: list[tuple[str, Path | None]] = []
+
+    def remote_url(remote: str, *, directory: Path | None = None) -> str:
+        read_from.append((remote, directory))
+        return "git@github.com:owner/repo.git"
+
+    monkeypatch.setattr(checkout, "remote_url", remote_url)
+
+    target = _context().for_directory(worktree).repository_id
+
+    assert (target, read_from) == (
+        forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
+        [("origin", worktree), ("origin", worktree)],
+    )
 
 
 def _exit_code(command: list[str]) -> int | str | None:

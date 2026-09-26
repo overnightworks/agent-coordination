@@ -4347,7 +4347,7 @@ def test_rule_refuses_a_non_github_canonical_remote_by_host(
     failure -- here a canonical remote on a host no adapter serves -- must
     still reach `rule`'s own `_refuse`, not `main`'s legacy `error` object."""
     monkeypatch.setattr(
-        checkout, "remote_url", lambda remote: "file:///srv/git/agent-coordination.git"
+        checkout, "remote_url", lambda remote, **_kwargs: "file:///srv/git/agent-coordination.git"
     )
 
     def unused(*_args: object, **_kwargs: object) -> forge.RepositoryId:
@@ -4621,7 +4621,7 @@ def test_ask_refuses_a_non_github_canonical_remote_by_host(
     failure -- here a canonical remote on a host no adapter serves -- must
     still reach `ask`'s own `_refuse`, not `main`'s legacy `error` object."""
     monkeypatch.setattr(
-        checkout, "remote_url", lambda remote: "file:///srv/git/agent-coordination.git"
+        checkout, "remote_url", lambda remote, **_kwargs: "file:///srv/git/agent-coordination.git"
     )
 
     def unused(*_args: object, **_kwargs: object) -> forge.RepositoryId:
@@ -7772,7 +7772,9 @@ def _stub_canonical_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     refused before the behaviour under test. Tests of `remote_url` itself
     (`tests/test_checkout.py`) rebind `_LIVE_REMOTE_URL`.
     """
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: f"git@github.com:{REPOSITORY}.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -7938,7 +7940,9 @@ def _patch_store_write(
     monkeypatch.setattr(store, "commit_transition", fake.commit_transition)
     monkeypatch.setattr(store, "claim_ages", fake.claim_ages)
     monkeypatch.setattr(store, "claim_lifecycle", fake.claim_lifecycle)
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: f"git@github.com:{REPOSITORY}.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
+    )
     return fake
 
 
@@ -7963,7 +7967,9 @@ def _patch_status_store(
     wires them in here instead of posting through a ledger-comment
     `FakeForge`.
     """
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: f"git@github.com:{REPOSITORY}.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
+    )
     keyed = {protocol.claim_key(claim.identity, claim.branch): claim for claim in claims}
     state = protocol.ClaimState(tip=protocol.ObjectId(BASE), claims=keyed)
     monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: state)
@@ -8000,7 +8006,9 @@ def test_cli_status_before_bootstrap_prints_unclaimed_repository(
     """A repository with no `refs/aco/state` at all (`EMPTY_STATE`, `tip is
     None`) still answers `status` plainly -- there is nothing to derive a
     claim's age from yet because there are no claims yet either."""
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: f"git@github.com:{REPOSITORY}.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
+    )
     monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: protocol.EMPTY_STATE)
     monkeypatch.setattr(issue_claim, "datetime", FixedDateTime)
 
@@ -8016,7 +8024,9 @@ def test_cli_status_reports_unavailable_for_a_rewritten_state_ref(
     itself can raise -- here a rewritten `refs/aco/state` (CLAIM-50) -- through
     the shared emitter as `reason: unavailable`, never `main`'s legacy
     `{"ok": false, "error": ...}` shape."""
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: f"git@github.com:{REPOSITORY}.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
+    )
 
     def raising_fetch_state(*, worktree: Path, remote: str) -> protocol.ClaimState:
         raise protocol.StateLineageError("<oid> is not an ancestor of <tip>")
@@ -8038,7 +8048,9 @@ def test_cli_status_json_before_bootstrap_reports_a_null_tip(
     """`status --json`'s `tip` is `null` for `EMPTY_STATE` (issue #256): a
     repository with no `refs/aco/state` ref yet has no oid a monitor could
     poll for movement."""
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: f"git@github.com:{REPOSITORY}.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
+    )
     monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: protocol.EMPTY_STATE)
     monkeypatch.setattr(issue_claim, "datetime", FixedDateTime)
 
@@ -15150,7 +15162,9 @@ def test_cli_claim_refuses_canonical_remote_mismatch_and_writes_nothing(
         checkout, "_git_output", lambda arguments, **_kwargs: git_values[tuple(arguments)]
     )
     fake = _patch_store_write(monkeypatch)
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "git@github.com:other/repo.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: "git@github.com:other/repo.git"
+    )
 
     status = issue_claim.main(
         [
@@ -15203,7 +15217,9 @@ def test_cli_bootstrap_ignores_repo_and_a_non_github_remote(
     and a lane `claim`/`rescope`/`release` share that guarantee too; an
     issue `claim` or `board` still checks Erwartung 6."""
     monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: "/repo")
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "git@gitlab.com:other/repo.git")
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: "git@gitlab.com:other/repo.git"
+    )
     monkeypatch.setattr(store, "bootstrap", lambda *, worktree, remote: BASE)
 
     def unused(*_args: object, **_kwargs: object) -> forge.RepositoryId:
@@ -15386,7 +15402,7 @@ def test_cli_board_refuses_a_non_github_canonical_remote_by_host(
     command like `status` takes for the same remote, and never GitHub's own
     "does not name a GitHub repository" text."""
     monkeypatch.setattr(
-        checkout, "remote_url", lambda remote: "file:///srv/git/agent-coordination.git"
+        checkout, "remote_url", lambda remote, **_kwargs: "file:///srv/git/agent-coordination.git"
     )
 
     def unused(*_args: object, **_kwargs: object) -> forge.RepositoryId:
@@ -15879,7 +15895,7 @@ def test_cli_brief_refuses_a_non_github_canonical_remote_by_host(
     that host's own name, before ever calling `discover_repository`/`gh` --
     the same refusal `board` gives for the same remote."""
     monkeypatch.setattr(
-        checkout, "remote_url", lambda remote: "file:///srv/git/agent-coordination.git"
+        checkout, "remote_url", lambda remote, **_kwargs: "file:///srv/git/agent-coordination.git"
     )
 
     def unused(*_args: object, **_kwargs: object) -> forge.RepositoryId:

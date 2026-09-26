@@ -138,7 +138,9 @@ class RunContext:
         """The canonical remote's configured URL, parsed host-neutrally
         (issue #245) -- read only when a forge target is resolved, so a
         forge-free command never errs on a non-GitHub canonical remote."""
-        return checkout.parse_remote_location(checkout.remote_url(self.canonical_remote))
+        return checkout.parse_remote_location(
+            checkout.remote_url(self.canonical_remote, directory=self.directory)
+        )
 
     @cached_property
     def repository_id(self) -> forge.RepositoryId:
@@ -154,9 +156,12 @@ class RunContext:
                 )
             return forge.RepositoryId(self.remote_location.host, (), self.remote_location.path)
         refuse_unsupported_forge_host(self.remote_location)
-        target = github.discover_repository(self.repo, remote_url=checkout.origin_remote_url)
+        target = github.discover_repository(self.repo, remote_url=self._origin_remote_url)
         refuse_canonical_remote_mismatch(target, self.remote_location)
         return target
+
+    def _origin_remote_url(self) -> str:
+        return checkout.origin_remote_url(directory=self.directory)
 
     @cached_property
     def default_branch(self) -> str:

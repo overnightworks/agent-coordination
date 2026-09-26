@@ -101,8 +101,10 @@ def resolved_commit(ref: str) -> str | None:
     return result.stdout.decode().rstrip("\n")
 
 
-def remote_url(remote: str) -> str:
-    """One named remote's URL.
+def remote_url(remote: str, *, directory: Path | None = None) -> str:
+    """One named remote's URL, read from `directory` via `-C` when given
+    (issue #457: a `RunContext` for another checkout) or the calling
+    process's own cwd otherwise.
 
     Generalizes `origin_remote_url` (issue #176, §2): the store's
     `canonical_remote` is a separate, independently configured axis from
@@ -111,13 +113,13 @@ def remote_url(remote: str) -> str:
     caller comparing a forge target against the canonical remote's own URL
     needs to name that remote explicitly rather than assuming `origin`.
     """
-    return _git_output(["config", "--get", f"remote.{remote}.url"])
+    return _git_output(["config", "--get", f"remote.{remote}.url"], directory=directory)
 
 
-def origin_remote_url() -> str:
+def origin_remote_url(*, directory: Path | None = None) -> str:
     """The checkout's `origin` remote: `github.discover_repository`'s first,
     cheap read, before it ever falls back to asking `gh`."""
-    return remote_url("origin")
+    return remote_url("origin", directory=directory)
 
 
 @dataclass(frozen=True)

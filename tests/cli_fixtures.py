@@ -206,7 +206,7 @@ def _patch_command(*lines: str) -> str:
 
 
 def _forbid_remote_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unused(remote: str) -> str:
+    def unused(remote: str, **_kwargs: object) -> str:
         pytest.fail("a forge-free command must never read a remote's own URL")
 
     monkeypatch.setattr(checkout, "remote_url", unused)

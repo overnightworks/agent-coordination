@@ -38,7 +38,7 @@ def test_origin_remote_url_reads_the_git_config(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(checkout, "remote_url", _LIVE_REMOTE_URL)
     calls: list[list[str]] = []
 
-    def git(arguments: list[str]) -> str:
+    def git(arguments: list[str], *, directory: Path | None = None) -> str:
         calls.append(arguments)
         return "git@github.com:owner/repository.git"
 
@@ -52,7 +52,7 @@ def test_remote_url_reads_any_named_remote(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(checkout, "remote_url", _LIVE_REMOTE_URL)
     calls: list[list[str]] = []
 
-    def git(arguments: list[str]) -> str:
+    def git(arguments: list[str], *, directory: Path | None = None) -> str:
         calls.append(arguments)
         return "git@github.com:owner/repository.git"
 
