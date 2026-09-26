@@ -1301,9 +1301,9 @@ def test_validate_slug_refuses_a_value_the_derived_rule_would_never_produce(slug
             {"ACO_AGENT": "Claude head (coordinator)"}, "claude", id="aco-agent-first-word"
         ),
         pytest.param({"GROK_SESSION_ID": "sess-1"}, "grok", id="grok-session"),
-        pytest.param({"CLAUDE_SESSION_ID": "sess-1"}, "claude", id="claude-session"),
+        pytest.param({"CLAUDE_CODE_SESSION_ID": "sess-1"}, "claude", id="claude-session"),
         pytest.param(
-            {"ACO_AGENT": "Grok", "CLAUDE_SESSION_ID": "sess-1"},
+            {"ACO_AGENT": "Grok", "CLAUDE_CODE_SESSION_ID": "sess-1"},
             "grok",
             id="aco-agent-wins-over-a-session-id",
         ),

@@ -215,7 +215,7 @@ order, every denial reason, and the JSON verdict shape are
 
 Identity: the hook inherits the session's own environment and weighs a
 write against the claim of the agent it resolves there -- `ACO_AGENT`, else
-`GROK_SESSION_ID`, else `CLAUDE_SESSION_ID`, the same order `aco claim`
+`GROK_SESSION_ID`, else `CLAUDE_CODE_SESSION_ID`, the same order `aco claim`
 uses. Start the session with the name the head claims under
 (`ACO_AGENT="Claude head" claude`), or pin it in the hook line
 (`"command": "ACO_AGENT='Claude head' aco protect"`). Without one, a write

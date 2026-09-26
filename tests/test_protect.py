@@ -502,6 +502,42 @@ def test_protect_mutating_tool_without_path_denies_path_required(
     _assert_protect_decision(capsys, decision="deny", reason="path required")
 
 
+@pytest.mark.parametrize(
+    ("identity_variable", "claim_holder"),
+    [
+        pytest.param(checkout.ACO_AGENT_ENV, "sess-1", id="aco-agent"),
+        pytest.param(checkout.GROK_SESSION_ID_ENV, "Grok sess-1", id="grok-session"),
+        pytest.param(
+            checkout.CLAUDE_CODE_SESSION_ID_ENV, "Claude sess-1", id="claude-code-session"
+        ),
+    ],
+)
+def test_protect_each_session_variable_alone_identifies_the_claim_holder(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    identity_variable: str,
+    claim_holder: str,
+) -> None:
+    """PROT-08 (issue #454): the session variable Claude Code actually sets,
+    `CLAUDE_CODE_SESSION_ID`, identifies its session on its own, like the
+    other two, so a covered write from the claimed worktree allows."""
+    _isolate_protect_home(monkeypatch, tmp_path)
+    work = tmp_path / "work"
+    _set_agent_identity_env(monkeypatch, {identity_variable: "sess-1"})
+    _patch_protect_git(monkeypatch, work)
+    _patch_protect_claim(monkeypatch, agent=claim_holder)
+
+    assert (
+        _protect_main(
+            monkeypatch,
+            {"tool_name": "Write", "tool_input": {"file_path": str(work / "src/widget.py")}},
+        )
+        == 0
+    )
+    _assert_protect_decision(capsys, decision="allow")
+
+
 def test_protect_missing_identity_denies_a_claimable_write_without_github(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -510,7 +546,7 @@ def test_protect_missing_identity_denies_a_claimable_write_without_github(
     """PROT-08 (issue #448): identity resolves last, once the path's own
     linked worktree and its live state are in hand -- a write that reaches
     a claim check with no `ACO_AGENT`, `GROK_SESSION_ID`, or
-    `CLAUDE_SESSION_ID` denies naming all three, never GitHub -- and never
+    `CLAUDE_CODE_SESSION_ID` denies naming all three, never GitHub -- and never
     `--agent`, a flag the hook line does not have."""
     _isolate_protect_home(monkeypatch, tmp_path)
     work = tmp_path / "work"
@@ -531,7 +567,7 @@ def test_protect_missing_identity_denies_a_claimable_write_without_github(
         decision="deny",
         reason=(
             "agent identity is required: set ACO_AGENT (e.g. in the hook line), "
-            "GROK_SESSION_ID, or CLAUDE_SESSION_ID"
+            "GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID"
         ),
     )
 

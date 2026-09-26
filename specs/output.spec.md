@@ -79,12 +79,12 @@ exit 2
 
 ### E-OUT-03 -- a refusal before the named command starts
 
-Setup: bare-remote, bootstrapped, `ACO_AGENT`, `GROK_SESSION_ID` and `CLAUDE_SESSION_ID` all unset
+Setup: bare-remote, bootstrapped, `ACO_AGENT`, `GROK_SESSION_ID` and `CLAUDE_CODE_SESSION_ID` all unset
 
 ```console
 $ aco claim 42 --scope src --json
-2> ERROR: agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_SESSION_ID
-{"ok": false, "reason": "precondition_failed", "message": "agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_SESSION_ID"}
+2> ERROR: agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID
+{"ok": false, "reason": "precondition_failed", "message": "agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID"}
 exit 2
 ```
 

@@ -176,7 +176,7 @@ def _hook_path(tool_input: dict[str, object], *, keys: tuple[str, ...]) -> str |
 PATH_REQUIRED = "path required"
 MISSING_HOOK_IDENTITY = (
     f"agent identity is required: set {checkout.ACO_AGENT_ENV} (e.g. in the hook line), "
-    f"{checkout.GROK_SESSION_ID_ENV}, or {checkout.CLAUDE_SESSION_ID_ENV}"
+    f"{checkout.GROK_SESSION_ID_ENV}, or {checkout.CLAUDE_CODE_SESSION_ID_ENV}"
 )
 
 
