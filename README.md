@@ -194,8 +194,28 @@ subagents -- the orchestrating head's settings, not each worktree's own --
 since every dispatched subagent's tool calls share that one session's
 process, cwd included (issue #314). `protect` judges a write from the
 payload's own path, never from that shared process cwd, and fails closed on
-any tool name it does not recognize. The full judgement order, every denial
-reason, and the JSON verdict shape are `specs/protect.spec.md`'s own.
+any tool name it does not recognize. A write outside every repository (the
+session's memory, scratchpad, `/tmp`) and a git-ignored file under a
+checkout's `.claude/` always allow; every other write inside a repository
+needs a live claim covering it from a linked worktree. The full judgement
+order, every denial reason, and the JSON verdict shape are
+`specs/protect.spec.md`'s own.
+
+Identity: the hook inherits the session's own environment and weighs a
+write against the claim of the agent it resolves there -- `ACO_AGENT`, else
+`GROK_SESSION_ID`, else `CLAUDE_SESSION_ID`, the same order `aco claim`
+uses. Start the session with the name the head claims under
+(`ACO_AGENT="Claude head" claude`), or pin it in the hook line
+(`"command": "ACO_AGENT='Claude head' aco protect"`). Without one, a write
+that reaches a claim check denies `agent identity is required: ...`; reads,
+session tools, and writes outside every repository need no identity.
+
+Way out: install the hook in the git-ignored `.claude/settings.local.json`,
+never a tracked settings file. A session whose hook misbehaves removes the
+`PreToolUse` entry there itself -- `protect` allows that write even in the
+main checkout, so no operator is needed. Claude Code reads hooks at session
+start; whether an edit also applies mid-session depends on its version
+(unverified here), and the next session start always picks it up.
 
 ## Configuration
 
