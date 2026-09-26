@@ -1498,6 +1498,15 @@ def _run_ok(arguments: list[str], capsys: pytest.CaptureFixture[str]) -> str:
     return out
 
 
+def _stub_claim_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The checkout reads `claim` makes that no state-ref proof is about --
+    the worktree's own validation, scope directories, and versioned files
+    -- stubbed the one way every `claim` in `TestCliStateRefForge` needs."""
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
+    monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("README",))
+
+
 def _run_refused(arguments: list[str], capsys: pytest.CaptureFixture[str]) -> str:
     """`_run_ok`'s own counterpart for a step the README names as a
     refusal: run `arguments`, assert the CLI's own refusal exit code, and
@@ -1649,9 +1658,7 @@ class TestCliStateRefForge:
         assert rulings_out.splitlines()[0].startswith(f"{RULABLE_ID} ")
         assert f"#{RULABLE_NUMBER}" not in rulings_out
 
-        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
-        monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
-        monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("README",))
+        _stub_claim_checkout(monkeypatch)
         claimed = issue_claim.main(
             [
                 "claim",
@@ -1779,9 +1786,7 @@ class TestCliStateRefForge:
         unrelated to this proof and stubbed the same way every other
         `claim` test stubs it."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
-        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
-        monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
-        monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("README",))
+        _stub_claim_checkout(monkeypatch)
 
         claimed = issue_claim.main(
             [
@@ -1831,8 +1836,8 @@ class TestCliStateRefForge:
 
         assert status == 0
         out = capsys.readouterr().out.strip()
-        assert out.startswith(f"CUT #{CONTAINER_NUMBER} -> #")
-        child_number = int(out.rsplit("#", 1)[1])
+        assert out.startswith(f"CUT {CONTAINER_ID} -> aco-")
+        child_number = items.item_number(out.rsplit(" ", 1)[1])
         remote_url = f"file://{bare_remote}"
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
@@ -1876,8 +1881,8 @@ class TestCliStateRefForge:
 
         assert status == 0
         out = capsys.readouterr().out.strip()
-        assert out.startswith(f"CUT #{CONTAINER_NUMBER} row 1 -> #")
-        child_number = int(out.rsplit("#", 1)[1])
+        assert out.startswith(f"CUT {CONTAINER_ID} row 1 -> aco-")
+        child_number = items.item_number(out.rsplit(" ", 1)[1])
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         item_files_after = store.read_item_files(worktree, state.tip)
@@ -2004,7 +2009,7 @@ class TestCliStateRefForge:
 
         assert status == 2
         assert capsys.readouterr().err == (
-            f"ERROR: #{CONTAINER_NUMBER} has no row 9; cuttable rows: 1\n"
+            f"ERROR: {CONTAINER_ID} has no row 9; cuttable rows: 1\n"
         )
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
@@ -2016,7 +2021,7 @@ class TestCliStateRefForge:
         carries no `scope` key at all -- shared by every scope-inheritance
         case below so each states only its own arrangement and expectation."""
         out = capsys.readouterr().out.strip()
-        child_number = int(out.rsplit("#", 1)[1])
+        child_number = items.item_number(out.rsplit(" ", 1)[1])
         remote_url = f"file://{bare_remote}"
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
@@ -2210,7 +2215,7 @@ class TestCliStateRefForge:
         err = capsys.readouterr().err
         assert (
             f"created #{child_number} but failed to remove row 1 "
-            f"from #{CONTAINER_NUMBER}'s agent-claim block" in err
+            f"from {CONTAINER_ID}'s agent-claim block" in err
         )
         assert "re-run the same cut -- it adopts the child" in err
         assert "written since it was read" in err
@@ -2224,9 +2229,7 @@ class TestCliStateRefForge:
         second_status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "Slice C"])
 
         assert second_status == 0
-        assert capsys.readouterr().out.strip() == (
-            f"ADOPTED #{CONTAINER_NUMBER} row 1 -> #{child_number}"
-        )
+        assert capsys.readouterr().out.strip() == (f"ADOPTED {CONTAINER_ID} row 1 -> {child_id}")
         after_second = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after_second.tip is not None
         assert set(after_second.items) == set(after_first.items)
@@ -2266,7 +2269,7 @@ class TestCliStateRefForge:
 
         assert status == 0
         assert capsys.readouterr().out.strip() == (
-            f"ADOPTED #{CONTAINER_NUMBER} row 1 -> #{created_number}"
+            f"ADOPTED {CONTAINER_ID} row 1 -> {items.format_item_id(created_number)}"
         )
         remote_url = f"file://{bare_remote}"
         state = store.fetch_state(worktree=worktree, remote=remote_url)
@@ -2651,8 +2654,7 @@ class TestCliStateRefForge:
         status = issue_claim.main(["item", "new", "--title", "Orphan", "--parent", "aco-abcdef"])
 
         assert status == 2
-        parent_number = items.item_number("aco-abcdef")
-        assert capsys.readouterr().err == f"ERROR: #{parent_number} does not exist\n"
+        assert capsys.readouterr().err == "ERROR: aco-abcdef does not exist\n"
 
     @pytest.mark.parametrize(
         ("cli_args", "expected_err_substring", "patch_minting_collision"),
@@ -2762,9 +2764,7 @@ class TestCliStateRefForge:
         assert edited == 0
         capsys.readouterr()
 
-        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
-        monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
-        monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("README",))
+        _stub_claim_checkout(monkeypatch)
         claimed = issue_claim.main(
             [
                 "claim",
@@ -2953,9 +2953,7 @@ class TestCliStateRefForge:
         in this class already exercises."""
         item_files = {**_item_files(), **_rulable_item_files()}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
-        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
-        monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
-        monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("README",))
+        _stub_claim_checkout(monkeypatch)
 
         claimed = issue_claim.main(
             [
@@ -3041,7 +3039,7 @@ class TestCliStateRefForge:
         edited = issue_claim.main(["item", "edit", str(CHILD_A_NUMBER), "--size", "L"])
 
         assert edited == 0
-        assert capsys.readouterr().out.strip() == f"EDITED #{CHILD_A_NUMBER} size=L"
+        assert capsys.readouterr().out.strip() == f"EDITED {CHILD_A_ID} size=L"
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
@@ -3071,7 +3069,7 @@ class TestCliStateRefForge:
         edited = issue_claim.main(["item", "edit", str(CHILD_A_NUMBER), "--whole", reason])
 
         assert edited == 0
-        assert capsys.readouterr().out.strip() == f"EDITED #{CHILD_A_NUMBER} whole={reason}"
+        assert capsys.readouterr().out.strip() == f"EDITED {CHILD_A_ID} whole={reason}"
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
@@ -3353,7 +3351,7 @@ class TestCliStateRefForge:
 
         assert (refused, capsys.readouterr().err) == (
             2,
-            f"ERROR: possible twin #{CLOSE_BLOCKER_NUMBER}; pass --not-a-twin\n",
+            f"ERROR: possible twin {CLOSE_BLOCKER_ID}; pass --not-a-twin\n",
         )
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
         assert issue_claim.main(["item", "new", "--title", "blocker", "--not-a-twin"]) == 0
@@ -3563,9 +3561,7 @@ class TestCliStateRefForge:
         self._live_state_ref_checkout(
             monkeypatch, tmp_path, bare_remote, worktree, _close_scenario_item_files()
         )
-        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
-        monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
-        monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("README",))
+        _stub_claim_checkout(monkeypatch)
         claimed = issue_claim.main(
             [
                 "claim",
@@ -3652,14 +3648,70 @@ class TestCliStateRefForge:
         bare_remote: Path,
         worktree: Path,
     ) -> None:
+        """PIN-28 (issue #467): the missing id is named as given, and a
+        forge-less remote's repository slot is that remote's own path."""
         self._live_state_ref_checkout(
             monkeypatch, tmp_path, bare_remote, worktree, _close_scenario_item_files()
         )
+        remote_path = checkout.parse_remote_location(f"file://{bare_remote}").path
 
         status = issue_claim.main(["item", "close", "aco-abcdef"])
 
-        assert status == 2
-        assert "does not exist" in capsys.readouterr().err
+        assert (status, capsys.readouterr().err) == (
+            2,
+            f"ERROR: aco-abcdef does not exist in {remote_path}\n",
+        )
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            pytest.param(
+                [
+                    "claim",
+                    "{item}",
+                    "--agent",
+                    "Codex Sol",
+                    "--base",
+                    "a" * 40,
+                    "--branch",
+                    "codex/issue-fresh",
+                    "--scope",
+                    "README",
+                ],
+                "{item} body incomplete: ",
+                id="claim",
+            ),
+            pytest.param(["check", "{item}"], "ISSUE {item} body incomplete: ", id="check"),
+            pytest.param(["next"], "{item}: body incomplete: ", id="next"),
+            pytest.param(["status", "{item}"], "UNCLAIMED issue {item}", id="status"),
+            pytest.param(
+                ["item", "edit", "{item}", "--size", "L"], "EDITED {item} size=L", id="item-edit"
+            ),
+        ],
+    )
+    def test_every_output_names_a_state_ref_item_by_its_id_never_its_decimal_number(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        arguments: list[str],
+        expected: str,
+    ) -> None:
+        """Issue #467 proof 1: under `storage = state-ref` a command names a
+        fresh (still incomplete) item as `aco-xxxxxx` -- the form it takes
+        back -- never as `#<n>` of the id's own decimal value."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        _stub_claim_checkout(monkeypatch)
+        item_id = _run_ok(["item", "new", "--title", "Fresh work"], capsys).strip()
+
+        issue_claim.main([argument.format(item=item_id) for argument in arguments])
+
+        captured = capsys.readouterr()
+        output = captured.out + captured.err
+        assert expected.format(item=item_id) in output
+        assert f"#{items.item_number(item_id)}" not in output
 
     def test_readme_week_without_a_forge_runs_end_to_end_against_a_fresh_bare_remote(
         self,
@@ -3676,9 +3728,7 @@ class TestCliStateRefForge:
         and an expectation ruled -- each step asserted by the exact
         sentence README says it prints."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, {})
-        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
-        monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
-        monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("README",))
+        _stub_claim_checkout(monkeypatch)
 
         bootstrap_out = _run_ok(["bootstrap"], capsys).strip()
         assert protocol.COMMIT_PATTERN.fullmatch(bootstrap_out)
@@ -3687,7 +3737,6 @@ class TestCliStateRefForge:
             ["item", "new", "--kind", "container", "--title", "A week without a forge"], capsys
         ).strip()
         assert items.ITEM_ID_PATTERN.fullmatch(container_id)
-        container_number = items.item_number(container_id)
 
         container_body = _filled_body(
             BLOCK_CONTAINER_SKELETON,
@@ -3788,10 +3837,10 @@ class TestCliStateRefForge:
 
         asked_text = "Does the runbook still hold without a forge?"
         asked_out = _run_ok(["ask", container_id, "--text", asked_text], capsys)
-        assert asked_out.strip() == f"ASKED #{container_number} line 1: {asked_text}"
+        assert asked_out.strip() == f"ASKED {container_id} line 1: {asked_text}"
 
         ruled_out = _run_ok(["rule", container_id, "--line", "1", "--yes"], capsys)
-        assert ruled_out.strip() == f"RULED #{container_number} line 1 yes; 0 line(s) still open"
+        assert ruled_out.strip() == f"RULED {container_id} line 1 yes; 0 line(s) still open"
 
         # `container_id`'s only expectation line is now ruled, so `rulings`
         # lists the item fully ruled rather than printing the empty

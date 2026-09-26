@@ -1677,15 +1677,16 @@ def build_board(inputs: BoardBuildInputs) -> Board:
         _joined_lane_event(event, historical_size_by_number, inputs.landed_at_by_item)
         for event in inputs.lane_events
     )
+    number_by_item = {item_argument(issue.number, config.storage): issue.number for issue in issues}
     open_items = tuple(
-        metrics.OpenItem(item=str(issue.number), size=size_by_number[issue.number], container=None)
-        for issue in issues
+        metrics.OpenItem(item=item, size=size_by_number[number], container=None)
+        for item, number in number_by_item.items()
     )
     report = metrics.measure(_measurement_feed(joined_events), open_items)
     measurements = _measurements(
         joined_events, report, observed_at, unparsed=inputs.unparsed_lifecycle_commits
     )
-    estimate_by_number = {int(estimate.item): estimate for estimate in report.estimates}
+    estimate_by_number = {number_by_item[estimate.item]: estimate for estimate in report.estimates}
     context = _BoardBuildContext(
         contracts=contracts,
         parsed_bodies=parsed_bodies,
@@ -2219,6 +2220,27 @@ def item_label(number: int, storage: Storage) -> str:
     if storage is Storage.STATE_REF:
         return items.format_item_id(number)
     return f"#{number}"
+
+
+def relation_label(reference: IssueReference, storage: Storage) -> str:
+    """How a forge relation's other end (a parent, say) is named: always
+    the qualified `owner/repo#n` under `storage = GITHUB`, where such a
+    relation may cross repositories, and `item_label`'s own id under
+    `STATE_REF`, whose relations never leave the one store (issue #467)."""
+    if storage is Storage.STATE_REF:
+        return item_label(reference.number, storage)
+    return str(reference)
+
+
+def item_argument(number: int, storage: Storage) -> str:
+    """`number` as a bare item reference -- a printed command's positional
+    argument or a string-typed `--json` field (issue #467): the bare number
+    under `storage = GITHUB`, byte-identical to every such value before the
+    state-ref pin existed, and `item_label`'s own id under `STATE_REF`, so
+    a person or agent can paste it back in (issue #292, residual of #300)."""
+    if storage is Storage.STATE_REF:
+        return item_label(number, storage)
+    return str(number)
 
 
 # git's own default abbreviation length -- a Landungen row's sha is evidence

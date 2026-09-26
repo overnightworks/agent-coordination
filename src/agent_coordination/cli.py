@@ -1873,18 +1873,6 @@ def _ruling_pull_hint(item: board.BoardItem) -> str | None:
     return f"ruled {item.ruling_landings} landings ago: refine again at the pull"
 
 
-def _next_action_item_argument(number: int, storage: body.Storage) -> str:
-    """The item reference `_parse_item_ref` accepts back as `_next_action_command`'s
-    printed `aco` invocation's positional argument: the bare number under
-    `Storage.GITHUB` -- unchanged, byte-identical to every command printed
-    before the state-ref pin existed -- and `board.item_label`'s own id under
-    `Storage.STATE_REF`, so a printed command is one a person can paste back
-    in (issue #292, residual of #300)."""
-    if storage is body.Storage.STATE_REF:
-        return board.item_label(number, storage)
-    return str(number)
-
-
 def _next_action_command(
     action: board.WorkItemAction | board.CutSliceAction, storage: body.Storage
 ) -> str:
@@ -1900,11 +1888,11 @@ def _next_action_command(
     `SCOPE_UNKNOWN_NOTE`.
     """
     if isinstance(action, board.WorkItemAction):
-        item_argument = _next_action_item_argument(action.item.number, storage)
+        item_argument = board.item_argument(action.item.number, storage)
         if action.item.scope is not None:
             return f"aco claim {item_argument}"
         return f"aco claim {item_argument} --scope <paths>"
-    container_argument = _next_action_item_argument(action.container.number, storage)
+    container_argument = board.item_argument(action.container.number, storage)
     return f'aco cut {container_argument} --title "{action.cut_title}"'
 
 
@@ -2189,7 +2177,10 @@ def _issue_reference_state(
 
 
 def _out_of_order_check(
-    projected: board.Board, issue: int | None, out_of_order_reason: str | None
+    projected: board.Board,
+    issue: int | None,
+    out_of_order_reason: str | None,
+    storage: body.Storage,
 ) -> SliceCheck | None:
     highest = board.highest_scored_actionable(projected)
     if highest is None or issue is None:
@@ -2200,7 +2191,7 @@ def _out_of_order_check(
     return SliceCheck(
         "warning" if out_of_order_reason is not None else "error",
         "out-of-order",
-        f"higher-priority actionable item #{highest.number} "
+        f"higher-priority actionable item {board.item_label(highest.number, storage)} "
         f"(score {highest.score}) is free: {highest.title}; "
         "use --out-of-order REASON to proceed",
         issue=highest.number,
@@ -2221,7 +2212,7 @@ def _blocked_check(
     return SliceCheck(
         "warning" if out_of_order_reason is not None else "error",
         "blocked",
-        f"#{item.number} is blocked by {blockers} (open); "
+        f"{board.item_label(item.number, storage)} is blocked by {blockers} (open); "
         "pass --out-of-order REASON to claim it anyway",
         issue=item.number,
     )
@@ -2261,7 +2252,7 @@ def _malformed_checks(item: board.BoardItem) -> tuple[SliceCheck, ...] | None:
     return None
 
 
-def _body_contract_checks(item: board.BoardItem) -> tuple[SliceCheck, ...]:
+def _body_contract_checks(item: board.BoardItem, storage: body.Storage) -> tuple[SliceCheck, ...]:
     malformed = _malformed_checks(item)
     if malformed is not None:
         return malformed
@@ -2280,7 +2271,7 @@ def _body_contract_checks(item: board.BoardItem) -> tuple[SliceCheck, ...]:
             SliceCheck(
                 "error",
                 "body-incomplete",
-                f"#{item.number} body incomplete: {missing}",
+                f"{board.item_label(item.number, storage)} body incomplete: {missing}",
                 issue=item.number,
             )
         )
@@ -2306,26 +2297,27 @@ def _slice_rule_checks(
     storage: body.Storage,
 ) -> tuple[SliceCheck, ...]:
     checks: list[SliceCheck] = []
-    out_of_order = _out_of_order_check(projected, issue, out_of_order_reason)
+    out_of_order = _out_of_order_check(projected, issue, out_of_order_reason, storage)
     if out_of_order is not None:
         checks.append(out_of_order)
+    label = board.item_label(issue, storage)
     item = next((item for item in projected.items if item.number == issue), None)
     if item is not None and item.kind is body.ItemKind.CONTAINER:
         checks.append(
-            SliceCheck("error", "container", f"#{issue} is a container; claim a child", issue=issue)
+            SliceCheck("error", "container", f"{label} is a container; claim a child", issue=issue)
         )
     blocked = _blocked_check(item, out_of_order_reason, lookup.repository, storage)
     if blocked is not None:
         checks.append(blocked)
     state, title, _body = _issue_reference_state(lookup.client, lookup.open_by_number, issue)
     if state is forge.ItemState.CLOSED:
-        checks.append(SliceCheck("error", "closed-issue", f"issue #{issue} is closed", issue=issue))
+        checks.append(SliceCheck("error", "closed-issue", f"issue {label} is closed", issue=issue))
     elif state is forge.ItemState.MISSING:
         checks.append(
-            SliceCheck("error", "missing-issue", f"issue #{issue} does not exist here", issue=issue)
+            SliceCheck("error", "missing-issue", f"issue {label} does not exist here", issue=issue)
         )
     if item is not None:
-        checks.extend(_body_contract_checks(item))
+        checks.extend(_body_contract_checks(item, storage))
     if title is not None:
         parent_check = _parent_checks(lookup.client, lookup.repository, issue, title)
         if parent_check is not None:
@@ -2725,29 +2717,34 @@ def _pull_request_check(
     )
 
 
-def _missing_number(repository: str, number: int) -> CheckOutcome:
+def _missing_number(repository: str, number: int, storage: body.Storage) -> CheckOutcome:
     """A number neither mode can read, named without claiming which of the
     two it would have been."""
     finding = f"does not exist in {repository}"
     return CheckOutcome(
         NumberSubject(CheckKind.MISSING, number),
-        f"REFUSED: #{number} {finding}",
+        f"REFUSED: {board.item_label(number, storage)} {finding}",
         CheckReason.MISSING,
         finding,
     )
 
 
-def _issue_line(number: int, finding: str) -> str:
+def _issue_line(number: int, finding: str, storage: body.Storage) -> str:
     """The one shape every issue-mode answer takes."""
-    return f"ISSUE #{number} {finding}"
+    return f"ISSUE {board.item_label(number, storage)} {finding}"
 
 
 def _refused_issue(
-    number: int, finding: str, reason: CheckReason, *, blocked_by: tuple[str, ...] = ()
+    number: int,
+    finding: str,
+    reason: CheckReason,
+    storage: body.Storage,
+    *,
+    blocked_by: tuple[str, ...] = (),
 ) -> CheckOutcome:
     return CheckOutcome(
         NumberSubject(CheckKind.ISSUE, number),
-        _issue_line(number, finding),
+        _issue_line(number, finding, storage),
         reason,
         finding,
         blocked_by,
@@ -2777,17 +2774,23 @@ def _issue_check(
     under `storage = "state-ref"` -- a body never states them itself."""
     shape = body.body_shape_check(raw_body, storage=storage)
     if shape.defects:
-        return _refused_issue(number, shape.defects[0], CheckReason(shape.verdict.value))
+        return _refused_issue(number, shape.defects[0], CheckReason(shape.verdict.value), storage)
     blockers = board.open_dependency_blockers(client.list_board_dependencies(number), repository)
     if blockers:
         labels = tuple(
             board.open_blocker_label(blocker, repository, storage) for blocker in blockers
         )
         return _refused_issue(
-            number, f"blocked by {', '.join(labels)}", CheckReason.BLOCKED, blocked_by=labels
+            number,
+            f"blocked by {', '.join(labels)}",
+            CheckReason.BLOCKED,
+            storage,
+            blocked_by=labels,
         )
     return CheckOutcome(
-        NumberSubject(CheckKind.ISSUE, number), _issue_line(number, "body ok"), CheckReason.VALID
+        NumberSubject(CheckKind.ISSUE, number),
+        _issue_line(number, "body ok", storage),
+        CheckReason.VALID,
     )
 
 
@@ -2963,7 +2966,9 @@ def _verify_merged_release(
                 f"merge commit {detail.merge_commit} of pull request #{detail.number} {defect}"
             )
         return None
-    _verify_merge_commit_authority(landings, detail.number, identity.issue, detail.merge_commit)
+    _verify_merge_commit_authority(
+        landings, detail.number, identity.issue, detail.merge_commit, context.config.storage
+    )
     reference = _fetch_issue_reference(client, identity.issue)
     if reference.state is forge.ItemState.OPEN:
         return _MergedLandingClose(identity.issue, detail.number)
@@ -3177,11 +3182,16 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     new_body = _item_new_body(parsed, raw_body)
     client = _LazyForge(context).writer()
     open_issues = client.list_open_board_issues()
+    storage = context.config.storage
     if parsed.parent is not None:
-        _open_container(open_issues, parsed.parent)
+        _open_container(open_issues, parsed.parent, storage)
     if not parsed.not_a_twin:
         _refuse_possible_twin(
-            client, parsed.title, _numbered_titles(open_issues), parent=parsed.parent
+            client,
+            parsed.title,
+            _numbered_titles(open_issues),
+            parent=parsed.parent,
+            storage=storage,
         )
     kind = body.ItemKind(parsed.kind)
     try:
@@ -3219,14 +3229,14 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
     `create_item` is not part of the generic `ForgeWriter` port every other
     write command narrows to."""
     client = _state_ref_board(context)
-    parent_missing = (
-        parsed.parent is not None
-        and client.item_reference(parsed.parent).state is forge.ItemState.MISSING
-    )
-    if parent_missing:
-        raise protocol.ClaimUnavailableError(f"#{parsed.parent} does not exist")
+    parent = parsed.parent
+    storage = context.config.storage
+    if parent is not None and client.item_reference(parent).state is forge.ItemState.MISSING:
+        raise protocol.ClaimUnavailableError(f"{board.item_label(parent, storage)} does not exist")
     if not parsed.not_a_twin:
-        _refuse_possible_twin(client, parsed.title, client.open_item_titles(), parent=parsed.parent)
+        _refuse_possible_twin(
+            client, parsed.title, client.open_item_titles(), parent=parsed.parent, storage=storage
+        )
     kind = body.ItemKind(parsed.kind)
     skeleton = (
         body.BLOCK_CONTAINER_SKELETON
@@ -3295,7 +3305,9 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
         client = _state_ref_board(context)
         number = parsed.item
         if not client.holds(number):
-            raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))
+            raise protocol.ClaimUnavailableError(
+                _missing_item_refusal(number, client, context.config.storage)
+            )
         client.update_item_body(number, new_body)
         _print_item_edit_result(
             items.format_item_id(number), number, client.item_oid(number), as_json=as_json
@@ -3322,8 +3334,10 @@ def _cmd_item_edit_size(parsed: argparse.Namespace, context: RunContext) -> int:
         client = _LazyForge(context).writer()
         _require_update_item_body(client, command=ITEM_EDIT_SIZE_COMMAND)
         number = parsed.item
-        current_body = _item_body_or_refuse(client, number, command=ITEM_EDIT_SIZE_COMMAND)
         storage = context.config.storage
+        current_body = _item_body_or_refuse(
+            client, number, command=ITEM_EDIT_SIZE_COMMAND, storage=storage
+        )
         located = _located_block_or_refuse(
             number, current_body, command=ITEM_EDIT_SIZE_COMMAND, storage=storage
         )
@@ -3331,17 +3345,19 @@ def _cmd_item_edit_size(parsed: argparse.Namespace, context: RunContext) -> int:
         client.update_item_body(
             number, body.replace_agent_claim_block(current_body, located, new_data)
         )
-        _print_item_edit_size_result(number, parsed.size, as_json=as_json)
+        _print_item_edit_size_result(number, parsed.size, storage, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
-def _print_item_edit_size_result(number: int, size: str, *, as_json: bool) -> None:
+def _print_item_edit_size_result(
+    number: int, size: str, storage: body.Storage, *, as_json: bool
+) -> None:
     if as_json:
         _emit_json(True, ItemReason.EDITED, item=number, size=size)
     else:
-        print(f"EDITED #{number} size={size}")
+        print(f"EDITED {board.item_label(number, storage)} size={size}")
 
 
 ITEM_EDIT_WHOLE_COMMAND = "item edit --whole"
@@ -3359,8 +3375,10 @@ def _cmd_item_edit_whole(parsed: argparse.Namespace, context: RunContext) -> int
         client = _LazyForge(context).writer()
         _require_update_item_body(client, command=ITEM_EDIT_WHOLE_COMMAND)
         number = parsed.item
-        current_body = _item_body_or_refuse(client, number, command=ITEM_EDIT_WHOLE_COMMAND)
         storage = context.config.storage
+        current_body = _item_body_or_refuse(
+            client, number, command=ITEM_EDIT_WHOLE_COMMAND, storage=storage
+        )
         located = _located_block_or_refuse(
             number, current_body, command=ITEM_EDIT_WHOLE_COMMAND, storage=storage
         )
@@ -3369,17 +3387,19 @@ def _cmd_item_edit_whole(parsed: argparse.Namespace, context: RunContext) -> int
         client.update_item_body(
             number, body.replace_agent_claim_block(current_body, located, new_data)
         )
-        _print_item_edit_whole_result(number, reason, as_json=as_json)
+        _print_item_edit_whole_result(number, reason, storage, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
-def _print_item_edit_whole_result(number: int, reason: str, *, as_json: bool) -> None:
+def _print_item_edit_whole_result(
+    number: int, reason: str, storage: body.Storage, *, as_json: bool
+) -> None:
     if as_json:
         _emit_json(True, ItemReason.EDITED, item=number, whole=reason)
     else:
-        print(f"EDITED #{number} whole={reason}")
+        print(f"EDITED {board.item_label(number, storage)} whole={reason}")
 
 
 def _print_item_edit_result(
@@ -3430,7 +3450,9 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
         protocol.require_no_live_claim(observed, protocol.IssueIdentity(number))
         client = _state_ref_board(context)
         if client.item_reference(number).state is forge.ItemState.MISSING:
-            raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))
+            raise protocol.ClaimUnavailableError(
+                _missing_item_refusal(number, client, context.config.storage)
+            )
         client.require_well_formed()
         closed_at = client.close_item(number)
         result = _ItemCloseResult(
@@ -3530,7 +3552,8 @@ def _cmd_item_show(parsed: argparse.Namespace, session: _ReadSession) -> int:
         number = parsed.item
         reference = client.item_reference(number)
         if reference.state is forge.ItemState.MISSING:
-            raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))
+            storage = session.context.config.storage
+            raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client, storage))
         parent = client.parent_number(number)
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
@@ -3879,7 +3902,7 @@ def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
         repository = client.repository.path
         reference = client.item_reference(number)
         if reference.state is forge.ItemState.MISSING:
-            outcome = _missing_number(repository, number)
+            outcome = _missing_number(repository, number, config.storage)
         elif reference.is_landing:
             _worktree, _remote, observed = _store_observation(session.context)
             outcome = _pull_request_check(
@@ -3900,7 +3923,9 @@ def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
     return outcome.report(as_json=as_json)
 
 
-def _trunk_classification_text(classification: board.TrunkClassification) -> str:
+def _trunk_classification_text(
+    classification: board.TrunkClassification, storage: body.Storage
+) -> str:
     """`classification`'s own display line, the trunk-trailer counterpart of
     `WorkItemClassification`/`NoItemClassification`'s `__str__` (issue
     #359): a trunk `Work-Item:` trailer names bare, repository-local
@@ -3909,14 +3934,18 @@ def _trunk_classification_text(classification: board.TrunkClassification) -> str
     lives here rather than reusing either PR-body type's `__str__`."""
     if isinstance(classification, board.NoItemClassification):
         return f"No-Item: {classification.kind.value}"
-    return "Work-Item: " + ", ".join(f"#{number}" for number in classification.numbers)
+    return "Work-Item: " + ", ".join(
+        board.item_label(number, storage) for number in classification.numbers
+    )
 
 
 def _refused_trunk_commit(sha: str, finding: str, reason: CheckReason) -> CheckOutcome:
     return CheckOutcome(TrunkSubject(sha), f"REFUSED: {sha} {finding}", reason, finding)
 
 
-def _trunk_commit_outcome(sha: str, landing: checkout.TrunkLanding | None) -> CheckOutcome:
+def _trunk_commit_outcome(
+    sha: str, landing: checkout.TrunkLanding | None, storage: body.Storage
+) -> CheckOutcome:
     """`sha`'s own answer (issue #359, LAND-48): the same three answers
     `check <pr>` reads from a pull request body's classification
     (LAND-04/LAND-06), read instead from the trailer block of `landing`, the
@@ -3937,7 +3966,7 @@ def _trunk_commit_outcome(sha: str, landing: checkout.TrunkLanding | None) -> Ch
         )
     return CheckOutcome(
         TrunkSubject(sha),
-        f"{sha} declares {_trunk_classification_text(classification)}",
+        f"{sha} declares {_trunk_classification_text(classification, storage)}",
         CheckReason.VALID,
     )
 
@@ -3951,7 +3980,7 @@ def _check_trunk_commit(parsed: argparse.Namespace, context: RunContext) -> int:
     sha = cast(str, parsed.number)
     landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
     landing = next((entry for entry in landings if entry.sha == sha), None)
-    return _trunk_commit_outcome(sha, landing).report(as_json=parsed.json)
+    return _trunk_commit_outcome(sha, landing, context.config.storage).report(as_json=parsed.json)
 
 
 def _brief_claim(
@@ -4620,7 +4649,10 @@ class _ClaimBodyInvalidError(protocol.ClaimError):
 
 
 def _item_target_body(
-    client: forge.ForgeReader, open_by_number: Mapping[int, board.Issue], number: int
+    client: forge.ForgeReader,
+    open_by_number: Mapping[int, board.Issue],
+    number: int,
+    storage: body.Storage,
 ) -> str:
     """The item's own body for `_item_scope`/`_item_whole` (issue #337):
     from `open_by_number` -- the open-board listing `claim` needs anyway
@@ -4638,7 +4670,7 @@ def _item_target_body(
     if issue is not None:
         return issue.body
     try:
-        return _item_body_or_refuse(client, number, command="claim")
+        return _item_body_or_refuse(client, number, command="claim", storage=storage)
     except protocol.ClaimUnavailableError as error:
         raise _ClaimTargetInvalidError(str(error)) from error
 
@@ -4659,11 +4691,13 @@ def _item_scope(
     `_item_whole`'s own read stays tolerant of a malformed body instead: its
     caller is only ever an optional width-gate fallback, never a hard
     requirement the way a claim's own scope is."""
-    raw_body = _item_target_body(client, open_by_number, number)
+    raw_body = _item_target_body(client, open_by_number, number, storage)
     parsed = body.parse_body(raw_body, storage=storage)
     if parsed.read_state is body.BodyReadState.MALFORMED:
         defect = parsed.contract.defects[0]
-        raise _ClaimBodyInvalidError(f"#{number} {body.body_defect_text(defect)}")
+        raise _ClaimBodyInvalidError(
+            f"{board.item_label(number, storage)} {body.body_defect_text(defect)}"
+        )
     return parsed.scope
 
 
@@ -4680,7 +4714,7 @@ def _item_whole(
     simply carries no `whole` for one, exactly as it did before issue #406,
     so the width gate's own refusal still fires instead of an unrelated
     defect message."""
-    raw_body = _item_target_body(client, open_by_number, number)
+    raw_body = _item_target_body(client, open_by_number, number, storage)
     return body.parse_body(raw_body, storage=storage).whole
 
 
@@ -5009,10 +5043,11 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     number = parsed.item
     client = session.forge()
     item = client.item_reference(number)
+    label = board.item_label(number, session.context.config.storage)
     if item.state is forge.ItemState.MISSING:
-        raise protocol.ClaimUnavailableError(f"issue #{number} does not exist here")
+        raise protocol.ClaimUnavailableError(f"issue {label} does not exist here")
     if item.state is forge.ItemState.CLOSED:
-        raise protocol.ClaimUnavailableError(f"issue #{number} is closed")
+        raise protocol.ClaimUnavailableError(f"issue {label} is closed")
     slug = (
         checkout.validate_slug(parsed.slug)
         if parsed.slug is not None
@@ -5255,7 +5290,9 @@ def _cleanup_landed_worktree(
         return checkout.worktree_cleanup_kept(f"git failure: {error}")
 
 
-def _newest_landed_commit(landings: tuple[checkout.TrunkLanding, ...], number: int) -> str:
+def _newest_landed_commit(
+    landings: tuple[checkout.TrunkLanding, ...], number: int, storage: body.Storage
+) -> str:
     """The most recent first-parent trunk commit whose own trailer names
     `number` (issue #359, LAND-47): the empty-value form of `release
     --merged`'s own sha argument under `storage = "state-ref"`."""
@@ -5267,7 +5304,7 @@ def _newest_landed_commit(landings: tuple[checkout.TrunkLanding, ...], number: i
         ):
             return landing.sha
     raise protocol.ClaimUnavailableError(
-        f"no trunk commit carries a Work-Item: trailer naming #{number}"
+        f"no trunk commit carries a Work-Item: trailer naming {board.item_label(number, storage)}"
     )
 
 
@@ -5275,7 +5312,7 @@ SHA_NOT_ON_TRUNK_DEFECT = "is not on the first-parent trunk"
 
 
 def _trunk_landing_defect(
-    landings: tuple[checkout.TrunkLanding, ...], number: int, sha: str
+    landings: tuple[checkout.TrunkLanding, ...], number: int, sha: str, storage: body.Storage
 ) -> str | None:
     """Why `sha` does not authorize closing work item `number` from the
     walked first-parent trunk (issue #359 LAND-52), or `None` when it does:
@@ -5297,23 +5334,27 @@ def _trunk_landing_defect(
         not isinstance(classification, board.TrunkWorkItemClassification)
         or number not in classification.numbers
     ):
-        return f"does not name work item #{number}"
+        return f"does not name work item {board.item_label(number, storage)}"
     return None
 
 
 def _landed_commit_by_sha(
-    landings: tuple[checkout.TrunkLanding, ...], number: int, sha: str
+    landings: tuple[checkout.TrunkLanding, ...], number: int, sha: str, storage: body.Storage
 ) -> str:
     """`sha`, verified as `number`'s own landing commit (issue #359,
     LAND-52): refused by name before anything is written otherwise."""
-    defect = _trunk_landing_defect(landings, number, sha)
+    defect = _trunk_landing_defect(landings, number, sha, storage)
     if defect is not None:
         raise protocol.ClaimUnavailableError(f"{sha} {defect}")
     return sha
 
 
 def _verify_merge_commit_authority(
-    landings: tuple[checkout.TrunkLanding, ...], pull_request: int, number: int, sha: str
+    landings: tuple[checkout.TrunkLanding, ...],
+    pull_request: int,
+    number: int,
+    sha: str,
+    storage: body.Storage,
 ) -> None:
     """Refuse a github `release --merged <pr>` whose merge commit does not
     authorize closing `number` (issue #397, Befund 41): `number` is the
@@ -5321,7 +5362,7 @@ def _verify_merge_commit_authority(
     this -- never the pull request's own mutable body -- and this merge
     commit trailer is the actual authority, the same `_trunk_landing_defect`
     reads for `storage = state-ref`."""
-    defect = _trunk_landing_defect(landings, number, sha)
+    defect = _trunk_landing_defect(landings, number, sha, storage)
     if defect is not None:
         raise protocol.ClaimUnavailableError(
             f"merge commit {sha} of pull request #{pull_request} {defect}"
@@ -5713,15 +5754,20 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         print(LAND_REINSTALL_LINE)
 
 
-def _landed_commit(landings: tuple[checkout.TrunkLanding, ...], number: int, requested: str) -> str:
+def _landed_commit(
+    landings: tuple[checkout.TrunkLanding, ...],
+    number: int,
+    requested: str,
+    storage: body.Storage,
+) -> str:
     """The trunk-landing commit `release --merged <sha|empty>` closes
     `number` from, under `storage = "state-ref"` (issue #359, LAND-47/
     LAND-52): `requested` empty picks the newest such commit
     (`_newest_landed_commit`); a given sha is verified instead
     (`_landed_commit_by_sha`)."""
     if requested:
-        return _landed_commit_by_sha(landings, number, requested)
-    return _newest_landed_commit(landings, number)
+        return _landed_commit_by_sha(landings, number, requested, storage)
+    return _newest_landed_commit(landings, number, storage)
 
 
 def _cmd_release_landed(
@@ -5744,12 +5790,16 @@ def _cmd_release_landed(
         )
     context = session.context
     landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
-    commit = _landed_commit(landings, identity.issue, cast(str, parsed.merged))
+    commit = _landed_commit(
+        landings, identity.issue, cast(str, parsed.merged), context.config.storage
+    )
     # `storage` is already proven `state-ref` by `_release_transition`, so
     # this cast is honest: `_build_forge` builds exactly a `StateRefBoard`.
     client = cast(state_board.StateRefBoard, context.forge)
     if client.item_reference(identity.issue).state is forge.ItemState.MISSING:
-        raise protocol.ClaimUnavailableError(_missing_item_refusal(identity.issue, client))
+        raise protocol.ClaimUnavailableError(
+            _missing_item_refusal(identity.issue, client, context.config.storage)
+        )
     write = client.prepare_landing(identity.issue)
     worktree, _remote, observed = _store_observation(context)
     _require_state_ref(observed)
@@ -5878,26 +5928,36 @@ def _print_release_result(report: ReleaseReport, *, as_json: bool) -> None:
         print(f"worktree: {worktree_cleanup_outcome_text(report.worktree)}")
 
 
-def _open_container(open_issues: Iterable[board.Issue], number: int) -> board.Issue:
+def _open_container(
+    open_issues: Iterable[board.Issue], number: int, storage: body.Storage
+) -> board.Issue:
     """`number`'s open issue when its type is a container -- `cut`'s own
     target and `item new --parent` (issue #444) -- or why it is not."""
     target = next((issue for issue in open_issues if issue.number == number), None)
     if target is None:
-        raise protocol.ClaimUnavailableError(f"#{number} is not an open container")
+        raise protocol.ClaimUnavailableError(
+            f"{board.item_label(number, storage)} is not an open container"
+        )
     if target.kind is not body.ItemKind.CONTAINER:
-        raise protocol.ClaimUnavailableError(f"#{number} is not a container")
+        raise protocol.ClaimUnavailableError(
+            f"{board.item_label(number, storage)} is not a container"
+        )
     return target
 
 
 def _cut_target(
-    client: forge.ForgeWriter, open_issues: Iterable[board.Issue], number: int
+    client: forge.ForgeWriter,
+    open_issues: Iterable[board.Issue],
+    number: int,
+    storage: body.Storage,
 ) -> board.Issue:
     """The open container `cut` targets, or why it refuses before any write."""
-    target = _open_container(open_issues, number)
+    target = _open_container(open_issues, number, storage)
     parent = client.parent_issue(number)
     if parent is not None:
+        parent_label = board.relation_label(parent.reference, storage)
         raise protocol.ClaimUnavailableError(
-            f"#{number} is itself a child of {parent.reference}; "
+            f"{board.item_label(number, storage)} is itself a child of {parent_label}; "
             "nested containers are not supported"
         )
     return target
@@ -5942,24 +6002,34 @@ class CutReason(StrEnum):
     PARTIAL_WRITE = "partial_write"
 
 
-def _print_cut_result(
-    number: int, row_index: int | None, child: int, *, as_json: bool, adopted: bool
-) -> None:
+@dataclass(frozen=True)
+class _CutOutcome:
+    """What one `cut` did: the container, the row it linked (if any), the
+    child it created or adopted, and whether it adopted."""
+
+    container: int
+    row_index: int | None
+    child: int
+    adopted: bool
+
+
+def _print_cut_result(outcome: _CutOutcome, storage: body.Storage, *, as_json: bool) -> None:
     """Print `cut`'s result: the text form's `CUT`/`ADOPTED` verb becomes
     `--json`'s own `reason` (issue #425) -- `adopted` no longer needs its
     own boolean sibling once the envelope's `reason` already names it."""
     if as_json:
         _emit_json(
             True,
-            CutReason.ADOPTED if adopted else CutReason.CUT,
-            container=number,
-            row=row_index,
-            child=child,
+            CutReason.ADOPTED if outcome.adopted else CutReason.CUT,
+            container=outcome.container,
+            row=outcome.row_index,
+            child=outcome.child,
         )
         return
-    suffix = "" if row_index is None else f" row {row_index}"
-    verb = "ADOPTED" if adopted else "CUT"
-    print(f"{verb} #{number}{suffix} -> #{child}")
+    suffix = "" if outcome.row_index is None else f" row {outcome.row_index}"
+    verb = "ADOPTED" if outcome.adopted else "CUT"
+    container_label = board.item_label(outcome.container, storage)
+    print(f"{verb} {container_label}{suffix} -> {board.item_label(outcome.child, storage)}")
 
 
 class _PartialWriteError(protocol.ClaimError):
@@ -6061,7 +6131,7 @@ def _adoptable_child(
     client: forge.ForgeWriter,
     container: int,
     title: str,
-    idea_label: str | None,
+    config: board.BoardConfig,
     open_issues: Iterable[board.Issue],
 ) -> board.ChildItem | None:
     """`container`'s already-open child titled exactly `title`, so a repeat
@@ -6099,15 +6169,16 @@ def _adoptable_child(
         if issue.title == title
         and issue.number != container
         and issue.kind is body.ItemKind.TASK
-        and not board.has_label(issue.labels, idea_label)
+        and not board.has_label(issue.labels, config.idea_label)
         and _orphan_names_container(issue.body, container)
         and client.parent_issue(issue.number) is None
     ]
     open_matches = open_linked + orphans
+    container_label = board.item_label(container, config.storage)
     if len(open_matches) > 1:
-        named = ", ".join(f"#{number}" for number in open_matches)
+        named = ", ".join(board.item_label(number, config.storage) for number in open_matches)
         raise protocol.ClaimUnavailableError(
-            f"#{container}'s row {title!r} matches more than one open issue ({named}); "
+            f"{container_label}'s row {title!r} matches more than one open issue ({named}); "
             "adopt the right one by hand and remove the row"
         )
     if open_matches:
@@ -6119,7 +6190,8 @@ def _adoptable_child(
     if closed is None:
         return None
     raise protocol.ClaimUnavailableError(
-        f"#{container} already has a closed child #{closed.number} titled {title!r}; "
+        f"{container_label} already has a closed child "
+        f"{board.item_label(closed.number, config.storage)} titled {title!r}; "
         "reopen it or remove the row by hand"
     )
 
@@ -6170,6 +6242,7 @@ def _refuse_possible_twin(
     open_titles: Iterable[tuple[int, str]],
     *,
     parent: int | None,
+    storage: body.Storage,
 ) -> None:
     """The one twin search `item new` and `cut` run before they create an
     issue (issue #444): `open_titles` -- every open issue's number and title
@@ -6183,7 +6256,9 @@ def _refuse_possible_twin(
     ]
     twin = _possible_twin(title, (entry for entry in candidates if entry[0] != parent))
     if twin is not None:
-        raise protocol.ClaimUnavailableError(f"possible twin #{twin}; pass --not-a-twin")
+        raise protocol.ClaimUnavailableError(
+            f"possible twin {board.item_label(twin, storage)}; pass --not-a-twin"
+        )
 
 
 def _block_slice_entries(data: Mapping[str, object]) -> list[dict[str, object]]:
@@ -6204,7 +6279,7 @@ def _slice_row(entry: dict[str, object]) -> body.SliceRow:
 
 
 def _cut_link(
-    number: int, data: Mapping[str, object], row_number: int | None
+    label: str, data: Mapping[str, object], row_number: int | None
 ) -> body.SliceRow | None:
     """Which `[[slice]]` entry `cut` links its fresh child to (#150 §7):
     without `--row`, the first entry when the block carries one; with `--row
@@ -6216,22 +6291,21 @@ def _cut_link(
         return _slice_row(entries[0]) if entries else None
     if "slice" not in data:
         raise protocol.ClaimUnavailableError(
-            f"#{number} has no slice table; --row needs one to select a row from"
+            f"{label} has no slice table; --row needs one to select a row from"
         )
     match = next((entry for entry in entries if entry["index"] == row_number), None)
     if match is None:
         cuttable = ", ".join(str(entry["index"]) for entry in entries) or "none"
         raise protocol.ClaimUnavailableError(
-            f"#{number} has no row {row_number}; cuttable rows: {cuttable}"
+            f"{label} has no row {row_number}; cuttable rows: {cuttable}"
         )
     return _slice_row(match)
 
 
-def _require_matching_title(number: int, link: body.SliceRow, title: str) -> None:
+def _require_matching_title(label: str, link: body.SliceRow, title: str) -> None:
     if title != link.title:
         raise protocol.ClaimUnavailableError(
-            f"#{number}'s slice {link.index} is titled {link.title!r}; "
-            "--title must match it exactly"
+            f"{label}'s slice {link.index} is titled {link.title!r}; --title must match it exactly"
         )
 
 
@@ -6248,7 +6322,8 @@ def _located_block_or_refuse(
     if parsed.read_state is body.BodyReadState.MALFORMED:
         defect = parsed.contract.defects[0]
         raise protocol.ClaimUnavailableError(
-            f"#{number} {body.body_defect_text(defect)}; {command} needs a valid agent-claim block"
+            f"{board.item_label(number, storage)} {body.body_defect_text(defect)}; "
+            f"{command} needs a valid agent-claim block"
         )
     return body.locate_agent_claim_block(raw_body)
 
@@ -6283,14 +6358,18 @@ def _cut_slice(
     config: board.BoardConfig,
 ) -> int:
     number = target.number
-    located = _located_block_or_refuse(number, target.body, command="cut", storage=config.storage)
-    link = _cut_link(number, located.data, parsed.row)
+    storage = config.storage
+    label = board.item_label(number, storage)
+    located = _located_block_or_refuse(number, target.body, command="cut", storage=storage)
+    link = _cut_link(label, located.data, parsed.row)
     if link is not None:
-        _require_matching_title(number, link, parsed.title)
+        _require_matching_title(label, link, parsed.title)
     child_scope = _cut_row_scope(link, _requested_body_scope(parsed.scope))
-    adopted = _adoptable_child(client, number, parsed.title, config.idea_label, open_issues)
+    adopted = _adoptable_child(client, number, parsed.title, config, open_issues)
     if adopted is None and not parsed.not_a_twin:
-        _refuse_possible_twin(client, parsed.title, _numbered_titles(open_issues), parent=number)
+        _refuse_possible_twin(
+            client, parsed.title, _numbered_titles(open_issues), parent=number, storage=storage
+        )
     try:
         child = (
             adopted.number
@@ -6310,19 +6389,19 @@ def _cut_slice(
             ]
             new_data = {**located.data, "slice": remaining}
             new_body = body.replace_agent_claim_block(target.body, located, new_data)
-            step = f"remove row {link.index} from #{number}'s agent-claim block"
+            step = f"remove row {link.index} from {label}'s agent-claim block"
             _link_created_child(client, number, new_body, child, step)
     except forge.ForgeIssueTypeNotSetError as error:
         raise _PartialWriteError(error, recovery=CUT_TYPE_RECOVERY) from error
     except forge.ForgePartialChildCreationError as error:
         raise _PartialWriteError(error, recovery=CUT_RERUN_RECOVERY) from error
-    _print_cut_result(
-        number,
-        None if link is None else link.index,
-        child,
-        as_json=parsed.json,
+    outcome = _CutOutcome(
+        container=number,
+        row_index=None if link is None else link.index,
+        child=child,
         adopted=adopted is not None,
     )
+    _print_cut_result(outcome, storage, as_json=parsed.json)
     return 0
 
 
@@ -6361,30 +6440,34 @@ def _cmd_cut(parsed: argparse.Namespace, session: _WriteSession) -> int:
                 )
         config = _load_board_config(client, session.context)
         open_issues = client.list_open_board_issues()
-        return _cut_slice(
-            client, _cut_target(client, open_issues, number), open_issues, parsed, config
-        )
+        target = _cut_target(client, open_issues, number, config.storage)
+        return _cut_slice(client, target, open_issues, parsed, config)
     except _PartialWriteError as error:
         return _refuse_partial_write(error, CutReason.PARTIAL_WRITE, as_json=as_json)
     except protocol.ClaimError as error:
         return _refuse(CutReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
-def _missing_item_refusal(number: int, client: forge.ForgeReader) -> str:
+def _missing_item_refusal(number: int, client: forge.ForgeReader, storage: body.Storage) -> str:
     """The refusal sentence for a missing item number -- every forge-backed
     command that checks `client.item_reference(number).state is
     forge.ItemState.MISSING` before acting shares this one sentence rather
-    than typing it out again."""
-    return f"#{number} does not exist in {client.repository.path}"
+    than typing it out again. The repository slot is the canonical remote's
+    own path: `owner/repo` on a forge host, the bare remote's local path
+    for a forge-less remote under `state-ref` (PIN-28)."""
+    return f"{board.item_label(number, storage)} does not exist in {client.repository.path}"
 
 
-def _item_body_or_refuse(client: forge.ForgeReader, number: int, *, command: str) -> str:
+def _item_body_or_refuse(
+    client: forge.ForgeReader, number: int, *, command: str, storage: body.Storage
+) -> str:
     """The live body of issue `number`, or a by-name refusal before any
     write: `rule` and `ask` both target one existing issue, never a pull
-    request."""
+    request -- a pull request exists only on a forge, so that refusal
+    keeps the forge's own `#n`."""
     reference = client.item_reference(number)
     if reference.state is forge.ItemState.MISSING:
-        raise protocol.ClaimUnavailableError(f"#{number} does not exist")
+        raise protocol.ClaimUnavailableError(f"{board.item_label(number, storage)} does not exist")
     if reference.is_landing:
         raise protocol.ClaimUnavailableError(
             f"#{number} is a pull request, not an issue; {command} needs an issue"
@@ -6427,7 +6510,7 @@ def _require_writable_target(
         raise _TargetUnavailableError(str(error)) from error
     config = _load_board_config(client, context)
     try:
-        body = _item_body_or_refuse(client, number, command=command)
+        body = _item_body_or_refuse(client, number, command=command, storage=config.storage)
         _located_block_or_refuse(number, body, command=command, storage=config.storage)
     except protocol.ClaimError as error:
         raise _InvalidTargetError(str(error)) from error
@@ -6453,7 +6536,12 @@ class RuleReason(StrEnum):
 
 
 def _emit_rule_result(
-    number: int, line: body.ExpectationLine, open_remaining: int, *, as_json: bool
+    number: int,
+    line: body.ExpectationLine,
+    open_remaining: int,
+    storage: body.Storage,
+    *,
+    as_json: bool,
 ) -> None:
     ruling = cast(str, line.ruling)
     ruled_on = cast(date, line.ruled_on)
@@ -6468,7 +6556,10 @@ def _emit_rule_result(
             open=open_remaining,
         )
         return
-    print(f"RULED #{number} line {line.index} {ruling}; {open_remaining} line(s) still open")
+    print(
+        f"RULED {board.item_label(number, storage)} line {line.index} {ruling}; "
+        f"{open_remaining} line(s) still open"
+    )
 
 
 def rule_item(
@@ -6519,7 +6610,8 @@ def _rule_expectation_line(parsed: argparse.Namespace, session: _WriteSession) -
     ruled_line, open_remaining = rule_item(
         session.context, number, parsed.line, parsed.ruling, parsed.note
     )
-    _emit_rule_result(number, ruled_line, open_remaining, as_json=parsed.json)
+    storage = session.context.config.storage
+    _emit_rule_result(number, ruled_line, open_remaining, storage, as_json=parsed.json)
     return 0
 
 
@@ -6709,7 +6801,7 @@ class AskReason(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-def _emit_ask_result(asked: _AskedLine, *, as_json: bool) -> None:
+def _emit_ask_result(asked: _AskedLine, storage: body.Storage, *, as_json: bool) -> None:
     if as_json:
         card_fields = {key: value for key, value in asdict(asked.card).items() if value is not None}
         _emit_json(
@@ -6722,7 +6814,7 @@ def _emit_ask_result(asked: _AskedLine, *, as_json: bool) -> None:
             **card_fields,
         )
         return
-    print(f"ASKED #{asked.item} line {asked.index}: {asked.text}")
+    print(f"ASKED {board.item_label(asked.item, storage)} line {asked.index}: {asked.text}")
 
 
 class _PictureFileError(protocol.ClaimError):
@@ -6782,7 +6874,7 @@ def _append_expectation_card(parsed: argparse.Namespace, session: _WriteSession)
     asked = _AskedLine(
         item=number, index=index, text=parsed.text, default=parsed.default, card=card
     )
-    _emit_ask_result(asked, as_json=parsed.json)
+    _emit_ask_result(asked, config.storage, as_json=parsed.json)
     return 0
 
 

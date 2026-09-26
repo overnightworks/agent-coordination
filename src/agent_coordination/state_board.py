@@ -677,7 +677,7 @@ class StateRefBoard:
         current = self._items[item_id]
         if current.record.state is items.RecordState.CLOSED:
             raise ClaimUnavailableError(
-                f"#{number} is already closed (closed on {current.record.closed_at})"
+                f"{item_id} is already closed (closed on {current.record.closed_at})"
             )
         now = items.format_record_timestamp(datetime.now(UTC))
         updated_record = replace(

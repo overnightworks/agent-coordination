@@ -5846,7 +5846,7 @@ def test_body_contract_checks_names_a_blockless_container_by_its_no_block_defect
     )
     item = next(item for item in projected.items if item.number == 201)
 
-    checks = issue_claim._body_contract_checks(item)
+    checks = issue_claim._body_contract_checks(item, body.Storage.GITHUB)
 
     assert checks == (
         issue_claim.SliceCheck(
@@ -5868,7 +5868,7 @@ def test_body_contract_checks_names_a_malformed_body_by_its_first_defect() -> No
     )
     item = next(item for item in projected.items if item.number == 202)
 
-    checks = issue_claim._body_contract_checks(item)
+    checks = issue_claim._body_contract_checks(item, body.Storage.GITHUB)
 
     assert checks == (
         issue_claim.SliceCheck(
@@ -6589,14 +6589,16 @@ def test_release_merged_refuses_a_trunk_item_the_state_ref_has_no_entry_for(
     status = issue_claim.main(["release", "12", "--agent", "Codex Sol", "--merged", sha])
 
     assert status == 2
-    assert capsys.readouterr().err == f"ERROR: #12 does not exist in {client.repository.path}\n"
+    assert capsys.readouterr().err == (
+        f"ERROR: aco-00000c does not exist in {client.repository.path}\n"
+    )
 
 
 @pytest.mark.parametrize(
     ("landing_ref", "reason"),
     [
         pytest.param("main~3", "carries no `Work-Item:` trailer", id="no-trailer"),
-        pytest.param("main~1", "does not name work item #10", id="foreign-item"),
+        pytest.param("main~1", "does not name work item aco-00000a", id="foreign-item"),
         pytest.param("feature", "is not on the first-parent trunk", id="off-trunk"),
     ],
 )
@@ -6773,7 +6775,7 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
     )
 
     assert replay_status == 2
-    assert capsys.readouterr().err.startswith("ERROR: #10 is already closed (closed on ")
+    assert capsys.readouterr().err.startswith("ERROR: aco-00000a is already closed (closed on ")
     assert _state_ref_tip(repo, remote) == tip_after
 
 
@@ -12928,7 +12930,7 @@ def test_release_merged_empty_refuses_when_no_trunk_commit_names_the_item(
 
     assert status == 2
     assert capsys.readouterr().err == (
-        "ERROR: no trunk commit carries a Work-Item: trailer naming #99\n"
+        "ERROR: no trunk commit carries a Work-Item: trailer naming aco-000063\n"
     )
     remaining = store.fetch_state(worktree=Path("."), remote="origin").claims
     assert len(remaining) == len(_LANDING_ITEM_NUMBERS)
@@ -14858,8 +14860,9 @@ def test_issue_check_labels_a_local_blocker_under_the_state_ref_pin() -> None:
         storage=body.Storage.STATE_REF,
     )
 
+    checked_label = board.item_label(CHECKED_ISSUE, body.Storage.STATE_REF)
     local_label = board.item_label(7, body.Storage.STATE_REF)
-    assert outcome.line == f"ISSUE #{CHECKED_ISSUE} blocked by {local_label}, other/repo#9"
+    assert outcome.line == f"ISSUE {checked_label} blocked by {local_label}, other/repo#9"
 
 
 def test_check_reads_a_pull_request_in_one_dispatch_landing_and_classification_request(
