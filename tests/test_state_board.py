@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -53,6 +54,10 @@ CHILD_B_ID = "aco-000003"
 CONTAINER_NUMBER = items.item_number(CONTAINER_ID)
 CHILD_A_NUMBER = items.item_number(CHILD_A_ID)
 CHILD_B_NUMBER = items.item_number(CHILD_B_ID)
+PAST_THE_ID_SPACE = 16777216
+PAST_THE_ID_SPACE_REFUSAL = (
+    f"ERROR: {PAST_THE_ID_SPACE} names no state-ref item; an item id ends at aco-ffffff"
+)
 
 EXPECTATION_TEXT = "Does the offline board render without gh?"
 
@@ -3723,6 +3728,26 @@ class TestCliStateRefForge:
                 ["item", "edit", "{item}", "--size", "L"], "EDITED {item} size=L", id="item-edit"
             ),
             pytest.param(["item", "close", "{item}"], "CLOSED {item}", id="item-close"),
+            pytest.param(
+                ["item", "close", str(PAST_THE_ID_SPACE)],
+                PAST_THE_ID_SPACE_REFUSAL,
+                id="item-close-past-the-id-space",
+            ),
+            pytest.param(
+                ["item", "show", f"#{PAST_THE_ID_SPACE}"],
+                PAST_THE_ID_SPACE_REFUSAL,
+                id="item-show-past-the-id-space",
+            ),
+            pytest.param(
+                ["item", "new", "--title", "Child", "--parent", str(PAST_THE_ID_SPACE)],
+                PAST_THE_ID_SPACE_REFUSAL,
+                id="item-new-parent-past-the-id-space",
+            ),
+            pytest.param(
+                ["claim", str(PAST_THE_ID_SPACE), "--agent", "Codex Sol", "--scope", "README"],
+                PAST_THE_ID_SPACE_REFUSAL,
+                id="claim-past-the-id-space",
+            ),
         ],
     )
     def test_every_output_names_a_state_ref_item_by_its_id_never_its_decimal_number(
@@ -3740,7 +3765,9 @@ class TestCliStateRefForge:
         as `aco-xxxxxx` -- the form it takes back -- never as `#<n>` or a
         quoted string of the id's own decimal value. The fresh item's title
         is slice-shaped, naming `CONTAINER` as its parent without recording
-        it, so `claim` also warns about that parent by its id."""
+        it, so `claim` also warns about that parent by its id. A number past
+        `aco-ffffff` refuses by PIN-31 before any lookup (#469 review), and
+        no output ever prints an id wider than six hex digits."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
         _stub_claim_checkout(monkeypatch)
         fresh_title = f"Fresh work (#{items.item_number(CONTAINER_ID)} slice 2)"
@@ -3754,6 +3781,7 @@ class TestCliStateRefForge:
         assert expected.format(**named) in output
         decimals = [items.item_number(identifier) for identifier in named.values()]
         assert not any(f"#{n}" in output or f'"{n}"' in output for n in decimals)
+        assert re.search(r"aco-[0-9a-f]{7}", output) is None
 
     def test_a_slice_title_naming_a_parent_beyond_the_id_space_prints_no_slice_warning(
         self,

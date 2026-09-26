@@ -18,7 +18,7 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 | `.agent-claim/board.toml` untracked, absent, or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
-| `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08 |
+| `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08, PIN-31 |
 | a state-ref item file itself is malformed | PIN-13..17, PIN-29 | ITEM-37 | ITEM-39, PIN-29 | LAND-65 | — |
 | a fresh item id, minted | PIN-06, PIN-07 | PIN-06, PIN-07 | — | — | — |
 
@@ -49,6 +49,7 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 - [ ] [PIN-07] `aco item new --title TITLE --json` prints `specs/output.spec.md`'s envelope: `{"ok": true, "reason": "created", "item": "aco-xxxxxx", "number": n}`.
 - [ ] [PIN-30] Under `storage = "state-ref"` a printed sentence or string `--json` field names an item `aco-xxxxxx`, never `#<n>`; the paragraph below names its exceptions.
 - [ ] [PIN-08] An id argument matching none of `aco-xxxxxx`, `#n`, or the bare number `n` refuses `'<value>' is not an item reference; use aco-xxxxxx, #n, or the bare number n` (see E-PIN-04).
+- [ ] [PIN-31] Under `storage = "state-ref"` an id argument past `aco-ffffff` refuses `<n> names no state-ref item; an item id ends at aco-ffffff` before any lookup, under `--json` OUT-06's envelope.
 
 PIN-30's exceptions keep `#<n>`: until #471, the claim-ledger sentences `protocol.py` renders -- CLAIM-11 (and START-16 through it), CLAIM-42, REL-09/REL-10, RESC-14 and PIN-26 -- and `item show`'s header (ITEM-07).
 

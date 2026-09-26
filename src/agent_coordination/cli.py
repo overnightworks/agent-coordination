@@ -10,7 +10,7 @@ import sys
 import threading
 import tomllib
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
@@ -4123,6 +4123,9 @@ def _emit_json(ok: bool, reason: StrEnum, **payload: object) -> None:
     print(json.dumps(envelope))
 
 
+STATE_REF_ITEM_PAST_THE_ID_SPACE = "{number} names no state-ref item; an item id ends at aco-ffffff"
+
+
 class PreDispatchReason(StrEnum):
     """The one `reason` every refusal raised before the chosen command starts
     reports under `--json` (issue #425): agent identity resolution, and
@@ -4130,7 +4133,8 @@ class PreDispatchReason(StrEnum):
     runs, so `_dispatch` owns their envelope here instead of each command
     carrying a second `precondition_failed` member for a refusal it never
     sees itself. `invalid_usage` is the parser's own refusal (issue #432),
-    raised before any command is even chosen."""
+    raised before any command is even chosen, and PIN-31's state-ref item
+    number past the id space (issue #467), an argument no command can use."""
 
     INVALID_USAGE = "invalid_usage"
     PRECONDITION_FAILED = "precondition_failed"
@@ -7466,14 +7470,61 @@ def _asked_for_json(root: argparse.ArgumentParser, given: list[str]) -> bool:
     stays argparse's own text, while `aco release --jso` -- an abbreviation
     argparse accepts -- is JSON. Each level is asked about its own tokens,
     the ones argparse handed it, so a `--` cuts that level alone."""
+    return any(
+        _spells_json_flag(token, parser)
+        for parser, tokens in _reached_levels(root, given)
+        for token in _level_options(tokens)
+    )
+
+
+def _reached_levels(
+    root: argparse.ArgumentParser, given: list[str]
+) -> Iterator[tuple[argparse.ArgumentParser, tuple[str, ...]]]:
+    """Each parser this invocation's parse reached, root first, with the
+    tokens argparse handed that level (issue #432)."""
     parser, tokens = root, tuple(given)
     while True:
-        if any(_spells_json_flag(token, parser) for token in _level_options(tokens)):
-            return True
+        yield parser, tokens
         subcommands = _subcommands(parser)
         if subcommands is None or subcommands.chosen is None:
-            return False
+            return
         parser, tokens = subcommands.chosen, subcommands.handed_down
+
+
+def _item_arguments(
+    root: argparse.ArgumentParser, given: list[str], parsed: argparse.Namespace
+) -> Iterator[int]:
+    """Every item number this invocation named: the parsed value of each
+    argument `board.parse_item_reference` types, on every parser the parse
+    reached."""
+    for parser, _tokens in _reached_levels(root, given):
+        for action in parser._actions:
+            value = getattr(parsed, action.dest, None)
+            if action.type is board.parse_item_reference and value is not None:
+                yield value
+
+
+def _refuse_item_past_the_id_space(
+    root: argparse.ArgumentParser,
+    given: list[str],
+    parsed: argparse.Namespace,
+    context: RunContext,
+) -> int | None:
+    """PIN-31 (issue #467, #469 review): under `storage = "state-ref"` a
+    number past `aco-ffffff` names no item, and `items.format_item_id` would
+    print it as an id `board.parse_item_reference` refuses back -- so it
+    refuses here, before any command looks it up or names it. The storage
+    pin is read only for such a number, so every ordinary run keeps its
+    command's own config refusal and envelope."""
+    past = [
+        number
+        for number in _item_arguments(root, given, parsed)
+        if not items.is_item_number(number)
+    ]
+    if not past or context.config.storage is not body.Storage.STATE_REF:
+        return None
+    error = protocol.ClaimUnavailableError(STATE_REF_ITEM_PAST_THE_ID_SPACE.format(number=past[0]))
+    return _refuse(PreDispatchReason.INVALID_USAGE, error, as_json=_asked_for_json(root, given))
 
 
 def main(arguments: list[str] | None = None) -> int:
@@ -7505,7 +7556,9 @@ def main(arguments: list[str] | None = None) -> int:
             return _local_operation(parsed)
         if parsed.command == "protect":
             return _protect()
-        return _read_status_body_or_dispatch(parsed, _run_context(parsed.repo))
+        context = _run_context(parsed.repo)
+        refusal = _refuse_item_past_the_id_space(parser, given, parsed, context)
+        return refusal if refusal is not None else _read_status_body_or_dispatch(parsed, context)
     except protocol.ClaimError as error:
         print(f"{CLI_ERROR_PREFIX}{error}", file=sys.stderr)
         return 2
