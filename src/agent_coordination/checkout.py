@@ -709,11 +709,15 @@ class TrunkLanding:
     landed. `classification` is read solely from the trailer block git's own
     parsing recognizes; a `Work-Item:`/`No-Item:` line anywhere else in the
     body is prose, not evidence, so most trunk commits (not every landing is
-    a dispatched slice's own merge or squash) carry `None`."""
+    a dispatched slice's own merge or squash) carry `None`.
+    `work_item_values` keeps the trailer's own `Work-Item:` values verbatim,
+    so a refusal can quote what landed even when the grammar rejects it
+    (issue #427)."""
 
     sha: str
     committed_at: datetime
     classification: board.TrunkClassification | board.ClassificationDefect | None
+    work_item_values: tuple[str, ...]
 
 
 def _trailer_values(field: str) -> tuple[str, ...]:
@@ -728,10 +732,11 @@ def _parsed_trunk_landing(fields: tuple[str, str, str, str]) -> TrunkLanding:
         raise ClaimError("git returned a malformed trunk landing timestamp") from error
     if committed_at.tzinfo is None:
         raise ClaimError("git returned a malformed trunk landing timestamp")
+    work_item_values = _trailer_values(work_item_field)
     classification = board.trunk_commit_classification(
-        _trailer_values(work_item_field), _trailer_values(no_item_field)
+        work_item_values, _trailer_values(no_item_field)
     )
-    return TrunkLanding(sha, committed_at.astimezone(UTC), classification)
+    return TrunkLanding(sha, committed_at.astimezone(UTC), classification, work_item_values)
 
 
 def trunk_landings(remote: str, depth: int, *, fetch: bool = False) -> tuple[TrunkLanding, ...]:

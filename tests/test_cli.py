@@ -881,6 +881,7 @@ def test_board_marks_an_item_landed_by_a_trailer_carrying_trunk_commit_without_a
                 "trailersha",
                 datetime(2026, 8, 29, tzinfo=UTC),
                 board.TrunkWorkItemClassification((10,)),
+                ("#10",),
             ),
         ),
     )
@@ -922,7 +923,10 @@ def test_board_dedupes_a_landing_between_the_trunk_trailer_and_a_squash_pull_req
         ),
     )
     trailer_landing = checkout.TrunkLanding(
-        "a" * 40, datetime(2026, 8, 29, tzinfo=UTC), board.TrunkWorkItemClassification((10,))
+        "a" * 40,
+        datetime(2026, 8, 29, tzinfo=UTC),
+        board.TrunkWorkItemClassification((10,)),
+        ("#10",),
     )
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: (trailer_landing,))
     board_command = ["--repo", REPOSITORY, "board"]
@@ -11641,7 +11645,7 @@ def test_next_names_an_old_ruling_when_the_item_is_pulled(
         checkout,
         "trunk_landings",
         lambda *_args, **_kwargs: tuple(
-            checkout.TrunkLanding(f"sha{hour}", datetime(2026, 8, 29, hour, tzinfo=UTC), None)
+            checkout.TrunkLanding(f"sha{hour}", datetime(2026, 8, 29, hour, tzinfo=UTC), None, ())
             for hour in range(10)
         ),
     )
@@ -12066,7 +12070,12 @@ def _trunk_landing(
     and every test proving a merge-commit defect builds its own variant
     from -- the same reader and grammar `storage = state-ref` already
     trusts (`_trunk_landing_defect`)."""
-    return checkout.TrunkLanding(sha, _MERGE_COMMIT_COMMITTED_AT, classification)
+    work_item_values = (
+        tuple(f"#{number}" for number in classification.numbers)
+        if isinstance(classification, board.TrunkWorkItemClassification)
+        else ()
+    )
+    return checkout.TrunkLanding(sha, _MERGE_COMMIT_COMMITTED_AT, classification, work_item_values)
 
 
 @dataclass(frozen=True)
@@ -12607,25 +12616,57 @@ def test_release_merged_closes_the_still_open_work_item(
     assert store.fetch_state(worktree=Path("."), remote="origin").claims == {}
 
 
+@pytest.mark.parametrize(
+    ("output", "stdout_for"),
+    [
+        pytest.param((), lambda _refusal: "", id="text"),
+        pytest.param(
+            ("--json",),
+            lambda refusal: (
+                json.dumps({"ok": False, "reason": "precondition_failed", "message": refusal})
+                + "\n"
+            ),
+            id="json",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "work_item_value",
+    [pytest.param("#72", id="valid-reference"), pytest.param("fix/x", id="branch-name")],
+)
 def test_release_merged_refuses_a_lane_whose_merge_commit_names_a_work_item(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    work_item_value: str,
+    output: tuple[str, ...],
+    stdout_for: Callable[[str], str],
 ) -> None:
-    """Issue #405 gate follow-up: a lane release's authority is the merge
-    commit's own trailer block, not the pull request's mutable `body` --
-    ignored here even though it declares `No-Item:` -- so a trunk commit
-    that actually names a work item still refuses."""
-    merged_release_client(
-        monkeypatch,
-        body="No-Item: docs",
-        lane=True,
-        landings=(_trunk_landing(MERGE_COMMIT_SHA, board.TrunkWorkItemClassification((72,))),),
+    """Issue #405 gate follow-up, issue #427: a lane release's authority is
+    the merge commit's own trailer block, not the pull request's mutable
+    `body` -- ignored here even though it declares `No-Item:` -- so a
+    squash commit carrying `Work-Item:`, valid or malformed alike, refuses
+    with the lane rule and the only way out, `--abandoned`."""
+    trailer_values = (work_item_value,)
+    squash_commit = checkout.TrunkLanding(
+        MERGE_COMMIT_SHA,
+        _MERGE_COMMIT_COMMITTED_AT,
+        board.trunk_commit_classification(trailer_values, ()),
+        trailer_values,
+    )
+    merged_release_client(monkeypatch, body="No-Item: docs", lane=True, landings=(squash_commit,))
+    command = ["--repo", REPOSITORY, "release", "--merged", "12", *output]
+
+    refusal = (
+        f"merge commit {MERGE_COMMIT_SHA} of pull request #12 carries "
+        f"`Work-Item: {work_item_value}`; an issue-less lane needs a "
+        '`No-Item: <docs|fix>` trailer; release it with --abandoned "landed as PR #12 '
+        'with a malformed trailer"'
     )
 
-    assert issue_claim.main(["--repo", REPOSITORY, "release", "--merged", "12"]) == 2
-    assert capsys.readouterr().err == (
-        f"ERROR: merge commit {MERGE_COMMIT_SHA} of pull request #12 carries a "
-        "`Work-Item:` trailer; an issue-less lane needs a `No-Item:` trailer\n"
-    )
+    assert issue_claim.main(command) == 2
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == (stdout_for(refusal), f"ERROR: {refusal}\n")
+    assert store.fetch_state(worktree=Path("."), remote="origin").claims
 
 
 def test_release_merged_refuses_an_unclassified_lane_merge_commit(
@@ -13823,7 +13864,10 @@ def test_land_release_routing_reads_the_merge_commit_trailer_for_a_rerun(
     issue -- the same recovery `test_land_rerun_recovers_release_routing_
     after_the_body_changed` proves end to end for a `Work-Item:` one."""
     landing = checkout.TrunkLanding(
-        MERGE_COMMIT_SHA, datetime.now(UTC), board.NoItemClassification(board.NoItemKind.FIX)
+        MERGE_COMMIT_SHA,
+        datetime.now(UTC),
+        board.NoItemClassification(board.NoItemKind.FIX),
+        (),
     )
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: (landing,))
 

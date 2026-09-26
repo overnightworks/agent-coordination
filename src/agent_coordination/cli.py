@@ -2924,7 +2924,7 @@ class _MergedLandingClose:
 
 
 def _trunk_no_item_landing_defect(
-    landings: tuple[checkout.TrunkLanding, ...], sha: str
+    landings: tuple[checkout.TrunkLanding, ...], sha: str, pull_request: int
 ) -> str | None:
     """Why `sha` does not authorize an issue-less lane's own `--merged`
     release (issue #405, #397 gate follow-up): mirrors `_trunk_landing_defect`'s
@@ -2935,14 +2935,26 @@ def _trunk_no_item_landing_defect(
     landing = next((entry for entry in landings if entry.sha == sha), None)
     if landing is None:
         return SHA_NOT_ON_TRUNK_DEFECT
+    if landing.work_item_values:
+        return _lane_work_item_trailer_defect(landing.work_item_values, pull_request)
     classification = landing.classification
     if classification is None:
         return "carries no `Work-Item:` or `No-Item:` trailer"
     if isinstance(classification, board.ClassificationDefect):
         return classification.message
-    if not isinstance(classification, board.NoItemClassification):
-        return "carries a `Work-Item:` trailer; an issue-less lane needs a `No-Item:` trailer"
     return None
+
+
+def _lane_work_item_trailer_defect(work_item_values: tuple[str, ...], pull_request: int) -> str:
+    """The lane rule a `Work-Item:` trailer breaks, valid or malformed alike
+    (issue #427), ending in the only way out: a landed trailer can no longer
+    change, so the lane is released as abandoned with the landing named."""
+    values = ", ".join(work_item_values)
+    return (
+        f"carries `Work-Item: {values}`; an issue-less lane needs a `No-Item: <docs|fix>` "
+        f'trailer; release it with --abandoned "landed as PR #{pull_request} '
+        'with a malformed trailer"'
+    )
 
 
 def _verify_merged_release(
@@ -2981,7 +2993,7 @@ def _verify_merged_release(
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
     landings = checkout.trunk_landings(canonical_remote, TRUNK_LANDING_DEPTH, fetch=True)
     if isinstance(identity, protocol.LaneIdentity):
-        defect = _trunk_no_item_landing_defect(landings, detail.merge_commit)
+        defect = _trunk_no_item_landing_defect(landings, detail.merge_commit, detail.number)
         if defect is not None:
             raise protocol.ClaimUnavailableError(
                 f"merge commit {detail.merge_commit} of pull request #{detail.number} {defect}"
