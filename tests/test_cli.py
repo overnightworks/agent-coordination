@@ -17291,11 +17291,13 @@ def _claim_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> _Counted
 
 def _rescope_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> _CountedRun:
     """`rescope` reads the checkout its own `--add` path resolves to, never
-    the process's cwd; `_git_checkout` places that checkout at `/repo`."""
+    the process's cwd; `_git_checkout` places that checkout at `/repo`, and
+    the toplevel that resolution already read is the one its store context
+    uses, never read there a second time."""
     _arranged_claim_client(monkeypatch)
     claimed = request(agent="Ada", issue=72, branch="codex/issue-72", scope=("src/widget.py",))
     _patch_store_write(monkeypatch, _store_claim_from_request(claimed))
-    argv = ["--repo", REPOSITORY, "rescope", "72", "--agent", "Ada", "--add", "/repo/src/new.py"]
+    argv = ["--repo", REPOSITORY, "rescope", "72", "--agent", "Ada", "--add", "/repo/new.py"]
     return _read_once(argv, toplevel=Path("/repo"), directory=Path("/repo"))
 
 
@@ -17322,11 +17324,13 @@ def _release_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Counte
 def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     """Proof 6: `land`'s fast-forward writes the landed trunk into this very
     checkout, so its release reads the toplevel and configuration once more,
-    afterwards -- as it did before #457."""
+    afterwards -- as it did before #457. Its worktree cleanup then resolves
+    each registered worktree through `checkout.worktree_on_branch`, the
+    checkout's own combined `rev-parse`, outside the run's context."""
     repo, _client = _land_scenario(monkeypatch, tmp_path)
     return _CountedRun(
         ["--repo", REPOSITORY, "land", "12"],
-        toplevel_reads={None: 2},
+        toplevel_reads={None: 2, repo: 1},
         config_reads={repo: 2},
     )
 
@@ -17335,12 +17339,15 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
     """The one named exception to proof 3 (head ruling 26.09.2026): the
     created worktree's second toplevel read is `checkout._scope_directories`'
     own, for a scope entry that is no git tree (the width gate, #326);
-    checkout reads it outside the run's context, and #418 slice B owns it."""
+    checkout reads it outside the run's context, and #418 slice B owns it.
+    The third is `checkout.resolve_or_create_worktree`'s own combined
+    `rev-parse`, which checks nothing already sits at the worktree path
+    before creating it -- equally the checkout's, outside the context."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-fresh-slug-title"
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
-        toplevel_reads={None: 1, worktree: 2},
+        toplevel_reads={None: 1, worktree: 3},
         config_reads={repo: 1, worktree: 1},
     )
 

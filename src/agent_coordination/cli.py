@@ -4507,7 +4507,7 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     path_checkout = _rescope_checkout(parsed)
     requested = _rescope_command(parsed, path_checkout)
     worktree, canonical_remote, observed = _store_observation(
-        run_context.for_directory(path_checkout.toplevel)
+        run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
     )
     _require_state_ref(observed)
     try:

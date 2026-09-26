@@ -267,15 +267,16 @@ class ContextReads:
 
 
 def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
-    """Counts `rev-parse --show-toplevel` and the `board.toml` tracked check
-    through whatever git fakes the test already installed, so it is called
-    after the arrangement and before the command."""
+    """Counts every `rev-parse` that asks `--show-toplevel` -- alone, or
+    combined with other queries as `resolve_path_checkout` asks it -- and the
+    `board.toml` tracked check, through whatever git fakes the test already
+    installed, so it is called after the arrangement and before the command."""
     reads = ContextReads()
     git_output = checkout._git_output
     path_is_tracked = checkout.path_is_tracked
 
     def counting_git_output(arguments: list[str], *, directory: Path | None = None) -> str:
-        if arguments == ["rev-parse", "--show-toplevel"]:
+        if arguments[0] == "rev-parse" and "--show-toplevel" in arguments:
             reads.toplevels[directory] += 1
         return git_output(arguments, directory=directory)
 

@@ -93,11 +93,16 @@ class RunContext:
         self.directory = directory
         self._build_forge = build_forge
 
-    def for_directory(self, directory: Path) -> RunContext:
+    def for_directory(self, directory: Path, *, is_toplevel: bool = False) -> RunContext:
         """A context for another checkout of the same run (`start`'s
         created worktree, `rescope`'s resolved checkout): nothing this
-        context read carries over."""
-        return RunContext(self.repo, build_forge=self._build_forge, directory=directory)
+        context read carries over. `is_toplevel` says the caller already
+        resolved `directory` as its checkout's toplevel (`rescope`), so the
+        child holds it as read instead of asking git a second time."""
+        child = RunContext(self.repo, build_forge=self._build_forge, directory=directory)
+        if is_toplevel:
+            child.toplevel = directory
+        return child
 
     def fresh(self) -> RunContext:
         """The same directory with nothing read yet (`board --serve`'s
