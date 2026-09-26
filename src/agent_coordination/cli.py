@@ -3003,21 +3003,45 @@ class _StoreItemWriter:
         content: bytes,
         store_expected: Mapping[str, protocol.ObjectId] | None,
     ) -> protocol.ObjectId:
-        new_oid = store.hash_blob(self.worktree, content)
-        intent = protocol.ItemWriteIntent(
+        return self._commit(self._item_write(item_id, expected, content, store_expected))
+
+    def close_item(
+        self,
+        item_id: str,
+        *,
+        number: int,
+        expected: protocol.ObjectId,
+        content: bytes,
+        store_expected: Mapping[str, protocol.ObjectId] | None,
+    ) -> protocol.ObjectId:
+        write = self._item_write(item_id, expected, content, store_expected)
+        return self._commit(protocol.ItemCloseIntent(write, protocol.IssueIdentity(number)))
+
+    def _item_write(
+        self,
+        item_id: str,
+        expected: protocol.ObjectId | None,
+        content: bytes,
+        store_expected: Mapping[str, protocol.ObjectId] | None,
+    ) -> protocol.ItemWriteIntent:
+        return protocol.ItemWriteIntent(
             item_id=item_id,
             expected=expected,
-            new_oid=new_oid,
+            new_oid=store.hash_blob(self.worktree, content),
             operation_id=uuid.uuid4().hex,
             store_expected=store_expected,
         )
+
+    def _commit(
+        self, intent: protocol.ItemWriteIntent | protocol.ItemCloseIntent
+    ) -> protocol.ObjectId:
         new_state = store.commit_transition(
             worktree=self.worktree,
             remote=self.canonical_remote,
-            subject=store.TransitionSubject(f"write item {item_id}"),
+            subject=store.TransitionSubject(f"write item {intent.item_id}"),
             intent=intent,
         )
-        return new_state.items[item_id]
+        return new_state.items[intent.item_id]
 
 
 def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
@@ -3377,9 +3401,9 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     record-owner rule by one field rather than composing a record here).
     Refuses under `storage = "github"` by name -- the forge closes its own
     issues, aco never governs them -- and refuses a live claim on the item
-    before ever writing: a closed item with a live claim still on it is the
-    `RECOVERY` anomaly the board already guards against, never a state this
-    command creates. Existence is checked through the ordinary
+    on every write attempt, retries included (`protocol.ItemCloseIntent`,
+    issue #459), never on a preflight a concurrent claim could slip past.
+    Existence is checked through the ordinary
     `item_reference` read before `close_item` is ever called, so an unknown
     id gets this command's own "does not exist" sentence rather than
     `close_item`'s internal `_by_number` lookup failing with the wrong
@@ -3400,13 +3424,6 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
         number = parsed.item
         _worktree, _remote, observed = _store_observation(context)
         _require_state_ref(observed)
-        live_claim = observed.claims.get(protocol.claim_key(protocol.IssueIdentity(number), ""))
-        if live_claim is not None:
-            raise protocol.ClaimUnavailableError(
-                f"#{number} has a live claim "
-                f"({protocol._claimant_text(live_claim.agent, live_claim.role)}); "
-                "release the claim first"
-            )
         client = _state_ref_board(context)
         if client.item_reference(number).state is forge.ItemState.MISSING:
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))

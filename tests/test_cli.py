@@ -6364,6 +6364,17 @@ class _RefusingItemWriter:
     ) -> protocol.ObjectId:
         raise AssertionError(f"unexpected write to item {item_id}")
 
+    def close_item(
+        self,
+        item_id: str,
+        *,
+        number: int,
+        expected: protocol.ObjectId,
+        content: bytes,
+        store_expected: Mapping[str, protocol.ObjectId] | None,
+    ) -> protocol.ObjectId:
+        raise AssertionError(f"unexpected close of item {item_id}")
+
 
 def _landing_item_body(title: str) -> str:
     data: dict[str, object] = {
@@ -6628,6 +6639,13 @@ def _seed_real_claim_and_item(
     transitions, so an atomicity proof below can land a third -- one
     `protocol.LandingIntent` -- and check that it, unlike these two, closes
     the item and releases the claim in the very same commit."""
+    claim = _land_real_claim(worktree, remote, issue=issue, claim_id=claim_id)
+    return claim, _land_real_item(worktree, remote, issue=issue, content=content)
+
+
+def _land_real_claim(
+    worktree: Path, remote: Path, *, issue: int, claim_id: str
+) -> protocol.ActiveClaim:
     claim_state = store.commit_transition(
         worktree=worktree,
         remote=str(remote),
@@ -6643,11 +6661,16 @@ def _seed_real_claim_and_item(
             operation_id=f"claim-op-{issue}",
         ),
     )
-    claim = next(
+    return next(
         value
         for value in claim_state.claims.values()
         if value.identity == protocol.IssueIdentity(issue)
     )
+
+
+def _land_real_item(
+    worktree: Path, remote: Path, *, issue: int, content: bytes
+) -> protocol.ObjectId:
     item_id = items.format_item_id(issue)
     new_oid = store.hash_blob(worktree, content)
     item_state = store.commit_transition(
@@ -6658,7 +6681,7 @@ def _seed_real_claim_and_item(
             item_id=item_id, expected=None, new_oid=new_oid, operation_id=f"item-op-{issue}"
         ),
     )
-    return claim, item_state.items[item_id]
+    return item_state.items[item_id]
 
 
 def _state_ref_paths(repo: Path, tip: str) -> set[str]:
@@ -6721,32 +6744,34 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
 
 
 class _RaceOnceTransport:
-    """A `store.PushTransport` that lets one unrelated writer land on
+    """A `store.PushTransport` that lets one other writer land on
     `refs/aco/state` between this transition's own read and its first real
-    push attempt (issue #359 R3): a genuine second `git push`, not a
-    monkeypatched rejection, so the ordinary `commit_transition` retry loop
-    meets a real non-fast-forward rejection and must actually refetch and
-    reapply -- proof that no half-state (neither the racer's write nor this
-    transition's own) is ever left applied only in part."""
+    push attempt (issues #359 R3, #459): `race` performs that genuine second
+    `git push` -- not a monkeypatched rejection -- so the ordinary
+    `commit_transition` retry loop meets a real non-fast-forward rejection
+    and must actually refetch and reapply."""
 
-    def __init__(self, worktree: Path, remote: Path) -> None:
-        self._worktree = worktree
-        self._remote = remote
-        self._raced = False
+    def __init__(self, race: Callable[[], object]) -> None:
+        self._race: Callable[[], object] | None = race
         self._real = store.GitPushTransport()
-        self.racer_commit: str | None = None
 
     def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
-        if not self._raced:
-            self._raced = True
-            current = _state_ref_tip(self._worktree, self._remote)
-            tree = _real_git(self._worktree, "rev-parse", f"{current}^{{tree}}").stdout.strip()
-            racer = _real_git(
-                self._worktree, "commit-tree", tree, "-p", current, "-m", "unrelated racer"
-            ).stdout.strip()
-            _real_git(self._worktree, "push", str(self._remote), f"{racer}:{store.STATE_REF}")
-            self.racer_commit = racer
+        if self._race is not None:
+            race, self._race = self._race, None
+            race()
         self._real.push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+
+
+def _unrelated_racer_commit(worktree: Path, remote: Path) -> str:
+    """Pushes one commit carrying the current state tree unchanged -- a
+    writer whose own change is unrelated to the transition it races."""
+    current = _state_ref_tip(worktree, remote)
+    tree = _real_git(worktree, "rev-parse", f"{current}^{{tree}}").stdout.strip()
+    racer = _real_git(
+        worktree, "commit-tree", tree, "-p", current, "-m", "unrelated racer"
+    ).stdout.strip()
+    _real_git(worktree, "push", str(remote), f"{racer}:{store.STATE_REF}")
+    return racer
 
 
 def test_landing_intent_survives_an_unrelated_ref_move_with_no_half_state(
@@ -6766,7 +6791,10 @@ def test_landing_intent_survives_an_unrelated_ref_move_with_no_half_state(
     )
     item_id = items.format_item_id(10)
     closed_oid = store.hash_blob(worktree, b"closed\n")
-    racer = _RaceOnceTransport(worktree, bare_remote)
+    racer_commits: list[str] = []
+    racer = _RaceOnceTransport(
+        lambda: racer_commits.append(_unrelated_racer_commit(worktree, bare_remote))
+    )
 
     new_state = store.commit_transition(
         worktree=worktree,
@@ -6785,7 +6813,7 @@ def test_landing_intent_survives_an_unrelated_ref_move_with_no_half_state(
         transport=racer,
     )
 
-    assert racer.racer_commit is not None
+    [racer_commit] = racer_commits
     # The racer's own commit is the ref state that stood between the
     # rejected first push and the retry that succeeded -- reading its tree
     # (an immutable git object, not a live poll) proves neither the item nor
@@ -6793,20 +6821,63 @@ def test_landing_intent_survives_an_unrelated_ref_move_with_no_half_state(
     # pre-landing oid and the claim is still present, exactly as they were
     # before this transition ever touched the ref.
     racer_item_oid = _real_git(
-        worktree, "rev-parse", f"{racer.racer_commit}:items/{item_id}.md"
+        worktree, "rev-parse", f"{racer_commit}:items/{item_id}.md"
     ).stdout.strip()
     assert racer_item_oid == open_oid
-    assert "claims/issue-10.toml" in _state_ref_paths(worktree, racer.racer_commit)
+    assert "claims/issue-10.toml" in _state_ref_paths(worktree, racer_commit)
     assert new_state.items[item_id] == closed_oid
     assert protocol.claim_key(protocol.IssueIdentity(10), "") not in new_state.claims
     assert new_state.tip is not None
     # The retry rebuilt directly on the racer's own commit -- no commit from
     # the rejected first attempt sits between them.
     parent = _real_git(worktree, "rev-parse", f"{new_state.tip}^").stdout.strip()
-    assert parent == racer.racer_commit
+    assert parent == racer_commit
     refetched = store.fetch_state(worktree=worktree, remote=str(bare_remote))
     assert refetched.items[item_id] == closed_oid
     assert protocol.claim_key(protocol.IssueIdentity(10), "") not in refetched.claims
+
+
+def test_item_close_refuses_a_claim_that_lands_between_its_first_attempt_and_the_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #459 proof 1: a claim lands on the item after the close read an
+    unclaimed state and before its first push, so that push is rejected; the
+    retry re-applies the close to the fresh state, meets the live claim, and
+    refuses with PIN-26's sentence -- the item stays open, the claim stays."""
+    worktree, bare_remote = _reset_repository(tmp_path)
+    _use_real_store(monkeypatch)
+    store.bootstrap(worktree=worktree, remote=str(bare_remote))
+    open_oid = _land_real_item(worktree, bare_remote, issue=10, content=b"open\n")
+    item_id = items.format_item_id(10)
+    close = protocol.ItemCloseIntent(
+        protocol.ItemWriteIntent(
+            item_id=item_id,
+            expected=open_oid,
+            new_oid=store.hash_blob(worktree, b"closed\n"),
+            operation_id="close-op-10",
+        ),
+        protocol.IssueIdentity(10),
+    )
+    racer = _RaceOnceTransport(
+        lambda: _land_real_claim(worktree, bare_remote, issue=10, claim_id="claim-10")
+    )
+    subject = store.TransitionSubject(f"write item {item_id}")
+
+    with pytest.raises(
+        protocol.ClaimUnavailableError,
+        match=r"^#10 has a live claim \(Codex Sol \(builder\)\); release the claim first$",
+    ):
+        store.commit_transition(
+            worktree=worktree,
+            remote=str(bare_remote),
+            subject=subject,
+            intent=close,
+            transport=racer,
+        )
+
+    refetched = store.fetch_state(worktree=worktree, remote=str(bare_remote))
+    assert refetched.items[item_id] == open_oid
+    assert protocol.claim_key(protocol.IssueIdentity(10), "") in refetched.claims
 
 
 def test_landing_intent_refuses_a_stale_item_oid_without_writing_anything(

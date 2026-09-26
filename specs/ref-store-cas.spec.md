@@ -32,6 +32,7 @@ exit `2`, exactly as `specs/claim-record.spec.md` already documents.
 | a subtree malformed | — | — | CAS-27..33 |
 | a resource file malformed | — | — | CAS-34..36 |
 | an item write's `expected` is stale or `None` | — | CAS-19, CAS-20 | — |
+| a claim lands on the item an `item close` retries | — | CAS-52 | — |
 
 \* `aco bootstrap`'s own push shares CAS-15's exact three-shaped sentence at 8 attempts instead of a transition's 32; see the section preamble below.
 
@@ -97,6 +98,7 @@ transition), and which of the three causes applies.
 - [ ] [CAS-20] An item write whose `expected` no longer matches the item's current stored oid refuses `item '<id>' was written since it was read (expected <oid>, found <oid-or-None>); re-read and retry`.
 - [ ] [CAS-21] Two item writes on distinct ids racing for the same tip both land (except CAS-51): `items/` is rebuilt from the full id -> oid map on every write, never a copy of the parent tree's own `items/` oid.
 - [ ] [CAS-51] An item write holding the whole `items/` it checked (a `board --serve` ruling click) refuses `items/ was written since this write checked it; re-read and retry` once any other item changed.
+- [ ] [CAS-52] `item close` re-checks PIN-26 on every attempt: a claim that lands on the item between a rejected push and its retry refuses the close with PIN-26's sentence, the item left open.
 
 ## `schema.toml`
 

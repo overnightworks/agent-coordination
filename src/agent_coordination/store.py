@@ -49,6 +49,7 @@ from .protocol import (
     ClaimState,
     ClaimTransitionIntent,
     ClaimUnavailableError,
+    ItemCloseIntent,
     ItemWriteIntent,
     LandingIntent,
     MalformedStateTreeError,
@@ -132,6 +133,9 @@ _TRANSITION_KINDS: dict[type[ClaimTransitionIntent], _TransitionKind] = {
     RescopeIntent: _TransitionKind(label=TransitionIntent.RESCOPE, claim_shaped=True),
     ReleaseIntent: _TransitionKind(label=TransitionIntent.RELEASE, claim_shaped=True),
     ItemWriteIntent: _TransitionKind(label=TransitionIntent.ITEM_WRITE, claim_shaped=False),
+    # A close commits as the item write it is; its live-claim check is a
+    # precondition of `apply`, not a trailer of its own (issue #459).
+    ItemCloseIntent: _TransitionKind(label=TransitionIntent.ITEM_WRITE, claim_shaped=False),
     LandingIntent: _TransitionKind(label=TransitionIntent.LANDING, claim_shaped=True),
 }
 _CLAIM_LABEL = _TRANSITION_KINDS[ClaimIntent].label
@@ -1569,7 +1573,7 @@ def _transition_message(
     )
     if isinstance(intent, LandingIntent):
         subject_field = f"item_id: {intent.item_id}\nclaim_id: {intent.claim_id}"
-    elif isinstance(intent, ItemWriteIntent):
+    elif isinstance(intent, ItemWriteIntent | ItemCloseIntent):
         subject_field = f"item_id: {intent.item_id}"
     else:
         subject_field = f"claim_id: {intent.claim_id}"

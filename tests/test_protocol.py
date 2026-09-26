@@ -414,3 +414,26 @@ def test_apply_landing_intent_refuses_against_a_missing_state_ref() -> None:
 
     with pytest.raises(protocol.ClaimError, match="does not exist yet"):
         protocol.apply(protocol.EMPTY_STATE, intent)
+
+
+# --- `ItemCloseIntent`: a close refused while its item is claimed (#459) ---
+
+
+def test_apply_item_close_intent_refuses_while_the_item_is_claimed() -> None:
+    """Issue #459: the live-claim check is part of the transition itself, so
+    every attempt `store.commit_transition` applies it to re-checks it; the
+    unclaimed close is `item close`'s own CLI proofs (PIN-25, ITEM-16)."""
+    claimed = _claimed_state_with_item()
+    write = protocol.ItemWriteIntent(
+        item_id=_LANDING_ITEM_ID,
+        expected=_LANDING_ITEM_OID,
+        new_oid=_LANDING_ITEM_NEW_OID,
+        operation_id="close-op",
+    )
+    intent = protocol.ItemCloseIntent(write, protocol.IssueIdentity(42))
+
+    with pytest.raises(
+        protocol.ClaimUnavailableError,
+        match=r"^#42 has a live claim \(Ada \(builder\)\); release the claim first$",
+    ):
+        protocol.apply(claimed, intent)

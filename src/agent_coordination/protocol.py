@@ -983,6 +983,28 @@ class ItemWriteIntent:
 
 
 @dataclass(frozen=True)
+class ItemCloseIntent:
+    """`aco item close`'s own write (issue #459): `write` is the ordinary
+    item-blob CAS (`ItemWriteIntent`'s own discipline, unchanged), and
+    `issue` the item's claim identity, which must hold no live claim --
+    checked by `apply` on every attempt, so a claim that lands between a
+    rejected push and its retry refuses the close instead of the retry
+    re-applying a write that was checked against a stale state. Modelled on
+    `LandingIntent`, which re-checks its own claim on every attempt too."""
+
+    write: ItemWriteIntent
+    issue: IssueIdentity
+
+    @property
+    def item_id(self) -> str:
+        return self.write.item_id
+
+    @property
+    def operation_id(self) -> str:
+        return self.write.operation_id
+
+
+@dataclass(frozen=True)
 class LandingIntent:
     """A `release --merged <sha|empty>` transition under `storage =
     "state-ref"` (issue #359): closes one state-ref item's blob -- the same
@@ -1007,7 +1029,7 @@ class LandingIntent:
 
 
 ClaimTransitionIntent = (
-    ClaimIntent | RescopeIntent | ReleaseIntent | ItemWriteIntent | LandingIntent
+    ClaimIntent | RescopeIntent | ReleaseIntent | ItemWriteIntent | ItemCloseIntent | LandingIntent
 )
 
 
@@ -1229,6 +1251,23 @@ def _apply_item_write_intent(state: ClaimState, intent: ItemWriteIntent) -> Clai
     return replace(state, items=MappingProxyType(new_items))
 
 
+def _require_no_live_claim(state: ClaimState, issue: IssueIdentity) -> None:
+    """Refuses while `issue` still carries a live claim: a closed item with
+    a live claim on it is the `RECOVERY` anomaly the board guards against,
+    never a state `item close` creates (PIN-26)."""
+    live_claim = state.claims.get(claim_key(issue, ""))
+    if live_claim is not None:
+        raise ClaimUnavailableError(
+            f"#{issue.issue} has a live claim "
+            f"({_claimant_text(live_claim.agent, live_claim.role)}); release the claim first"
+        )
+
+
+def _apply_item_close_intent(state: ClaimState, intent: ItemCloseIntent) -> ClaimState:
+    _require_no_live_claim(state, intent.issue)
+    return _apply_item_write_intent(state, intent.write)
+
+
 def _apply_landing_intent(state: ClaimState, intent: LandingIntent) -> ClaimState:
     """Closes `intent.item_id`'s blob and releases `intent.claim_id`'s claim
     in the one `ClaimState` transition a landing commits (issue #359): the
@@ -1259,7 +1298,7 @@ def _apply_landing_intent(state: ClaimState, intent: LandingIntent) -> ClaimStat
 
 def apply(state: ClaimState, intent: ClaimTransitionIntent) -> ClaimState:
     """The pure claim-state transition (issue #176 §1; item writes, issue
-    #279; atomic landings, issue #359): the sole writer of
+    #279; atomic landings, issue #359; item closes, issue #459): the sole writer of
     `ClaimState.claims`/`consumed_ids`/`resources`/`items`. Assumes
     `state.tip` is already real -- `store.py` never calls this against
     `EMPTY_STATE`."""
@@ -1271,6 +1310,8 @@ def apply(state: ClaimState, intent: ClaimTransitionIntent) -> ClaimState:
         return _apply_release_intent(state, intent)
     if isinstance(intent, LandingIntent):
         return _apply_landing_intent(state, intent)
+    if isinstance(intent, ItemCloseIntent):
+        return _apply_item_close_intent(state, intent)
     return _apply_item_write_intent(state, intent)
 
 

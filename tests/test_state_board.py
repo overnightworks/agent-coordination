@@ -471,6 +471,20 @@ class _UnusedItemWriter:
         del expected, content, store_expected
         raise AssertionError(f"unexpected write to item {item_id}")
 
+    def close_item(
+        self,
+        item_id: str,
+        *,
+        number: int,
+        expected: protocol.ObjectId,
+        content: bytes,
+        store_expected: Mapping[str, protocol.ObjectId] | None,
+    ) -> protocol.ObjectId:
+        del number
+        return self.write_item(
+            item_id, expected=expected, content=content, store_expected=store_expected
+        )
+
 
 def _fake_oid(seed: str) -> protocol.ObjectId:
     """A well-formed 40-character git object id, deterministic in `seed` --
