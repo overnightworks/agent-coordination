@@ -1,0 +1,7 @@
+claim_id = "af81514f45cf49be85de403e405a1382"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "21fd7cc417aa9b777470e2b77f9ac859bcc0d441"
+branch = "claude/issue-299-browser-estimates"
+scope = ["tests/test_board_serve.py"]
+opened_commit = "b84838387674d11f8b93723f858bc67b10973524"
