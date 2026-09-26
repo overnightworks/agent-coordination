@@ -81,7 +81,7 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 - [ ] [PIN-25] `aco item close ITEM` under `storage = "state-ref"` prints `CLOSED aco-xxxxxx` then a `freed: ` line naming every item `ITEM`'s own close just freed, or `freed: none`, exit `0` (see E-PIN-09).
 - [ ] [PIN-26] `aco item close ITEM` against an item still carrying a live claim refuses `#<n> has a live claim (<agent> (<role>)); release the claim first`, before any write.
 - [ ] [PIN-27] A second `aco item close ITEM` on an already-closed item refuses `<item-id> is already closed (closed on <closed_at>)`.
-- [ ] [PIN-28] `aco item close ITEM` for an `ITEM` no `items/` entry carries refuses `<item-id> does not exist in <repository>`: `owner/repo` on a forge host, a forge-less remote's own path (E-PIN-10).
+- [ ] [PIN-28] `aco item close ITEM` for an `ITEM` no `items/` entry carries refuses `<item-id> does not exist in <repository>`: `owner/repo` on a forge host, a forge-less remote's path less `.git` (E-PIN-10).
 
 ## Never
 
