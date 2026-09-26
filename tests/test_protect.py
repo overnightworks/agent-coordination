@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -1899,6 +1900,42 @@ def test_rescope_succeeds_from_every_cwd_when_the_add_path_is_absolute(
     assert capsys.readouterr().out == f"RESCOPED issue #72: {claimed.claim_id}\n"
 
 
+def test_rescope_admits_a_file_in_a_new_directory_that_protect_then_allows_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #474: `rescope --add` of a file whose directories do not exist
+    yet resolves the worktree from their nearest existing ancestor, the way
+    `protect` judges the same path (RESC-18, PROT-39), so the claim can grow
+    before the write the hook would otherwise deny with `claim first`."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    _use_real_path_is_tracked(monkeypatch)
+    _main, worktree = _protect_real_repo_with_worktree(tmp_path)
+    new_file = worktree / "neu" / "tief" / "x.py"
+    claimed = _protect_active_claim(
+        "Codex Sol", scope=("src/widget.py",), branch="codex/issue-72-widget"
+    )
+    states = [_protect_state_with_claim(claimed)]
+    monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: states[-1])
+
+    def commit(*, worktree, remote, subject, intent):
+        states.append(protocol.apply(states[-1], intent))
+        return states[-1]
+
+    monkeypatch.setattr(store, "commit_transition", commit)
+
+    status = issue_claim.main(["rescope", "72", "--add", str(new_file)])
+
+    assert status == 0
+    assert capsys.readouterr().out == f"RESCOPED issue #72: {claimed.claim_id}\n"
+    assert _protect_main(monkeypatch, _write_target_payload(new_file)) == 0
+    _assert_protect_decision(capsys, decision="allow", reason=None)
+
+
 def _rescope_args_all_relative(tmp_path: Path) -> list[str]:
     _protect_real_repo_with_worktree(tmp_path)
     return ["rescope", "72", "--add", "docs/widget.md"]
@@ -2263,6 +2300,20 @@ def _rescope_args_add_path_outside_any_repository(tmp_path: Path) -> list[str]:
     return ["rescope", "72", "--add", str(outside / "file.py")]
 
 
+def _rescope_args_add_path_in_a_new_directory_outside_any_repository(
+    tmp_path: Path,
+) -> list[str]:
+    return ["rescope", "72", "--add", str(tmp_path / "outside" / "neu" / "x.py")]
+
+
+def _rescope_args_add_dotdot_path_through_a_missing_directory_out_of_the_worktree(
+    tmp_path: Path,
+) -> list[str]:
+    _main, worktree = _protect_real_repo_with_worktree(tmp_path)
+    escape_to_outside = os.path.relpath(tmp_path / "outside", worktree)
+    return ["rescope", "72", "--add", f"{worktree}/missing/../{escape_to_outside}/new/q.py"]
+
+
 def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
     unborn = tmp_path / "unborn"
     unborn.mkdir()
@@ -2278,6 +2329,14 @@ def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
             "is outside the resolved checkout",
         ),
         (_rescope_args_add_path_outside_any_repository, "not in a repository"),
+        (
+            _rescope_args_add_path_in_a_new_directory_outside_any_repository,
+            "not in a repository",
+        ),
+        (
+            _rescope_args_add_dotdot_path_through_a_missing_directory_out_of_the_worktree,
+            "not in a repository",
+        ),
         (_rescope_args_add_path_in_an_unborn_checkout, checkout.NO_COMMIT_CHECKOUT_REASON),
         (_rescope_args_all_relative, checkout.RELATIVE_PAYLOAD_PATH_DENIAL),
         (_rescope_args_mixed_absolute_and_relative, checkout.RELATIVE_PAYLOAD_PATH_DENIAL),
@@ -2285,6 +2344,8 @@ def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
     ids=[
         "second-add-path-outside-checkout",
         "outside-any-repository",
+        "new-directory-outside-any-repository",
+        "dotdot-through-missing-directory-outside-any-repository",
         "checkout-has-no-commit",
         "all-relative",
         "mixed-absolute-and-relative",
@@ -2316,6 +2377,30 @@ def test_rescope_denies_before_touching_the_store(
 
     assert status == 2
     assert expected_error_fragment in capsys.readouterr().err
+
+
+def test_rescope_json_reports_a_dotdot_path_through_a_missing_directory_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """RESC-17: a `..` path that leaves the worktree through a missing
+    directory is an unresolved checkout, so `--json` reports `unavailable`
+    with the sentence stderr printed."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    args = _rescope_args_add_dotdot_path_through_a_missing_directory_out_of_the_worktree(tmp_path)
+
+    status = issue_claim.main([*args, "--json"])
+
+    captured = capsys.readouterr()
+    refusal = json.loads(captured.out)
+    assert status == 2
+    assert (refusal["ok"], refusal["reason"]) == (False, "unavailable")
+    assert "not in a repository" in refusal["message"]
+    assert captured.err == f"ERROR: {refusal['message']}\n"
 
 
 # `protect.judge`'s own direct proofs (issue #394): a real bare-remote

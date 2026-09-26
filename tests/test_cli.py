@@ -17654,16 +17654,27 @@ def _claim_untracked_scope_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     return _read_once(["claim", "314", "--scope", "src/x.py"], toplevel=worktree)
 
 
-def _rescope_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> _CountedRun:
+def _rescope_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     """`rescope` reads the checkout its own `--add` path resolves to, never
-    the process's cwd; `_git_checkout` places that checkout at `/repo`, and
-    the toplevel that resolution already read is the one its store context
-    uses, never read there a second time."""
+    the process's cwd, and the toplevel that resolution already read is the
+    one its store context uses, never read there a second time. The fake
+    checkout sits in a `tmp_path` child that is never created, so the
+    resolution reads from its nearest existing ancestor, `tmp_path` itself
+    (RESC-18)."""
     _arranged_claim_client(monkeypatch)
+    repo = tmp_path / "repo"
+    git_values = _git_checkout(
+        toplevel=str(repo),
+        git_directory=str(repo / ".git" / "worktrees" / "issue-72"),
+        common_directory=str(repo / ".git"),
+    )
+    monkeypatch.setattr(
+        checkout, "_git_output", lambda arguments, **_kwargs: git_values[tuple(arguments)]
+    )
     claimed = request(agent="Ada", issue=72, branch="codex/issue-72", scope=("src/widget.py",))
     _patch_store_write(monkeypatch, _store_claim_from_request(claimed))
-    argv = ["--repo", REPOSITORY, "rescope", "72", "--agent", "Ada", "--add", "/repo/new.py"]
-    return _read_once(argv, toplevel=Path("/repo"), directory=Path("/repo"))
+    argv = ["--repo", REPOSITORY, "rescope", "72", "--agent", "Ada", "--add", str(repo / "new.py")]
+    return _read_once(argv, toplevel=repo, directory=tmp_path)
 
 
 def _cut_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
