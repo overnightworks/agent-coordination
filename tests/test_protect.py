@@ -538,19 +538,29 @@ def test_protect_each_session_variable_alone_identifies_the_claim_holder(
     _assert_protect_decision(capsys, decision="allow")
 
 
+@pytest.mark.parametrize(
+    "environ",
+    [
+        pytest.param({}, id="no-variable"),
+        pytest.param({"CLAUDE_SESSION_ID": "sess-1"}, id="retired-claude-session-id-only"),
+    ],
+)
 def test_protect_missing_identity_denies_a_claimable_write_without_github(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    environ: dict[str, str],
 ) -> None:
     """PROT-08 (issue #448): identity resolves last, once the path's own
     linked worktree and its live state are in hand -- a write that reaches
     a claim check with no `ACO_AGENT`, `GROK_SESSION_ID`, or
     `CLAUDE_CODE_SESSION_ID` denies naming all three, never GitHub -- and never
-    `--agent`, a flag the hook line does not have."""
+    `--agent`, a flag the hook line does not have. The retired
+    `CLAUDE_SESSION_ID` names no identity either (issue #454, no
+    compatibility layer)."""
     _isolate_protect_home(monkeypatch, tmp_path)
     work = tmp_path / "work"
-    _set_agent_identity_env(monkeypatch)
+    _set_agent_identity_env(monkeypatch, environ)
     _forbid_github_construction(monkeypatch)
     _patch_protect_git(monkeypatch, work)
     _patch_protect_claim(monkeypatch, scope=("src",))
