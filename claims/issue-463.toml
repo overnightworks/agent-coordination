@@ -1,0 +1,8 @@
+claim_id = "db9e7380de0749f086da9d2c1e1fd7d1"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "d3432abbed526260802d01ba480f498ab6be1918"
+branch = "claude/issue-463-scope-check-rule"
+scope = [".agent-claim/brief.toml", "README.md", "tests/test_board.py", "tests/test_cli.py"]
+opened_commit = "ba8be488ba2ef675384aadf0276378f531127871"
+whole_reason = "one rule in three brief steps plus one README sentence"
