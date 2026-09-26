@@ -2,8 +2,8 @@
 
 `aco brief <item>`: one dispatch brief composed from reads a lane step's body
 otherwise gets assembled from by hand -- the item's own body, its live issue
-claim, that claim's lane tip, and the files the lane touches against its
-base. `aco brief <item> --step <step>` adds two more sections, this
+claim, that claim's lane tip, and the files the lane itself changes since
+its merge base with trunk. `aco brief <item> --step <step>` adds two more sections, this
 repository's own rules and checks for that lane step, read from the tracked
 `.agent-claim/brief.toml`. This file owns the command's own argument, its
 printed section shape, when each section carries a value versus stays empty,
@@ -14,8 +14,12 @@ record's own fields this command reads (CLAIM-01, CLAIM-05, CLAIM-47), and
 `specs/storage-pin.spec.md` owns the item-reference grammar `<item>`
 accepts (PIN-08) and the state-ref forge gate (PIN-04, PIN-05). `<item>`
 is the argument as given; `<n>` its resolved number; `<step>` is one of
-`build`, `review`, `fix`, `land`. A refusal reaching the shared collection
-point prints `ERROR: <sentence>` on stderr, exit `2`.
+`build`, `review`, `fix`, `land`; `<trunk>` is `<remote>/HEAD`'s target, for the
+canonical remote `<remote>`, when this checkout records one -- taken as
+recorded, even when that target no longer resolves -- otherwise the first
+of `<remote>/main`, `<remote>/master`, the local `main`, and the local
+`master` that resolves in this checkout. A refusal reaching the shared
+collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 ## Behavior table
 
@@ -23,7 +27,8 @@ point prints `ERROR: <sentence>` on stderr, exit `2`.
 |---|---|---|
 | a live issue claim, lane branch resolves | BRIEF-01, BRIEF-02, BRIEF-11, BRIEF-05 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch gone | BRIEF-04 | BRIEF-06, BRIEF-10 |
-| a live issue claim, lane branch read fails outright | BRIEF-18 | BRIEF-18 |
+| a live issue claim, lane branch read or `<trunk>` diff fails outright | BRIEF-18 | BRIEF-18 |
+| a live issue claim, lane branch resolves, no `<trunk>` | BRIEF-20 | BRIEF-20 |
 | no live issue claim | BRIEF-03 | BRIEF-06 |
 | `<item>` names no item at all | BRIEF-08 | BRIEF-08 |
 | a non-GitHub canonical remote | BRIEF-07 | BRIEF-07 |
@@ -37,13 +42,14 @@ point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-11] That claim line's indented lines are one per scope path, then `  whole: <reason>` only when the claim carries one (see E-BRIEF-01).
 - [ ] [BRIEF-03] With no live issue claim, `CLAIM` prints exactly `no active claim`; `TIP` prints no value line at all; `TOUCHED` lists nothing (see E-BRIEF-02).
 - [ ] [BRIEF-04] With a live claim whose branch resolves neither locally nor as `origin/<branch>` -- git itself answering "no such ref" -- `TIP` prints `branch not found` and `TOUCHED` lists nothing (see E-BRIEF-03).
-- [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from a `git diff --name-only <base>..<tip>` (see E-BRIEF-01).
-- [ ] [BRIEF-18] When a live claim's branch read fails instead of answering not-found, `aco brief` refuses with git's own failure detail, exit `2`, `reason: unavailable` under `--json` (see E-BRIEF-12).
+- [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from `git diff --name-only <trunk>...<tip>` (see E-BRIEF-01, E-BRIEF-14).
+- [ ] [BRIEF-18] A live claim's branch read failing instead of answering not-found, or its `<trunk>...<tip>` diff failing, refuses with git's own detail, exit `2`, `reason: unavailable` (see E-BRIEF-12).
+- [ ] [BRIEF-20] A found tip with no `<trunk>` refuses `cannot determine the trunk: none of <remote>/HEAD, <remote>/main, <remote>/master, main or master resolves`, exit `2`, `reason: unavailable` (see E-BRIEF-15).
 - [ ] [BRIEF-08] `<item>` naming no item at all prints one empty line for the missing body, then every section exactly as BRIEF-01..06 describe with no live claim -- never a refusal (see E-BRIEF-06).
 
 ## `--json`
 
-- [ ] [BRIEF-06] `aco brief <item> --json` prints `specs/output.spec.md`'s envelope with `reason: "composed"`, then `"body", "claim", "tip", "touched"`, `"claim"` `null` with no live claim (see E-BRIEF-04).
+- [ ] [BRIEF-06] `aco brief <item> --json` prints `specs/output.spec.md`'s envelope, `reason: "composed"`, `"body", "claim", "tip", "touched"` (as `TOUCHED`), `"claim"` `null` without a live claim (see E-BRIEF-14).
 - [ ] [BRIEF-10] A non-`null` `"claim"` object is `{"agent", "role", "branch", "base", "scope", "whole", "age"}`, `"whole"` `null` without one (see E-BRIEF-04).
 
 ## `--step`
@@ -62,7 +68,7 @@ point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 - [ ] [BRIEF-07] `aco brief <item>` on a canonical remote whose host has no forge adapter refuses `no forge adapter for host <host>`, exit `2`, before any forge resolution (see E-BRIEF-05).
 - [ ] [BRIEF-09] Under `storage = "state-ref"`, `aco brief <item>` resolves the state-ref forge like `item show`/`edit`/`close`; `--repo` there refuses the same as those (PIN-04, PIN-05).
-- [ ] [BRIEF-17] `--json` on a dispatched refusal (see BRIEF-07/09/15/19) prints `specs/output.spec.md`'s envelope, the sentence as `message`, `reason` from the table below (see E-BRIEF-11).
+- [ ] [BRIEF-17] `--json` on a dispatched refusal (see BRIEF-07/09/15/18/19/20) prints `specs/output.spec.md`'s envelope, the sentence as `message`, `reason` from the table below (see E-BRIEF-11).
 - [ ] [BRIEF-19] A forge failure reading the item refuses `ERROR: <sentence>`, exit `2`, `--json` `reason: "unavailable"` (see E-BRIEF-13).
 
 `reason`, by which refusal fired:
@@ -70,7 +76,7 @@ point prints `ERROR: <sentence>` on stderr, exit `2`.
 | refusal | `reason` |
 |---|---|
 | PIN-04 (`--repo` under `storage = state-ref`) | `invalid_usage` |
-| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-19 (the item read fails) | `unavailable` |
+| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 (no `<trunk>`) | `unavailable` |
 
 ## Never
 
@@ -304,5 +310,33 @@ Setup: bare-remote, fake `gh`, the forge failing the item read with `<detail>`
 $ aco brief 42 --json
 2> ERROR: <detail>
 {"ok": false, "reason": "unavailable", "message": "<detail>"}
+exit 2
+```
+
+### E-BRIEF-14 -- a trunk pull adds nothing to `TOUCHED`
+
+Setup: as E-BRIEF-04, then another lane lands `b.py` on `origin/main`, and
+`ada/issue-42` merges `origin/main` into itself
+
+```console
+$ aco brief 42 --json
+{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m"}, "tip": "<tip>", "touched": ["README.md"]}
+exit 0
+```
+
+### E-BRIEF-15 -- no `<trunk>`
+
+Setup: as E-BRIEF-04, but `origin`'s default branch is `trunk` and it
+carries no `main` or `master`, the work repository has no local `main` or
+`master`, and after the claim and push `origin/HEAD` is no longer recorded
+(`git remote set-head origin --delete`)
+
+```console
+$ aco brief 42
+2> ERROR: cannot determine the trunk: none of origin/HEAD, origin/main, origin/master, main or master resolves
+exit 2
+$ aco brief 42 --json
+2> ERROR: cannot determine the trunk: none of origin/HEAD, origin/main, origin/master, main or master resolves
+{"ok": false, "reason": "unavailable", "message": "cannot determine the trunk: none of origin/HEAD, origin/main, origin/master, main or master resolves"}
 exit 2
 ```

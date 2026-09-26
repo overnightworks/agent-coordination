@@ -3998,11 +3998,6 @@ def _lane_tip(branch: str) -> str | None:
     return None
 
 
-def _touched_files(base: str, tip: str) -> tuple[str, ...]:
-    diff = checkout._git_output(["diff", "--name-only", f"{base}..{tip}"])
-    return tuple(diff.splitlines()) if diff else ()
-
-
 def _print_brief_claim(
     claim: protocol.ActiveClaim, opened_at: datetime, observed_at: datetime
 ) -> None:
@@ -4194,11 +4189,12 @@ def _cmd_brief(parsed: argparse.Namespace, session: _ReadSession) -> int:
     body otherwise gets assembled from by hand (AGENTS.md "the next brief
     names the body, the lane tip ... and the commands"): the item's body from
     the forge, its live claim from the store, the claim branch's current tip,
-    and the files the lane touches against its base. Never a new data
-    source, and never a write. Every refusal on this path -- BRIEF-07,
-    BRIEF-09's PIN-04/PIN-05, BRIEF-15, BRIEF-18's lane-tip read, and the
-    item read itself, which is a forge call like any other (issue #432) --
-    reports through `_refuse` under this command's own vocabulary."""
+    and the files the lane itself changes since its merge base with trunk.
+    Never a new data source, and never a write. Every refusal on this path --
+    BRIEF-07, BRIEF-09's PIN-04/PIN-05, BRIEF-15, BRIEF-18's lane-tip read and
+    trunk diff, BRIEF-20's trunk read, and the item read itself, which is a
+    forge call like any other (issue #432) -- reports through `_refuse` under
+    this command's own vocabulary."""
     as_json = parsed.json
     try:
         return _brief_report(parsed, session)
@@ -4215,14 +4211,14 @@ def _brief_report(parsed: argparse.Namespace, session: _ReadSession) -> int:
     item = int(parsed.item)
     client = session.forge()
     item_body = client.item_reference(item).body or ""
-    worktree, _remote, state = _store_observation(session.context)
+    worktree, remote, state = _store_observation(session.context)
     live = _brief_live_claim(worktree, state, item)
     if live is None:
         tip: str | None = None
         touched: tuple[str, ...] = ()
     else:
         tip = _lane_tip(live.claim.branch)
-        touched = _touched_files(live.claim.base, tip) if tip is not None else ()
+        touched = checkout.lane_changed_paths(tip, remote=remote) if tip is not None else ()
     observed_at = datetime.now(UTC)
     composition = _BriefComposition(item_body, live, observed_at, tip, touched, step_rules)
     if parsed.json:
