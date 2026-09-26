@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from board_fixtures import REPOSITORY, board_issue, complete_contract, proposed_expectation
-from cli_fixtures import stub_board_config_tracked
+from cli_fixtures import count_context_reads, run_context_over, stub_board_config_tracked
 from test_cli import (
     FakeForge,
     _assert_json_refusal_object,
@@ -58,6 +58,7 @@ from agent_coordination import (
 )
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import expectation_lines, rule_expectation
+from agent_coordination.session import RunContext
 
 OPEN_LINE_TEXT = "Brauchen wir Admin-Rechte?"
 SERVED_ITEM = 10
@@ -195,7 +196,7 @@ class ServedBoard:
 def _serving(client: FakeForge) -> Iterator[ServedBoard]:
     parsed = issue_claim._parser().parse_args(["--repo", REPOSITORY, "board", "--serve"])
     session = issue_claim._WriteSession(
-        forge=issue_claim._LazyForge(parsed.repo), release_branch=None
+        forge=issue_claim._LazyForge(issue_claim._run_context(parsed.repo)), release_branch=None
     )
     server = issue_claim._board_server(parsed, session)
     thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
@@ -415,6 +416,69 @@ def test_the_reload_link_redirects_so_a_later_plain_refresh_does_not_rebuild(
     assert "Renamed item" not in plain_body
 
 
+def _served_request(served: ServedBoard, request: str) -> None:
+    token = served.server.token
+    if request == "post":
+        served.post_rule(
+            {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes", "note": ""}
+        )
+    else:
+        served.get(token=token, reload=request == "reload")
+
+
+@pytest.mark.parametrize(
+    ("requests", "rereads"),
+    [
+        pytest.param(("reload", "reload"), (True, True), id="two-reloading-gets"),
+        pytest.param(("get", "post", "get"), (False, True, True), id="get-post-get"),
+    ],
+)
+def test_every_request_reads_the_repository_through_its_own_fresh_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    requests: tuple[str, ...],
+    rereads: tuple[bool, ...],
+) -> None:
+    """Issue #457 proof 5: startup reads the checkout once through the run's
+    own context; after that every request builds exactly one fresh child
+    context of its own, never one another request built. A request that
+    needs the repository -- a rebuild or a ruling click -- reads it through
+    that child exactly once, and one the held page answers reads nothing.
+    A context memoised across requests would leave the second of two
+    reloads reading nothing; one built only to rebuild or click would leave
+    the cached first GET without a child."""
+    client = _served_board_environment(monkeypatch, tmp_path)
+    reads = count_context_reads(monkeypatch)
+    children = _record_fresh_contexts(monkeypatch)
+    once = ({None: 1}, {tmp_path: 1})
+    nothing: tuple[dict[Path | None, int], dict[Path | None, int]] = ({}, {})
+
+    with _serving(client) as served:
+        counted = [(reads.drain(), len(children))]
+        for request in requests:
+            _served_request(served, request)
+            counted.append((reads.drain(), len(children)))
+
+    expected_reads = [once, *(once if reread else nothing for reread in rereads)]
+    assert counted == [(read, built) for built, read in enumerate(expected_reads)]
+    assert len({id(child) for child in children}) == len(requests)
+
+
+def _record_fresh_contexts(monkeypatch: pytest.MonkeyPatch) -> list[RunContext]:
+    """Every child `RunContext.fresh` builds, in order, held so no two share
+    an identity."""
+    children: list[RunContext] = []
+    build_fresh = RunContext.fresh
+
+    def recording_fresh(context: RunContext) -> RunContext:
+        child = build_fresh(context)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(RunContext, "fresh", recording_fresh)
+    return children
+
+
 def _arrange_sized_items(
     client: FakeForge,
     monkeypatch: pytest.MonkeyPatch,
@@ -575,7 +639,7 @@ def test_post_rule_on_an_already_ruled_line_writes_nothing_and_shows_the_refusal
     refused click rebuilds too and the page shows the line ruled."""
     token = served_board.server.token
     served_board.get(token=token)
-    issue_claim.rule_item(served_board.client, SERVED_ITEM, 1, "yes", None)
+    issue_claim.rule_item(run_context_over(served_board.client), SERVED_ITEM, 1, "yes", None)
     ruled_body = served_board.client.item_bodies[SERVED_ITEM]
 
     second = served_board.post_rule(
@@ -1591,5 +1655,7 @@ def test_rule_item_refuses_an_already_ruled_line_by_name(
         forge.ItemState.OPEN, "Plain item", once_ruled
     )
 
+    context = run_context_over(client)
+
     with pytest.raises(protocol.ClaimError, match="already ruled"):
-        issue_claim.rule_item(client, SERVED_ITEM, 1, "no", None)
+        issue_claim.rule_item(context, SERVED_ITEM, 1, "no", None)

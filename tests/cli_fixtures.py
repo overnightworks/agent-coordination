@@ -9,14 +9,17 @@ rootless collection puts `tests/` on `sys.path`, so a plain
 from __future__ import annotations
 
 import subprocess
+from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 from board_fixtures import BASE
 
-from agent_coordination import checkout, github, process, store
+from agent_coordination import board, checkout, forge, github, process, store
 from agent_coordination.protocol import ClaimError
+from agent_coordination.session import RunContext
 
 
 def _stub_one_git_call(
@@ -203,7 +206,7 @@ def _patch_command(*lines: str) -> str:
 
 
 def _forbid_remote_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unused(remote: str) -> str:
+    def unused(remote: str, **_kwargs: object) -> str:
         pytest.fail("a forge-free command must never read a remote's own URL")
 
     monkeypatch.setattr(checkout, "remote_url", unused)
@@ -237,3 +240,51 @@ def arrange_scope_width(
     monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: versioned or ())
     if validate_checkout:
         monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+
+
+def run_context_over(client: forge.ForgeReader) -> RunContext:
+    """A cwd-rooted `RunContext` whose forge is `client`: a test driving a
+    helper that takes a context reads the same toplevel and tracked
+    `board.toml` a command would, with its own fake forge behind them."""
+    return RunContext(None, build_forge=lambda _context: client)
+
+
+@dataclass
+class ContextReads:
+    """Every toplevel and board-configuration read one command made, keyed
+    by the directory it was read from (issue #457)."""
+
+    toplevels: Counter[Path | None] = field(default_factory=Counter)
+    configs: Counter[Path | None] = field(default_factory=Counter)
+
+    def drain(self) -> tuple[dict[Path | None, int], dict[Path | None, int]]:
+        """The reads counted since the last drain, forgotten after: one step
+        of a longer sequence (`board --serve`'s requests) counted alone."""
+        taken = dict(self.toplevels), dict(self.configs)
+        self.toplevels.clear()
+        self.configs.clear()
+        return taken
+
+
+def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
+    """Counts every `rev-parse` that asks `--show-toplevel` -- alone, or
+    combined with other queries as `resolve_path_checkout` asks it -- and the
+    `board.toml` tracked check, through whatever git fakes the test already
+    installed, so it is called after the arrangement and before the command."""
+    reads = ContextReads()
+    git_output = checkout._git_output
+    path_is_tracked = checkout.path_is_tracked
+
+    def counting_git_output(arguments: list[str], *, directory: Path | None = None) -> str:
+        if arguments[0] == "rev-parse" and "--show-toplevel" in arguments:
+            reads.toplevels[directory] += 1
+        return git_output(arguments, directory=directory)
+
+    def counting_path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
+        if path == board.CONFIG_PATH.as_posix():
+            reads.configs[directory] += 1
+        return path_is_tracked(path, directory=directory)
+
+    monkeypatch.setattr(checkout, "_git_output", counting_git_output)
+    monkeypatch.setattr(checkout, "path_is_tracked", counting_path_is_tracked)
+    return reads

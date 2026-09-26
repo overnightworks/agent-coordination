@@ -31,35 +31,45 @@ from agent_coordination.protocol import ClaimError, ClaimRequest
 
 _LIVE_VERSIONED_PATHS = checkout.versioned_paths
 _LIVE_TRUNK_LANDINGS = checkout.trunk_landings
-_LIVE_REMOTE_URL = checkout.remote_url
 
 
-def test_origin_remote_url_reads_the_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(checkout, "remote_url", _LIVE_REMOTE_URL)
-    calls: list[list[str]] = []
+@pytest.mark.parametrize(
+    ("remote", "read_remote"),
+    [
+        pytest.param("origin", checkout.origin_remote_url, id="origin"),
+        pytest.param(
+            "upstream",
+            lambda **where: checkout.remote_url("upstream", **where),
+            id="named-remote",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "from_repository_cwd",
+    [
+        pytest.param(True, id="repository-cwd-without-directory"),
+        pytest.param(False, id="directory-from-a-non-repository-cwd"),
+    ],
+)
+def test_remote_url_reads_the_git_config_of_the_given_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    remote: str,
+    read_remote: Callable[..., str],
+    from_repository_cwd: bool,
+) -> None:
+    """Issue #457 proof 7 at the checkout boundary: a remote's URL comes
+    from the git configuration of the directory it is asked for, or of the
+    calling process's cwd when none is given."""
+    repo, origin = _real_repository_with_bare_remote(tmp_path)
+    remote_urls = {"origin": str(origin), "upstream": "git@github.com:owner/repository.git"}
+    _real_git(repo, "remote", "add", "upstream", remote_urls["upstream"])
+    outside_every_repository = tmp_path / "elsewhere"
+    outside_every_repository.mkdir()
+    monkeypatch.chdir(repo if from_repository_cwd else outside_every_repository)
+    where = {} if from_repository_cwd else {"directory": repo}
 
-    def git(arguments: list[str]) -> str:
-        calls.append(arguments)
-        return "git@github.com:owner/repository.git"
-
-    monkeypatch.setattr(checkout, "_git_output", git)
-
-    assert checkout.origin_remote_url() == "git@github.com:owner/repository.git"
-    assert calls == [["config", "--get", "remote.origin.url"]]
-
-
-def test_remote_url_reads_any_named_remote(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(checkout, "remote_url", _LIVE_REMOTE_URL)
-    calls: list[list[str]] = []
-
-    def git(arguments: list[str]) -> str:
-        calls.append(arguments)
-        return "git@github.com:owner/repository.git"
-
-    monkeypatch.setattr(checkout, "_git_output", git)
-
-    assert checkout.remote_url("upstream") == "git@github.com:owner/repository.git"
-    assert calls == [["config", "--get", "remote.upstream.url"]]
+    assert read_remote(**where) == remote_urls[remote]
 
 
 def test_scope_directories_detects_a_git_tree(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -700,11 +710,6 @@ def test_checkout_git_calls_fail_loud_when_git_is_missing_or_times_out(
     direct `subprocess.run` callers (`_git_output` backs `origin_remote_url`)
     -- must translate a missing executable or a timeout to the same
     `ClaimError` text."""
-    # `_stub_canonical_remote` (autouse) replaces `checkout.remote_url` with a
-    # fixed string so every other store-command test skips a real git call;
-    # `origin_remote_url` looks that name up dynamically, so this test must
-    # restore the live implementation to actually reach `subprocess.run`.
-    monkeypatch.setattr(checkout, "remote_url", _LIVE_REMOTE_URL)
 
     def fails(*_arguments, **_kwargs):
         raise raised
