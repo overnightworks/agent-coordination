@@ -106,12 +106,12 @@ def resolved_commit(ref: str) -> str | None:
     return result.stdout.decode().rstrip("\n")
 
 
-def lane_changed_paths(tip: str, *, remote: str, directory: Path | None = None) -> tuple[str, ...]:
+def lane_changed_paths(tip: str, *, remote: str) -> tuple[str, ...]:
     """The paths `tip` changes since its merge base with `remote`'s trunk
     (issue #468): the lane's own change only. A diff from the claim's base
     would also list every path a trunk pull brought in from other lanes."""
-    trunk = _trunk_ref(remote, directory=directory)
-    diff = _git_output(["diff", "--name-only", f"{trunk}...{tip}"], directory=directory)
+    trunk = _trunk_ref(remote)
+    diff = _git_output(["diff", "--name-only", f"{trunk}...{tip}"])
     return tuple(diff.splitlines())
 
 
