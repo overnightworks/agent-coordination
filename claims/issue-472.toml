@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "3f0a4362bcf6af3a1199631d4e67b933ca4a2761"
 branch = "claude/issue-472-runcontext-b5"
-scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "src/agent_coordination/board.py", "src/agent_coordination/body.py", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/github.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_protect.py", "tests/test_session.py", "tests/test_state_board.py"]
+scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "src/agent_coordination/board.py", "src/agent_coordination/body.py", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/github.py", "src/agent_coordination/process.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_process.py", "tests/test_protect.py", "tests/test_session.py", "tests/test_state_board.py"]
 opened_commit = "8e5fb5269160619be944c2c959d0530f51cf0792"
 whole_reason = "Reste aus dem Review von #457: zweite Toplevel-Lesungen, ein gh-Rückfall im falschen Verzeichnis und drei veraltete Kommentare"
