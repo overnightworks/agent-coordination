@@ -22,7 +22,8 @@ those IDs rather than restating them. `<sha>` is the runner's own commit id.
 | `ls-remote`/`fetch` auth or transport failure | CAS-04, CAS-05 |
 | any store-level failure reaching this command's own sink | BOOT-01 |
 | an argument this command does not define | BOOT-02 |
-| `--repo` set, or the canonical remote names a non-GitHub host | BOOT-03 |
+| an OWNER/REPO `--repo` set, or the canonical remote names a non-GitHub host | BOOT-03 |
+| `--repo` not shaped OWNER/REPO | OUT-08 |
 
 ## The command's own argument shape
 
@@ -41,7 +42,7 @@ This command defines no `--json`, so its own sink never invents an error object 
 ## Never
 
 - `aco bootstrap` never writes a second commit once `refs/aco/state` exists: a present ref is a pure read (CAS-01).
-- `aco bootstrap` never resolves an item forge, reads `--repo`, or calls out to the forge: `--repo` and a non-GitHub canonical remote are no error (BOOT-03).
+- `aco bootstrap` never resolves an item forge from `--repo` or calls out to the forge: an OWNER/REPO `--repo` and a non-GitHub canonical remote are no error (BOOT-03); any other `--repo` refuses (OUT-08).
 - `aco bootstrap` never accepts `--json`, a `--ledger` value, or any other flag: its own parser defines the bare subcommand alone (BOOT-02).
 - `aco bootstrap`'s own commit never carries a `claims/`, `ids/`, `resources/`, or `items/` entry: only `schema.toml` (CAS-02's own fact).
 
