@@ -22,7 +22,8 @@ body refusal (BODY-01..BODY-50, cited by PIN-24); `specs/claim-record.spec.md`
 owns the scope canonicalization grammar (CLAIM-19..CLAIM-23) `item new
 --scope` reuses -- never CLAIM-18's comma-versioned-file check, which only
 `aco claim`/`rescope` apply; `specs/ref-store-cas.spec.md` owns the stale-oid refusal
-(CAS-20) a second `item edit`/`item close` from the same snapshot meets;
+(CAS-20) a second `item edit`/`item close` from the same snapshot meets,
+and `item close`'s live-claim re-check on every write attempt (CAS-52);
 `specs/output.spec.md` owns the `--json` envelope itself (key order, `ok`,
 `message`); this file names only its own `reason` vocabulary (ITEM-17,
 ITEM-25, ITEM-32) and cites the others by ID. A refusal prints `ERROR: <sentence>`

@@ -471,6 +471,20 @@ class _UnusedItemWriter:
         del expected, content, store_expected
         raise AssertionError(f"unexpected write to item {item_id}")
 
+    def close_item(
+        self,
+        item_id: str,
+        *,
+        number: int,
+        expected: protocol.ObjectId,
+        content: bytes,
+        store_expected: Mapping[str, protocol.ObjectId] | None,
+    ) -> protocol.ObjectId:
+        del number
+        return self.write_item(
+            item_id, expected=expected, content=content, store_expected=store_expected
+        )
+
 
 def _fake_oid(seed: str) -> protocol.ObjectId:
     """A well-formed 40-character git object id, deterministic in `seed` --
@@ -3494,6 +3508,44 @@ class TestCliStateRefForge:
         state_after_second_close = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state_after_second_close.tip == state_after_first_close.tip
         assert state_after_second_close.items[CLOSE_BLOCKER_ID] == oid_after_first_close
+
+    def test_item_close_names_the_live_claim_before_the_closed_date_on_a_closed_claimed_item(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """PIN-26 outranks an already-closed item (#459 review finding 2): a
+        closed item a live claim still sits on (CLAIM-52's recovery state)
+        refuses with PIN-26's live-claim sentence, not the closed date."""
+        self._live_state_ref_checkout(
+            monkeypatch, tmp_path, bare_remote, worktree, _close_scenario_item_files()
+        )
+        assert issue_claim.main(["item", "close", str(CLOSE_BLOCKER_NUMBER)]) == 0
+        store.commit_transition(
+            worktree=worktree,
+            remote=f"file://{bare_remote}",
+            subject=store.ClaimTransitionSubject(
+                f"claim issue {CLOSE_BLOCKER_NUMBER}", item=str(CLOSE_BLOCKER_NUMBER)
+            ),
+            intent=protocol.ClaimIntent(
+                identity=protocol.IssueIdentity(CLOSE_BLOCKER_NUMBER),
+                agent="Codex Sol",
+                role="builder",
+                base=protocol.ObjectId("c" * 40),
+                branch="codex/closed-and-claimed",
+                scope=("README",),
+                claim_id=protocol.ClaimId("closed-and-claimed"),
+                operation_id="closed-and-claimed-op",
+            ),
+        )
+        capsys.readouterr()
+
+        err = _run_refused(["item", "close", str(CLOSE_BLOCKER_NUMBER)], capsys)
+
+        assert f"#{CLOSE_BLOCKER_NUMBER} has a live claim (Codex Sol (builder))" in err
 
     def test_item_close_refuses_a_live_claim_then_succeeds_after_release_abandoned(
         self,
