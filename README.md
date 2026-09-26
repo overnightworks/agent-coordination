@@ -195,12 +195,15 @@ denies each unknown name and stalls the session.
 Install this in the settings of the session that actually runs the
 subagents -- the orchestrating head's settings, not each worktree's own --
 since every dispatched subagent's tool calls share that one session's
-process, cwd included (issue #314). The matcher names exactly the tools
-that can write a file -- every name `HOOK_TOOL_EFFECTS` marks mutating, plus
-`Bash` and `Monitor`, whose command text it scans -- so every other tool
-(MCP tools, plan mode, task lists, worktree and cron tools) never reaches the
-hook and cannot stall the session; a new file-writing tool joins both that
-table and this matcher. `protect` judges a write from the payload's own path,
+process, cwd included (issue #314). The matcher names every tool the table
+gates -- each name `HOOK_TOOL_EFFECTS` marks mutating, plus the command-text
+tools `Bash` and `Monitor` -- so every other tool (MCP tools, plan mode, task
+lists, worktree and cron tools) never reaches the hook and cannot stall the
+session; a new gated tool joins both that table and this matcher. A named
+limit: `shell` and `run_terminal_command` can write, but their payload names
+no path to judge, so the table clears them as read-only and the matcher leaves
+them out -- like MCP write tools and the worktree tools, the gate does not see
+those writes. `protect` judges a write from the payload's own path,
 never from that shared process cwd, and fails closed on any tool name that
 reaches it unrecognized. A write outside every repository (the session's
 memory, scratchpad, `/tmp`) allows, unless it goes through a file symlink

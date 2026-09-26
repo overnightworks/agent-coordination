@@ -72,10 +72,10 @@ marks each read-only: `ToolSearch`, `SendMessage`, `TaskStop`,
 `ScheduleWakeup`, `SendFeedback`, `Workflow`, and `Artifact` (issue #448).
 `Monitor` is the one session tool that runs a shell script, its own
 `command`, so it is judged exactly like `Bash`.
-The README's hook matcher names exactly the tools that can write a file --
-every mutating name plus `Bash` and `Monitor` -- so any other tool (MCP
-tools, plan mode, task lists) never reaches `protect` and never stalls a
-session; a new file-writing tool joins both the table and that matcher.
+The README's hook matcher names every tool the table gates -- each mutating
+name plus the command-text tools `Bash` and `Monitor` -- so any other tool
+(MCP tools, plan mode, task lists) never reaches `protect` and never stalls a
+session; a new gated tool joins both the table and that matcher.
 
 - [ ] [PROT-03] Unreadable stdin, invalid JSON, or a payload that is not a JSON object denies `invalid hook payload` (PROT-02's shape).
 - [ ] [PROT-04] A payload naming no string tool name under either `toolName` or `tool_name` denies `invalid hook payload`.

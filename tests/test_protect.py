@@ -1054,11 +1054,11 @@ def _documented_hook_matcher() -> str:
     return entry["matcher"]
 
 
-def test_documented_hook_matcher_names_exactly_the_tools_that_can_write() -> None:
+def test_documented_hook_matcher_names_exactly_the_tools_the_table_gates() -> None:
     """PROT-37 (issue #448): the README's matcher keeps every other tool --
     MCP tools, plan mode, task lists -- from reaching `protect`'s fail-closed
     PROT-06, so it must name every tool the table does not clear as read-only,
-    and nothing else, or a new file-writing tool slips past the hook."""
+    and nothing else, or a new gated tool slips past the hook."""
     writing_tools = {
         name
         for name, effect in protect.HOOK_TOOL_EFFECTS.items()
