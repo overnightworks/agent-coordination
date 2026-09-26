@@ -218,12 +218,11 @@ def _assert_protect_decision(
     reason: str | None = None,
 ) -> None:
     captured = capsys.readouterr()
-    assert captured.err == ""
     payload = json.loads(captured.out)
     if decision == "allow":
-        assert payload == {"decision": "allow"}
+        assert (payload, captured.err) == ({"decision": "allow"}, "")
         return
-    assert payload == {"decision": "deny", "reason": reason}
+    assert (payload, captured.err) == ({"decision": "deny", "reason": reason}, f"{reason}\n")
 
 
 def test_protect_denied_checkout_validation_never_reads_the_store(
@@ -527,13 +526,13 @@ def test_protect_missing_identity_denies_a_claimable_write_without_github(
         )
         == 2
     )
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    payload = json.loads(captured.out)
-    assert payload["decision"] == "deny"
-    assert payload["reason"] == (
-        "agent identity is required: set ACO_AGENT (e.g. in the hook line), "
-        "GROK_SESSION_ID, or CLAUDE_SESSION_ID"
+    _assert_protect_decision(
+        capsys,
+        decision="deny",
+        reason=(
+            "agent identity is required: set ACO_AGENT (e.g. in the hook line), "
+            "GROK_SESSION_ID, or CLAUDE_SESSION_ID"
+        ),
     )
 
 
@@ -1038,9 +1037,9 @@ def test_protect_unknown_tool_name_denies_with_a_repair_sentence(
 
     assert _protect_main(monkeypatch, {"toolName": "invented_tool"}) == 2
     captured = capsys.readouterr()
-    assert captured.err == ""
     payload = json.loads(captured.out)
     assert payload["decision"] == "deny"
+    assert captured.err == f"{payload['reason']}\n"
     assert "invented_tool" in payload["reason"]
     assert "HOOK_TOOL_EFFECTS" in payload["reason"]
     assert "238" in payload["reason"]
@@ -1241,10 +1240,7 @@ def test_protect_claim_error_from_write_path_denies_json_without_error_prefix(
         )
         == 2
     )
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    assert "ERROR:" not in captured.out
-    assert json.loads(captured.out) == {"decision": "deny", "reason": "adapter failed"}
+    _assert_protect_decision(capsys, decision="deny", reason="adapter failed")
 
 
 def test_protect_non_claim_error_from_write_path_denies_json_without_traceback(
@@ -1269,13 +1265,7 @@ def test_protect_non_claim_error_from_write_path_denies_json_without_traceback(
         )
         == 2
     )
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    assert "ERROR:" not in captured.out
-    assert json.loads(captured.out) == {
-        "decision": "deny",
-        "reason": "write path crashed",
-    }
+    _assert_protect_decision(capsys, decision="deny", reason="write path crashed")
 
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])

@@ -3,7 +3,7 @@
 `aco protect` is the `PreToolUse` hook entry point (issue #176, #238, #252,
 #314): reading one hook payload from stdin, it judges a single mutating tool
 call against this session's own live claim and prints its verdict as one JSON
-object, never a second time and never on stderr. This file owns the payload
+object, never a second time; a denial repeats its sentence on stderr. This file owns the payload
 envelope, every denial reason and the order they are judged in, and the
 allow/deny JSON shape and exit codes. `specs/claim-record.spec.md` owns a
 claim's own identity, scope grammar and overlap; `specs/ref-store-cas.spec.md`
@@ -61,7 +61,12 @@ could answer for it.
 ## The JSON envelope
 
 - [ ] [PROT-01] A write `protect` authorizes prints exactly `{"decision": "allow"}` to stdout, nothing to stderr, exit `0` (see E-PROT-01).
-- [ ] [PROT-02] A write `protect` refuses prints exactly `{"decision": "deny", "reason": "<sentence>"}` to stdout, nothing to stderr, exit `2` (see E-PROT-02).
+- [ ] [PROT-02] A write `protect` refuses prints exactly `{"decision": "deny", "reason": "<sentence>"}` to stdout, the bare sentence as one stderr line, exit `2` (see E-PROT-02).
+
+Who reads which channel: Claude Code blocks on exit `2` and hands its agent
+the stderr sentence, since the stdout object is not its own hook schema
+(Claude Code hooks reference, "Exit code 2"); Grok reads the stdout object.
+Both see the same sentence, so no tool's agent is left without a reason.
 
 ## The hook payload
 
@@ -243,6 +248,7 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, no live c
 ```console
 $ echo '{"toolName": "Write", "toolInput": {"file_path": "<worktree>/README.md"}}' | aco protect
 {"decision": "deny", "reason": "claim first"}
+2> claim first
 exit 2
 ```
 
@@ -253,6 +259,7 @@ Setup: bare-remote, bootstrapped, no live claim
 ```console
 $ echo '{"toolName": "Write", "toolInput": {"file_path": "<main>/README.md"}}' | aco protect
 {"decision": "deny", "reason": "not main"}
+2> not main
 exit 2
 ```
 
@@ -263,6 +270,7 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `
 ```console
 $ echo '{"toolName": "apply_patch", "toolInput": {"command": "*** Begin Patch\n*** Update File: <worktree>/src/widget.py\n@@\n-old\n+new\n*** Add File: <worktree>/docs/widget.md\n+content\n*** End Patch"}}' | aco protect
 {"decision": "deny", "reason": "docs/widget.md outside claim scope"}
+2> docs/widget.md outside claim scope
 exit 2
 ```
 
@@ -286,6 +294,7 @@ Setup: bare-remote, no live claim
 ```console
 $ echo '{"toolName": "invented_tool"}' | aco protect
 {"decision": "deny", "reason": "'invented_tool' is not in aco's hook tool table (HOOK_TOOL_EFFECTS, issue #238); add it there as read-only or mutating before use"}
+2> 'invented_tool' is not in aco's hook tool table (HOOK_TOOL_EFFECTS, issue #238); add it there as read-only or mutating before use
 exit 2
 ```
 
@@ -296,6 +305,7 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `
 ```console
 $ echo '{"toolName": "Write", "toolInput": {"path": "src/widget.py"}}' | aco protect
 {"decision": "deny", "reason": "relative payload path"}
+2> relative payload path
 exit 2
 ```
 
@@ -306,6 +316,7 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `
 ```console
 $ echo '{"toolName": "Bash", "toolInput": {"command": "sed -i \"s/a/b/\" docs/widget.md"}, "cwd": "<worktree>"}' | aco protect
 {"decision": "deny", "reason": "sed -i docs/widget.md outside claim scope"}
+2> sed -i docs/widget.md outside claim scope
 exit 2
 ```
 
@@ -329,6 +340,7 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `
 ```console
 $ echo '{"toolName": "Bash", "toolInput": {"command": "cd docs && rm widget.md"}, "cwd": "<worktree>"}' | aco protect
 {"decision": "deny", "reason": "rm docs/widget.md outside claim scope"}
+2> rm docs/widget.md outside claim scope
 exit 2
 $ echo '{"toolName": "Bash", "toolInput": {"command": "cd $SCRATCH && rm widget.md"}, "cwd": "<worktree>"}' | aco protect
 {"decision": "allow"}
@@ -355,5 +367,6 @@ $ echo '{"tool_name": "Edit", "tool_input": {"file_path": "<main>/.claude/settin
 exit 0
 $ echo '{"tool_name": "Edit", "tool_input": {"file_path": "<main>/.claude/settings.json"}}' | aco protect
 {"decision": "deny", "reason": "not main"}
+2> not main
 exit 2
 ```
