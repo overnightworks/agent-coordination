@@ -3401,8 +3401,10 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     record-owner rule by one field rather than composing a record here).
     Refuses under `storage = "github"` by name -- the forge closes its own
     issues, aco never governs them -- and refuses a live claim on the item
-    on every write attempt, retries included (`protocol.ItemCloseIntent`,
-    issue #459), never on a preflight a concurrent claim could slip past.
+    first, before any other precondition (PIN-26 outranks an already-closed
+    item), then again on every write attempt, retries included
+    (`protocol.ItemCloseIntent`, issue #459), so a concurrent claim cannot
+    slip past the first check.
     Existence is checked through the ordinary
     `item_reference` read before `close_item` is ever called, so an unknown
     id gets this command's own "does not exist" sentence rather than
@@ -3424,6 +3426,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
         number = parsed.item
         _worktree, _remote, observed = _store_observation(context)
         _require_state_ref(observed)
+        protocol.require_no_live_claim(observed, protocol.IssueIdentity(number))
         client = _state_ref_board(context)
         if client.item_reference(number).state is forge.ItemState.MISSING:
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))

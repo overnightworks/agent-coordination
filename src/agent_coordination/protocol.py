@@ -1251,10 +1251,12 @@ def _apply_item_write_intent(state: ClaimState, intent: ItemWriteIntent) -> Clai
     return replace(state, items=MappingProxyType(new_items))
 
 
-def _require_no_live_claim(state: ClaimState, issue: IssueIdentity) -> None:
+def require_no_live_claim(state: ClaimState, issue: IssueIdentity) -> None:
     """Refuses while `issue` still carries a live claim: a closed item with
     a live claim on it is the `RECOVERY` anomaly the board guards against,
-    never a state `item close` creates (PIN-26)."""
+    never a state `item close` creates (PIN-26). `apply` checks it on every
+    close attempt; `cli._cmd_item_close` also checks it before any other
+    precondition, so PIN-26 outranks every other refusal."""
     live_claim = state.claims.get(claim_key(issue, ""))
     if live_claim is not None:
         raise ClaimUnavailableError(
@@ -1264,7 +1266,7 @@ def _require_no_live_claim(state: ClaimState, issue: IssueIdentity) -> None:
 
 
 def _apply_item_close_intent(state: ClaimState, intent: ItemCloseIntent) -> ClaimState:
-    _require_no_live_claim(state, intent.issue)
+    require_no_live_claim(state, intent.issue)
     return _apply_item_write_intent(state, intent.write)
 
 
