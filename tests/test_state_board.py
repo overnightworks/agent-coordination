@@ -645,7 +645,7 @@ class TestMalformedItem:
         assert str(refused.value) == refusal
 
     def test_an_edit_adding_a_malformed_blocker_refuses_naming_its_repair(self) -> None:
-        """Issue #450, ITEM-43: a blocker naming a malformed item refuses its
+        """Issue #450, ITEM-44: a blocker naming a malformed item refuses its
         repair before any write; `_UnusedItemWriter` fails any write."""
         adapter = _state_ref_board(_item_files_with_a_malformed_item(_blank_title_item()))
         edit = _state_ref_body(
