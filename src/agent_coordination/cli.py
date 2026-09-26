@@ -7519,17 +7519,27 @@ def _refuse_item_past_the_id_space(
     number past `aco-ffffff` names no item, and `items.format_item_id` would
     print it as an id `board.parse_item_reference` refuses back -- so it
     refuses here, before any command looks it up or names it. The storage
-    pin is read only for such a number, so every ordinary run keeps its
-    command's own config refusal and envelope."""
+    pin is read only for such a number; a pin that cannot be read is left to
+    the command, which meets the same refusal and reports it in its own
+    envelope."""
     past = [
         number
         for number in _item_arguments(root, given, parsed)
         if not items.is_item_number(number)
     ]
-    if not past or context.config.storage is not body.Storage.STATE_REF:
+    if not past or not _pins_state_ref(context):
         return None
     error = protocol.ClaimUnavailableError(STATE_REF_ITEM_PAST_THE_ID_SPACE.format(number=past[0]))
     return _refuse(PreDispatchReason.INVALID_USAGE, error, as_json=_asked_for_json(root, given))
+
+
+def _pins_state_ref(context: RunContext) -> bool:
+    """Whether this checkout's readable storage pin says `state-ref`; an
+    unreadable pin says nothing here, so its refusal stays the command's."""
+    try:
+        return context.config.storage is body.Storage.STATE_REF
+    except protocol.ClaimError:
+        return False
 
 
 def main(arguments: list[str] | None = None) -> int:

@@ -15606,6 +15606,24 @@ def test_untracked_board_config_refuses_every_store_command_by_name(
     assert captured.err == _UNTRACKED_BOARD_CONFIG_ERROR
 
 
+@pytest.mark.parametrize("item", ["5", "16777216"], ids=["in-the-id-space", "past-the-id-space"])
+def test_untracked_board_config_refuses_item_show_in_its_own_json_envelope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], item: str
+) -> None:
+    """ITEM-17 (#469 review finding 2): an untracked pin is `item show`'s own
+    `precondition_failed` refusal under `--json` whatever number it names --
+    PIN-31's guard reads no pin it cannot trust, so it never takes the
+    refusal from the command."""
+    monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
+
+    status = issue_claim.main(["item", "show", item, "--json"])
+
+    captured = capsys.readouterr()
+    assert status == 2
+    assert captured.err == _UNTRACKED_BOARD_CONFIG_ERROR
+    _assert_json_refusal_object(captured.err, captured.out, reason="precondition_failed")
+
+
 def _scratch_lane_repository(tmp_path: Path) -> tuple[Path, str, str]:
     """A repository with a base commit on `main` and a lane branch one commit
     ahead of it -- `brief`'s own real reads (`rev-parse --verify`, `diff
