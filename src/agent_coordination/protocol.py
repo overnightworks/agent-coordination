@@ -959,9 +959,10 @@ class ReleaseIntent:
 @dataclass(frozen=True)
 class ItemWriteIntent:
     """Replaces `items/<item_id>.md`'s stored blob oid via oid-based CAS
-    (issue #279). Create, edit, and close are all "replace this blob" and
-    differ only in how the caller computed `new_oid`'s bytes -- never in a
-    separate intent shape, so there is one `ItemWriteIntent`, not three.
+    (issue #279). Create and edit are both "replace this blob" and differ
+    only in how the caller computed `new_oid`'s bytes, so they share this
+    one shape. A close is the same blob write wrapped in `ItemCloseIntent`,
+    which adds the live-claim check every attempt re-applies (issue #459).
 
     `expected=None` means "this item must not exist yet"; any other value
     must equal the item's current oid or the write refuses loud, never
@@ -980,6 +981,28 @@ class ItemWriteIntent:
     new_oid: ObjectId
     operation_id: str
     store_expected: Mapping[str, ObjectId] | None = None
+
+
+@dataclass(frozen=True)
+class ItemCloseIntent:
+    """`aco item close`'s own write (issue #459): `write` is the ordinary
+    item-blob CAS (`ItemWriteIntent`'s own discipline, unchanged), and
+    `issue` the item's claim identity, which must hold no live claim --
+    checked by `apply` on every attempt, so a claim that lands between a
+    rejected push and its retry refuses the close instead of the retry
+    re-applying a write that was checked against a stale state. Modelled on
+    `LandingIntent`, which re-checks its own claim on every attempt too."""
+
+    write: ItemWriteIntent
+    issue: IssueIdentity
+
+    @property
+    def item_id(self) -> str:
+        return self.write.item_id
+
+    @property
+    def operation_id(self) -> str:
+        return self.write.operation_id
 
 
 @dataclass(frozen=True)
@@ -1007,7 +1030,7 @@ class LandingIntent:
 
 
 ClaimTransitionIntent = (
-    ClaimIntent | RescopeIntent | ReleaseIntent | ItemWriteIntent | LandingIntent
+    ClaimIntent | RescopeIntent | ReleaseIntent | ItemWriteIntent | ItemCloseIntent | LandingIntent
 )
 
 
@@ -1229,6 +1252,25 @@ def _apply_item_write_intent(state: ClaimState, intent: ItemWriteIntent) -> Clai
     return replace(state, items=MappingProxyType(new_items))
 
 
+def require_no_live_claim(state: ClaimState, issue: IssueIdentity) -> None:
+    """Refuses while `issue` still carries a live claim: a closed item with
+    a live claim on it is the `RECOVERY` anomaly the board guards against,
+    never a state `item close` creates (PIN-26). `apply` checks it on every
+    close attempt; `cli._cmd_item_close` also checks it before every
+    item-state refusal (missing, malformed, already closed)."""
+    live_claim = state.claims.get(claim_key(issue, ""))
+    if live_claim is not None:
+        raise ClaimUnavailableError(
+            f"#{issue.issue} has a live claim "
+            f"({_claimant_text(live_claim.agent, live_claim.role)}); release the claim first"
+        )
+
+
+def _apply_item_close_intent(state: ClaimState, intent: ItemCloseIntent) -> ClaimState:
+    require_no_live_claim(state, intent.issue)
+    return _apply_item_write_intent(state, intent.write)
+
+
 def _apply_landing_intent(state: ClaimState, intent: LandingIntent) -> ClaimState:
     """Closes `intent.item_id`'s blob and releases `intent.claim_id`'s claim
     in the one `ClaimState` transition a landing commits (issue #359): the
@@ -1259,7 +1301,7 @@ def _apply_landing_intent(state: ClaimState, intent: LandingIntent) -> ClaimStat
 
 def apply(state: ClaimState, intent: ClaimTransitionIntent) -> ClaimState:
     """The pure claim-state transition (issue #176 §1; item writes, issue
-    #279; atomic landings, issue #359): the sole writer of
+    #279; atomic landings, issue #359; item closes, issue #459): the sole writer of
     `ClaimState.claims`/`consumed_ids`/`resources`/`items`. Assumes
     `state.tip` is already real -- `store.py` never calls this against
     `EMPTY_STATE`."""
@@ -1271,6 +1313,8 @@ def apply(state: ClaimState, intent: ClaimTransitionIntent) -> ClaimState:
         return _apply_release_intent(state, intent)
     if isinstance(intent, LandingIntent):
         return _apply_landing_intent(state, intent)
+    if isinstance(intent, ItemCloseIntent):
+        return _apply_item_close_intent(state, intent)
     return _apply_item_write_intent(state, intent)
 
 

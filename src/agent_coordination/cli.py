@@ -2986,10 +2986,11 @@ def _canonical_remote_name(toplevel: Path) -> str:
 class _StoreItemWriter:
     """`state_board.ItemWriter`, implemented over `store` (issue #283): the
     one place this tool hashes an item's finished bytes into a blob and
-    writes it through one `ItemWriteIntent` CAS transition (issue #279).
+    writes it through one CAS transition -- an `ItemWriteIntent` (issue
+    #279), or for a close an `ItemCloseIntent` (issue #459).
     `state_board.py` itself may not import `store` (Layers contract), so
-    every actual git call a state-ref item write makes funnels through this
-    one method.
+    this class owns both git steps of a state-ref item write: `_item_write`
+    hashes the blob, `_commit` publishes it through the CAS transition.
     """
 
     worktree: Path
@@ -3003,21 +3004,45 @@ class _StoreItemWriter:
         content: bytes,
         store_expected: Mapping[str, protocol.ObjectId] | None,
     ) -> protocol.ObjectId:
-        new_oid = store.hash_blob(self.worktree, content)
-        intent = protocol.ItemWriteIntent(
+        return self._commit(self._item_write(item_id, expected, content, store_expected))
+
+    def close_item(
+        self,
+        item_id: str,
+        *,
+        number: int,
+        expected: protocol.ObjectId,
+        content: bytes,
+        store_expected: Mapping[str, protocol.ObjectId] | None,
+    ) -> protocol.ObjectId:
+        write = self._item_write(item_id, expected, content, store_expected)
+        return self._commit(protocol.ItemCloseIntent(write, protocol.IssueIdentity(number)))
+
+    def _item_write(
+        self,
+        item_id: str,
+        expected: protocol.ObjectId | None,
+        content: bytes,
+        store_expected: Mapping[str, protocol.ObjectId] | None,
+    ) -> protocol.ItemWriteIntent:
+        return protocol.ItemWriteIntent(
             item_id=item_id,
             expected=expected,
-            new_oid=new_oid,
+            new_oid=store.hash_blob(self.worktree, content),
             operation_id=uuid.uuid4().hex,
             store_expected=store_expected,
         )
+
+    def _commit(
+        self, intent: protocol.ItemWriteIntent | protocol.ItemCloseIntent
+    ) -> protocol.ObjectId:
         new_state = store.commit_transition(
             worktree=self.worktree,
             remote=self.canonical_remote,
-            subject=store.TransitionSubject(f"write item {item_id}"),
+            subject=store.TransitionSubject(f"write item {intent.item_id}"),
             intent=intent,
         )
-        return new_state.items[item_id]
+        return new_state.items[intent.item_id]
 
 
 def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
@@ -3376,10 +3401,12 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     CAS write over this process's own already-read oid, extending #287's
     record-owner rule by one field rather than composing a record here).
     Refuses under `storage = "github"` by name -- the forge closes its own
-    issues, aco never governs them -- and refuses a live claim on the item
-    before ever writing: a closed item with a live claim still on it is the
-    `RECOVERY` anomaly the board already guards against, never a state this
-    command creates. Existence is checked through the ordinary
+    issues, aco never governs them -- and, once the state ref is readable,
+    refuses a live claim on the item before every item-state refusal
+    (missing, malformed, already closed), then again on every write
+    attempt, retries included (`protocol.ItemCloseIntent`, issue #459), so
+    a concurrent claim cannot slip past the first check.
+    Existence is checked through the ordinary
     `item_reference` read before `close_item` is ever called, so an unknown
     id gets this command's own "does not exist" sentence rather than
     `close_item`'s internal `_by_number` lookup failing with the wrong
@@ -3400,13 +3427,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
         number = parsed.item
         _worktree, _remote, observed = _store_observation(context)
         _require_state_ref(observed)
-        live_claim = observed.claims.get(protocol.claim_key(protocol.IssueIdentity(number), ""))
-        if live_claim is not None:
-            raise protocol.ClaimUnavailableError(
-                f"#{number} has a live claim "
-                f"({protocol._claimant_text(live_claim.agent, live_claim.role)}); "
-                "release the claim first"
-            )
+        protocol.require_no_live_claim(observed, protocol.IssueIdentity(number))
         client = _state_ref_board(context)
         if client.item_reference(number).state is forge.ItemState.MISSING:
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))

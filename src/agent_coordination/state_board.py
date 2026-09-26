@@ -12,8 +12,9 @@ already-fetched data. Every write (`create_item`, `create_child`,
 port: one
 compare-and-swap write to `items/<id>.md`, implemented in `cli.py` over
 `store` (hash-object once, then one `commit_transition` with an
-`ItemWriteIntent`, issue #279) -- so this module still never imports
-`store` itself.
+`ItemWriteIntent`, issue #279; `close_item` through the port's own
+`close_item` and an `ItemCloseIntent`, issue #459) -- so this module still
+never imports `store` itself.
 
 `LANDING` and the two pull-request listings answer `Capability.UNSUPPORTED`:
 this adapter has no data for any of them. The two pull-request listings
@@ -80,9 +81,10 @@ class ItemWriter(Protocol):
     freshly written blob's oid, so the caller can update its own in-memory
     state without a re-fetch. Implemented in `cli.py`, over `store`
     (hash-object once, then one `commit_transition` with an
-    `ItemWriteIntent`, issue #279): this module may not import `store`
-    itself (Layers contract), so every actual git call for an item write
-    stays behind this one method.
+    `ItemWriteIntent`, issue #279, or for a close an `ItemCloseIntent`,
+    issue #459): this module may not import `store` itself (Layers
+    contract), so every actual git call for an item write stays behind
+    this port's two methods.
     """
 
     def write_item(
@@ -93,6 +95,19 @@ class ItemWriter(Protocol):
         content: bytes,
         store_expected: Mapping[str, ObjectId] | None,
     ) -> ObjectId: ...
+
+    def close_item(
+        self,
+        item_id: str,
+        *,
+        number: int,
+        expected: ObjectId,
+        content: bytes,
+        store_expected: Mapping[str, ObjectId] | None,
+    ) -> ObjectId:
+        """`write_item`'s own CAS for `item close` (issue #459), refused on
+        every attempt while item `number` still carries a live claim."""
+        ...
 
 
 NO_LANDINGS_YET = (
@@ -294,15 +309,19 @@ class StateRefBoard:
         self._holds_well_formed = True
 
     def _write_item(self, item_id: str, *, expected: ObjectId | None, content: bytes) -> ObjectId:
-        store_expected = None
-        if self._holds_well_formed:
-            store_expected = {
-                **{held_id: held.oid for held_id, held in self._malformed.items()},
-                **{held_id: held.oid for held_id, held in self._items.items()},
-            }
         return self._writer.write_item(
-            item_id, expected=expected, content=content, store_expected=store_expected
+            item_id, expected=expected, content=content, store_expected=self._store_expected()
         )
+
+    def _store_expected(self) -> Mapping[str, ObjectId] | None:
+        """The whole `items/` map every write of a `hold_well_formed`
+        instance commits onto (issue #447), else `None`."""
+        if not self._holds_well_formed:
+            return None
+        return {
+            **{held_id: held.oid for held_id, held in self._malformed.items()},
+            **{held_id: held.oid for held_id, held in self._items.items()},
+        }
 
     def _decoded(self, number: int) -> _DecodedItem | None:
         item_id = self._by_number.get(number)
@@ -675,13 +694,21 @@ class StateRefBoard:
     def close_item(self, number: int) -> str:
         """Closes `number`'s item record (issue #289) in one CAS write over
         this instance's own already-read `current.oid` (the same oid
-        discipline `update_item_body` uses, issue #279) -- the one place
+        discipline `update_item_body` uses, issue #279), through the
+        writer's own `close_item`, which also refuses a live claim on every
+        attempt (issue #459) -- the one place
         `state`/`closed_at` are ever composed for an immediate close;
         `cli._cmd_item_close` delegates the whole write here rather than
         building its own record. Returns the fresh `closed_at` for the
         CLI's own report line."""
         write = self._closing_write(number)
-        new_oid = self._write_item(write.item_id, expected=write.expected, content=write.content)
+        new_oid = self._writer.close_item(
+            write.item_id,
+            number=number,
+            expected=write.expected,
+            content=write.content,
+            store_expected=self._store_expected(),
+        )
         self._items[write.item_id] = _DecodedItem(
             record=write.record, body=write.content.decode("utf-8"), oid=new_oid
         )
