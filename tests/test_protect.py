@@ -566,8 +566,8 @@ def test_protect_missing_identity_denies_a_claimable_write_without_github(
         capsys,
         decision="deny",
         reason=(
-            "agent identity is required: set ACO_AGENT (e.g. in the hook line), "
-            "GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID"
+            "agent identity is required: set ACO_AGENT, GROK_SESSION_ID, or "
+            "CLAUDE_CODE_SESSION_ID (ACO_AGENT can sit in the hook line)"
         ),
     )
 
