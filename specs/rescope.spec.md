@@ -26,6 +26,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 | state \ trigger | `--add PATH` | `--drop PATH` | neither given | `--whole REASON` |
 |---|---|---|---|---|
 | a relative entry, anywhere in either list | RESC-01 | RESC-01 | — | — |
+| the path's directories do not exist yet | RESC-18 | RESC-18 | — | — |
 | resolved checkout is outside every repository | PROT-10 | PROT-10 | PROT-10 | — |
 | resolved checkout has no commit yet | PROT-11 | PROT-11 | PROT-11 | — |
 | current branch is empty | RESC-02 | RESC-02 | RESC-02 | — |
@@ -52,6 +53,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 - [ ] [RESC-03] Sharing main's git dir, rescope refuses `build claims require a linked isolated worktree checkout; run this command from this claim's own worktree on '<branch>', not the primary checkout`, exit `2`.
 - [ ] [RESC-04] On the repository's own trunk branch, rescope refuses `build claims require an isolated non-main worktree branch; run this command from this claim's own worktree, not the primary checkout`, exit `2`.
 - [ ] [RESC-05] A `--add`/`--drop` path resolving outside the resolved checkout refuses `<flag> path '<path>' is outside the resolved checkout <toplevel>`, exit `2`.
+- [ ] [RESC-18] A `--add`/`--drop` path whose directories do not exist yet resolves its checkout from the nearest existing ancestor, as `protect` judges it (PROT-39); outside every repository it refuses PROT-10.
 
 ## Selecting the live claim
 

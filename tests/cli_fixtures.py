@@ -96,13 +96,13 @@ def stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _git_checkout(
     *,
+    toplevel: str = "/repo",
     head: str = BASE,
     branch: str = "codex/issue-72",
     git_directory: str = "/repo/.git/worktrees/issue-72",
     common_directory: str = "/repo/.git",
     dirty: str = "",
 ) -> dict[tuple[str, ...], str]:
-    toplevel = "/repo"
     return {
         ("rev-parse", "HEAD"): head,
         ("rev-parse", "--verify", "HEAD"): head,
