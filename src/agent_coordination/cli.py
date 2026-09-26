@@ -3059,7 +3059,7 @@ def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
     snapshot cached before that worktree existed."""
     repository = context.repository_id
     default_branch = context.default_branch
-    worktree = context.worktree
+    worktree = context.toplevel
     canonical_remote = context.canonical_remote
     state = store.fetch_state(worktree=worktree, remote=canonical_remote)
     item_files = {} if state.tip is None else store.read_item_files(worktree, state.tip)
@@ -3594,7 +3594,7 @@ def _store_observation(context: RunContext) -> tuple[Path, str, protocol.ClaimSt
     Erwartung-6-checks that target separately, the first time its context's
     `forge` is actually asked for."""
     canonical_remote = context.canonical_remote
-    worktree = context.worktree
+    worktree = context.toplevel
     return worktree, canonical_remote, store.fetch_state(worktree=worktree, remote=canonical_remote)
 
 
@@ -5677,7 +5677,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
             # request this preflight goes on to refuse must anchor no ref
             # and stamp no lineage -- the same read-only requirement
             # `_reset_observation` already carries for `reset`.
-            observed = store.peek_state(worktree=context.worktree, remote=context.canonical_remote)
+            observed = store.peek_state(worktree=context.toplevel, remote=context.canonical_remote)
             _require_state_ref(observed)
             return observed
 
@@ -6838,7 +6838,7 @@ def _bootstrap_state(context: RunContext) -> int:
     one (#315), so an untracked `board.toml` refuses here too, before this
     command's own first write."""
     canonical_remote = context.canonical_remote
-    print(store.bootstrap(worktree=context.worktree, remote=canonical_remote))
+    print(store.bootstrap(worktree=context.toplevel, remote=canonical_remote))
     return 0
 
 
@@ -7044,7 +7044,7 @@ def _reset_observation(
     refusal, or a failed export writes no per-worktree stamp or anchor
     (finding 2)."""
     canonical_remote = context.canonical_remote
-    worktree = context.worktree
+    worktree = context.toplevel
     state = store.peek_state_for_reset(worktree=worktree, remote=canonical_remote)
     return worktree, canonical_remote, state
 

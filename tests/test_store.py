@@ -20,7 +20,7 @@ from typing import NamedTuple
 
 import pytest
 from cli_fixtures import stub_board_config_tracked
-from test_cli import FakeForge
+from test_cli import FakeForge, _redirect_toplevel
 
 from agent_coordination import cli as issue_claim
 from agent_coordination import github, process, protocol, store
@@ -1374,6 +1374,7 @@ def test_cli_bootstrap_creates_the_empty_state_ref_without_a_ledger(
         lambda remote: "git@github.com:example/agent-coordination.git",
     )
     _git("remote", "add", "origin", str(bare_remote), cwd=worktree)
+    _redirect_toplevel(monkeypatch, worktree)
     monkeypatch.chdir(worktree)
 
     status = issue_claim.main(["--repo", "example/agent-coordination", "bootstrap"])
@@ -1396,6 +1397,7 @@ def test_cli_bootstrap_is_idempotent_on_a_second_run(
         lambda remote: "git@github.com:example/agent-coordination.git",
     )
     _git("remote", "add", "origin", str(bare_remote), cwd=worktree)
+    _redirect_toplevel(monkeypatch, worktree)
     monkeypatch.chdir(worktree)
     issue_claim.main(["--repo", "example/agent-coordination", "bootstrap"])
     first_output = capsys.readouterr().out
