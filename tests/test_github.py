@@ -1766,6 +1766,26 @@ def test_repository_resolution_uses_github_quiet_environment(
     assert env["GH_NO_UPDATE_NOTIFIER"] == "1"
 
 
+def test_repository_resolution_asks_gh_about_the_named_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #472: the `gh repo view` fallback resolves the checkout the
+    caller named, never whatever this process's own cwd happens to be."""
+    asked_in: list[Path | None] = []
+
+    def spy_run_captured(
+        command: list[str], *, cwd: Path | None = None, **_kwargs: object
+    ) -> process.CapturedResult:
+        asked_in.append(cwd)
+        return process.CapturedResult(exit_status=0, stdout=b"owner/repository\n", stderr=b"")
+
+    monkeypatch.setattr(process, "run_captured", spy_run_captured)
+
+    github.discover_repository(remote_url=_non_github_remote_url, directory=tmp_path)
+
+    assert asked_in == [tmp_path]
+
+
 def test_merged_pull_request_history_warns_when_it_reaches_the_result_cap(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
