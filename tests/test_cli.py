@@ -5997,9 +5997,10 @@ def test_load_board_config_refuses_a_block_pin_the_forge_cannot_support(tmp_path
     (tmp_path / ".agent-claim" / "board.toml").write_text('body_contract = "block"\n')
 
     client = _MinimalBoardSource(capability_result=forge.Capability.UNSUPPORTED)
+    context = issue_claim._run_context(None)
 
     with pytest.raises(ClaimError, match="list_board_dependencies"):
-        issue_claim._load_board_config(client, issue_claim._run_context(None))
+        issue_claim._load_board_config(client, context)
 
 
 def test_fetch_dependencies_bounds_concurrency_at_the_shared_constant() -> None:
