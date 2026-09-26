@@ -58,6 +58,7 @@ from agent_coordination import (
 )
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import expectation_lines, rule_expectation
+from agent_coordination.session import RunContext
 
 OPEN_LINE_TEXT = "Brauchen wir Admin-Rechte?"
 SERVED_ITEM = 10
@@ -438,23 +439,44 @@ def test_every_request_reads_the_repository_through_its_own_fresh_context(
     requests: tuple[str, ...],
     rereads: tuple[bool, ...],
 ) -> None:
-    """Issue #457 proof 5: startup reads the checkout once; after that each
-    request that needs the repository -- a rebuild or a ruling click --
-    reads it afresh through its own child context, exactly once, and a
-    request the held page answers reads nothing. A context memoised across
-    requests would leave the second of two reloads reading nothing."""
+    """Issue #457 proof 5: startup reads the checkout once through the run's
+    own context; after that every request builds exactly one fresh child
+    context of its own, never one another request built. A request that
+    needs the repository -- a rebuild or a ruling click -- reads it through
+    that child exactly once, and one the held page answers reads nothing.
+    A context memoised across requests would leave the second of two
+    reloads reading nothing; one built only to rebuild or click would leave
+    the cached first GET without a child."""
     client = _served_board_environment(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
+    children = _record_fresh_contexts(monkeypatch)
     once = ({None: 1}, {tmp_path: 1})
     nothing: tuple[dict[Path | None, int], dict[Path | None, int]] = ({}, {})
 
     with _serving(client) as served:
-        counted = [reads.drain()]
+        counted = [(reads.drain(), len(children))]
         for request in requests:
             _served_request(served, request)
-            counted.append(reads.drain())
+            counted.append((reads.drain(), len(children)))
 
-    assert counted == [once, *(once if reread else nothing for reread in rereads)]
+    expected_reads = [once, *(once if reread else nothing for reread in rereads)]
+    assert counted == [(read, built) for built, read in enumerate(expected_reads)]
+    assert len({id(child) for child in children}) == len(requests)
+
+
+def _record_fresh_contexts(monkeypatch: pytest.MonkeyPatch) -> list[RunContext]:
+    """Every child `RunContext.fresh` builds, in order, held so no two share
+    an identity."""
+    children: list[RunContext] = []
+    build_fresh = RunContext.fresh
+
+    def recording_fresh(context: RunContext) -> RunContext:
+        child = build_fresh(context)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(RunContext, "fresh", recording_fresh)
+    return children
 
 
 def _arrange_sized_items(
