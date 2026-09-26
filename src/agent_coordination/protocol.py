@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from functools import partial
 from pathlib import PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from typing import Protocol, TypeVar, cast
@@ -52,8 +53,28 @@ ASCII_PRINTABLE_MIN = 0x20
 ASCII_DEL = 0x7F
 
 
+ItemLabel = Callable[[int], str]
+ItemNaming = Callable[[ItemLabel], str]
+
+
+def forge_item_label(number: int) -> str:
+    """An item as the forge names it, `#<n>` -- a claim-ledger refusal's own
+    text, since this layer never reads the storage pin (issue #471)."""
+    return f"#{number}"
+
+
 class ClaimError(RuntimeError):
-    pass
+    """A claim-ledger refusal. One that names an item keeps its sentence as
+    `naming`, a function of how the caller names an item: its own text is
+    the forge form, and a caller that knows the storage pin asks `named`
+    for that storage's form (issue #471)."""
+
+    def __init__(self, message: str = "", *, naming: ItemNaming | None = None) -> None:
+        super().__init__(message if naming is None else naming(forge_item_label))
+        self.naming = naming
+
+    def named(self, item_label: ItemLabel) -> str:
+        return str(self) if self.naming is None else self.naming(item_label)
 
 
 class ClaimUnavailableError(ClaimError):
@@ -237,9 +258,12 @@ def _outbound_resource_name(value: object) -> str:
 LANE_MARKER_KEY = "lane"
 
 
-def _identity_summary(identity: ClaimIdentity, branch: str) -> str:
-    """Human-readable subject for a claim error message."""
-    return f"lane {branch!r}" if isinstance(identity, LaneIdentity) else f"issue #{identity.issue}"
+def identity_summary(identity: ClaimIdentity, branch: str, item_label: ItemLabel) -> str:
+    """The subject a claim-ledger refusal names: `lane '<branch>'`, or
+    `issue <label>` in `item_label`'s form (issue #471)."""
+    if isinstance(identity, LaneIdentity):
+        return f"lane {branch!r}"
+    return f"issue {item_label(identity.issue)}"
 
 
 def is_safe_branch_name(branch: str) -> bool:
@@ -1077,16 +1101,22 @@ def _auto_resource_value(occupied: set[int]) -> int:
     return value
 
 
+def _resource_held_sentence(
+    name: str, value: int, holder: ActiveClaim, item_label: ItemLabel
+) -> str:
+    return (
+        f"{name} {value} is held by {holder.agent} ({holder.role}) on "
+        f"{identity_summary(holder.identity, holder.branch, item_label)}"
+    )
+
+
 def _explicit_resource_conflict(state: ClaimState, name: str, value: int) -> ClaimConflictError:
     holder = next(
         (claim for claim in state.claims.values() if claim.resource == ResourceHold(name, value)),
         None,
     )
     if holder is not None:
-        return ClaimConflictError(
-            f"{name} {value} is held by {holder.agent} ({holder.role}) on "
-            f"{_identity_summary(holder.identity, holder.branch)}"
-        )
+        return ClaimConflictError(naming=partial(_resource_held_sentence, name, value, holder))
     return ClaimConflictError(f"{name} {value} was already consumed and cannot be reused")
 
 
@@ -1135,6 +1165,14 @@ def _live_claim_by_id(state: ClaimState, claim_id: ClaimId) -> tuple[str, Active
     )
 
 
+def _claimed_by_sentence(intent: ClaimIntent, owner: ActiveClaim, item_label: ItemLabel) -> str:
+    return (
+        f"{identity_summary(intent.identity, intent.branch, item_label)} is claimed by "
+        f"{owner.agent} ({owner.role}) on "
+        f"{identity_summary(owner.identity, owner.branch, item_label)} branch {owner.branch}"
+    )
+
+
 def _apply_claim_intent(state: ClaimState, intent: ClaimIntent) -> ClaimState:
     if state.tip is None:
         # The one command allowed to turn `EMPTY_STATE` into real content is
@@ -1153,12 +1191,7 @@ def _apply_claim_intent(state: ClaimState, intent: ClaimIntent) -> ClaimState:
         )
     blocked_by = blocking_claims(tuple(state.claims.values()), intent)
     if blocked_by:
-        owner = blocked_by[0]
-        raise ClaimConflictError(
-            f"{_identity_summary(intent.identity, intent.branch)} is claimed by "
-            f"{owner.agent} ({owner.role}) on {_identity_summary(owner.identity, owner.branch)} "
-            f"branch {owner.branch}"
-        )
+        raise ClaimConflictError(naming=partial(_claimed_by_sentence, intent, blocked_by[0]))
     resource, resource_record = _resolved_resource(state, intent)
     new_claim = ActiveClaim(
         identity=intent.identity,
@@ -1260,10 +1293,16 @@ def require_no_live_claim(state: ClaimState, issue: IssueIdentity) -> None:
     item-state refusal (missing, malformed, already closed)."""
     live_claim = state.claims.get(claim_key(issue, ""))
     if live_claim is not None:
-        raise ClaimUnavailableError(
-            f"#{issue.issue} has a live claim "
-            f"({_claimant_text(live_claim.agent, live_claim.role)}); release the claim first"
-        )
+        raise ClaimUnavailableError(naming=partial(_live_claim_sentence, issue, live_claim))
+
+
+def _live_claim_sentence(
+    issue: IssueIdentity, live_claim: ActiveClaim, item_label: ItemLabel
+) -> str:
+    return (
+        f"{item_label(issue.issue)} has a live claim "
+        f"({_claimant_text(live_claim.agent, live_claim.role)}); release the claim first"
+    )
 
 
 def _apply_item_close_intent(state: ClaimState, intent: ItemCloseIntent) -> ClaimState:

@@ -7225,8 +7225,9 @@ def test_selected_store_claim_refuses_a_lane_identity_without_a_branch() -> None
     function's own boundary check as a direct unit test rather than relying
     on that upstream guarantee never slipping."""
     identity = protocol.LaneIdentity()
+    storage = body.Storage.GITHUB
     with pytest.raises(ClaimUnavailableError, match="lane release requires a non-empty"):
-        issue_claim._selected_store_claim(protocol.EMPTY_STATE, identity, "", None)
+        issue_claim._selected_store_claim(protocol.EMPTY_STATE, identity, "", None, storage)
 
 
 def test_claim_scope_is_optional_at_the_argparse_layer_for_issue_mode() -> None:

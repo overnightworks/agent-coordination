@@ -8,6 +8,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -2208,18 +2209,29 @@ def measurements_lines(measurements: Measurements) -> list[str]:
     return lines
 
 
-def item_label(number: int, storage: Storage) -> str:
-    """The one display form of `number` any narrative output prints under
-    `storage` (issue #292): `items.format_item_id`'s `aco-xxxxxx` under
-    `storage = STATE_REF` -- an id `parse_item_reference` already accepts
-    right back, so what a command prints is what the next command takes --
-    unchanged `#n` under `storage = GITHUB`. `board` is the lowest layer
-    that may import `items` (the Layers contract), and both `cli` and
-    `board_html` already import `board`, so this is the one owner both call
-    into rather than each keeping its own copy."""
+def _storage_item_name(number: int, storage: Storage, forge_name: str) -> str:
+    """The one storage switch every item name below asks (issue #471): under
+    `storage = STATE_REF` `items.format_item_id`'s `aco-xxxxxx` -- an id
+    `parse_item_reference` accepts right back, so what a command prints is
+    what the next command takes -- and under `GITHUB` the caller's own
+    forge form, byte-identical to every such name before the pin existed.
+    `board` is the lowest layer that may import `items` (the Layers
+    contract), so `cli` and `board_html` both call into it here."""
     if storage is Storage.STATE_REF:
         return items.format_item_id(number)
-    return f"#{number}"
+    return forge_name
+
+
+def item_label(number: int, storage: Storage) -> str:
+    """The display form of `number` any narrative output prints under
+    `storage` (issue #292): `#n` under `GITHUB`."""
+    return _storage_item_name(number, storage, protocol.forge_item_label(number))
+
+
+def item_labeller(storage: Storage) -> protocol.ItemLabel:
+    """`item_label` under `storage` -- the form a claim-ledger refusal from
+    `protocol` is named in (`protocol.ClaimError.named`, issue #471)."""
+    return partial(item_label, storage=storage)
 
 
 NAMES_NO_ITEM = "names no state-ref item; an item id ends at aco-ffffff"
@@ -2238,9 +2250,7 @@ def relation_label(reference: IssueReference, storage: Storage) -> str:
     the qualified `owner/repo#n` under `storage = GITHUB`, where such a
     relation may cross repositories, and `item_label`'s own id under
     `STATE_REF`, whose relations never leave the one store (issue #467)."""
-    if storage is Storage.STATE_REF:
-        return item_label(reference.number, storage)
-    return str(reference)
+    return _storage_item_name(reference.number, storage, str(reference))
 
 
 def item_argument(number: int, storage: Storage) -> str:
@@ -2249,9 +2259,7 @@ def item_argument(number: int, storage: Storage) -> str:
     under `storage = GITHUB`, byte-identical to every such value before the
     state-ref pin existed, and `item_label`'s own id under `STATE_REF`, so
     a person or agent can paste it back in (issue #292, residual of #300)."""
-    if storage is Storage.STATE_REF:
-        return item_label(number, storage)
-    return str(number)
+    return _storage_item_name(number, storage, str(number))
 
 
 # git's own default abbreviation length -- a Landungen row's sha is evidence
