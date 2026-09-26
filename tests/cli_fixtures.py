@@ -15,8 +15,9 @@ from pathlib import Path
 import pytest
 from board_fixtures import BASE
 
-from agent_coordination import checkout, github, process, store
+from agent_coordination import checkout, forge, github, process, store
 from agent_coordination.protocol import ClaimError
+from agent_coordination.session import RunContext
 
 
 def _stub_one_git_call(
@@ -237,3 +238,10 @@ def arrange_scope_width(
     monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: versioned or ())
     if validate_checkout:
         monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+
+
+def run_context_over(client: forge.ForgeReader) -> RunContext:
+    """A cwd-rooted `RunContext` whose forge is `client`: a test driving a
+    helper that takes a context reads the same toplevel and tracked
+    `board.toml` a command would, with its own fake forge behind them."""
+    return RunContext(None, build_forge=lambda _context: client)

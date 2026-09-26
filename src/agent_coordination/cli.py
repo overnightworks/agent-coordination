@@ -37,6 +37,7 @@ from . import (
     terminal,
     workspace,
 )
+from .session import RepoMeaninglessUnderStateRefError, RunContext, board_config
 
 CLI_ERROR_PREFIX = "ERROR: "
 
@@ -1449,7 +1450,7 @@ def _parent_closable_number(
 
 
 def _release_landing(
-    client: forge.ForgeReader,
+    context: RunContext,
     claims: tuple[protocol.ActiveClaim, ...],
     claim_ages: Mapping[str, datetime],
     landed: board.IssueReference | None,
@@ -1462,12 +1463,13 @@ def _release_landing(
     below is the one round trip both `_freed_item_numbers` and `_board` need
     for this same candidate set; passing it into `_board` keeps this a
     single fetch rather than two (issue #256 review)."""
+    client = context.forge
     issues = client.list_open_board_issues()
     candidates = tuple(issue.number for issue in issues if issue.blocked_by_count > 0)
     dependencies = _validated_dependencies(issues, _fetch_dependencies(client, candidates))
     freed = () if landed is None else _freed_item_numbers(dependencies, landed)
     projected = _board(
-        client,
+        context,
         claims,
         issues=issues,
         history=_ClaimHistory(ages=claim_ages),
@@ -1591,55 +1593,12 @@ def _validated_dependencies(
     return validated
 
 
-def _resolve_toplevel(*, directory: Path | None = None) -> Path:
-    """The checkout's toplevel, for every command that resolves the
-    repository's board configuration (#150) -- its priority ladder, its idea
-    label, its canonical remote, and the body pin it is still checked
-    against. Read from `directory` via `-C` when given (issue #322: `start`'s
-    own resolved worktree, never a process-wide `os.chdir`) or the calling
-    process's own cwd otherwise. Without a working tree there is no
-    configuration to read, so the command refuses rather than running on
-    guessed defaults (#178)."""
-    try:
-        return Path(checkout._git_output(["rev-parse", "--show-toplevel"], directory=directory))
-    except protocol.ClaimError as error:
-        raise protocol.ClaimUnavailableError(
-            "this command reads the repository's body contract from "
-            ".agent-claim/board.toml and needs a checkout (a shallow one is "
-            f"enough): {error}"
-        ) from error
-
-
-def _board_config(toplevel: Path) -> board.BoardConfig:
-    """The repository's board configuration, refused before
-    `board.load_config` ever runs when `.agent-claim/board.toml` is not
-    actually tracked by git (#315): a `.gitignore` that ignores every
-    dot-directory keeps a freshly written pin off every worktree unless it
-    is force-added, and the prior silent `storage = github` default then
-    surfaced as the unrelated "no forge adapter for host ..." the moment a
-    forge command resolved a non-GitHub canonical remote. `board.load_config`
-    itself stays a pure filesystem reader (Layers contract) -- this is the
-    one place, reached by every store command, that can see whether git
-    actually tracks the pin. Reads `toplevel` explicitly (issue #314 gate
-    B3), never the calling process's own cwd: `protect`'s and `rescope`'s
-    own callers (`_canonical_remote_name`, handed into `protect.judge` as
-    `canonical_remote_for`, and `_cmd_rescope` directly) pass the payload's
-    own resolved checkout, so a foreign cwd can never wrongly deny a valid
-    config or bless an untracked one."""
-    if not checkout.path_is_tracked(board.CONFIG_PATH.as_posix(), directory=toplevel):
-        raise protocol.ClaimUnavailableError(
-            f"{board.CONFIG_PATH} is not tracked in this checkout, so its "
-            f"storage pin cannot be trusted: git add -f {board.CONFIG_PATH}"
-        )
-    return board.load_config(toplevel / board.CONFIG_PATH)
-
-
-def _load_board_config(client: forge.BoardSource, toplevel: Path) -> board.BoardConfig:
-    """The repository's board configuration, validated against what `client`
+def _load_board_config(client: forge.BoardSource, context: RunContext) -> board.BoardConfig:
+    """`context`'s board configuration, validated against what `client`
     can actually do (#150 §3): reading a body's dependencies requires
     `list_board_dependencies` at read-only or better, and the typed block is
     the one body grammar, so every repository needs it."""
-    config = _board_config(toplevel)
+    config = context.config
     if (
         client.capability(forge.ForgeOperation.LIST_BOARD_DEPENDENCIES)
         is forge.Capability.UNSUPPORTED
@@ -1707,7 +1666,7 @@ def _closed_item_sizes(
 
 
 def _board(
-    client: forge.ForgeReader,
+    context: RunContext,
     claims: tuple[protocol.ActiveClaim, ...],
     *,
     issues: tuple[board.Issue, ...] | None = None,
@@ -1716,7 +1675,8 @@ def _board(
 ) -> board.Board:
     history = history or _ClaimHistory()
     now = datetime.now(UTC)
-    config = _load_board_config(client, _resolve_toplevel())
+    client = context.forge
+    config = _load_board_config(client, context)
     if issues is None:
         issues = client.list_open_board_issues()
     since = _merged_pull_request_floor(issues, now)
@@ -2443,9 +2403,13 @@ class _LandingCheckContext:
     below stays under the five-argument limit as claims moved from a
     `client`-read ledger walk to a separately threaded store snapshot."""
 
-    client: forge.ForgeReader
+    run: RunContext
     repository: str
     storage: body.Storage
+
+    @property
+    def client(self) -> forge.ForgeReader:
+        return self.run.forge
 
 
 @dataclass(frozen=True)
@@ -2599,7 +2563,7 @@ def _structural_classification(
     classification = board.parse_pull_request_classification(detail.body, context.repository)
     if isinstance(classification, board.ClassificationDefect):
         return classification
-    default_branch = context.client.default_branch()
+    default_branch = context.run.default_branch
     if detail.target_branch != default_branch:
         return board.ClassificationDefect(
             f"targets {detail.target_branch!r}, not the default branch {default_branch!r}"
@@ -2738,14 +2702,14 @@ class CheckOutcome:
 
 
 def _pull_request_check(
-    client: forge.ForgeReader,
+    run: RunContext,
     claims: tuple[protocol.ActiveClaim, ...],
     repository: str,
     number: int,
     storage: body.Storage,
 ) -> CheckOutcome:
-    detail = client.landing(number)
-    context = _LandingCheckContext(client, repository, storage)
+    detail = run.forge.landing(number)
+    context = _LandingCheckContext(run, repository, storage)
     checked = _checked_classification(context, claims, detail)
     if isinstance(checked, board.ClassificationDefect):
         return CheckOutcome(
@@ -2870,7 +2834,7 @@ def _body_check_report(check: body.BodyShapeCheck, *, as_json: bool) -> int:
     return 0 if ok else 2
 
 
-def _cmd_body(parsed: argparse.Namespace) -> int:
+def _cmd_body(parsed: argparse.Namespace, context: RunContext) -> int:
     """`body --check` is forge-free (issue #262), the same way `status` and
     `bootstrap` are (issue #245): it reads stdin only, never an issue, a
     live claim, a filesystem path, or the forge's own `blocked_by`
@@ -2882,7 +2846,7 @@ def _cmd_body(parsed: argparse.Namespace) -> int:
     already read through `_decode_item`."""
     as_json = parsed.json
     try:
-        config = _board_config(_resolve_toplevel())
+        config = context.config
         raw_body = _read_body_check_input()
     except protocol.ClaimError as error:
         return _refuse(BodyCheckReason.UNAVAILABLE, error, as_json=as_json)
@@ -2958,10 +2922,10 @@ def _lane_work_item_trailer_defect(work_item_values: tuple[str, ...], pull_reque
 
 
 def _verify_merged_release(
+    context: RunContext,
     client: github.GitHubForge,
     identity: protocol.ClaimIdentity,
     merged: protocol.MergedRelease,
-    canonical_remote: str,
 ) -> _MergedLandingClose | None:
     """Refuse a `--merged` release the landing itself does not support, and
     report -- without yet closing anything -- whether the named work item is
@@ -2984,14 +2948,14 @@ def _verify_merged_release(
     detail = client.landing(merged.pull_request)
     if not detail.merged:
         raise protocol.ClaimUnavailableError(f"pull request #{detail.number} is not merged")
-    default_branch = client.default_branch()
+    default_branch = context.default_branch
     if detail.target_branch != default_branch:
         raise protocol.ClaimUnavailableError(
             f"pull request #{detail.number} merged into {detail.target_branch!r}, "
             f"not the default branch {default_branch!r}"
         )
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
-    landings = checkout.trunk_landings(canonical_remote, TRUNK_LANDING_DEPTH, fetch=True)
+    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH, fetch=True)
     if isinstance(identity, protocol.LaneIdentity):
         defect = _trunk_no_item_landing_defect(landings, detail.merge_commit, detail.number)
         if defect is not None:
@@ -3011,78 +2975,11 @@ def _verify_merged_release(
 
 
 def _canonical_remote_name(toplevel: Path) -> str:
-    """This repository's configured `canonical_remote` name (issue #176,
-    Erwartung 7) -- every store command's own precondition, forge or not.
-    A forge command additionally resolves and Erwartung-6-checks a forge
-    target against it (`_resolved_forge_target` below); a forge-free command
-    (`status`, `protect`, `bootstrap`, a lane `claim`/`rescope`/`release`)
-    never does, so this alone is all it ever reads."""
-    return _board_config(toplevel).canonical_remote
-
-
-def _canonical_remote_location(canonical_remote: str) -> checkout.RemoteLocation:
-    """`canonical_remote`'s configured URL, parsed host-neutrally (issue
-    #245) -- read only from a forge command's own precondition, never from a
-    forge-free one, so a non-GitHub canonical remote is no error there."""
-    return checkout.parse_remote_location(checkout.remote_url(canonical_remote))
-
-
-def _refuse_unsupported_forge_host(location: checkout.RemoteLocation) -> None:
-    """The GitHub-storage forge command's precondition beyond Erwartung 6:
-    GitHub is the one forge adapter reached by host, so a canonical remote
-    on any other host refuses by name here, before ever asking `gh`, rather
-    than failing deep inside `discover_repository` with GitHub's own "not a
-    GitHub repository" text. Never reached under `storage = "state-ref"`
-    (issue #248): that pin routes to `state_board.StateRefBoard` before
-    this host check would even run, so a non-GitHub canonical remote is no
-    error there.
-    """
-    if location.host != github.GITHUB_HOST:
-        raise protocol.ClaimUnavailableError(f"no forge adapter for host {location.host}")
-
-
-def _refuse_canonical_remote_mismatch(
-    forge_target: forge.RepositoryId, location: checkout.RemoteLocation
-) -> None:
-    """Every forge command's shared refusal (Erwartung 6): the forge target
-    (`--repo`, or whatever `discover_repository` resolved) must name the same
-    repository the canonical remote's own URL points at, or nothing is read
-    or written. Reached only when a forge target exists at all -- a
-    forge-free command never resolves one, so this never runs for it.
-    """
-    if (forge_target.host, forge_target.path) != (location.host, location.path):
-        raise protocol.ClaimUnavailableError(
-            f"forge target {forge_target.path} does not match canonical remote "
-            f"{location.path}; run aco from that repository's checkout"
-        )
-
-
-def _resolved_forge_target(repo: str | None, canonical_remote: str) -> forge.RepositoryId:
-    """A forge command's own precondition (issue #176 Erwartung 6, issue
-    #245): the repository this run's forge talks to, refused by name before
-    it is ever built -- either this host has no adapter, or it names a
-    different repository than the canonical remote's own URL does.
-    """
-    location = _canonical_remote_location(canonical_remote)
-    _refuse_unsupported_forge_host(location)
-    forge_target = github.discover_repository(repo, remote_url=checkout.origin_remote_url)
-    _refuse_canonical_remote_mismatch(forge_target, location)
-    return forge_target
-
-
-class RepoMeaninglessUnderStateRefError(protocol.ClaimUnavailableError):
-    """`_refuse_repo_under_state_ref`'s own refusal, typed (issue #396) so
-    `aco brief`'s `--json` can report `invalid_usage` instead of its own
-    generic `unavailable` bucket for every other forge-resolution refusal --
-    every other caller of `_refuse_repo_under_state_ref` still just needs a
-    `protocol.ClaimError` to catch, unaffected by the narrower type."""
-
-
-def _refuse_repo_under_state_ref(repo: str | None) -> None:
-    """`--repo` names a GitHub target; under `storage = "state-ref"` there
-    is no host-based target to override (issue #248)."""
-    if repo is not None:
-        raise RepoMeaninglessUnderStateRefError("--repo is meaningless under storage = state-ref")
+    """The configured `canonical_remote` of the checkout at `toplevel`, for
+    `protect` (handed into `protect.judge` as `canonical_remote_for`) and
+    `rescope`, which judge from their own payload's resolved checkout rather
+    than from a `RunContext` (issue #457)."""
+    return board_config(toplevel).canonical_remote
 
 
 @dataclass(frozen=True)
@@ -3123,39 +3020,22 @@ class _StoreItemWriter:
         return new_state.items[item_id]
 
 
-def _state_ref_forge(
-    repo: str | None, canonical_remote: str, *, directory: Path | None = None
-) -> state_board.StateRefBoard:
+def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
     """The `state-ref` storage pin's forge (issues #248, #283): repository
-    identity read host-neutrally from the canonical remote's own URL (issue
-    #245's `RemoteLocation`, never GitHub's syntax), the default branch read
-    from git, item content and blob oids read once through
+    identity and default branch from `context` (host-neutral, `origin/HEAD`),
+    item content and blob oids read once through
     `store.read_item_files`/`ClaimState.items`, and a write port over that
     same `store` (`_StoreItemWriter`) -- this is the one place
     `state_board.StateRefBoard` is ever handed live data or a way to write
     it, since the Layers contract keeps that module from reaching `store`
-    itself.
-
-    `checkout.default_branch_name()` reads `origin/HEAD` specifically, not
-    whatever `canonical_remote` names (a named residual: every repository
-    piloting this pin today also names its canonical remote `origin`).
-
-    `directory` names the checkout this forge reads and writes through --
-    `start` (issue #322 review finding 2) hands it the freshly created
-    worktree so the worktree-scoped claim never reads a caller-checkout
-    snapshot cached before that worktree existed, including the default
-    branch itself; every other caller omits it and keeps the previous,
-    process-cwd-bound behaviour.
-    """
-    _refuse_repo_under_state_ref(repo)
-    location = _canonical_remote_location(canonical_remote)
-    repository = forge.RepositoryId(location.host, (), location.path)
-    default_branch = checkout.default_branch_name(directory=directory)
-    if default_branch is None:
-        raise protocol.ClaimUnavailableError(
-            "cannot resolve the default branch; run aco from a checkout with origin/HEAD set"
-        )
-    worktree = Path.cwd() if directory is None else directory
+    itself. It reads and writes through `context`'s own worktree: `start`
+    (issue #322 review finding 2) hands it a context for the freshly created
+    worktree, so the worktree-scoped claim never reads a caller-checkout
+    snapshot cached before that worktree existed."""
+    repository = context.repository_id
+    default_branch = context.default_branch
+    worktree = context.worktree
+    canonical_remote = context.canonical_remote
     state = store.fetch_state(worktree=worktree, remote=canonical_remote)
     item_files = {} if state.tip is None else store.read_item_files(worktree, state.tip)
     return state_board.StateRefBoard(
@@ -3167,11 +3047,20 @@ def _state_ref_forge(
     )
 
 
-def _github_forge(repo: str | None, canonical_remote: str) -> github.GitHubForge:
-    """The `github` storage pin's forge: `--repo`, else the canonical
-    remote's own repository (`_resolved_forge_target`) -- the one place this
-    module builds `github.GitHubForge`, as `_state_ref_forge` is for its pin."""
-    return github.GitHubForge(_resolved_forge_target(repo, canonical_remote))
+def _build_forge(context: RunContext) -> forge.ForgeReader:
+    """The forge adapter for `context`'s own `storage` pin (issue #248),
+    never chosen by the canonical remote's host: `github` (the default)
+    builds `github.GitHubForge`; `state-ref` builds
+    `state_board.StateRefBoard` from the state ref's own `items/` tree."""
+    if context.config.storage is body.Storage.STATE_REF:
+        return _state_ref_forge(context)
+    return github.GitHubForge(context.repository_id)
+
+
+def _run_context(repo: str | None) -> RunContext:
+    """This run's root context, built once the command is known to need a
+    repository at all (after the workspace and `protect` dispatch)."""
+    return RunContext(repo, build_forge=_build_forge)
 
 
 ITEM_NEW_ORIGIN_ON_GITHUB_REFUSAL = '--origin needs storage = "state-ref"'
@@ -3207,7 +3096,7 @@ def _refuse_item_body_invalid(defects: tuple[str, ...], *, as_json: bool) -> int
     return 2
 
 
-def _cmd_item_new(parsed: argparse.Namespace) -> int:
+def _cmd_item_new(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item new` (issues #285, #316, #444): one fresh item under
     either storage pin, each through its own adapter's write
     (`_item_new_on_github`, `_item_new_on_state_ref`), both behind the same
@@ -3216,10 +3105,9 @@ def _cmd_item_new(parsed: argparse.Namespace) -> int:
     shared envelope as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
-        config = _board_config(_resolve_toplevel())
-        if config.storage is body.Storage.GITHUB:
-            return _item_new_on_github(parsed, config.canonical_remote)
-        return _item_new_on_state_ref(parsed, config.canonical_remote)
+        if context.config.storage is body.Storage.GITHUB:
+            return _item_new_on_github(parsed, context)
+        return _item_new_on_state_ref(parsed, context)
     except _PartialWriteError as error:
         return _refuse_partial_write(error, ItemReason.PARTIAL_WRITE, as_json=as_json)
     except protocol.ClaimError as error:
@@ -3234,7 +3122,7 @@ def _item_new_body(parsed: argparse.Namespace, raw_body: str) -> str:
     return _block_body_with_whole(new_body, _requested_whole_reason(parsed.whole))
 
 
-def _item_new_on_github(parsed: argparse.Namespace, canonical_remote: str) -> int:
+def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item new` under `storage = "github"` (issue #444): the body piped on
     stdin passes the same shape check `aco check <n>` applies before
     anything else is read or written, so an invalid body creates nothing;
@@ -3253,7 +3141,7 @@ def _item_new_on_github(parsed: argparse.Namespace, canonical_remote: str) -> in
     if defects:
         return _refuse_item_body_invalid(defects, as_json=parsed.json)
     new_body = _item_new_body(parsed, raw_body)
-    client = _github_forge(parsed.repo, canonical_remote)
+    client = github.GitHubForge(context.repository_id)
     open_issues = client.list_open_board_issues()
     if parsed.parent is not None:
         _open_container(open_issues, parsed.parent)
@@ -3285,7 +3173,7 @@ def _item_new_on_github(parsed: argparse.Namespace, canonical_remote: str) -> in
     return 0
 
 
-def _item_new_on_state_ref(parsed: argparse.Namespace, canonical_remote: str) -> int:
+def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item new` under `storage = "state-ref"` (issues #285, #316): the one
     write path for a fresh state-ref item -- `StateRefBoard.create_item`,
     the same CAS write `cut`'s own `create_child` performs, generalized to
@@ -3296,7 +3184,7 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, canonical_remote: str) ->
     the generic `_LazyForge` (issue #248) -- it calls `_state_ref_forge`
     directly, since `create_item` is not part of the generic `ForgeWriter`
     port every other write command narrows to."""
-    client = _state_ref_forge(parsed.repo, canonical_remote)
+    client = _state_ref_forge(context)
     parent_missing = (
         parsed.parent is not None
         and client.item_reference(parsed.parent).state is forge.ItemState.MISSING
@@ -3332,7 +3220,7 @@ def _print_item_new_result(item_id: str, number: int, *, as_json: bool) -> None:
 ITEM_EDIT_GITHUB_REFUSAL = "forge issues are edited on the forge; aco never governs them"
 
 
-def _cmd_item_edit(parsed: argparse.Namespace) -> int:
+def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM` (issue #287; `--size`, issue #357; `--whole`,
     issue #399): with `--size` or `--whole`, a narrow write of only that one
     top-level field (`_cmd_item_edit_size`/`_cmd_item_edit_whole`, both
@@ -3359,20 +3247,18 @@ def _cmd_item_edit(parsed: argparse.Namespace) -> int:
     the shared envelope as `body_invalid`, with `body --check`'s own
     `defects`; every other refusal is `precondition_failed` (issue #425)."""
     if parsed.size is not None:
-        return _cmd_item_edit_size(parsed)
+        return _cmd_item_edit_size(parsed, context)
     if parsed.whole is not None:
-        return _cmd_item_edit_whole(parsed)
+        return _cmd_item_edit_whole(parsed, context)
     as_json = parsed.json
     try:
-        toplevel = _resolve_toplevel()
-        config = _board_config(toplevel)
-        if config.storage is not body.Storage.STATE_REF:
+        if context.config.storage is not body.Storage.STATE_REF:
             raise protocol.ClaimUnavailableError(ITEM_EDIT_GITHUB_REFUSAL)
         new_body = _read_body_check_input()
         defects = _body_shape_defects(new_body, storage=body.Storage.STATE_REF)
         if defects:
             return _refuse_item_body_invalid(defects, as_json=as_json)
-        client = _state_ref_forge(parsed.repo, config.canonical_remote)
+        client = _state_ref_forge(context)
         number = parsed.item
         if not client.holds(number):
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))
@@ -3388,7 +3274,7 @@ def _cmd_item_edit(parsed: argparse.Namespace) -> int:
 ITEM_EDIT_SIZE_COMMAND = "item edit --size"
 
 
-def _cmd_item_edit_size(parsed: argparse.Namespace) -> int:
+def _cmd_item_edit_size(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM --size S|M|L` (issue #357): the one item-size
     write, over the generic `ForgeWriter.update_item_body` both `github`
     and `state-ref` already implement -- unlike the whole-body `item edit`
@@ -3399,11 +3285,11 @@ def _cmd_item_edit_size(parsed: argparse.Namespace) -> int:
     as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
-        client = _LazyForge(parsed.repo).writer()
+        client = _LazyForge(context).writer()
         _require_update_item_body(client, command=ITEM_EDIT_SIZE_COMMAND)
         number = parsed.item
         current_body = _item_body_or_refuse(client, number, command=ITEM_EDIT_SIZE_COMMAND)
-        storage = _board_config(_resolve_toplevel()).storage
+        storage = context.config.storage
         located = _located_block_or_refuse(
             number, current_body, command=ITEM_EDIT_SIZE_COMMAND, storage=storage
         )
@@ -3427,7 +3313,7 @@ def _print_item_edit_size_result(number: int, size: str, *, as_json: bool) -> No
 ITEM_EDIT_WHOLE_COMMAND = "item edit --whole"
 
 
-def _cmd_item_edit_whole(parsed: argparse.Namespace) -> int:
+def _cmd_item_edit_whole(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM --whole REASON` (issue #399): the one item-whole
     write, mirroring `_cmd_item_edit_size` over the same generic
     `ForgeWriter.update_item_body` -- works under `storage = "github"` too,
@@ -3436,11 +3322,11 @@ def _cmd_item_edit_whole(parsed: argparse.Namespace) -> int:
     envelope as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
-        client = _LazyForge(parsed.repo).writer()
+        client = _LazyForge(context).writer()
         _require_update_item_body(client, command=ITEM_EDIT_WHOLE_COMMAND)
         number = parsed.item
         current_body = _item_body_or_refuse(client, number, command=ITEM_EDIT_WHOLE_COMMAND)
-        storage = _board_config(_resolve_toplevel()).storage
+        storage = context.config.storage
         located = _located_block_or_refuse(
             number, current_body, command=ITEM_EDIT_WHOLE_COMMAND, storage=storage
         )
@@ -3474,7 +3360,7 @@ def _print_item_edit_result(
 ITEM_CLOSE_GITHUB_REFUSAL = "the forge closes its issues; aco never governs them"
 
 
-def _cmd_item_close(parsed: argparse.Namespace) -> int:
+def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item close ITEM` (issue #289): the state-ref item's own record,
     closed -- `state` to `CLOSED`, `closed_at`/`updated_at` to now, the item
     file and every other byte untouched (`StateRefBoard.close_item`'s one
@@ -3500,12 +3386,10 @@ def _cmd_item_close(parsed: argparse.Namespace) -> int:
     the shared envelope as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
-        toplevel = _resolve_toplevel()
-        config = _board_config(toplevel)
-        if config.storage is not body.Storage.STATE_REF:
+        if context.config.storage is not body.Storage.STATE_REF:
             raise protocol.ClaimUnavailableError(ITEM_CLOSE_GITHUB_REFUSAL)
         number = parsed.item
-        _worktree, _remote, observed = _store_observation()
+        _worktree, _remote, observed = _store_observation(context)
         _require_state_ref(observed)
         live_claim = observed.claims.get(protocol.claim_key(protocol.IssueIdentity(number), ""))
         if live_claim is not None:
@@ -3514,7 +3398,7 @@ def _cmd_item_close(parsed: argparse.Namespace) -> int:
                 f"({protocol._claimant_text(live_claim.agent, live_claim.role)}); "
                 "release the claim first"
             )
-        client = _state_ref_forge(parsed.repo, config.canonical_remote)
+        client = _state_ref_forge(context)
         if client.item_reference(number).state is forge.ItemState.MISSING:
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client))
         client.require_well_formed()
@@ -3672,16 +3556,15 @@ def _claim_history(worktree: Path, state: protocol.ClaimState) -> _ClaimHistory:
     )
 
 
-def _store_observation(*, directory: Path | None = None) -> tuple[Path, str, protocol.ClaimState]:
+def _store_observation(context: RunContext) -> tuple[Path, str, protocol.ClaimState]:
     """One fetch of `refs/aco/state` for a store command -- forge-free by
-    itself (issue #245). `directory`, when given (issue #322: `start`'s own
-    resolved worktree, never a process-wide `os.chdir`), is the worktree
-    this observation is anchored to and fetched into; the calling process's
-    own cwd otherwise. A command that also needs a forge resolves and
-    Erwartung-6-checks that target separately, the first time its session's
+    itself (issue #245), anchored to and fetched into `context`'s own
+    worktree (issue #322: `start`'s resolved worktree, never a process-wide
+    `os.chdir`). A command that also needs a forge resolves and
+    Erwartung-6-checks that target separately, the first time its context's
     `forge` is actually asked for."""
-    canonical_remote = _canonical_remote_name(_resolve_toplevel(directory=directory))
-    worktree = Path.cwd() if directory is None else directory
+    canonical_remote = context.canonical_remote
+    worktree = context.worktree
     return worktree, canonical_remote, store.fetch_state(worktree=worktree, remote=canonical_remote)
 
 
@@ -3806,43 +3689,19 @@ def _optional_issue_number(value: int | None) -> int | None:
     return None if value is None else int(value)
 
 
+@dataclass(frozen=True)
 class _LazyForge:
-    """This command's forge: resolved and Erwartung-6-checked the first time
-    anything calls it, cached after that, and never touched at all by a
-    command that never calls it (issue #245) -- `status`, `protect`,
-    `bootstrap`, and a lane `claim`/`rescope`/`release` never resolve a
-    repository or invoke `gh` because none of them ever does.
+    """This command's forge, read through its `RunContext` (issue #457):
+    resolved and Erwartung-6-checked the first time anything calls it, held
+    by the context after that, and never touched at all by a command that
+    never calls it (issue #245) -- `status`, `protect`, `bootstrap`, and a
+    lane `claim`/`rescope`/`release` never resolve a repository or invoke
+    `gh` because none of them ever does."""
 
-    Chooses its adapter by the repository's own `storage` pin (issue #248),
-    never by the canonical remote's host: `github` (the default) builds
-    `github.GitHubForge`; `state-ref` builds `state_board.StateRefBoard`
-    from the state ref's own `items/` tree instead.
-
-    `directory` (issue #322 review finding 2) names the checkout this
-    forge resolves and reads through; omitted, it keeps the previous
-    process-cwd-bound resolution. `start` builds a fresh, undirected
-    instance against the caller checkout to read the item before its
-    worktree exists, then a second instance directed at that worktree for
-    the claim, rather than reusing this cache across both directories.
-    """
-
-    def __init__(self, repo: str | None, *, directory: Path | None = None) -> None:
-        self._repo = repo
-        self._directory = directory
-        self._resolved: forge.ForgeReader | None = None
+    context: RunContext
 
     def __call__(self) -> forge.ForgeReader:
-        if self._resolved is None:
-            toplevel = _resolve_toplevel(directory=self._directory)
-            config = _board_config(toplevel)
-            canonical_remote = config.canonical_remote
-            if config.storage is body.Storage.STATE_REF:
-                self._resolved = _state_ref_forge(
-                    self._repo, canonical_remote, directory=self._directory
-                )
-            else:
-                self._resolved = _github_forge(self._repo, canonical_remote)
-        return self._resolved
+        return self.context.forge
 
     def writer(self) -> forge.ForgeWriter:
         """The same resolved forge, narrowed to its writing surface (issue
@@ -3863,6 +3722,10 @@ class _ReadSession:
 
     forge: _LazyForge
 
+    @property
+    def context(self) -> RunContext:
+        return self.forge.context
+
 
 @dataclass(frozen=True)
 class _WriteSession:
@@ -3870,6 +3733,10 @@ class _WriteSession:
 
     forge: _LazyForge
     release_branch: str | None
+
+    @property
+    def context(self) -> RunContext:
+        return self.forge.context
 
 
 def _rescope_location(add: list[str] | None, drop: list[str] | None) -> Path:
@@ -3965,7 +3832,7 @@ def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
     as_json = parsed.json
     try:
         if isinstance(parsed.number, str):
-            return _check_trunk_commit(parsed)
+            return _check_trunk_commit(parsed, session.context)
         number = int(parsed.number)
         client = session.forge()
         # Read for its refusals only: a repository pinned to a grammar this
@@ -3975,15 +3842,19 @@ def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
         # dispatches to) stays inside this handler too, so a forge failure
         # anywhere on the check path reports `unavailable` through the
         # shared envelope rather than the plain sentence alone.
-        config = _load_board_config(client, _resolve_toplevel())
+        config = _load_board_config(client, session.context)
         repository = client.repository.path
         reference = client.item_reference(number)
         if reference.state is forge.ItemState.MISSING:
             outcome = _missing_number(repository, number)
         elif reference.is_landing:
-            _worktree, _remote, observed = _store_observation()
+            _worktree, _remote, observed = _store_observation(session.context)
             outcome = _pull_request_check(
-                client, tuple(observed.claims.values()), repository, number, config.storage
+                session.context,
+                tuple(observed.claims.values()),
+                repository,
+                number,
+                config.storage,
             )
         else:
             outcome = _issue_check(
@@ -4038,15 +3909,14 @@ def _trunk_commit_outcome(sha: str, landing: checkout.TrunkLanding | None) -> Ch
     )
 
 
-def _check_trunk_commit(parsed: argparse.Namespace) -> int:
+def _check_trunk_commit(parsed: argparse.Namespace, context: RunContext) -> int:
     """`check <sha>`: the trunk form of the one check, reporting through the
     same envelope and the same exit codes the number forms use (issue #435).
     Its walk is the one `release --merged <sha>` verifies against under
     `storage = "state-ref"` (LAND-47/LAND-52), reused rather than re-derived
     here. Needs no forge at all: a trunk commit's trailer is local history."""
     sha = cast(str, parsed.number)
-    config = _board_config(_resolve_toplevel())
-    landings = checkout.trunk_landings(config.canonical_remote, TRUNK_LANDING_DEPTH)
+    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
     landing = next((entry for entry in landings if entry.sha == sha), None)
     return _trunk_commit_outcome(sha, landing).report(as_json=parsed.json)
 
@@ -4272,13 +4142,15 @@ def _brief_config(toplevel: Path) -> board.BriefConfig | None:
     return board.load_brief_config(toplevel / board.BRIEF_CONFIG_PATH)
 
 
-def _brief_step_rules_or_refusal(step: str | None) -> board.BriefStepRules | None:
+def _brief_step_rules_or_refusal(
+    step: str | None, context: RunContext
+) -> board.BriefStepRules | None:
     """`--step`'s own rules and checks, or `None` when the brief carries no
     `--step` at all -- the one branch that must stay untouched by
     `.agent-claim/brief.toml`'s presence or content (BRIEF-16)."""
     if step is None:
         return None
-    config = _brief_config(_resolve_toplevel())
+    config = _brief_config(context.toplevel)
     if config is None:
         raise protocol.ClaimError(f"no {board.BRIEF_CONFIG_PATH} in the repository")
     return config.for_step(board.BriefStep(step))
@@ -4306,11 +4178,11 @@ def _cmd_brief(parsed: argparse.Namespace, session: _ReadSession) -> int:
 def _brief_report(parsed: argparse.Namespace, session: _ReadSession) -> int:
     """`brief`'s own composition and printing, every refusal raised by name
     for `_cmd_brief` to report."""
-    step_rules = _brief_step_rules_or_refusal(parsed.step)
+    step_rules = _brief_step_rules_or_refusal(parsed.step, session.context)
     item = int(parsed.item)
     client = session.forge()
     item_body = client.item_reference(item).body or ""
-    worktree, _remote, state = _store_observation()
+    worktree, _remote, state = _store_observation(session.context)
     live = _brief_live_claim(worktree, state, item)
     if live is None:
         tip: str | None = None
@@ -4326,7 +4198,7 @@ def _brief_report(parsed: argparse.Namespace, session: _ReadSession) -> int:
     return 0
 
 
-def _cmd_status(parsed: argparse.Namespace) -> int:
+def _cmd_status(parsed: argparse.Namespace, context: RunContext) -> int:
     """`status` reads live claims from the store directly (issue #176),
     dispatched straight from `main` -- it never needs `_dispatch`'s ledger
     resolution (a cut-over repository may have no ledger issue left at all).
@@ -4336,15 +4208,13 @@ def _cmd_status(parsed: argparse.Namespace) -> int:
     #406): `status` names no `invalid_usage` of its own (see `StatusReason`).
     """
     try:
-        return _status_read(parsed)
+        return _status_read(parsed, context)
     except protocol.ClaimError as error:
         return _refuse(StatusReason.UNAVAILABLE, error, as_json=parsed.json)
 
 
-def _status_read(parsed: argparse.Namespace) -> int:
-    canonical_remote = _canonical_remote_name(_resolve_toplevel())
-    worktree = Path.cwd()
-    state = store.fetch_state(worktree=worktree, remote=canonical_remote)
+def _status_read(parsed: argparse.Namespace, context: RunContext) -> int:
+    worktree, _remote, state = _store_observation(context)
     claims = tuple(state.claims.values())
     if parsed.path is not None:
         # `--path` prints no age, so it never reads a claim's ancestry: a
@@ -4352,16 +4222,14 @@ def _status_read(parsed: argparse.Namespace) -> int:
         # (README "status --path").
         if parsed.json:
             return _status_path_json(claims, parsed.path)
-        storage = _board_config(_resolve_toplevel()).storage
-        _status_path(claims, parsed.path, storage)
+        _status_path(claims, parsed.path, context.config.storage)
         return 0
     ages = _claim_ages(worktree, state)
     issue = _optional_issue_number(parsed.issue)
     now = datetime.now(UTC)
     if parsed.json:
         return _status_json(claims, issue, ages, state.tip, now=now)
-    storage = _board_config(_resolve_toplevel()).storage
-    return _status(claims, issue, ages, storage, now=now)
+    return _status(claims, issue, ages, context.config.storage, now=now)
 
 
 @dataclass(frozen=True)
@@ -4389,13 +4257,16 @@ class _StoreAndIssues:
     issues: tuple[board.Issue, ...]
 
 
-def _store_observation_and_issues(client: forge.ForgeReader) -> _StoreAndIssues:
+def _store_observation_and_issues(context: RunContext) -> _StoreAndIssues:
     """The claim-state fetch (`ls-remote` + `fetch`) and the open-issue list
     overlapped on separate threads (issue #440): a board build that needs
     both -- every one that has not already been handed a pre-fetched
-    `issues` tuple -- used to pay their wait times back to back."""
+    `issues` tuple -- used to pay their wait times back to back. The forge
+    is resolved first, on this thread, so its refusals keep their order and
+    the context's facts are read once, before either thread asks for them."""
+    client = context.forge
     with ThreadPoolExecutor(max_workers=2) as pool:
-        observation = pool.submit(_store_observation)
+        observation = pool.submit(_store_observation, context)
         issues = pool.submit(client.list_open_board_issues)
         worktree, remote, observed = observation.result()
         return _StoreAndIssues(worktree, remote, observed, issues.result())
@@ -4410,15 +4281,15 @@ def _observed_board(
     onto forge board data (issue #176 -- claims no longer come from the
     ledger; the forge is still the board's own data source)."""
     if issues is None:
-        fetched = _store_observation_and_issues(session.forge())
+        fetched = _store_observation_and_issues(session.context)
         worktree, observed, issues = fetched.worktree, fetched.observed, fetched.issues
     else:
         # A caller that already fetched `issues` itself (`rulings`) has
         # nothing left to overlap the state fetch with.
-        worktree, _remote, observed = _store_observation()
+        worktree, _remote, observed = _store_observation(session.context)
     live_claims = tuple(observed.claims.values())
     projected = _board(
-        session.forge(),
+        session.context,
         live_claims,
         issues=issues,
         history=_claim_history(worktree, observed),
@@ -4445,17 +4316,17 @@ def _board_page(session: _ReadSession) -> board_html.BoardPage:
     through `projected.landings` (issue #371). `--html` calls this fresh
     every time; `--serve` (issue #440) holds its own result between `GET`s
     instead, rebuilding only on a ruling or an explicit reload."""
-    client = session.forge()
-    fetched = _store_observation_and_issues(client)
+    context = session.context
+    fetched = _store_observation_and_issues(context)
     projected = _board(
-        client,
+        context,
         tuple(fetched.observed.claims.values()),
         issues=fetched.issues,
         history=_claim_history(fetched.worktree, fetched.observed),
     )
     bodies = {issue.number: issue.body for issue in fetched.issues}
-    toplevel = _resolve_toplevel()
-    config = _board_config(toplevel)
+    toplevel = context.toplevel
+    config = context.config
     sources = board_html.BoardSources(
         bodies=bodies,
         claimants=_lane_claimants(fetched.observed),
@@ -4560,7 +4431,7 @@ def _cmd_rulings(parsed: argparse.Namespace, session: _ReadSession) -> int:
         issues = session.forge().list_open_board_issues()
         projected = _observed_board(session, issues=issues).board
         bodies = {issue.number: issue.body for issue in issues}
-        storage = _board_config(_resolve_toplevel()).storage
+        storage = session.context.config.storage
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(RulingsReason.INVALID_USAGE, error, as_json=as_json)
     except protocol.ClaimError as error:
@@ -4581,7 +4452,7 @@ def _cmd_next(parsed: argparse.Namespace, session: _ReadSession) -> int:
     as_json = parsed.json
     try:
         observed = _observed_board(session)
-        storage = _board_config(_resolve_toplevel()).storage
+        storage = session.context.config.storage
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(NextReason.INVALID_USAGE, error, as_json=as_json)
     except protocol.ClaimError as error:
@@ -4784,7 +4655,6 @@ def _whole_from_item_body(
     session: _WriteSession,
     identity: protocol.ClaimIdentity,
     *,
-    directory: Path | None,
     open_by_number: Mapping[int, board.Issue] | None,
 ) -> Callable[[], str | None] | None:
     """The wide-scope gate's own fallback for `claim`/`start` (issue #399):
@@ -4804,7 +4674,7 @@ def _whole_from_item_body(
 
     def resolve() -> str | None:
         client = session.forge()
-        storage = _board_config(_resolve_toplevel(directory=directory)).storage
+        storage = session.context.config.storage
         return _item_whole(client, open_by_number or {}, number, storage=storage)
 
     return resolve
@@ -4936,7 +4806,7 @@ def _claim_target_checks(
         open_by_number = {issue.number: issue for issue in client.list_open_board_issues()}
     _reject_scope_mismatch(open_by_number, target_issue, requested.scope, context.storage)
     projected = _board(
-        client,
+        session.context,
         tuple(observed.claims.values()),
         issues=tuple(open_by_number.values()),
         history=_ClaimHistory(ages=_claim_ages(context.worktree, observed)),
@@ -4951,9 +4821,7 @@ def _claim_target_checks(
     return checks, target_issue, replayed
 
 
-def _cmd_claim(
-    parsed: argparse.Namespace, session: _WriteSession, *, directory: Path | None = None
-) -> int:
+def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
     """`claim`'s own `--json` refusals (issue #406, `ClaimReason`):
     `_claim_write`'s typed exceptions choose `target_invalid`/
     `body_invalid`/`claim_conflict`; `RepoMeaninglessUnderStateRefError`
@@ -4962,7 +4830,7 @@ def _cmd_claim(
     `unavailable`, matching `ask`/`rule`/`brief`'s own catch-all."""
     as_json = parsed.json
     try:
-        return _claim_write(parsed, session, directory=directory)
+        return _claim_write(parsed, session)
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(ClaimReason.INVALID_USAGE, error, as_json=as_json)
     except _ClaimTargetInvalidError as error:
@@ -4985,9 +4853,9 @@ class _ClaimConflictError(protocol.ClaimError):
     unwrapped to `_cmd_claim`'s `unavailable` catch-all (CLM-27)."""
 
 
-def _claim_write(
-    parsed: argparse.Namespace, session: _WriteSession, *, directory: Path | None = None
-) -> int:
+def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
+    context = session.context
+    directory = context.directory
     requested = _request(parsed, directory=directory)
     if isinstance(requested.identity, protocol.LaneIdentity) and not requested.scope:
         raise protocol.ClaimUnavailableError(LANE_CLAIM_SCOPE_REQUIRED)
@@ -5004,29 +4872,27 @@ def _claim_write(
             requested.scope,
             requested.whole_reason,
             directory=directory,
-            whole_from_body=_whole_from_item_body(
-                session, requested.identity, directory=directory, open_by_number=None
-            ),
+            whole_from_body=_whole_from_item_body(session, requested.identity, open_by_number=None),
         )
         requested = replace(requested, whole_reason=effective_whole)
-        worktree, canonical_remote, observed = _store_observation(directory=directory)
+        worktree, canonical_remote, observed = _store_observation(context)
         _require_state_ref(observed)
-        storage = _board_config(_resolve_toplevel(directory=directory)).storage
+        storage = context.config.storage
     else:
         # `--scope` was omitted in issue mode: the item's own scope has to
         # come from the store, and usually the forge, before it can even be
         # shape-checked -- both observed exactly once, here, so an omitted-
         # scope claim never fetches either a second time (issue #337).
-        worktree, canonical_remote, observed = _store_observation(directory=directory)
+        worktree, canonical_remote, observed = _store_observation(context)
         _require_state_ref(observed)
-        storage = _board_config(_resolve_toplevel(directory=directory)).storage
+        storage = context.config.storage
         requested, open_by_number = _resolved_claim_request(requested, observed, session, storage)
         versioning, effective_whole = _scope_versioning(
             requested.scope,
             requested.whole_reason,
             directory=directory,
             whole_from_body=_whole_from_item_body(
-                session, requested.identity, directory=directory, open_by_number=open_by_number
+                session, requested.identity, open_by_number=open_by_number
             ),
         )
         requested = replace(requested, whole_reason=effective_whole)
@@ -5122,16 +4988,17 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     prefix = checkout.branch_prefix_for_identity()
     branch = f"{prefix}/issue-{number}-{slug}"
     checkout.refuse_unsafe_start_branch(branch, prefix=prefix)
-    toplevel = _resolve_toplevel()
-    worktree_path = _start_worktree_path(toplevel, number=number, slug=slug)
-    canonical_remote = _board_config(toplevel).canonical_remote
-    checkout.resolve_or_create_worktree(worktree_path, branch, remote=canonical_remote)
+    worktree_path = _start_worktree_path(session.context.toplevel, number=number, slug=slug)
+    checkout.resolve_or_create_worktree(
+        worktree_path, branch, remote=session.context.canonical_remote
+    )
     print(f"worktree: {worktree_path}")
     print(f"branch: {branch}")
     identity = _resolved_identity(number, branch)
-    _worktree, _remote, observed = _store_observation(directory=worktree_path)
+    worktree_context = session.context.for_directory(worktree_path)
+    _worktree, _remote, observed = _store_observation(worktree_context)
     _require_state_ref(observed)
-    storage = _board_config(_resolve_toplevel(directory=worktree_path)).storage
+    storage = worktree_context.config.storage
     # `claim_key` alone is an issue-only key for an `IssueIdentity` (it never
     # folds `branch` into the key at all): a live record found under it may
     # belong to a different agent, a different role, or a different branch
@@ -5169,15 +5036,14 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
         resource=None,
         json=False,
     )
-    # A fresh forge directed at the worktree (issue #322 review finding 2),
-    # never `session.forge` itself: that instance is cached from the caller
-    # checkout by the item-existence read above, and reusing it here would
-    # let the worktree-scoped claim read a state-ref snapshot taken before
-    # the worktree existed instead of from the checkout it actually claims in.
-    claim_session = _WriteSession(
-        forge=_LazyForge(parsed.repo, directory=worktree_path), release_branch=None
-    )
-    return _cmd_claim(claim_parsed, claim_session, directory=worktree_path)
+    # The worktree's own context (issue #322 review finding 2, issue #457),
+    # never `session.forge` itself: that forge is held by the caller
+    # checkout's context since the item-existence read above, and reusing it
+    # here would let the worktree-scoped claim read a state-ref snapshot
+    # taken before the worktree existed instead of from the checkout it
+    # actually claims in.
+    claim_session = _WriteSession(forge=_LazyForge(worktree_context), release_branch=None)
+    return _cmd_claim(claim_parsed, claim_session)
 
 
 @dataclass(frozen=True)
@@ -5238,12 +5104,13 @@ def _cmd_release(parsed: argparse.Namespace, session: _WriteSession) -> int:
 def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> int:
     issue = _optional_issue_number(parsed.issue)
     identity = _resolved_identity(issue, session.release_branch or "")
-    storage = _board_config(_resolve_toplevel()).storage
+    context = session.context
+    storage = context.config.storage
     if parsed.merged is not None and storage is body.Storage.STATE_REF:
         return _cmd_release_landed(parsed, session, identity, storage)
     merged = None if parsed.merged is None else _github_pull_request_number(parsed.merged)
     outcome = _release_outcome(merged, parsed.abandoned)
-    worktree, canonical_remote, observed = _store_observation()
+    worktree, canonical_remote, observed = _store_observation(context)
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(parsed, observed, identity, session.release_branch)
     client: github.GitHubForge | None = None
@@ -5256,7 +5123,7 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         # cast is honest, not a suppression: `_LazyForge.__call__` builds
         # exactly a `github.GitHubForge` for every other storage pin.
         client = cast(github.GitHubForge, session.forge())
-        pending_close = _verify_merged_release(client, identity, outcome, canonical_remote)
+        pending_close = _verify_merged_release(context, client, identity, outcome)
         if pending_close is not None:
             # Runs before the release transition below (issue #359 R1): a
             # close failure here -- a transient forge error, most often --
@@ -5284,10 +5151,10 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
     landing, hint = (
         (None, None)
         if client is None
-        else _landing_report(client, identity, worktree, new_state, storage)
+        else _landing_report(context, identity, worktree, new_state, storage)
     )
     worktree_cleanup = (
-        _cleanup_landed_worktree(parsed, resolved.selected.branch, canonical_remote)
+        _cleanup_landed_worktree(parsed, resolved.selected.branch, context)
         if isinstance(outcome, protocol.MergedRelease)
         else None
     )
@@ -5327,7 +5194,7 @@ def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> s
 
 
 def _cleanup_landed_worktree(
-    parsed: argparse.Namespace, branch: str, remote: str
+    parsed: argparse.Namespace, branch: str, context: RunContext
 ) -> checkout.WorktreeCleanupOutcome:
     """After a successful `--merged` release, remove the lane's local
     worktree and local branch when both are safe to remove, and report
@@ -5344,13 +5211,13 @@ def _cleanup_landed_worktree(
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
     try:
-        toplevel = _resolve_toplevel()
+        toplevel = context.toplevel
         matching = checkout.worktree_on_branch(store.list_worktrees(toplevel), branch)
         if matching is None:
             return checkout.worktree_cleanup_kept(WORKTREE_KEPT_NO_WORKTREE_REASON)
         if matching == toplevel:
             return checkout.worktree_cleanup_kept(WORKTREE_KEPT_RAN_FROM_INSIDE_REASON)
-        return checkout.cleanup_landed_worktree(matching, branch, remote=remote)
+        return checkout.cleanup_landed_worktree(matching, branch, remote=context.canonical_remote)
     except protocol.ClaimError as error:
         return checkout.worktree_cleanup_kept(f"git failure: {error}")
 
@@ -5684,7 +5551,9 @@ def _land_release_routing(
     )
 
 
-def _land_release(parsed: argparse.Namespace, issue: int | None, branch: str) -> None:
+def _land_release(
+    parsed: argparse.Namespace, context: RunContext, issue: int | None, branch: str
+) -> None:
     """`aco land`'s own delegated call into the existing `release --merged`
     path (issue #405): never a second copy of its close/release/report/
     cleanup -- `--branch` selects the lane by name without requiring this
@@ -5712,7 +5581,7 @@ def _land_release(parsed: argparse.Namespace, issue: int | None, branch: str) ->
         json=False,
         repo=parsed.repo,
     )
-    release_session = _WriteSession(forge=_LazyForge(parsed.repo), release_branch=branch)
+    release_session = _WriteSession(forge=_LazyForge(context), release_branch=branch)
     _release_transition(release_parsed, release_session)
 
 
@@ -5744,8 +5613,9 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
     check placed only there left a rerun free to delete the branch and
     fast-forward -- and `_cmd_release` free to close the item -- on a bare
     `--coordinator-override` with no coordinator role behind it."""
-    toplevel = _resolve_toplevel()
-    config = _board_config(toplevel)
+    context = session.context
+    toplevel = context.toplevel
+    config = context.config
     if config.storage is not body.Storage.GITHUB:
         raise protocol.ClaimUnavailableError(LAND_GITHUB_ONLY_REFUSAL)
     if parsed.coordinator_override:
@@ -5771,14 +5641,13 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
             # request this preflight goes on to refuse must anchor no ref
             # and stamp no lineage -- the same read-only requirement
             # `_reset_observation` already carries for `reset`.
-            canonical_remote = _canonical_remote_name(_resolve_toplevel())
-            observed = store.peek_state(worktree=Path.cwd(), remote=canonical_remote)
+            observed = store.peek_state(worktree=context.worktree, remote=context.canonical_remote)
             _require_state_ref(observed)
             return observed
 
-        context = _LandingCheckContext(client, repository, config.storage)
+        check_context = _LandingCheckContext(context, repository, config.storage)
         detail, classification, readiness = _land_preflight(
-            client, claims_provider, context, number, parsed
+            client, claims_provider, check_context, number, parsed
         )
         default_branch = checkout.refuse_unclean_default_branch_checkout()
         merge_sha = _land_merge(client, detail, readiness, classification)
@@ -5799,6 +5668,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         "release",
         lambda: _land_release(
             parsed,
+            context,
             _land_release_routing(classification, merge_sha, config.canonical_remote),
             detail.source_branch,
         ),
@@ -5836,15 +5706,16 @@ def _cmd_release_landed(
             "--merged under storage = state-ref requires an issue number; "
             "an issue-less lane has no item to close"
         )
-    toplevel = _resolve_toplevel()
-    canonical_remote = _board_config(toplevel).canonical_remote
-    landings = checkout.trunk_landings(canonical_remote, TRUNK_LANDING_DEPTH)
+    context = session.context
+    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
     commit = _landed_commit(landings, identity.issue, cast(str, parsed.merged))
-    client = _state_ref_forge(parsed.repo, canonical_remote)
+    # `storage` is already proven `state-ref` by `_release_transition`, so
+    # this cast is honest: `_build_forge` builds exactly a `StateRefBoard`.
+    client = cast(state_board.StateRefBoard, context.forge)
     if client.item_reference(identity.issue).state is forge.ItemState.MISSING:
         raise protocol.ClaimUnavailableError(_missing_item_refusal(identity.issue, client))
     write = client.prepare_landing(identity.issue)
-    worktree, _remote, observed = _store_observation()
+    worktree, _remote, observed = _store_observation(context)
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(parsed, observed, identity, session.release_branch)
     new_oid = store.hash_blob(worktree, write.content)
@@ -5862,15 +5733,15 @@ def _cmd_release_landed(
     )
     new_state = store.commit_transition(
         worktree=worktree,
-        remote=canonical_remote,
+        remote=context.canonical_remote,
         subject=_transition_subject(
             "release", resolved.selected.identity, resolved.selected.branch
         ),
         intent=intent,
     )
     client.mark_landed(write, new_oid)
-    landing, hint = _landing_report(client, identity, worktree, new_state, storage)
-    worktree_cleanup = _cleanup_landed_worktree(parsed, resolved.selected.branch, canonical_remote)
+    landing, hint = _landing_report(context, identity, worktree, new_state, storage)
+    worktree_cleanup = _cleanup_landed_worktree(parsed, resolved.selected.branch, context)
     _print_release_result(
         ReleaseReport(
             resolved.selected,
@@ -5889,7 +5760,7 @@ def _cmd_release_landed(
 
 
 def _landing_report(
-    client: forge.ForgeReader,
+    context: RunContext,
     identity: protocol.ClaimIdentity,
     worktree: Path,
     new_state: store.ClaimState,
@@ -5900,13 +5771,13 @@ def _landing_report(
     malformed state-ref item the board read refuses on (issue #447), can only
     ever downgrade the report to `hint`, never undo or fail that release."""
     landed = (
-        board.IssueReference(client.repository.path, identity.issue)
+        board.IssueReference(context.forge.repository.path, identity.issue)
         if isinstance(identity, protocol.IssueIdentity)
         else None
     )
     try:
         landing = _release_landing(
-            client,
+            context,
             tuple(new_state.claims.values()),
             _claim_ages(worktree, new_state),
             landed,
@@ -6452,7 +6323,7 @@ def _cmd_cut(parsed: argparse.Namespace, session: _WriteSession) -> int:
                 raise protocol.ClaimUnavailableError(
                     f"this forge cannot {operation.value}; cut the slice by hand"
                 )
-        config = _load_board_config(client, _resolve_toplevel())
+        config = _load_board_config(client, session.context)
         open_issues = client.list_open_board_issues()
         return _cut_slice(
             client, _cut_target(client, open_issues, number), open_issues, parsed, config
@@ -6506,7 +6377,7 @@ class _InvalidTargetError(protocol.ClaimError):
 
 
 def _require_writable_target(
-    client: forge.ForgeWriter, number: int, *, command: str
+    client: forge.ForgeWriter, context: RunContext, number: int, *, command: str
 ) -> tuple[str, board.BoardConfig]:
     """`ask` and `rule`'s shared target gate (RULE-06..08, cited verbatim by
     `specs/ask.spec.md`): the forge must accept a body write, the item must
@@ -6518,7 +6389,7 @@ def _require_writable_target(
         _require_update_item_body(client, command=command)
     except protocol.ClaimError as error:
         raise _TargetUnavailableError(str(error)) from error
-    config = _load_board_config(client, _resolve_toplevel())
+    config = _load_board_config(client, context)
     try:
         body = _item_body_or_refuse(client, number, command=command)
         _located_block_or_refuse(number, body, command=command, storage=config.storage)
@@ -6565,7 +6436,7 @@ def _emit_rule_result(
 
 
 def rule_item(
-    client: forge.ForgeWriter, number: int, line: int, ruling: str, note: str | None
+    context: RunContext, number: int, line: int, ruling: str, note: str | None
 ) -> tuple[body.ExpectationLine, int]:
     """`_cmd_rule`'s own write, extracted (issue #280) so `board --serve`'s
     `POST /rule` calls the exact same path a CLI `aco rule` invocation does
@@ -6574,7 +6445,8 @@ def rule_item(
     still has open; raises `protocol.ClaimError` by name for every refusal
     (already ruled, out of range, a bad outcome, a malformed or missing
     item), which both callers turn into their own by-name response."""
-    current_body, config = _require_writable_target(client, number, command="rule")
+    client = _LazyForge(context).writer()
+    current_body, config = _require_writable_target(client, context, number, command="rule")
     ruled_on = datetime.now(UTC).date()
     new_body = body.rule_expectation(current_body, line, ruling, ruled_on, note=note)
     client.update_item_body(number, new_body)
@@ -6607,9 +6479,10 @@ def _rule_item_reason(error: _RuleItemError) -> RuleReason:
 def _rule_expectation_line(parsed: argparse.Namespace, session: _WriteSession) -> int:
     """`rule`'s own work, every refusal raised by name for `_cmd_rule` to
     report."""
-    client = session.forge.writer()
     number = int(parsed.item)
-    ruled_line, open_remaining = rule_item(client, number, parsed.line, parsed.ruling, parsed.note)
+    ruled_line, open_remaining = rule_item(
+        session.context, number, parsed.line, parsed.ruling, parsed.note
+    )
     _emit_rule_result(number, ruled_line, open_remaining, as_json=parsed.json)
     return 0
 
@@ -6652,11 +6525,11 @@ class _ServedBoardCache:
     -- marks `built` stale, so the next `GET` rebuilds it; an explicit
     `?reload=1` rebuilds on that very `GET`. `lock` serializes a rebuild
     against a concurrent request: `ThreadingHTTPServer` runs each one on its
-    own thread. Every rebuild reads through a fresh `_LazyForge` (issue #447):
-    a state-ref forge is a snapshot of the store at resolution, so one held
-    for the server's lifetime would never show a later write."""
+    own thread. Every rebuild reads through a fresh context (issues #447,
+    #457): a state-ref forge is a snapshot of the store at resolution, so one
+    held for the server's lifetime would never show a later write."""
 
-    repo: str | None
+    context: RunContext
     built: tuple[board_html.BoardPage, datetime] | None = None
     stale: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -6670,7 +6543,7 @@ class _ServedBoardCache:
         has no page to keep, and raises."""
         with self.lock:
             if self.built is None or self.stale or reload:
-                fresh = _ReadSession(forge=_LazyForge(self.repo))
+                fresh = _ReadSession(forge=_LazyForge(self.context.fresh()))
                 try:
                     self.built = (_board_page(fresh), datetime.now(UTC))
                 except protocol.MalformedStateTreeError as refusal:
@@ -6701,7 +6574,7 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
     it without blocking."""
     client = session.forge.writer()
     token_holder: list[str] = []
-    cache = _ServedBoardCache(parsed.repo)
+    cache = _ServedBoardCache(session.context)
 
     def resolve_token() -> str:
         token = workspace.board_token(
@@ -6734,10 +6607,11 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
         # snapshot cannot see an item that went bad while it ran, and a
         # preflight alone could not see one going bad before the write.
         try:
-            clicked = _LazyForge(parsed.repo).writer()
+            request_context = session.context.fresh()
+            clicked = _LazyForge(request_context).writer()
             if isinstance(clicked, state_board.StateRefBoard):
                 clicked.hold_well_formed()
-            rule_item(clicked, item, line, ruling, note)
+            rule_item(request_context, item, line, ruling, note)
         except protocol.ClaimError as error:
             return board_serve.RuleOutcome(refusal=str(error))
         finally:
@@ -6857,7 +6731,7 @@ def _append_expectation_card(parsed: argparse.Namespace, session: _WriteSession)
     )
     client = session.forge.writer()
     number = int(parsed.item)
-    current_body, config = _require_writable_target(client, number, command="ask")
+    current_body, config = _require_writable_target(client, session.context, number, command="ask")
     new_body = body.append_expectation(current_body, parsed.text, parsed.default, card=card)
     index = len(body.expectation_lines(new_body, storage=config.storage))
     client.update_item_body(number, new_body)
@@ -6913,14 +6787,14 @@ def _release_branch_for(parsed: argparse.Namespace) -> str | None:
     )
 
 
-def _bootstrap_state() -> int:
+def _bootstrap_state(context: RunContext) -> int:
     """Create `refs/aco/state` if proven absent; report the existing tip
     untouched when it is already there. Forge-free (issue #245): `--repo` is
-    meaningless here and unused. `_canonical_remote_name` reads through
-    `_board_config` (#315), so an untracked `board.toml` refuses here too,
-    before this command's own first write."""
-    canonical_remote = _canonical_remote_name(_resolve_toplevel())
-    print(store.bootstrap(worktree=Path.cwd(), remote=canonical_remote))
+    meaningless here and unused. The context's configuration is the tracked
+    one (#315), so an untracked `board.toml` refuses here too, before this
+    command's own first write."""
+    canonical_remote = context.canonical_remote
+    print(store.bootstrap(worktree=context.worktree, remote=canonical_remote))
     return 0
 
 
@@ -7116,20 +6990,22 @@ def _execute_reset(*, worktree: Path, remote: str, plan: ResetPlan) -> None:
     print(_reset_bootstrap_line(tip=fresh_tip))
 
 
-def _reset_observation() -> tuple[Path, str, protocol.ClaimState | protocol.UnreadableState]:
+def _reset_observation(
+    context: RunContext,
+) -> tuple[Path, str, protocol.ClaimState | protocol.UnreadableState]:
     """`reset`'s own state read (issue #298, 19.09.2026 gate finding 1):
     `store.peek_state_for_reset` instead of `_store_observation`'s ordinary
     `fetch_state`, so a broken lineage -- exactly what `reset` exists to
     recover from -- never blocks it, and so a dry run, a live-claim
     refusal, or a failed export writes no per-worktree stamp or anchor
     (finding 2)."""
-    canonical_remote = _canonical_remote_name(_resolve_toplevel())
-    worktree = Path.cwd()
+    canonical_remote = context.canonical_remote
+    worktree = context.worktree
     state = store.peek_state_for_reset(worktree=worktree, remote=canonical_remote)
     return worktree, canonical_remote, state
 
 
-def _reset_state(parsed: argparse.Namespace) -> int:
+def _reset_state(parsed: argparse.Namespace, context: RunContext) -> int:
     """`reset` (issue #298): exports `STATE_REF`, deletes it on the remote
     with a lease and locally if present, clears every worktree's lineage
     stamp and fetch anchor, and bootstraps a fresh empty state. Forge-free,
@@ -7139,13 +7015,12 @@ def _reset_state(parsed: argparse.Namespace) -> int:
     read has unknown live claims, so executing over it additionally needs
     `--force-unreadable` (issue #341); its bundle is still exported.
     """
-    worktree, remote, state = _reset_observation()
+    worktree, remote, state = _reset_observation(context)
     if isinstance(state, protocol.ClaimState) and state.claims:
-        storage = board.load_config(_resolve_toplevel() / board.CONFIG_PATH).storage
         ages = _claim_ages(worktree, state)
-        _status(tuple(state.claims.values()), None, ages, storage)
+        _status(tuple(state.claims.values()), None, ages, context.config.storage)
         return 2
-    export = _resolved_reset_export_config(parsed, _resolve_toplevel())
+    export = _resolved_reset_export_config(parsed, context.toplevel)
     plan = _build_reset_plan(
         worktree=worktree,
         remote=remote,
@@ -7184,7 +7059,9 @@ class _CommandEntry:
 
 _COMMAND_TABLE: dict[str, _CommandEntry] = {
     "bootstrap": _CommandEntry(
-        _add_bootstrap_parser, _CommandSession.FORGE_FREE, lambda _parsed: _bootstrap_state()
+        _add_bootstrap_parser,
+        _CommandSession.FORGE_FREE,
+        lambda _parsed, context: _bootstrap_state(context),
     ),
     "reset": _CommandEntry(_add_reset_parser, _CommandSession.FORGE_FREE, _reset_state),
     "board": _CommandEntry(_add_board_parser, _CommandSession.READ, _cmd_board),
@@ -7203,17 +7080,17 @@ _COMMAND_TABLE: dict[str, _CommandEntry] = {
 }
 
 
-def _dispatch_item(parsed: argparse.Namespace) -> int:
+def _dispatch_item(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item`'s own four subcommands, pulled out of `_dispatch` (issue #372
     S1) so their nesting stops counting against every other command's
     cognitive complexity."""
     if parsed.item_command == "new":
-        return _cmd_item_new(parsed)
+        return _cmd_item_new(parsed, context)
     if parsed.item_command == "edit":
-        return _cmd_item_edit(parsed)
+        return _cmd_item_edit(parsed, context)
     if parsed.item_command == "close":
-        return _cmd_item_close(parsed)
-    return _cmd_item_show(parsed, _ReadSession(forge=_LazyForge(parsed.repo)))
+        return _cmd_item_close(parsed, context)
+    return _cmd_item_show(parsed, _ReadSession(forge=_LazyForge(context)))
 
 
 def _resolved_before_the_command_starts(parsed: argparse.Namespace) -> str | None:
@@ -7227,7 +7104,7 @@ def _resolved_before_the_command_starts(parsed: argparse.Namespace) -> str | Non
     return _release_branch_for(parsed) if parsed.command == "release" else None
 
 
-def _dispatch(parsed: argparse.Namespace) -> int:
+def _dispatch(parsed: argparse.Namespace, context: RunContext) -> int:
     # Only the pre-start checks report through the shared envelope (issue
     # #425); a refusal a command raises itself owns its own `reason`, so the
     # dispatch below stays outside this boundary.
@@ -7240,12 +7117,12 @@ def _dispatch(parsed: argparse.Namespace) -> int:
             as_json=bool(getattr(parsed, "json", False)),
         )
     if parsed.command == "item":
-        return _dispatch_item(parsed)
+        return _dispatch_item(parsed, context)
     entry = _COMMAND_TABLE[parsed.command]
     if entry.session is _CommandSession.FORGE_FREE:
-        result = entry.handler(parsed)
+        result = entry.handler(parsed, context)
         return 0 if result is None else result
-    forge_accessor = _LazyForge(parsed.repo)
+    forge_accessor = _LazyForge(context)
     if parsed.command == "board" and parsed.serve:
         # `board --serve` writes through a click (issue #280), so it needs
         # the writer session even though its own name reads like every
@@ -7370,15 +7247,15 @@ def _local_operation(parsed: argparse.Namespace) -> int:
     return _register_workspace(parsed) if parsed.command == "register" else _run_workspace(parsed)
 
 
-def _read_status_body_or_dispatch(parsed: argparse.Namespace) -> int:
+def _read_status_body_or_dispatch(parsed: argparse.Namespace, context: RunContext) -> int:
     """`status` and `body` are forge-free (issue #245, #262): both are
     resolved here, ahead of `_dispatch`'s own `_LazyForge`, so neither ever
     resolves one."""
     if parsed.command == "status":
-        return _cmd_status(parsed)
+        return _cmd_status(parsed, context)
     if parsed.command == "body":
-        return _cmd_body(parsed)
-    return _dispatch(parsed)
+        return _cmd_body(parsed, context)
+    return _dispatch(parsed, context)
 
 
 def _subcommands(parser: argparse.ArgumentParser) -> _RecordingSubParsersAction | None:
@@ -7452,7 +7329,7 @@ def main(arguments: list[str] | None = None) -> int:
             return _local_operation(parsed)
         if parsed.command == "protect":
             return _protect()
-        return _read_status_body_or_dispatch(parsed)
+        return _read_status_body_or_dispatch(parsed, _run_context(parsed.repo))
     except protocol.ClaimError as error:
         print(f"{CLI_ERROR_PREFIX}{error}", file=sys.stderr)
         return 2

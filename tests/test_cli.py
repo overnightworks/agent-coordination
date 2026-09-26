@@ -51,6 +51,7 @@ from cli_fixtures import (
     _set_agent_identity_env,
     _stub_one_git_call,
     arrange_scope_width,
+    run_context_over,
     stub_board_config_tracked,
 )
 from github_fixtures import LANDING_BRANCH, MERGE_COMMIT_SHA, WORK_ITEM_ISSUE
@@ -76,6 +77,7 @@ from agent_coordination.protocol import (
     ClaimUnavailableError,
     IssueIdentity,
 )
+from agent_coordination.session import RunContext
 
 GitHubForge = github.GitHubForge
 
@@ -2286,42 +2288,6 @@ def _real_state_ref_start_scenario(
     return repo, remote, seeded_oid
 
 
-def test_state_ref_forge_resolves_default_branch_from_its_own_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Issue #322 review finding 1: `_state_ref_forge`'s default-branch read
-    must be scoped to its own `directory` parameter -- `start`'s freshly
-    created worktree, once one is handed in -- never left to read
-    `origin/HEAD` from the calling process's own cwd regardless of it. A
-    fake `checkout.default_branch_name` capturing the `directory` it
-    receives is the right proof here: the argument itself is the contract
-    this finding is about, not a git outcome a real checkout could also
-    produce by coincidence (every worktree of one repository tracks the
-    same `origin/HEAD`). Driven directly against `_state_ref_forge` (issue
-    #322 review, delta finding 1) rather than through `aco start` end to
-    end, since the full CLI flow also calls `checkout.default_branch_name`
-    from `_validate_worktree_branch`'s own, already worktree-scoped call
-    site and would conflate the two."""
-    _use_real_store(monkeypatch)
-    repo, remote = _real_repository_with_bare_remote(tmp_path)
-    (repo / "base.txt").write_text("base\n")
-    _real_git(repo, "add", "base.txt")
-    _real_git(repo, "commit", "-q", "-m", "initial")
-    _push_repository_trunk(repo, "origin")
-    store.bootstrap(worktree=repo, remote=str(remote))
-    recorded_directories: list[Path | None] = []
-
-    def fake_default_branch_name(*, directory: Path | None = None) -> str | None:
-        recorded_directories.append(directory)
-        return "main"
-
-    monkeypatch.setattr(checkout, "default_branch_name", fake_default_branch_name)
-
-    issue_claim._state_ref_forge(None, "origin", directory=repo)
-
-    assert recorded_directories == [repo]
-
-
 def test_start_under_state_ref_claims_from_the_worktree_it_creates(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -2346,11 +2312,9 @@ def test_start_under_state_ref_claims_from_the_worktree_it_creates(
     real_state_ref_forge = issue_claim._state_ref_forge
     recorded_directories: list[Path | None] = []
 
-    def recording_state_ref_forge(
-        repo_argument: str | None, canonical_remote: str, *, directory: Path | None = None
-    ) -> state_board.StateRefBoard:
-        recorded_directories.append(directory)
-        return real_state_ref_forge(repo_argument, canonical_remote, directory=directory)
+    def recording_state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
+        recorded_directories.append(context.directory)
+        return real_state_ref_forge(context)
 
     monkeypatch.setattr(issue_claim, "_state_ref_forge", recording_state_ref_forge)
 
@@ -5200,7 +5164,7 @@ def test_board_reads_priority_configuration_from_the_checkout_root(
     monkeypatch.setattr(checkout, "_git_output", git_output)
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
 
-    projected = issue_claim._board(client, ())
+    projected = issue_claim._board(run_context_over(client), ())
 
     assert [item.number for item in projected.items] == [21, 20]
     assert observed == [["rev-parse", "--show-toplevel"]]
@@ -5779,7 +5743,7 @@ def test_board_queries_merged_pull_requests_back_to_the_oldest_open_issue(
     monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
 
-    issue_claim._board(client, ())
+    issue_claim._board(run_context_over(client), ())
 
     # A fixed 14-day window (now - 14 days = 2026-08-07) would have missed
     # anything the six-month-old epic's own slices landed months ago.
@@ -5809,7 +5773,7 @@ def test_board_fetches_children_only_for_container_kinded_issues(
     monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
 
-    projected = issue_claim._board(client, ())
+    projected = issue_claim._board(run_context_over(client), ())
 
     assert client.observed_children_lookups == [90]
     container_item = next(item for item in projected.items if item.number == 90)
@@ -6034,7 +5998,7 @@ def test_load_board_config_refuses_a_block_pin_the_forge_cannot_support(tmp_path
     client = _MinimalBoardSource(capability_result=forge.Capability.UNSUPPORTED)
 
     with pytest.raises(ClaimError, match="list_board_dependencies"):
-        issue_claim._load_board_config(client, tmp_path)
+        issue_claim._load_board_config(client, issue_claim._run_context(None))
 
 
 def test_fetch_dependencies_bounds_concurrency_at_the_shared_constant() -> None:
@@ -6280,82 +6244,6 @@ def test_status_notes_a_scope_that_is_claimed_after_its_descendant(
     assert "CONFLICT" not in rendered
 
 
-def test_canonical_remote_location_parses_the_configured_remote_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "git@github.com:owner/repo.git")
-
-    location = issue_claim._canonical_remote_location("origin")
-
-    assert location == checkout.RemoteLocation(github.GITHUB_HOST, "owner/repo")
-
-
-def test_refuse_unsupported_forge_host_allows_github() -> None:
-    issue_claim._refuse_unsupported_forge_host(
-        checkout.RemoteLocation(github.GITHUB_HOST, "owner/repo")
-    )
-
-
-def test_refuse_unsupported_forge_host_refuses_another_host() -> None:
-    """No forge adapter but GitHub's exists yet (#230 slice 2) -- a forge
-    command against any other host refuses by its own name (issue #245),
-    never with GitHub's "does not name a GitHub repository" text."""
-    location = checkout.RemoteLocation("gitlab.com", "o/r")
-
-    with pytest.raises(ClaimUnavailableError, match=r"no forge adapter for host gitlab\.com"):
-        issue_claim._refuse_unsupported_forge_host(location)
-
-
-def test_refuse_canonical_remote_mismatch_allows_a_matching_target() -> None:
-    issue_claim._refuse_canonical_remote_mismatch(
-        forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
-        checkout.RemoteLocation(github.GITHUB_HOST, "owner/repo"),
-    )
-
-
-def test_refuse_canonical_remote_mismatch_names_both_repositories() -> None:
-    mismatched = forge.RepositoryId(github.GITHUB_HOST, ("other",), "repo")
-    canonical_remote = checkout.RemoteLocation(github.GITHUB_HOST, "owner/repo")
-
-    with pytest.raises(
-        ClaimUnavailableError,
-        match="forge target other/repo does not match canonical remote owner/repo",
-    ):
-        issue_claim._refuse_canonical_remote_mismatch(mismatched, canonical_remote)
-
-
-def test_resolved_forge_target_refuses_before_asking_gh_on_a_non_github_host(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`_resolved_forge_target` gates on the canonical remote's own host
-    before it ever calls `discover_repository` (issue #245): a `gh` call
-    here would fail the test outright."""
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "file:///srv/git/repo.git")
-
-    def unused(*_args: object, **_kwargs: object) -> forge.RepositoryId:
-        pytest.fail("a non-GitHub canonical remote must refuse before discover_repository runs")
-
-    monkeypatch.setattr(github, "discover_repository", unused)
-
-    with pytest.raises(ClaimUnavailableError, match="no forge adapter for host file"):
-        issue_claim._resolved_forge_target(None, "origin")
-
-
-def test_resolved_forge_target_checks_erwartung_6_against_a_github_remote(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(checkout, "remote_url", lambda remote: "git@github.com:owner/repo.git")
-    monkeypatch.setattr(
-        github,
-        "discover_repository",
-        lambda repo, remote_url: forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
-    )
-
-    target = issue_claim._resolved_forge_target(None, "origin")
-
-    assert target == forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo")
-
-
 def _write_state_ref_pin(tmp_path: Path) -> None:
     """`.agent-claim/board.toml` pinned to `storage = "state-ref"`, in the
     isolated toplevel `_isolate_git_toplevel` (conftest.py) already
@@ -6374,9 +6262,7 @@ def test_lazy_forge_builds_a_state_ref_board_under_the_state_ref_pin(
     about the checkout looks unusual."""
     _write_state_ref_pin(tmp_path)
     stub = FakeForge(repository=forge.RepositoryId("file", (), str(tmp_path)))
-    monkeypatch.setattr(
-        issue_claim, "_state_ref_forge", lambda _repo, _remote, *, directory=None: stub
-    )
+    monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: stub)
 
     def unused(*_args: object, **_kwargs: object) -> None:
         pytest.fail("storage = state-ref must never build a GitHubForge")
@@ -6585,9 +6471,7 @@ def _landing_scenario(
         item_oids=item_oids,
         writer=_RefusingItemWriter(),
     )
-    monkeypatch.setattr(
-        issue_claim, "_state_ref_forge", lambda _repo, _remote, *, directory=None: client
-    )
+    monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: client)
     claims = tuple(
         _active_claim(
             "Codex Sol",
@@ -16320,9 +16204,7 @@ def test_item_new_json_reports_ok_reason_created(
     item_id = items.format_item_id(42)
     monkeypatch.setattr(client, "create_item", lambda **_kwargs: item_id, raising=False)
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
-    monkeypatch.setattr(
-        issue_claim, "_state_ref_forge", lambda _repo, _remote, *, directory=None: client
-    )
+    monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: client)
 
     status = issue_claim.main(["item", "new", "--title", "Fresh Item", "--json"])
 
@@ -16531,9 +16413,7 @@ def test_item_close_prints_json_under_the_state_ref_pin(
     )
     monkeypatch.setattr(client, "close_item", lambda _number: "2026-09-16T12:00:00Z", raising=False)
     monkeypatch.setattr(client, "require_well_formed", lambda: None, raising=False)
-    monkeypatch.setattr(
-        issue_claim, "_state_ref_forge", lambda _repo, _remote, *, directory=None: client
-    )
+    monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: client)
 
     status = issue_claim.main(["item", "close", "42", "--json"])
 

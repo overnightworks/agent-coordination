@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from board_fixtures import REPOSITORY, board_issue, complete_contract, proposed_expectation
-from cli_fixtures import stub_board_config_tracked
+from cli_fixtures import run_context_over, stub_board_config_tracked
 from test_cli import (
     FakeForge,
     _assert_json_refusal_object,
@@ -195,7 +195,7 @@ class ServedBoard:
 def _serving(client: FakeForge) -> Iterator[ServedBoard]:
     parsed = issue_claim._parser().parse_args(["--repo", REPOSITORY, "board", "--serve"])
     session = issue_claim._WriteSession(
-        forge=issue_claim._LazyForge(parsed.repo), release_branch=None
+        forge=issue_claim._LazyForge(issue_claim._run_context(parsed.repo)), release_branch=None
     )
     server = issue_claim._board_server(parsed, session)
     thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
@@ -575,7 +575,7 @@ def test_post_rule_on_an_already_ruled_line_writes_nothing_and_shows_the_refusal
     refused click rebuilds too and the page shows the line ruled."""
     token = served_board.server.token
     served_board.get(token=token)
-    issue_claim.rule_item(served_board.client, SERVED_ITEM, 1, "yes", None)
+    issue_claim.rule_item(run_context_over(served_board.client), SERVED_ITEM, 1, "yes", None)
     ruled_body = served_board.client.item_bodies[SERVED_ITEM]
 
     second = served_board.post_rule(
@@ -1591,5 +1591,7 @@ def test_rule_item_refuses_an_already_ruled_line_by_name(
         forge.ItemState.OPEN, "Plain item", once_ruled
     )
 
+    context = run_context_over(client)
+
     with pytest.raises(protocol.ClaimError, match="already ruled"):
-        issue_claim.rule_item(client, SERVED_ITEM, 1, "no", None)
+        issue_claim.rule_item(context, SERVED_ITEM, 1, "no", None)
