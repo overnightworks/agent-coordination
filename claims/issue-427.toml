@@ -1,0 +1,8 @@
+claim_id = "384a8dd4d6df4dc4bb000cf5039c42f6"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "f9479075cc9d3eb82e8d67c4bf958917e5422f78"
+branch = "claude/issue-427-release-lane-rule"
+scope = ["specs/landing-grammar.spec.md", "specs/release.spec.md", "src/agent_coordination/cli.py", "tests/test_cli.py"]
+opened_commit = "184b573a3b6e8acd22a7a3b4487ad6df90aa6306"
+whole_reason = "one refusal sentence: its code, two spec files and its test"
