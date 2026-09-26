@@ -15772,13 +15772,15 @@ _NO_TRUNK_SENTENCE = (
 
 
 def _land_on_trunk_and_pull_into_lane(repository: Path, path: str) -> None:
-    """Another lane lands `path` on `main`; the lane then merges trunk in."""
-    _real_git(repository, "checkout", "-q", "main")
+    """Another lane lands `path` on `origin/main` while the local `main`
+    stays at the base; the lane then merges `origin/main` in."""
+    _real_git(repository, "checkout", "-q", "--detach", "main")
     (repository / path).write_text("landed elsewhere\n")
     _real_git(repository, "add", path)
     _real_git(repository, "commit", "-q", "-m", "another lane lands")
+    _real_git(repository, "update-ref", "refs/remotes/origin/main", "HEAD")
     _real_git(repository, "checkout", "-q", "codex/issue-258-brief")
-    _real_git(repository, "merge", "-q", "--no-edit", "main")
+    _real_git(repository, "merge", "-q", "--no-edit", "origin/main")
 
 
 def _text_touched(output: str) -> list[str]:
