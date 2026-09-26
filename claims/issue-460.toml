@@ -1,0 +1,8 @@
+claim_id = "78634aa9b67141f19ddebcc349c62822"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "e0418c2a0ee02bc7000a8f4b203ec34b2026b491"
+branch = "claude/issue-460-subdir-reads"
+scope = ["src/agent_coordination/cli.py", "src/agent_coordination/session.py", "src/agent_coordination/state_board.py", "src/agent_coordination/store.py", "tests/test_cli.py", "tests/test_session.py"]
+opened_commit = "30654a5a2644f69274bfb213721e9c294375cd8f"
+whole_reason = "ein Lesepfad, der das Prozess-cwd statt der Checkout-Wurzel benutzt, und sein Test aus einem Unterordner"
