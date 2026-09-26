@@ -3,13 +3,13 @@ distributor #389 finding 2): `judge` reads one already-parsed hook payload
 and returns a typed `Verdict` -- allow or deny, with the deny reason -- from
 the payload envelope checks (PROT-03..) through the shared Checkout/
 Default-Branch/Claim-Scope/Bash-pattern chain every mutating tool call runs.
-`cli` keeps only reading stdin, calling `judge`, and printing the verdict's
-own JSON envelope and, for a deny, its stderr sentence under one
+`cli` keeps only reading stdin, calling `judge`, and printing whatever the
+verdict's `stdout_text` and `stderr_text` carry -- nothing for an allow, the
+deny object on stdout and its sentence on stderr for a deny -- under one
 `except Exception` frame (PROT-17); this module never touches stdin, stdout,
-or stderr itself. `specs/protect.spec.md` owns every
-denial reason, the order they are judged in, and the JSON shape and exit
-codes `Verdict.to_json`/`Verdict.exit_code` produce -- this file cites those
-IDs rather than restating them.
+or stderr itself. `specs/protect.spec.md` owns every denial reason, the order
+they are judged in, and the output and exit codes `Verdict` produces -- this
+file cites those IDs rather than restating them.
 
 `judge` takes `canonical_remote_for` as an explicit dependency rather than
 resolving it itself: reading `.agent-claim/board.toml`'s own storage pin
