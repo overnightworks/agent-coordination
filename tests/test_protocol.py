@@ -437,3 +437,40 @@ def test_apply_item_close_intent_refuses_while_the_item_is_claimed() -> None:
         match=r"^#42 has a live claim \(Ada \(builder\)\); release the claim first$",
     ):
         protocol.apply(claimed, intent)
+
+
+@pytest.mark.parametrize(
+    ("identity", "branch", "forge_sentence", "named_sentence"),
+    [
+        pytest.param(
+            protocol.IssueIdentity(42),
+            "ada/issue-42",
+            "issue #42 is claimed by Ada (builder) on issue #42 branch ada/issue-42",
+            "issue item-42 is claimed by Ada (builder) on issue item-42 branch ada/issue-42",
+            id="issue",
+        ),
+        pytest.param(
+            protocol.LaneIdentity(),
+            "docs/guide",
+            "lane 'docs/guide' is claimed by Ada (builder) on lane 'docs/guide' branch docs/guide",
+            "lane 'docs/guide' is claimed by Ada (builder) on lane 'docs/guide' branch docs/guide",
+            id="lane",
+        ),
+    ],
+)
+def test_a_claim_conflict_names_its_item_in_the_form_the_caller_asks_for(
+    identity: protocol.ClaimIdentity, branch: str, forge_sentence: str, named_sentence: str
+) -> None:
+    """Issue #471: a claim-ledger refusal's own text names an item `#<n>`,
+    and `named` renders the same sentence in the caller's storage form; a
+    lane names no item, so both read alike."""
+    claimed = protocol.apply(_STATE_WITH_TIP, _claim_intent(identity=identity, branch=branch))
+    second = _claim_intent(identity=identity, branch=branch, claim_id="a2", operation_id="op-2")
+
+    with pytest.raises(protocol.ClaimConflictError) as refused:
+        protocol.apply(claimed, second)
+
+    assert (str(refused.value), refused.value.named(lambda number: f"item-{number}")) == (
+        forge_sentence,
+        named_sentence,
+    )
