@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -2305,6 +2306,14 @@ def _rescope_args_add_path_in_a_new_directory_outside_any_repository(
     return ["rescope", "72", "--add", str(tmp_path / "outside" / "neu" / "x.py")]
 
 
+def _rescope_args_add_dotdot_path_through_a_missing_directory_out_of_the_worktree(
+    tmp_path: Path,
+) -> list[str]:
+    _main, worktree = _protect_real_repo_with_worktree(tmp_path)
+    escape_to_outside = os.path.relpath(tmp_path / "outside", worktree)
+    return ["rescope", "72", "--add", f"{worktree}/missing/../{escape_to_outside}/new/q.py"]
+
+
 def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
     unborn = tmp_path / "unborn"
     unborn.mkdir()
@@ -2324,6 +2333,10 @@ def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
             _rescope_args_add_path_in_a_new_directory_outside_any_repository,
             "not in a repository",
         ),
+        (
+            _rescope_args_add_dotdot_path_through_a_missing_directory_out_of_the_worktree,
+            "not in a repository",
+        ),
         (_rescope_args_add_path_in_an_unborn_checkout, checkout.NO_COMMIT_CHECKOUT_REASON),
         (_rescope_args_all_relative, checkout.RELATIVE_PAYLOAD_PATH_DENIAL),
         (_rescope_args_mixed_absolute_and_relative, checkout.RELATIVE_PAYLOAD_PATH_DENIAL),
@@ -2332,6 +2345,7 @@ def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
         "second-add-path-outside-checkout",
         "outside-any-repository",
         "new-directory-outside-any-repository",
+        "dotdot-through-missing-directory-outside-any-repository",
         "checkout-has-no-commit",
         "all-relative",
         "mixed-absolute-and-relative",

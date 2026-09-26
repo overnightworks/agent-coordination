@@ -465,8 +465,12 @@ def resolve_nearest_existing_checkout(directory: Path) -> PathCheckout | None:
     missing directory would read as "outside every repository". The one
     resolver `protect` and `rescope` share for a path's directory (issue
     #474: `rescope --add` of a file in a new directory refused `not in a
-    repository` while `protect` judged the same path by its checkout)."""
-    return resolve_path_checkout(_nearest_existing_directory(directory))
+    repository` while `protect` judged the same path by its checkout).
+    `directory` is normalized lexically first, as `protect` normalizes its
+    payload: a `..` through a directory not created yet must not walk up to
+    an ancestor the normalized path has already left (issue #474 drive
+    finding)."""
+    return resolve_path_checkout(_nearest_existing_directory(Path(os.path.normpath(directory))))
 
 
 def _nearest_existing_directory(directory: Path) -> Path:
