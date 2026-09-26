@@ -29,7 +29,7 @@ from cli_fixtures import (
     stub_board_config_tracked,
 )
 
-from agent_coordination import board, checkout, hook_input, protect, protocol, store
+from agent_coordination import board, checkout, hook_input, process, protect, protocol, store
 from agent_coordination import cli as issue_claim
 from agent_coordination.protocol import ClaimError
 
@@ -1950,6 +1950,50 @@ def test_protect_denies_not_main_for_a_real_checkout(
 
     assert _protect_main(monkeypatch, payload_for(target)) == 2
     _assert_protect_decision(capsys, decision="deny", reason="not main")
+
+
+def _file_outside_every_repository(tmp_path: Path) -> Path:
+    outside = tmp_path / "not-a-repository"
+    outside.mkdir()
+    return outside / "widget.py"
+
+
+@pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
+@pytest.mark.parametrize(
+    ("build_target", "decision", "exit_code"),
+    [
+        (_real_main_checkout_target, "deny", 2),
+        (_file_outside_every_repository, "allow", 0),
+    ],
+    ids=["inside-main-checkout-denies", "outside-every-repository-allows"],
+)
+def test_protect_never_reads_a_git_failure_as_outside_every_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    payload_for: Callable[[Path], dict[str, object]],
+    build_target: Callable[[Path], Path],
+    decision: str,
+    exit_code: int,
+) -> None:
+    """Issue #448 review finding: with git unavailable, a path below a
+    `.git` entry still denies (PROT-17, the failure's own text) instead of
+    passing as outside every repository (PROT-32); a path with no `.git`
+    entry above it is outside and allows all the same."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch)
+    target = build_target(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def git_missing(*_args: object, **_kwargs: object) -> process.CapturedResult:
+        raise process.ExecutableMissingError("git")
+
+    monkeypatch.setattr(process, "run_git", git_missing)
+
+    assert _protect_main(monkeypatch, payload_for(target)) == exit_code
+    assert json.loads(capsys.readouterr().out)["decision"] == decision
 
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])

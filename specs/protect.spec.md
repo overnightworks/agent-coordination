@@ -190,6 +190,7 @@ than a bare `claim first`.
 ## Never
 
 - `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, or a path outside every repository, touches `store.fetch_state` zero times.
+- `protect` never reads a git failure as outside every repository: a path below a `.git` file, or a `.git` directory holding `HEAD`, denies with that failure's text (PROT-17) when git cannot resolve its checkout.
 - `protect` never opens `.claude/` by its name alone: a tracked file there, or an untracked one git does not ignore, is judged like any other path (PROT-12 in the main checkout).
 - The escape exists so a session can switch off a misconfigured hook in its own ignored `settings.local.json` without the operator; no claim can cover a file that never reaches a commit.
 - `protect` never defaults an unrecognized tool name to allowed: PROT-06 fails closed instead.

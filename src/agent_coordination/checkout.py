@@ -405,11 +405,35 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
     toplevel/git-dir/common-dir comparison below meaningful: git's default,
     relative-to-`-C`-directory paths would otherwise have to be re-resolved
     against `directory` itself, not the caller's own cwd.
+
+    A git failure is "outside every repository" only when no repository
+    marker sits in `directory` or any of its ancestors either; below one,
+    the failure is raised instead (issue #448 review finding: `protect`
+    allows a `None` path unjudged, so a missing git, or a path inside a
+    `.git` directory itself, must never read as "no repository here").
     """
     try:
         return _resolve_checkout(directory)
     except ClaimError:
+        if _has_repository_marker_above(directory):
+            raise
         return None
+
+
+def _has_repository_marker_above(directory: Path) -> bool:
+    """Whether `directory` or any ancestor holds a repository marker: a
+    `.git` file (a linked worktree's) or a `.git` directory holding `HEAD`
+    (a main checkout's) -- a stray empty `.git` directory is no repository
+    to git either. Judged on the symlink-resolved path, the one git's own
+    discovery walks."""
+    resolved = directory.resolve()
+    return any(
+        _is_repository_marker(candidate / ".git") for candidate in (resolved, *resolved.parents)
+    )
+
+
+def _is_repository_marker(dot_git: Path) -> bool:
+    return dot_git.is_file() or (dot_git / "HEAD").is_file()
 
 
 def _resolve_checkout(directory: Path) -> PathCheckout:
