@@ -2207,14 +2207,12 @@ class TestCliStateRefForge:
         after_first = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after_first.tip is not None
         [child_id] = set(after_first.items) - before_ids
-        child_number = items.item_number(child_id)
-        child_record = _decoded_record(
-            store.read_item_files(worktree, after_first.tip)[f"{child_id}.md"].decode(), child_id
-        )
-        assert child_record.parent == CONTAINER_ID
+        child_body = store.read_item_files(worktree, after_first.tip)[f"{child_id}.md"].decode()
+        assert _decoded_record(child_body, child_id).parent == CONTAINER_ID
+        assert child_body.startswith(f"Parent: {CONTAINER_ID}\n")
         err = capsys.readouterr().err
         assert (
-            f"created #{child_number} but failed to remove row 1 "
+            f"created {child_id} but failed to remove row 1 "
             f"from {CONTAINER_ID}'s agent-claim block" in err
         )
         assert "re-run the same cut -- it adopts the child" in err

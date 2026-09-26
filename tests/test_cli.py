@@ -3445,7 +3445,7 @@ def test_cut_names_the_created_child_when_the_relation_post_fails(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]
@@ -3577,7 +3577,7 @@ def test_cut_creates_a_child_and_removes_the_first_cuttable_slice(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER, created_scope),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, created_scope),
             body.ItemKind.TASK,
         )
     ]
@@ -3796,7 +3796,7 @@ def test_cut_names_the_created_child_when_linking_fails(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]
@@ -3823,7 +3823,7 @@ def _forge_with_existing_child(
     pass `_orphan_names_container`, exactly like a real linked issue: a
     broken `parent_issue` filter in `_adoptable_child` would then double-count
     it as its own orphan, and the surrounding test would fail."""
-    child_body = issue_claim._cut_child_body(CUT_CONTAINER)
+    child_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB)
     open_issues = (_one_slice_container(),)
     if child_state is board.ChildState.OPEN:
         open_issues = (
@@ -3908,7 +3908,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
     orphan = board_issue(
         951,
         "Scheibe 1",
-        issue_claim._cut_child_body(CUT_CONTAINER),
+        issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
         kind=body.ItemKind.TASK,
     )
     monkeypatch.setattr(client, "list_open_board_issues", lambda: (_one_slice_container(), orphan))
@@ -3944,7 +3944,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
             board_issue(
                 951,
                 "Scheibe 1",
-                issue_claim._cut_child_body(CUT_CONTAINER),
+                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
                 labels=("idea",),
                 kind=body.ItemKind.TASK,
             ),
@@ -3955,14 +3955,19 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
             board_issue(
                 CUT_CONTAINER,
                 "Scheibe 1",
-                issue_claim._cut_child_body(CUT_CONTAINER),
+                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
                 kind=body.ItemKind.TASK,
             ),
             None,
             id="the_container_itself",
         ),
         pytest.param(
-            board_issue(951, "Scheibe 1", issue_claim._cut_child_body(80), kind=body.ItemKind.TASK),
+            board_issue(
+                951,
+                "Scheibe 1",
+                issue_claim._cut_child_body(80, body.Storage.GITHUB),
+                kind=body.ItemKind.TASK,
+            ),
             None,
             id="orphan_names_a_different_container_as_parent",
         ),
@@ -4000,7 +4005,7 @@ def test_cut_never_adopts_an_orphan_that_is_not_this_containers_recovery_shape(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]
@@ -4161,7 +4166,7 @@ def test_cut_adopts_the_orphan_after_a_relation_partial_failure(
 
     assert first_exit_code == 2
     child = client.next_created_child_number - 1
-    expected_body = issue_claim._cut_child_body(CUT_CONTAINER)
+    expected_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB)
     assert client.created_issues == [("Scheibe 1", expected_body, body.ItemKind.TASK)]
     assert client.linked_children == [(CUT_CONTAINER, child)]
     capsys.readouterr()
@@ -5326,7 +5331,7 @@ def test_next_prints_a_cut_command_that_cut_accepts(
         (
             case.container_number,
             case.expected_created_title,
-            issue_claim._cut_child_body(case.container_number),
+            issue_claim._cut_child_body(case.container_number, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]

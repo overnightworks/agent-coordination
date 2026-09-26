@@ -19,7 +19,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from . import board
-from .body import ItemKind
+from .body import ItemKind, Storage
 from .protocol import ClaimError
 
 
@@ -99,11 +99,21 @@ class ForgePartialChildCreationError(ForgePartialCreationError):
     a re-run.
     """
 
-    def __init__(self, *, child: int, parent: int, step: str, cause: Exception) -> None:
+    def __init__(
+        self,
+        *,
+        child: int,
+        parent: int,
+        step: str,
+        cause: Exception,
+        storage: Storage = Storage.GITHUB,
+    ) -> None:
         self.parent = parent
         self.cause = cause
         super().__init__(
-            f"created #{child} but failed to {step}: {cause}", created=child, step=step
+            f"created {board.item_label(child, storage)} but failed to {step}: {cause}",
+            created=child,
+            step=step,
         )
 
 

@@ -5963,12 +5963,20 @@ def _cut_target(
     return target
 
 
+@dataclass(frozen=True)
+class _SliceRowRemoval:
+    """`container`'s rewritten body, the cut row already removed from its
+    `agent-claim` block, and `step`, the words naming that write."""
+
+    container: int
+    new_body: str
+    step: str
+
+
 def _link_created_child(
-    client: forge.ForgeWriter, container: int, new_body: str, child: int, step: str
+    client: forge.ForgeWriter, removal: _SliceRowRemoval, child: int, storage: body.Storage
 ) -> None:
-    """Write `new_body` (`container`'s `agent-claim` block, the
-    just-created `child`'s slice entry already removed from it) back to
-    `container`.
+    """Write `removal.new_body` back to `removal.container`.
 
     Not atomic with `create_child` -- GitHub has no transaction across the
     two writes. A failure here still leaves the created child behind, so it
@@ -5978,10 +5986,14 @@ def _link_created_child(
     identical re-run finishes.
     """
     try:
-        client.update_item_body(container, new_body)
+        client.update_item_body(removal.container, removal.new_body)
     except protocol.ClaimError as error:
         raise forge.ForgePartialChildCreationError(
-            child=child, parent=container, step=step, cause=error
+            child=child,
+            parent=removal.container,
+            step=removal.step,
+            cause=error,
+            storage=storage,
         ) from error
 
 
@@ -6045,12 +6057,12 @@ class _PartialWriteError(protocol.ClaimError):
         super().__init__(f"{error}; {recovery}")
 
 
-def _body_with_parent(skeleton: str, parent: int | None) -> str:
-    """`skeleton`, preceded by one `Parent: #<parent>` line -- the same
-    wording issue bodies already use for this fact -- when `parent` is
-    given; `skeleton` itself otherwise. The one place `cut`'s own child
-    body composes a parent line onto a skeleton."""
-    return skeleton if parent is None else f"Parent: #{parent}\n\n{skeleton}"
+def _parent_line(container: int, storage: body.Storage) -> str:
+    """The `Parent: <label>` line `cut` writes as a fresh child's first line
+    -- the same wording issue bodies already use for this fact, naming
+    `container` as `board.item_label` prints it (issue #467) -- and reads
+    back to recognise its own orphan."""
+    return f"Parent: {board.item_label(container, storage)}"
 
 
 def _requested_body_scope(raw: list[str] | None) -> tuple[str, ...] | None:
@@ -6108,23 +6120,26 @@ def _block_body_with_whole(raw_body: str, whole: str | None) -> str:
     return body.replace_agent_claim_block(raw_body, located, new_data)
 
 
-def _cut_child_body(container: int, scope: tuple[str, ...] | None = None) -> str:
-    """The body `cut` writes for a fresh child: one `Parent: #<container>`
-    line ahead of `body.BLOCK_CHILD_SKELETON`, plus the cut slice's own
+def _cut_child_body(
+    container: int, storage: body.Storage, scope: tuple[str, ...] | None = None
+) -> str:
+    """The body `cut` writes for a fresh child: `_parent_line` ahead of
+    `body.BLOCK_CHILD_SKELETON`, plus the cut slice's own
     top-level `scope = [...]` (issue #337) when the cut carries one -- the
     linked row's own scope, or a filled `--scope`. A repeat `cut` after a
     partial failure reads the parent line back (`_orphan_names_container`)
     to tell `container`'s own orphan apart from an unrelated open issue that
     merely shares the row's title (#260)."""
-    return _block_body_with_scope(_body_with_parent(body.BLOCK_CHILD_SKELETON, container), scope)
+    skeleton = f"{_parent_line(container, storage)}\n\n{body.BLOCK_CHILD_SKELETON}"
+    return _block_body_with_scope(skeleton, scope)
 
 
-def _orphan_names_container(raw_body: str, container: int) -> bool:
-    """Whether `raw_body`'s first line is the `Parent: #<container>` line
+def _orphan_names_container(raw_body: str, container: int, storage: body.Storage) -> bool:
+    """Whether `raw_body`'s first line is the `_parent_line`
     `_cut_child_body` writes -- the one signal that tells `container`'s own
     orphan apart from another open issue, another container's own failed
     cut, or a human-filed issue that happens to share the row's title."""
-    return body.first_line(raw_body) == f"Parent: #{container}"
+    return body.first_line(raw_body) == _parent_line(container, storage)
 
 
 def _adoptable_child(
@@ -6170,7 +6185,7 @@ def _adoptable_child(
         and issue.number != container
         and issue.kind is body.ItemKind.TASK
         and not board.has_label(issue.labels, config.idea_label)
-        and _orphan_names_container(issue.body, container)
+        and _orphan_names_container(issue.body, container, config.storage)
         and client.parent_issue(issue.number) is None
     ]
     open_matches = open_linked + orphans
@@ -6377,7 +6392,7 @@ def _cut_slice(
             else client.create_child(
                 parent=number,
                 title=parsed.title,
-                body=_cut_child_body(number, child_scope),
+                body=_cut_child_body(number, storage, child_scope),
                 kind=body.ItemKind.TASK,
             )
         )
@@ -6388,9 +6403,12 @@ def _cut_slice(
                 if entry["index"] != link.index
             ]
             new_data = {**located.data, "slice": remaining}
-            new_body = body.replace_agent_claim_block(target.body, located, new_data)
-            step = f"remove row {link.index} from {label}'s agent-claim block"
-            _link_created_child(client, number, new_body, child, step)
+            removal = _SliceRowRemoval(
+                container=number,
+                new_body=body.replace_agent_claim_block(target.body, located, new_data),
+                step=f"remove row {link.index} from {label}'s agent-claim block",
+            )
+            _link_created_child(client, removal, child, storage)
     except forge.ForgeIssueTypeNotSetError as error:
         raise _PartialWriteError(error, recovery=CUT_TYPE_RECOVERY) from error
     except forge.ForgePartialChildCreationError as error:
