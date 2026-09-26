@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from cli_fixtures import stub_board_config_tracked
 
-from agent_coordination import checkout, cli, forge, github, session
-from agent_coordination.protocol import ClaimUnavailableError
+from agent_coordination import checkout, cli, forge, github, session, store
+from agent_coordination.protocol import ClaimState, ClaimUnavailableError
 from agent_coordination.session import RunContext
 
 
@@ -189,6 +189,36 @@ def test_a_context_for_another_directory_reads_its_remotes_there(
         forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
         [("origin", worktree), ("origin", worktree)],
     )
+
+
+def test_a_failed_observation_is_fetched_again_and_a_successful_one_is_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #477 (CAS-53): a fetch of `refs/aco/state` that fails is never held --
+    the context's next ask fetches again, from its toplevel over its
+    canonical remote -- while one that succeeds answers every later ask."""
+    worktree = tmp_path / "worktree"
+    _write_board_config(worktree, "")
+    monkeypatch.setattr(
+        checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
+    )
+    observed = ClaimState(tip=None, claims={})
+    fetched_from: list[tuple[Path, str]] = []
+
+    def fetch_state(*, worktree: Path, remote: str) -> ClaimState:
+        fetched_from.append((worktree, remote))
+        if len(fetched_from) == 1:
+            raise ClaimUnavailableError("the remote is unreachable")
+        return observed
+
+    monkeypatch.setattr(store, "fetch_state", fetch_state)
+    context = _context().for_directory(worktree)
+
+    with pytest.raises(ClaimUnavailableError, match="the remote is unreachable"):
+        _ = context.observation
+    later_asks = (context.observation, context.observation)
+
+    assert (later_asks, fetched_from) == ((observed, observed), [(worktree, "origin")] * 2)
 
 
 def _exit_code(command: list[str]) -> int | str | None:

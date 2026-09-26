@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 
@@ -17601,17 +17602,28 @@ def test_cli_reset_recovers_from_a_deleted_ref_this_worktree_had_already_observe
 
 @dataclass(frozen=True)
 class _CountedRun:
-    """One command's argv and the exact reads it makes: toplevel reads keyed
-    by the directory git ran in (`None`: the process's own cwd), board
-    configuration reads by the toplevel they read."""
+    """One command's argv, its exit code, and the exact reads it makes:
+    toplevel reads keyed by the directory git ran in (`None`: the process's
+    own cwd), board configuration reads by the toplevel they read, and
+    observations of `refs/aco/state` outside a transition by the worktree
+    they fetched into (issue #477)."""
 
     argv: list[str]
     toplevel_reads: dict[Path | None, int]
     config_reads: dict[Path | None, int]
+    observations: dict[Path, int]
+    exit_code: int = 0
 
 
-def _read_once(argv: list[str], *, toplevel: Path, directory: Path | None = None) -> _CountedRun:
-    return _CountedRun(argv, toplevel_reads={directory: 1}, config_reads={toplevel: 1})
+def _read_once(
+    argv: list[str], *, toplevel: Path, directory: Path | None = None, observes: bool = True
+) -> _CountedRun:
+    return _CountedRun(
+        argv,
+        toplevel_reads={directory: 1},
+        config_reads={toplevel: 1},
+        observations={toplevel: 1} if observes else {},
+    )
 
 
 def _status_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
@@ -17626,16 +17638,65 @@ def _next_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRu
     return _read_once(["--repo", REPOSITORY, "next", "--json"], toplevel=tmp_path)
 
 
-def _state_ref_next_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+def _state_ref_command(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> _CountedRun:
+    """Issue #477: under `state-ref` the board a command builds and the
+    checks it runs itself read one observation of the state ref, however
+    many of them ask."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
-    return _read_once(["next", "--json"], toplevel=repo)
+    return _read_once(argv, toplevel=repo)
+
+
+def _state_ref_item_edit_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_state_ref_item_body("Edited Title")))
+    return _state_ref_command(["item", "edit", "314"], monkeypatch, tmp_path)
+
+
+def _state_ref_release_merged_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> _CountedRun:
+    """`release --merged` finds its claim and prepares its landing item
+    from the same observation (issue #477); its landing transition still
+    fetches for itself until #418 B2."""
+    repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    landing_trailer = f"Work-Item: {items.format_item_id(314)}"
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "Land", "-m", landing_trailer)
+    _push_repository_trunk(repo, "origin")
+    monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
+    return _read_once(["release", "314", "--merged", "--keep-worktree"], toplevel=repo)
+
+
+def _github_item_close_refusal_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> _CountedRun:
+    """`item close` refuses `storage = "github"` from the board
+    configuration alone, before it ever needs the state ref (issue #477)."""
+    argv = _item_close_github_storage_refusal(monkeypatch, tmp_path)
+    return _CountedRun(argv, {None: 1}, {tmp_path: 1}, observations={}, exit_code=2)
+
+
+def _claim_comma_scope_refusal_command(
+    monkeypatch: pytest.MonkeyPatch, _tmp_path: Path
+) -> _CountedRun:
+    """A scope shape refusal reads nothing of the repository at all."""
+    _arranged_claim_client(monkeypatch)
+    return _CountedRun(_claim_argv("--scope", "a,b"), {}, {}, observations={}, exit_code=2)
+
+
+def _body_check_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    """`body --check` judges a piped body without the state ref (#420 retired
+    `--template`, the mode #477 names for this proof)."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(complete_contract("Check #10.")))
+    return _read_once(["body", "--check"], toplevel=tmp_path, observes=False)
 
 
 def _rule_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
     _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
     argv = ["--repo", REPOSITORY, "rule", str(RULE_ITEM), "--line", "1", "--yes"]
-    return _read_once(argv, toplevel=tmp_path)
+    return _read_once(argv, toplevel=tmp_path, observes=False)
 
 
 def _claim_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> _CountedRun:
@@ -17686,7 +17747,7 @@ def _cut_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun
     _configured_board_client(monkeypatch, tmp_path, open_issues=(_cut_container_issue(toml_text),))
     _write_block_pin(tmp_path)
     argv = ["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), "--title", "Scheibe 1"]
-    return _read_once(argv, toplevel=tmp_path)
+    return _read_once(argv, toplevel=tmp_path, observes=False)
 
 
 def _release_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
@@ -17703,24 +17764,29 @@ def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRu
     this very checkout, so its release reads the toplevel and configuration
     once more, afterwards -- as it did before #457. Its worktree cleanup
     judges the main checkout from that held toplevel, never resolving it
-    again (issue #472 proof 2)."""
+    again (issue #472 proof 2). It observes the state ref only through that
+    release's fresh context, after its own write (issue #477)."""
     repo, _client = _land_scenario(monkeypatch, tmp_path)
     return _CountedRun(
         ["--repo", REPOSITORY, "land", "12"],
         toplevel_reads={None: 2},
         config_reads={repo: 2},
+        observations={repo: 1},
     )
 
 
 def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     """The created worktree's scope entry is no git tree, so the width gate
-    (#326) asks the worktree context's held toplevel (issue #472)."""
+    (#326) asks the worktree context's held toplevel (issue #472). The
+    item is read from the caller checkout's observation, the claim checked
+    against the worktree's own (issue #477)."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-fresh-slug-title"
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
         toplevel_reads={None: 1, worktree: 1},
         config_reads={repo: 1, worktree: 1},
+        observations={repo: 1, worktree: 1},
     )
 
 
@@ -17729,18 +17795,26 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
     [
         pytest.param(_status_command, id="forge-free-status"),
         pytest.param(_next_command, id="github-read-next"),
-        pytest.param(_state_ref_next_command, id="state-ref-read-next"),
+        pytest.param(partial(_state_ref_command, ["next", "--json"]), id="state-ref-read-next"),
+        pytest.param(partial(_state_ref_command, ["status"]), id="state-ref-status"),
+        pytest.param(partial(_state_ref_command, ["board", "--json"]), id="state-ref-board"),
+        pytest.param(partial(_state_ref_command, ["item", "close", "314"]), id="item-close"),
+        pytest.param(_state_ref_item_edit_command, id="item-edit"),
+        pytest.param(_state_ref_release_merged_command, id="state-ref-release-merged"),
         pytest.param(_rule_command, id="one-write-rule"),
-        pytest.param(_claim_command, id="claim"),
+        pytest.param(_claim_command, id="github-claim"),
         pytest.param(_claim_untracked_scope_command, id="claim-untracked-scope-entry"),
         pytest.param(_rescope_command, id="rescope"),
         pytest.param(_release_command, id="release"),
         pytest.param(_cut_command, id="two-write-cut"),
         pytest.param(_start_command, id="two-directory-state-ref-start"),
         pytest.param(_land_command, id="land-rereads-after-its-fast-forward"),
+        pytest.param(_github_item_close_refusal_command, id="item-close-github-refusal"),
+        pytest.param(_claim_comma_scope_refusal_command, id="claim-scope-shape-refusal"),
+        pytest.param(_body_check_command, id="body-check"),
     ],
 )
-def test_a_command_reads_its_toplevel_and_board_config_once_per_directory(
+def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path], _CountedRun],
@@ -17749,14 +17823,18 @@ def test_a_command_reads_its_toplevel_and_board_config_once_per_directory(
     command asks and held after that -- one toplevel and one board
     configuration read per directory the command works in, however many of
     its steps ask again, unless the command itself wrote that directory's
-    checkout in between (proof 6, `land`). No exception (issue #472)."""
+    checkout in between (proof 6, `land`). No exception (issue #472). The
+    same holds for its observation of `refs/aco/state` outside a transition,
+    which a command refused before it needs the state ref never makes
+    (issue #477, CAS-53)."""
     run = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
 
     exit_code = issue_claim.main(run.argv)
 
-    assert (exit_code, dict(reads.toplevels), dict(reads.configs)) == (
-        0,
+    assert (exit_code, *reads.drain()) == (
+        run.exit_code,
         run.toplevel_reads,
         run.config_reads,
+        run.observations,
     )

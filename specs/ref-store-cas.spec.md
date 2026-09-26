@@ -91,6 +91,7 @@ transition), and which of the three causes applies.
 ### Work budget
 
 - [ ] [CAS-18] `status`'s two store reads (a fetch, then every claim's age) make one `ls-remote`, `fetch`, `ls-tree`, `archive`, `log` call and four `rev-parse` calls, ten live claims or three hundred alike.
+- [ ] [CAS-53] A command fetches the ref at most once per checkout it works in, and its board and its own checks read that one snapshot; a transition's own compare-and-swap fetches are not counted.
 
 ## An item write's own compare-and-swap
 

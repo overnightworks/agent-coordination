@@ -13,12 +13,13 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 from board_fixtures import BASE
 
 from agent_coordination import board, checkout, forge, github, process, store
-from agent_coordination.protocol import ClaimError
+from agent_coordination.protocol import ClaimError, ClaimState
 from agent_coordination.session import RunContext
 
 
@@ -249,31 +250,56 @@ def run_context_over(client: forge.ForgeReader) -> RunContext:
     return RunContext(None, build_forge=lambda _context: client)
 
 
+CountedReads = tuple[dict[Path | None, int], dict[Path | None, int], dict[Path, int]]
+
+
 @dataclass
 class ContextReads:
     """Every toplevel and board-configuration read one command made, keyed
-    by the directory it was read from (issue #457)."""
+    by the directory it was read from (issue #457), and every observation of
+    `refs/aco/state` outside a transition, keyed by the worktree it was
+    fetched into (issue #477)."""
 
     toplevels: Counter[Path | None] = field(default_factory=Counter)
     configs: Counter[Path | None] = field(default_factory=Counter)
+    observations: Counter[Path] = field(default_factory=Counter)
 
-    def drain(self) -> tuple[dict[Path | None, int], dict[Path | None, int]]:
+    def drain(self) -> CountedReads:
         """The reads counted since the last drain, forgotten after: one step
         of a longer sequence (`board --serve`'s requests) counted alone."""
-        taken = dict(self.toplevels), dict(self.configs)
+        taken = dict(self.toplevels), dict(self.configs), dict(self.observations)
         self.toplevels.clear()
         self.configs.clear()
+        self.observations.clear()
         return taken
 
 
 def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
     """Counts every `rev-parse` that asks `--show-toplevel` -- alone, or
-    combined with other queries as `resolve_path_checkout` asks it -- and the
-    `board.toml` tracked check, through whatever git fakes the test already
+    combined with other queries as `resolve_path_checkout` asks it -- the
+    `board.toml` tracked check, and every `store.fetch_state` a transition
+    does not make itself (its CAS reads stay outside the observation budget
+    until #418 B2), through whatever git and store fakes the test already
     installed, so it is called after the arrangement and before the command."""
     reads = ContextReads()
     git_output = checkout._git_output
     path_is_tracked = checkout.path_is_tracked
+    fetch_state = store.fetch_state
+    commit_transition = store.commit_transition
+    in_transition = False
+
+    def counting_fetch_state(*, worktree: Path, remote: str) -> ClaimState:
+        if not in_transition:
+            reads.observations[worktree] += 1
+        return fetch_state(worktree=worktree, remote=remote)
+
+    def uncounted_transition(**arguments: Any) -> ClaimState:
+        nonlocal in_transition
+        in_transition = True
+        try:
+            return commit_transition(**arguments)
+        finally:
+            in_transition = False
 
     def counting_git_output(arguments: list[str], *, directory: Path | None = None) -> str:
         if arguments[0] == "rev-parse" and "--show-toplevel" in arguments:
@@ -287,4 +313,6 @@ def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
 
     monkeypatch.setattr(checkout, "_git_output", counting_git_output)
     monkeypatch.setattr(checkout, "path_is_tracked", counting_path_is_tracked)
+    monkeypatch.setattr(store, "fetch_state", counting_fetch_state)
+    monkeypatch.setattr(store, "commit_transition", uncounted_transition)
     return reads

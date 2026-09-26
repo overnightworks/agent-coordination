@@ -31,7 +31,12 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from board_fixtures import REPOSITORY, board_issue, complete_contract, proposed_expectation
-from cli_fixtures import count_context_reads, run_context_over, stub_board_config_tracked
+from cli_fixtures import (
+    CountedReads,
+    count_context_reads,
+    run_context_over,
+    stub_board_config_tracked,
+)
 from test_cli import (
     FakeForge,
     _assert_json_refusal_object,
@@ -428,31 +433,36 @@ def _served_request(served: ServedBoard, request: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("requests", "rereads"),
+    ("requests", "reads_made"),
     [
-        pytest.param(("reload", "reload"), (True, True), id="two-reloading-gets"),
-        pytest.param(("get", "post", "get"), (False, True, True), id="get-post-get"),
+        pytest.param(("reload", "reload"), ("rebuild", "rebuild"), id="two-reloading-gets"),
+        pytest.param(("get", "post", "get"), ("held", "ruling", "rebuild"), id="get-post-get"),
     ],
 )
 def test_every_request_reads_the_repository_through_its_own_fresh_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     requests: tuple[str, ...],
-    rereads: tuple[bool, ...],
+    reads_made: tuple[str, ...],
 ) -> None:
     """Issue #457 proof 5: startup reads the checkout once through the run's
     own context; after that every request builds exactly one fresh child
     context of its own, never one another request built. A request that
     needs the repository -- a rebuild or a ruling click -- reads it through
     that child exactly once, and one the held page answers reads nothing.
+    A rebuild also observes `refs/aco/state` exactly once (issue #477); a
+    ruling click writes the forge alone and never observes it.
     A context memoised across requests would leave the second of two
     reloads reading nothing; one built only to rebuild or click would leave
     the cached first GET without a child."""
     client = _served_board_environment(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
     children = _record_fresh_contexts(monkeypatch)
-    once = ({None: 1}, {tmp_path: 1})
-    nothing: tuple[dict[Path | None, int], dict[Path | None, int]] = ({}, {})
+    expected_by_kind: dict[str, CountedReads] = {
+        "rebuild": ({None: 1}, {tmp_path: 1}, {tmp_path: 1}),
+        "ruling": ({None: 1}, {tmp_path: 1}, {}),
+        "held": ({}, {}, {}),
+    }
 
     with _serving(client) as served:
         counted = [(reads.drain(), len(children))]
@@ -460,7 +470,7 @@ def test_every_request_reads_the_repository_through_its_own_fresh_context(
             _served_request(served, request)
             counted.append((reads.drain(), len(children)))
 
-    expected_reads = [once, *(once if reread else nothing for reread in rereads)]
+    expected_reads = [expected_by_kind[kind] for kind in ("rebuild", *reads_made)]
     assert counted == [(read, built) for built, read in enumerate(expected_reads)]
     assert len({id(child) for child in children}) == len(requests)
 
