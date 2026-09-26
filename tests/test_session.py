@@ -5,6 +5,7 @@ answered per directory."""
 from __future__ import annotations
 
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -194,7 +195,6 @@ def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.param(["body"], "", 2, id="body-without-its-mode"),
         pytest.param(["--repo", "owner/repo", "run"], "", 2, id="workspace-run"),
         pytest.param(["run"], "", 2, id="workspace-run-without-a-configuration"),
-        pytest.param(["protect"], "not json", 2, id="protect"),
     ],
 )
 def test_a_command_that_needs_no_repository_reads_no_context(
@@ -205,11 +205,30 @@ def test_a_command_that_needs_no_repository_reads_no_context(
     exit_code: int,
 ) -> None:
     """Issue #457 proof 2: the run's context is built only after the
-    workspace and `protect` dispatch, and lazily, so a parse refusal, a
-    workspace command, and `protect` (which judges from its own payload)
-    never read the repository a context would answer for."""
+    workspace dispatch, and lazily, so a parse refusal and a workspace
+    command never read the repository a context would answer for."""
     _forbid_context_reads(monkeypatch)
     monkeypatch.setattr(cli, "_workspace_config_path", lambda: tmp_path / "workspace.toml")
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
 
     assert _exit_code(command) == exit_code
+
+
+def test_protect_judges_its_payload_without_ever_building_a_run_context(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #457 proof 2: `protect` is dispatched before the run's context
+    exists and judges from its own payload's path -- here a real one
+    outside every repository, which it allows unjudged."""
+
+    def unused(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("protect must never build a run context")
+
+    monkeypatch.setattr(RunContext, "__init__", unused)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "notes.txt")}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+
+    assert (_exit_code(["protect"]), json.loads(capsys.readouterr().out)) == (
+        0,
+        {"decision": "allow"},
+    )

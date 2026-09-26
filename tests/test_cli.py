@@ -1844,7 +1844,7 @@ def test_next_pulls_an_unruled_item_and_names_only_unworkable_ones_as_skipped(
 
 
 def _redirect_toplevel(monkeypatch: pytest.MonkeyPatch, toplevel: Path) -> None:
-    """Point `_resolve_toplevel()` (`rev-parse --show-toplevel`) at a real
+    """Point `RunContext.toplevel` (`rev-parse --show-toplevel`) at a real
     repository this test built itself (issue #322), taking precedence over
     the module's autouse `_isolate_git_toplevel` fake -- every other real
     git call `start`'s own worktree creation runs still reaches real git,

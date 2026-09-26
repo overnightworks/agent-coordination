@@ -4142,7 +4142,7 @@ def _brief_json(composition: _BriefComposition) -> int:
 def _brief_config(toplevel: Path) -> board.BriefConfig | None:
     """`.agent-claim/brief.toml`'s own content, read only when the file is
     actually tracked by git (issue #324) -- the same tracked-file
-    requirement `_board_config` enforces for `board.toml`'s storage pin, so
+    requirement `session.board_config` enforces for `board.toml`'s storage pin, so
     an ignored or not-yet-added file never quietly answers for the
     repository. `None` either when it is untracked or when `load_brief_config`
     finds no such file at all."""
