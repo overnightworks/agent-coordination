@@ -441,32 +441,50 @@ def test_apply_item_close_intent_refuses_while_the_item_is_claimed() -> None:
 
 
 @pytest.mark.parametrize(
-    ("identity", "branch", "forge_sentence", "named_sentence"),
+    ("held", "conflicting_identity", "forge_sentence", "named_sentence"),
     [
         pytest.param(
+            _claim_intent(identity=protocol.IssueIdentity(42), branch="ada/issue-42"),
             protocol.IssueIdentity(42),
-            "ada/issue-42",
             "issue #42 is claimed by Ada (builder) on issue #42 branch ada/issue-42",
             "issue item-42 is claimed by Ada (builder) on issue item-42 branch ada/issue-42",
             id="issue",
         ),
         pytest.param(
+            _claim_intent(identity=protocol.LaneIdentity(), branch="docs/guide"),
             protocol.LaneIdentity(),
-            "docs/guide",
             "lane 'docs/guide' is claimed by Ada (builder) on lane 'docs/guide' branch docs/guide",
             "lane 'docs/guide' is claimed by Ada (builder) on lane 'docs/guide' branch docs/guide",
             id="lane",
         ),
+        pytest.param(
+            _claim_intent(
+                identity=protocol.IssueIdentity(42), resource_name="display", resource_value=2
+            ),
+            protocol.IssueIdentity(43),
+            "display 2 is held by Ada (builder) on issue #42",
+            "display 2 is held by Ada (builder) on issue item-42",
+            id="resource",
+        ),
     ],
 )
 def test_a_claim_conflict_names_its_item_in_the_form_the_caller_asks_for(
-    identity: protocol.ClaimIdentity, branch: str, forge_sentence: str, named_sentence: str
+    held: protocol.ClaimIntent,
+    conflicting_identity: protocol.ClaimIdentity,
+    forge_sentence: str,
+    named_sentence: str,
 ) -> None:
     """Issue #471: a claim-ledger refusal's own text names an item `#<n>`,
     and `named` renders the same sentence in the caller's storage form; a
-    lane names no item, so both read alike."""
-    claimed = protocol.apply(_STATE_WITH_TIP, _claim_intent(identity=identity, branch=branch))
-    second = _claim_intent(identity=identity, branch=branch, claim_id="a2", operation_id="op-2")
+    lane names no item, so both read alike. A resource conflict (CLAIM-42)
+    names its holder's item the same way."""
+    claimed = protocol.apply(_STATE_WITH_TIP, held)
+    second = replace(
+        held,
+        identity=conflicting_identity,
+        claim_id=protocol.ClaimId("a2"),
+        operation_id="op-2",
+    )
 
     with pytest.raises(protocol.ClaimConflictError) as refused:
         protocol.apply(claimed, second)
