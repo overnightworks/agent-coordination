@@ -3337,8 +3337,9 @@ def _cmd_item_edit(parsed: argparse.Namespace) -> int:
     `update_item_body`'s own owner rule; `updated_at` always moves to now;
     `title`, `labels`, `blocked_by` come from the piped record when it
     carries one -- except a malformed item (ITEM-39), which takes the piped
-    record whole and refuses a body without one; a resulting blocker naming
-    no item or the item itself refuses before any write (ITEM-43). Refuses under
+    record whole and refuses a body without one; a delivered blocker the
+    item does not already carry that names no item or the item itself
+    refuses before any write (ITEM-43, ITEM-44). Refuses under
     `storage = "github"`: forge issues are edited on the forge, never
     governed by aco. Calls `_state_ref_forge` directly,
     as `item new`'s state-ref path does. A malformed piped body reports through

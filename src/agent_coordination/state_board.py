@@ -572,9 +572,10 @@ class StateRefBoard:
         `current.oid`, this instance's own already-read snapshot -- never a
         re-read -- so a second writer holding the same stale oid refuses
         with issue #279's own sentence rather than merging or overwriting.
-        Every resulting blocker must resolve to another readable item
+        Every blocker the write adds must resolve to another readable item
         before the write (issue #450), since a dangling one would stop every
-        later `board`/`next` (PIN-17).
+        later `board`/`next` (PIN-17); a blocker the item already carries is
+        never re-judged, so `cut`, `rule`, `ask` and `--size` write as before.
         A malformed item (issue #447) has no stored record to merge into:
         `body`'s own complete `[record]` repairs it once its relations
         resolve (`_refuse_unresolved_repair`), else it refuses by name."""
@@ -584,7 +585,9 @@ class StateRefBoard:
         if malformed is None:
             current = self._items[item_id]
             title, labels, blocked_by = _delivered_content_fields(body, current.record)
-            self._refuse_unresolved_blockers(item_id, blocked_by)
+            stored_blockers = set(current.record.blocked_by)
+            added_blockers = [blocker for blocker in blocked_by if blocker not in stored_blockers]
+            self._refuse_unresolved_blockers(item_id, added_blockers)
             updated_record = replace(
                 current.record, title=title, labels=labels, blocked_by=blocked_by, updated_at=now
             )

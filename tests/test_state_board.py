@@ -249,25 +249,30 @@ def _item_files() -> dict[str, bytes]:
     }
 
 
-def _container_body_with_slices(slice_rows: tuple[tuple[int, str], ...]) -> str:
+def _container_body_with_slices(
+    slice_rows: tuple[tuple[int, str], ...], blocked_by: tuple[str, ...] = ()
+) -> str:
     """`CONTAINER_ID`'s own body, its `[[slice]]` table set to `slice_rows`
-    -- the one shape issue #291's `cut` proofs need and the flat
-    `_CONTAINER_PROJECTION`/`_record` pair above cannot express (neither
-    carries a `slice` array)."""
+    and its stored `blocked_by` to `blocked_by` -- the one shape issue
+    #291's `cut` proofs need and the flat `_CONTAINER_PROJECTION`/`_record`
+    pair above cannot express (neither carries a `slice` array)."""
     data = {
         **_CONTAINER_PROJECTION.block_data(),
         "slice": [{"index": index, "title": title} for index, title in slice_rows],
-        "record": _record(title="Epic", state="open", kind="container"),
+        "record": _record(title="Epic", state="open", kind="container", blocked_by=blocked_by),
     }
     return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
 
 
-def _item_files_with_container_slices(slice_rows: tuple[tuple[int, str], ...]) -> dict[str, bytes]:
+def _item_files_with_container_slices(
+    slice_rows: tuple[tuple[int, str], ...], blocked_by: tuple[str, ...] = ()
+) -> dict[str, bytes]:
     """`_item_files`'s own three-item scenario, `CONTAINER_ID`'s body
-    replaced by one carrying `slice_rows` -- `CHILD_A`/`CHILD_B` stay
-    untouched so a slice-table proof still exercises a container that
-    already has real children, not an invented empty one."""
-    return {**_item_files(), f"{CONTAINER_ID}.md": _container_body_with_slices(slice_rows).encode()}
+    replaced by one carrying `slice_rows` and `blocked_by` -- `CHILD_A`/
+    `CHILD_B` stay untouched so a slice-table proof still exercises a
+    container that already has real children, not an invented empty one."""
+    container_body = _container_body_with_slices(slice_rows, blocked_by)
+    return {**_item_files(), f"{CONTAINER_ID}.md": container_body.encode()}
 
 
 def _item_files_with_one_scoped_slice(
@@ -1873,6 +1878,40 @@ class TestCliStateRefForge:
         assert status == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["row"] == 2
+        remote_url = f"file://{bare_remote}"
+        state = store.fetch_state(worktree=worktree, remote=remote_url)
+        assert state.tip is not None
+        container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
+        remaining = locate_agent_claim_block(container_body).data
+        assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
+
+    @pytest.mark.parametrize(
+        "stored_blocker",
+        [pytest.param(CONTAINER_ID, id="itself"), pytest.param("aco-ffffff", id="unknown")],
+    )
+    def test_cut_row_links_the_row_on_a_container_whose_stored_blocker_does_not_resolve(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        stored_blocker: str,
+    ) -> None:
+        """Issue #450: ITEM-43 refuses only a blocker a write adds, so a
+        container already carrying a self or unknown blocker still has its
+        cut row removed -- never CUT-18's partial write that a re-run could
+        not finish."""
+        item_files = _item_files_with_container_slices(
+            ((1, "Slice C"), (2, "Slice D")), blocked_by=(stored_blocker,)
+        )
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        status = issue_claim.main(
+            ["cut", str(CONTAINER_NUMBER), "--title", "Slice D", "--row", "2"]
+        )
+
+        assert (status, capsys.readouterr().err) == (0, "")
         remote_url = f"file://{bare_remote}"
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
