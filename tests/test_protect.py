@@ -1688,7 +1688,6 @@ def test_protect_allows_a_path_outside_every_repository_without_identity(
     _assert_protect_decision(capsys, decision="allow")
 
 
-
 def test_protect_apply_patch_judges_two_worktrees_separately_and_one_deny_wins(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
