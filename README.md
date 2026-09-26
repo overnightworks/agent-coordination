@@ -167,8 +167,11 @@ exact preconditions and refusals are also `specs/workspace.spec.md`'s own.
 
 ## PreToolUse write gate
 
-Copy this hook once into the file the provider actually loads. Skip when a
-`PreToolUse` hook already runs `aco protect`.
+Copy this hook once into the file the provider actually loads. When a
+`PreToolUse` hook already runs `aco protect`, add no second entry: set that
+entry's `matcher` to the one shown. The formerly documented `"matcher": "*"`
+sends every tool -- MCP tools, plan mode, task lists -- to `protect`, which
+denies each unknown name and stalls the session.
 
 ```json
 {
