@@ -1,0 +1,8 @@
+claim_id = "1b0364cfd2814effa02e90751e4e6b8e"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "e2b9992e38a6fffe2080bd57cf379c10c49cc152"
+branch = "claude/issue-457-runcontext-static"
+scope = ["pyproject.toml", "src/agent_coordination/board_serve.py", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_cli.py", "tests/test_session.py"]
+opened_commit = "2f1784b21731ec98fef9b78fad1cce795f75b979"
+whole_reason = "ein neuer Owner für die statischen Fakten eines Laufs, durch cli gereicht; byte-gleich"
