@@ -49,7 +49,8 @@ canonical remote name.
 | a `cd` changes the resolution directory | — | — | — | PROT-34 | — |
 | a `cd` target cannot be resolved | — | — | — | PROT-35 (allow) | — |
 | a decoy path key the tool never sends | — | PROT-27 | — | — | — |
-| `--repo`, or a non-GitHub canonical remote | PROT-28 | PROT-28 | PROT-28 | PROT-28 | PROT-28 |
+| an OWNER/REPO `--repo`, or a non-GitHub canonical remote | PROT-28 | PROT-28 | PROT-28 | PROT-28 | PROT-28 |
+| `--repo` not shaped OWNER/REPO | OUT-08 | OUT-08 | OUT-08 | OUT-08 | OUT-08 |
 
 Every column resolves agent identity last (issue #448), only once a
 checkout, its live state, and a repository-relative path are already in
@@ -207,7 +208,7 @@ than a bare `claim first`.
 
 ## Forge-free
 
-- [ ] [PROT-28] `protect` never resolves an item forge: allow and deny alike are unaffected by `--repo` or a non-GitHub canonical remote.
+- [ ] [PROT-28] `protect` never resolves an item forge: an OWNER/REPO `--repo` or a non-GitHub canonical remote leaves allow and deny alike unaffected; any other `--repo` refuses first (OUT-08).
 
 ## Never
 
