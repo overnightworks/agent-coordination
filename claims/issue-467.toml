@@ -1,8 +1,0 @@
-claim_id = "b07cad64cb8b4bba81b1100408164a1f"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "eaebbd22615054f33d5d41288c2d36cf46976dec"
-branch = "claude/issue-467-item-id-renderer"
-scope = ["scripts/test_budget_ratchet.txt", "specs/ask.spec.md", "specs/board.spec.md", "specs/body-block.spec.md", "specs/body.spec.md", "specs/bootstrap.spec.md", "specs/brief.spec.md", "specs/check.spec.md", "specs/claim-record.spec.md", "specs/claim.spec.md", "specs/cut.spec.md", "specs/item.spec.md", "specs/land.spec.md", "specs/landing-grammar.spec.md", "specs/next.spec.md", "specs/output.spec.md", "specs/protect.spec.md", "specs/ref-store-cas.spec.md", "specs/release.spec.md", "specs/rescope.spec.md", "specs/reset.spec.md", "specs/rule.spec.md", "specs/rulings.spec.md", "specs/start.spec.md", "specs/status.spec.md", "specs/storage-pin.spec.md", "specs/workspace.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/board_html.py", "src/agent_coordination/cli.py", "src/agent_coordination/forge.py", "src/agent_coordination/items.py", "src/agent_coordination/state_board.py", "src/agent_coordination/store.py", "tests/board_fixtures.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_board_html.py", "tests/test_cli.py", "tests/test_state_board.py", "tests/test_store.py"]
-opened_commit = "888d77681812709fcceb2ec33ff6c1c747d11128"
-whole_reason = "ein Renderer für Item-Referenzen: state-ref nennt aco-xxxxxx überall, wo heute die Dezimalzahl durchsickert"
