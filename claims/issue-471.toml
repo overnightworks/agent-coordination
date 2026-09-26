@@ -1,8 +1,0 @@
-claim_id = "f48a9bcae80445a7b98fadb9eae44a84"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "a9f22079db4b010a33df08215ce0805082ff87ef"
-branch = "claude/issue-471-ledger-labels"
-scope = ["scripts/test_budget_ratchet.txt", "specs/board.spec.md", "specs/check.spec.md", "specs/claim-record.spec.md", "specs/claim.spec.md", "specs/item.spec.md", "specs/landing-grammar.spec.md", "specs/release.spec.md", "specs/rescope.spec.md", "specs/start.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_protocol.py", "tests/test_state_board.py"]
-opened_commit = "3ef5b7cc210944ed0fbb3292ac6ef279a97ad79a"
-whole_reason = "remaining item-reference sentences and #467's spec remainders"
