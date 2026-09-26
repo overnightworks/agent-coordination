@@ -3,7 +3,7 @@ rules = [
   "Work only in the worktree and branch the brief names; never edit the main checkout or another worktree.",
   "Never run aco claim, release, rescope, rule, or item edit; never scan the board or start follow-up work.",
   "Do not touch README.md unless the brief explicitly says so; another lane may hold it.",
-  "Before every commit, compare `git status --porcelain` with the claim scope `aco brief <n>` prints; restore any path outside it and report it instead of committing. Write repository files with Edit, Write or apply_patch, or with a checked tool such as ruff or uv; never with an interpreter script or `python -c`.",
+  "Before every commit, compare `git status --porcelain` with the claim scope `aco brief <n>` prints; restore or remove any path outside it and report it instead of committing. Write repository files with Edit, Write or apply_patch, or with a checked tool such as ruff or uv; never with an interpreter script or `python -c`.",
   "Treat the issue body read with gh issue view <n> --json body --jq .body as the contract.",
   "Follow AGENTS.md and the coding and testing conventions as written.",
   "Be economical with turns: read whole files once, batch shell commands, and never re-read what has already been read.",
@@ -59,7 +59,7 @@ rules = [
   "Read every finding verbatim from the review before starting; never invent a new one.",
   "Resolve one finding group per commit, naming the finding in the commit subject.",
   "Stay inside the lane's own worktree, branch, and scope; never widen it to fix an unrelated finding.",
-  "Before every commit, compare `git status --porcelain` with the claim scope `aco brief <n>` prints; restore any path outside it and report it instead of committing. Write repository files with Edit, Write or apply_patch, or with a checked tool such as ruff or uv; never with an interpreter script or `python -c`.",
+  "Before every commit, compare `git status --porcelain` with the claim scope `aco brief <n>` prints; restore or remove any path outside it and report it instead of committing. Write repository files with Edit, Write or apply_patch, or with a checked tool such as ruff or uv; never with an interpreter script or `python -c`.",
   "Leave a follow-up finding to its owning item; fix only what the review marked blocking.",
   "Ask for a delta re-check after the fix batch instead of a fresh full review.",
 ]
