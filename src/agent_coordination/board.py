@@ -2215,9 +2215,12 @@ def _storage_item_name(number: int, storage: Storage, forge_name: str) -> str:
     `parse_item_reference` accepts right back, so what a command prints is
     what the next command takes -- and under `GITHUB` the caller's own
     forge form, byte-identical to every such name before the pin existed.
-    `board` is the lowest layer that may import `items` (the Layers
-    contract), so `cli` and `board_html` both call into it here."""
-    if storage is Storage.STATE_REF:
+    A number past `aco-ffffff` (`names_no_item`) -- a stored claim may
+    still carry one -- keeps the forge form under either pin, since no id
+    names it and a dressed-up `aco-1000000` would not parse back. `board`
+    is the lowest layer that may import `items` (the Layers contract), so
+    `cli` and `board_html` both call into it here."""
+    if storage is Storage.STATE_REF and not names_no_item(number, storage):
         return items.format_item_id(number)
     return forge_name
 

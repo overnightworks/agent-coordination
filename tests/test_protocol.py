@@ -481,15 +481,18 @@ def test_a_claim_conflict_names_its_item_in_the_form_the_caller_asks_for(
     ("holder", "holder_label"),
     [
         pytest.param(42, "aco-00002a", id="in-the-id-space"),
+        pytest.param(16777216, "#16777216", id="stored-past-aco-ffffff"),
     ],
 )
 def test_a_state_ref_resource_conflict_names_its_holder_by_a_name_a_command_takes_back(
     holder: int, holder_label: str
 ) -> None:
     """CLAIM-42 under `storage = "state-ref"` (issue #471, #476 review
-    finding 3): the holder's item is named by its id through the renderer
-    the CLI hands the refusal. The CLI offers no explicit resource value, so
-    the refusal is driven at the store's own transition."""
+    findings 2 and 3): the holder's item is named by its id through the
+    renderer the CLI hands the refusal, and a stored holder past `aco-ffffff`
+    keeps `#<n>` (PIN-30's second exception) rather than an `aco-1000000` no
+    command takes back. The CLI offers no explicit resource value, so the
+    refusal is driven at the store's own transition."""
     held = protocol.apply(
         _STATE_WITH_TIP,
         _claim_intent(
