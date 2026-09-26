@@ -406,16 +406,20 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
     relative-to-`-C`-directory paths would otherwise have to be re-resolved
     against `directory` itself, not the caller's own cwd.
 
-    A git failure is "outside every repository" only when no repository
-    marker sits in `directory` or any of its ancestors either; below one,
-    the failure is raised instead (issue #448 review finding: `protect`
-    allows a `None` path unjudged, so a missing git, or a path inside a
-    `.git` directory itself, must never read as "no repository here").
+    A git failure on an existing `directory` is "outside every repository"
+    only when no repository marker sits in it or any of its ancestors
+    either; below one, the failure is raised instead (issue #448 review
+    finding: `protect` allows a `None` path unjudged, so a missing git, or a
+    path inside a `.git` directory itself, must never read as "no
+    repository here"). A `directory` that does not exist yet is never inside a
+    repository -- `git -C` cannot even enter it -- so it stays `None`
+    whatever sits above it: `start`'s own not-yet-created worktree path
+    (START-01) may well have an outer checkout's `.git` above it.
     """
     try:
         return _resolve_checkout(directory)
     except ClaimError:
-        if _has_repository_marker_above(directory):
+        if directory.is_dir() and _has_repository_marker_above(directory):
             raise
         return None
 
