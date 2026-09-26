@@ -3153,15 +3153,22 @@ class TestCliStateRefForge:
         assert f"{EDIT_TARGET_ID}: blocked by" not in freed_out
 
     @pytest.mark.parametrize(
-        ("blocker_id", "refusal"),
+        ("blocked_by", "refusal"),
         [
             pytest.param(
-                "aco-ffffff",
+                ("aco-ffffff",),
                 "item aco-ffffff is listed as a blocker but does not exist",
                 id="unknown-blocker",
             ),
             pytest.param(
-                EDIT_TARGET_ID, f"item {EDIT_TARGET_ID} is listed as its own blocker", id="itself"
+                (EDIT_TARGET_ID,),
+                f"item {EDIT_TARGET_ID} is listed as its own blocker",
+                id="itself",
+            ),
+            pytest.param(
+                (EDIT_BLOCKER_ID, EDIT_BLOCKER_ID),
+                f"item {EDIT_TARGET_ID} lists blocker {EDIT_BLOCKER_ID} more than once",
+                id="repeated-blocker",
             ),
         ],
     )
@@ -3172,18 +3179,18 @@ class TestCliStateRefForge:
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
-        blocker_id: str,
+        blocked_by: tuple[str, ...],
         refusal: str,
     ) -> None:
-        """Issue #450 proof 1: a piped `blocked_by` naming no item, or the
-        edited item itself, refuses before any write, so `board --json`
-        keeps reading instead of refusing PIN-17 from then on."""
+        """Issue #450 proof 1: a piped `blocked_by` naming no item, the
+        edited item itself, or one item twice refuses before any write, so
+        `board --json` keeps reading instead of refusing from then on."""
         self._live_state_ref_checkout(
             monkeypatch, tmp_path, bare_remote, worktree, _edit_target_item_files()
         )
         unresolved_body = _state_ref_body(
             _EDIT_TARGET_PROJECTION,
-            _record(title="Target", state="open", kind="task", blocked_by=(blocker_id,)),
+            _record(title="Target", state="open", kind="task", blocked_by=blocked_by),
         )
         monkeypatch.setattr(sys, "stdin", io.StringIO(unresolved_body))
         remote_url = f"file://{bare_remote}"

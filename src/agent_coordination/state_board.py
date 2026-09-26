@@ -585,9 +585,7 @@ class StateRefBoard:
         if malformed is None:
             current = self._items[item_id]
             title, labels, blocked_by = _delivered_content_fields(body, current.record)
-            stored_blockers = set(current.record.blocked_by)
-            added_blockers = [blocker for blocker in blocked_by if blocker not in stored_blockers]
-            self._refuse_unresolved_blockers(item_id, added_blockers)
+            self._refuse_unresolved_blockers(item_id, blocked_by, stored=current.record.blocked_by)
             updated_record = replace(
                 current.record, title=title, labels=labels, blocked_by=blocked_by, updated_at=now
             )
@@ -620,11 +618,26 @@ class StateRefBoard:
             self._related(record.parent, missing=_PARENT_MISSING)
         self._refuse_unresolved_blockers(item_id, record.blocked_by)
 
-    def _refuse_unresolved_blockers(self, item_id: str, blocked_by: Iterable[str]) -> None:
-        """Every id in `blocked_by` names a readable item other than
-        `item_id` (issues #447, #450): a missing one refuses PIN-17's
-        sentence, a malformed one its repair, `item_id` itself by name."""
+    def _refuse_unresolved_blockers(
+        self, item_id: str, blocked_by: tuple[str, ...], *, stored: tuple[str, ...] = ()
+    ) -> None:
+        """`blocked_by` names each blocker once, and every one not in
+        `stored` names a readable item other than `item_id` (issues #447,
+        #450): a repeated one refuses by name, since a board read refuses
+        a repeated dependency; a missing one PIN-17's sentence, a malformed
+        one its repair, `item_id` itself by name. Carrying `stored` through
+        unchanged is never re-judged."""
+        if blocked_by == stored:
+            return
+        named: set[str] = set()
         for blocker_id in blocked_by:
+            if blocker_id in named:
+                raise ClaimUnavailableError(
+                    f"item {item_id} lists blocker {blocker_id} more than once"
+                )
+            named.add(blocker_id)
+            if blocker_id in stored:
+                continue
             self._related(blocker_id, missing=_BLOCKER_MISSING)
             if blocker_id == item_id:
                 raise ClaimUnavailableError(f"item {item_id} {_BLOCKER_ITSELF}")
