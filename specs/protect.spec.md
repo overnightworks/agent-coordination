@@ -29,6 +29,7 @@ canonical remote name.
 | no resolvable path in the payload | PROT-07 | PROT-07 | PROT-07 | PROT-30 (no pattern) | — |
 | payload path not absolute | PROT-09 | PROT-09 | PROT-09 (each path) | PROT-31 (allow) | — |
 | path's directory outside every repository | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | — |
+| path's directories do not exist yet | PROT-39 | PROT-39 | PROT-39 | PROT-39 | — |
 | an ignored file under the checkout's `.claude/` | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | — |
 | checkout has no commit yet | PROT-11 | PROT-11 | PROT-11 | PROT-11 | — |
 | shared main checkout, or on the default branch | PROT-12 | PROT-12 | PROT-12 | PROT-12 | — |
@@ -84,12 +85,13 @@ marks each read-only: `ToolSearch`, `SendMessage`, `TaskStop`,
 - [ ] [PROT-08] A failure resolving this session's own agent identity, reached only once a live state is in hand, denies that failure's own bare sentence, no `ERROR:` prefix.
 - [ ] [PROT-09] A payload path that is not absolute denies `relative payload path`, never guessed against the hook process's own cwd (see E-PROT-07).
 - [ ] [PROT-10] A path whose directory sits outside every git repository is `not in a repository`, the sentence `rescope` refuses with; `protect` allows it instead (PROT-32).
+- [ ] [PROT-32] A write path outside every repository -- any tool's payload path or a recognized Bash pattern's -- allows before identity or the store is read, except a checkout's own root (PROT-14) (see E-PROT-11).
 - [ ] [PROT-11] A checkout with no commit yet (an unborn branch) denies `no commit on this branch`.
 - [ ] [PROT-12] The shared main checkout, or a linked worktree on the repository's own resolved default branch, denies `not main` (see E-PROT-03).
 - [ ] [PROT-13] A checkout whose default branch cannot be resolved at all denies `default branch unknown`, never falling back to a `main`/`master` guess.
 - [ ] [PROT-14] A payload path that resolves to exactly the checkout root denies `path required`, the same reason as no path at all.
-- [ ] [PROT-39] A path whose directories do not exist yet is judged by the checkout of its nearest existing ancestor, never allowed as outside every repository (PROT-32).
 - [ ] [PROT-38] A path under the checkout's own `.claude/` that git ignores allows in any checkout, main included, before identity or the store is read (see E-PROT-12).
+- [ ] [PROT-39] A path whose directories do not exist yet is judged by the checkout of its nearest existing ancestor, never allowed as outside every repository (PROT-32).
 - [ ] [PROT-36] A payload path naming a nested checkout's own root is judged by that checkout, never by an outer one its parent directory sits inside, before PROT-14 denies it.
 
 ## The live claim state
@@ -167,10 +169,12 @@ it at all. That directory changes for the rest of the enclosing
 segment is its own subshell, so a `cd` on either side of one changes nothing
 outside it -- and a parenthesised `( ... )` group keeps its own copy that
 reverts at its own closing `)`, exactly like Bash's own subshell scoping.
-Every resolved path then runs the same Checkout, Default-Branch, and
-Claim-Scope gates a mutating tool's own path runs (PROT-11 no commit yet,
-PROT-12/PROT-13 not main, PROT-14 the checkout root -- including a path that
-names a linked worktree's own root directory exactly, judged by that
+Every resolved path then runs the same Outside-Repository, Checkout,
+Default-Branch, and Claim-Scope gates a mutating tool's own path runs
+(PROT-32 outside every repository, PROT-38 an ignored `.claude/` setting,
+PROT-11 no commit yet, PROT-12/PROT-13 not main, PROT-14 the checkout root
+-- including a path that names a linked worktree's own root directory
+exactly, judged by that
 checkout rather than by its parent, the store's own
 PROT-29/PROT-15/PROT-16/PROT-17, PROT-21/PROT-22 a covering claim), except a
 scope miss denies naming both the recognized pattern and the path rather
@@ -178,7 +182,6 @@ than a bare `claim first`.
 
 - [ ] [PROT-30] A `command` naming none of these patterns -- or no string `command` at all -- allows without resolving identity, git, or the store.
 - [ ] [PROT-31] A recognized pattern's relative path resolves against the payload's own `cwd`, as PROT-34 updates it; with no known directory, that path allows outright, before identity resolves.
-- [ ] [PROT-32] A write path outside every repository -- any tool's payload path or a recognized Bash pattern's -- allows before identity or the store is read, except a checkout's own root (PROT-14) (see E-PROT-11).
 - [ ] [PROT-33] A recognized pattern's own path outside the live claim's scope denies `<pattern> <path> outside claim scope`, naming both (see E-PROT-08).
 - [ ] [PROT-34] A literal, resolvable `cd` changes the directory every later path in its own `;`/`&&`/`||`/newline list resolves against -- never across a `|`, and only inside its own group.
 - [ ] [PROT-35] An unresolvable `cd` target -- expandable, `-`, or no operand -- ends recognition for the rest of the command outright, allowing it (see E-PROT-10).
