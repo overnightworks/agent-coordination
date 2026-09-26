@@ -196,13 +196,26 @@ def path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
     not track. A dedicated call, not `path in versioned_paths()`: that
     listing's exact membership and count are a different concern
     (scope-width math over every tracked file), so a test fixing one axis
-    never has to carry the other.
+    never has to carry the other."""
+    return _git_yes_or_no(["ls-files", "--error-unmatch", "--", path], directory=directory)
 
-    Exit 1 is the one status `--error-unmatch` defines for "not tracked";
-    any other nonzero exit (e.g. 128 outside a git repository) is a real git
+
+def path_is_ignored(path: str, *, directory: Path) -> bool:
+    """Whether git's own exclude rules (`.gitignore`, `.git/info/exclude`,
+    the global excludes file) ignore `path` (repo-relative) in the checkout
+    at `directory` -- for a path that need not exist yet, and never for a
+    tracked one, which no exclude rule can ignore (issue #448: `protect`'s
+    escape for a session's own ignored `.claude/` settings)."""
+    return _git_yes_or_no(["check-ignore", "--quiet", "--", path], directory=directory)
+
+
+def _git_yes_or_no(arguments: list[str], *, directory: Path | None) -> bool:
+    """A git question answered by exit status alone: `0` yes, `1` no -- the
+    one "no" both `ls-files --error-unmatch` and `check-ignore` define. Any
+    other nonzero exit (e.g. 128 outside a git repository) is a real git
     failure, matching `versioned_paths`'s handling in this module -- it must
-    not read as an untrusted pin instead of a git error."""
-    result = _git_run(["ls-files", "--error-unmatch", "--", path], directory=directory)
+    never read as a plain "no" instead of a git error."""
+    result = _git_run(arguments, directory=directory)
     if result.exit_status == 0:
         return True
     if result.exit_status == 1:

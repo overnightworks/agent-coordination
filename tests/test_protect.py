@@ -2183,3 +2183,52 @@ def test_judge_denies_a_path_resolving_to_the_checkout_root_before_reading_the_s
     verdict = protect.judge(payload, canonical_remote_for=_no_canonical_remote_call)
 
     assert _judge_decision_and_reason(verdict) == (protect.Decision.DENY, "path required")
+
+
+def _real_main_checkout_with_session_settings(tmp_path: Path) -> Path:
+    """A real repository's own main checkout (`Setup: bare-remote`) with a
+    tracked `.claude/settings.json` and git excluding
+    `.claude/settings.local.json` -- the global excludes file switched off,
+    so only this repository's own rules decide what is ignored."""
+    repo, _remote = _real_repository_with_bare_remote(tmp_path)
+    _real_git(repo, "config", "core.excludesFile", "/dev/null")
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text("{}\n")
+    (repo / "README.md").write_text("hello\n")
+    _real_git(repo, "add", "README.md", ".claude/settings.json")
+    _real_git(repo, "commit", "-q", "-m", "initial")
+    _push_repository_trunk(repo, "origin")
+    (repo / ".git" / "info" / "exclude").write_text("/.claude/settings.local.json\n")
+    return repo
+
+
+@pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
+@pytest.mark.parametrize(
+    ("relative", "status", "reason"),
+    [
+        (".claude/settings.local.json", 0, None),
+        (".claude/settings.json", 2, checkout.PROTECT_NOT_MAIN_REASON),
+        (".claude/notes.md", 2, checkout.PROTECT_NOT_MAIN_REASON),
+        ("README.md", 2, checkout.PROTECT_NOT_MAIN_REASON),
+    ],
+    ids=["ignored-session-setting", "tracked-setting", "untracked-unignored", "tracked-file"],
+)
+def test_protect_lets_the_main_checkout_write_only_its_ignored_session_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    payload_for: Callable[[Path], dict[str, object]],
+    relative: str,
+    status: int,
+    reason: str | None,
+) -> None:
+    """PROT-38 (issue #448): the escape a misconfigured hook needs -- the
+    session may rewrite its own ignored `.claude/` settings in the main
+    checkout, with no identity and no claim, while a tracked `.claude/` file,
+    an untracked one git does not ignore, and any other file there still
+    deny `not main` (PROT-12)."""
+    main_checkout = _real_main_checkout_with_session_settings(tmp_path)
+    _set_agent_identity_env(monkeypatch)
+
+    assert _protect_main(monkeypatch, payload_for(main_checkout / relative)) == status
+    _assert_protect_decision(capsys, decision="deny" if reason else "allow", reason=reason)

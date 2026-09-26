@@ -29,6 +29,7 @@ canonical remote name.
 | no resolvable path in the payload | PROT-07 | PROT-07 | PROT-07 | PROT-30 (no pattern) | — |
 | payload path not absolute | PROT-09 | PROT-09 | PROT-09 (each path) | PROT-31 (allow) | — |
 | path's directory outside every repository | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | — |
+| an ignored file under the checkout's `.claude/` | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | — |
 | checkout has no commit yet | PROT-11 | PROT-11 | PROT-11 | PROT-11 | — |
 | shared main checkout, or on the default branch | PROT-12 | PROT-12 | PROT-12 | PROT-12 | — |
 | default branch cannot be resolved | PROT-13 | PROT-13 | PROT-13 | PROT-13 | — |
@@ -85,6 +86,7 @@ marks each read-only: `Monitor`, `ToolSearch`, `SendMessage`, `TaskStop`,
 - [ ] [PROT-12] The shared main checkout, or a linked worktree on the repository's own resolved default branch, denies `not main` (see E-PROT-03).
 - [ ] [PROT-13] A checkout whose default branch cannot be resolved at all denies `default branch unknown`, never falling back to a `main`/`master` guess.
 - [ ] [PROT-14] A payload path that resolves to exactly the checkout root denies `path required`, the same reason as no path at all.
+- [ ] [PROT-38] A path under the checkout's own `.claude/` that git ignores allows in any checkout, main included, before identity or the store is read (see E-PROT-12).
 - [ ] [PROT-36] A payload path naming a nested checkout's own root is judged by that checkout, never by an outer one its parent directory sits inside, before PROT-14 denies it.
 
 ## The live claim state
@@ -184,6 +186,8 @@ than a bare `claim first`.
 ## Never
 
 - `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, or a path outside every repository, touches `store.fetch_state` zero times.
+- `protect` never opens `.claude/` by its name alone: a tracked file there, or an untracked one git does not ignore, is judged like any other path (PROT-12 in the main checkout).
+- The escape exists so a session can switch off a misconfigured hook in its own ignored `settings.local.json` without the operator; no claim can cover a file that never reaches a commit.
 - `protect` never defaults an unrecognized tool name to allowed: PROT-06 fails closed instead.
 - `protect` never trusts a relative payload path by joining it to the hook process's own cwd, even from the one cwd where that guess would happen to be correct.
 - `protect` never accepts `--json`: every verdict is already the one JSON object on every outcome (README, "Refusals and --json").
@@ -326,4 +330,17 @@ Setup: bare-remote, no live claim, `ACO_AGENT` unset
 $ echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/scratch/notes.md"}}' | aco protect
 {"decision": "allow"}
 exit 0
+```
+
+### E-PROT-12 -- the session's own ignored `.claude/` settings stay writable
+
+Setup: bare-remote, bootstrapped, a tracked `.claude/settings.json`, `.claude/settings.local.json` excluded by `.git/info/exclude`, no live claim, `ACO_AGENT` unset
+
+```console
+$ echo '{"tool_name": "Edit", "tool_input": {"file_path": "<main>/.claude/settings.local.json"}}' | aco protect
+{"decision": "allow"}
+exit 0
+$ echo '{"tool_name": "Edit", "tool_input": {"file_path": "<main>/.claude/settings.json"}}' | aco protect
+{"decision": "deny", "reason": "not main"}
+exit 2
 ```

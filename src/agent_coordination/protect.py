@@ -381,6 +381,23 @@ def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None
     return _protect_not_main_denial(path_checkout)
 
 
+_SESSION_SETTINGS_DIRECTORY = ".claude/"
+
+
+def _is_ignored_session_setting(relative: str, path_checkout: checkout.PathCheckout) -> bool:
+    """Whether `relative` is a file under the checkout's own `.claude/` that
+    git ignores -- the session's own settings, `.claude/settings.local.json`
+    with the hook itself among them (PROT-38, issue #448). Such a file never
+    reaches a commit, so no claim can answer for it, and denying it made a
+    misconfigured hook impossible to switch off without the operator. A
+    tracked `.claude/` file is shared configuration and stays gated like any
+    other path; Claude Code's own permission prompt for settings edits is
+    untouched by this allow."""
+    return relative.startswith(_SESSION_SETTINGS_DIRECTORY) and checkout.path_is_ignored(
+        relative, directory=path_checkout.toplevel
+    )
+
+
 _ProtectMissDenialBuilder = Callable[[protocol.ClaimState, checkout.PathCheckout, str, str], str]
 
 
@@ -396,19 +413,23 @@ def _protect_checkout_scope_denial(
 
     A path outside every repository allows before anything else is read
     (PROT-32, issue #448): the session's memory, scratchpad, and `/tmp` are
-    not aco's to judge. Agent identity resolves last, only once a checkout,
-    a relative scope entry, and a live state are in hand (PROT-08, issue
-    #448): a write that never gets that far never needed an identity, so a
-    session without one is gated only where a claim could answer for it.
+    not aco's to judge; so does an ignored session setting under `.claude/`
+    (PROT-38), in any checkout, the main one included. Agent identity
+    resolves last, only once a checkout, a relative scope entry, and a live
+    state are in hand (PROT-08, issue #448): a write that never gets that
+    far never needed an identity, so a session without one is gated only
+    where a claim could answer for it.
     `miss_denial` builds each caller's own scope-miss sentence from the
     state, checkout, agent, and relative scope entry now in hand."""
     path_checkout = _resolved_path_checkout(raw_path)
     if path_checkout is None:
         return None
+    relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
+    if relative is not None and _is_ignored_session_setting(relative, path_checkout):
+        return None
     denial = _protect_checkout_denial(path_checkout)
     if denial is not None:
         return denial
-    relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
     if relative is None:
         return PATH_REQUIRED
     state, denial = _protect_cached_claim_state_or_denial(path_checkout, context=context)
