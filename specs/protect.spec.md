@@ -86,7 +86,7 @@ session; a new file-writing tool joins both the table and that matcher.
 ## The payload path and its own checkout
 
 - [ ] [PROT-07] A mutating tool call with no resolvable path -- a missing key, an empty string, or an `apply_patch` command matching no patch-file grammar -- denies `path required`.
-- [ ] [PROT-08] A failure resolving this session's own agent identity, reached only once a live state is in hand, denies that failure's own bare sentence, no `ERROR:` prefix.
+- [ ] [PROT-08] Past its live state, a session naming no identity denies `agent identity is required: set ACO_AGENT (e.g. in the hook line), GROK_SESSION_ID, or CLAUDE_SESSION_ID`; an unusable one, its own sentence.
 - [ ] [PROT-09] A payload path that is not absolute denies `relative payload path`, never guessed against the hook process's own cwd (see E-PROT-07).
 - [ ] [PROT-10] A path whose directory sits outside every git repository is `not in a repository`, the sentence `rescope` refuses with; `protect` allows it instead (PROT-32).
 - [ ] [PROT-32] A write path outside every repository -- any tool's payload path or a recognized Bash pattern's -- allows before identity or the store is read, except a checkout's own root (PROT-14) (see E-PROT-11).

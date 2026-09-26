@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 from board_fixtures import BASE, REPOSITORY, _active_claim
 from cli_fixtures import (
-    _assert_missing_identity_message,
     _forbid_forge_resolution,
     _forbid_github_construction,
     _forbid_protect_git_github_and_identity,
@@ -512,7 +511,8 @@ def test_protect_missing_identity_denies_a_claimable_write_without_github(
     """PROT-08 (issue #448): identity resolves last, once the path's own
     linked worktree and its live state are in hand -- a write that reaches
     a claim check with no `ACO_AGENT`, `GROK_SESSION_ID`, or
-    `CLAUDE_SESSION_ID` denies naming all three, never GitHub."""
+    `CLAUDE_SESSION_ID` denies naming all three, never GitHub -- and never
+    `--agent`, a flag the hook line does not have."""
     _isolate_protect_home(monkeypatch, tmp_path)
     work = tmp_path / "work"
     _set_agent_identity_env(monkeypatch)
@@ -531,7 +531,10 @@ def test_protect_missing_identity_denies_a_claimable_write_without_github(
     assert captured.err == ""
     payload = json.loads(captured.out)
     assert payload["decision"] == "deny"
-    _assert_missing_identity_message(payload["reason"])
+    assert payload["reason"] == (
+        "agent identity is required: set ACO_AGENT (e.g. in the hook line), "
+        "GROK_SESSION_ID, or CLAUDE_SESSION_ID"
+    )
 
 
 @pytest.mark.parametrize(
@@ -896,7 +899,7 @@ def test_protect_bash_allows_a_relative_path_when_the_payload_carries_no_cwd(
     (`specs/protect.spec.md`'s own `## Never`). No claim is set up at all:
     a resolver that fell back to guessing a cwd would deny `claim first`
     here instead of allowing. `_forbid_protect_git_github_and_identity`'s
-    own `resolved_agent` stub is left in place, unlike the sibling tests
+    own `session_agent` stub is left in place, unlike the sibling tests
     below: this path must never resolve identity at all (issue #380 delta,
     review finding: resolving it eagerly, before this allow, used to turn an
     unresolvable identity into a wrongful PROT-08 deny here)."""
@@ -1992,8 +1995,9 @@ def _bash_payload(command: str) -> dict[str, object]:
         (_bash_rm_target_payload, "allow", 0),
         (_monitor_rm_target_payload, "allow", 0),
         (lambda link: _bash_payload(f"mv {link} {link}.old"), "allow", 0),
+        (lambda link: _bash_payload(f"mv {link.parent / 'src'} {link}"), "allow", 0),
     ],
-    ids=["write", "bash-append", "bash-rm", "monitor-rm", "bash-mv"],
+    ids=["write", "bash-append", "bash-rm", "monitor-rm", "bash-mv", "bash-mv-onto-link"],
 )
 def test_protect_judges_a_symlink_outside_every_repository_by_what_the_operation_touches(
     monkeypatch: pytest.MonkeyPatch,
@@ -2005,8 +2009,9 @@ def test_protect_judges_a_symlink_outside_every_repository_by_what_the_operation
 ) -> None:
     """Issue #448 review findings: a write through a file symlink outside
     every repository lands in its target's main checkout and denies `not
-    main`; removing or renaming the link itself never touches that target,
-    so it stays outside every repository and allows (PROT-32)."""
+    main`; removing, renaming, or renaming a file onto the link itself never
+    touches that target, so it stays outside every repository and allows
+    (PROT-32)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

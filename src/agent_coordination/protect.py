@@ -174,6 +174,10 @@ def _hook_path(tool_input: dict[str, object], *, keys: tuple[str, ...]) -> str |
 
 
 PATH_REQUIRED = "path required"
+MISSING_HOOK_IDENTITY = (
+    f"agent identity is required: set {checkout.ACO_AGENT_ENV} (e.g. in the hook line), "
+    f"{checkout.GROK_SESSION_ID_ENV}, or {checkout.CLAUDE_SESSION_ID_ENV}"
+)
 
 
 class _HookPathSource(StrEnum):
@@ -436,6 +440,16 @@ def _is_ignored_session_setting(relative: str, path_checkout: checkout.PathCheck
 _ProtectMissDenialBuilder = Callable[[protocol.ClaimState, checkout.PathCheckout, str, str], str]
 
 
+def _hook_session_agent() -> str:
+    """This session's own agent, or `MISSING_HOOK_IDENTITY` raised for
+    `cli`'s deny frame (PROT-08): the hook line has no `--agent` flag, so
+    the sentence names only the ways a hook can be given one."""
+    agent = checkout.session_agent()
+    if agent is None:
+        raise protocol.ClaimError(MISSING_HOOK_IDENTITY)
+    return agent
+
+
 def _protect_checkout_scope_denial(
     raw_path: str,
     *,
@@ -476,7 +490,7 @@ def _protect_checkout_scope_denial(
     state, denial = _protect_cached_claim_state_or_denial(path_checkout, context=context)
     if state is None:
         return denial
-    agent = checkout.resolved_agent(None)
+    agent = _hook_session_agent()
     return _protect_scope_denial(
         state,
         agent=agent,

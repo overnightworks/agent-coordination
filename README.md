@@ -199,11 +199,11 @@ that can write a file -- every name `HOOK_TOOL_EFFECTS` marks mutating, plus
 hook and cannot stall the session; a new file-writing tool joins both that
 table and this matcher. `protect` judges a write from the payload's own path,
 never from that shared process cwd, and fails closed on any tool name that
-reaches it unrecognized. A write outside every repository (the
-session's memory, scratchpad, `/tmp`) and a git-ignored file under a
-checkout's `.claude/` allow -- unless the write goes through a file symlink
-into a checkout, which that checkout then judges; every other write inside
-a repository needs a live claim covering it from a linked worktree. The full judgement
+reaches it unrecognized. A write outside every repository (the session's
+memory, scratchpad, `/tmp`) allows, unless it goes through a file symlink
+into a checkout -- then that checkout judges it. A git-ignored file under a
+checkout's `.claude/` allows too; every other write inside a repository
+needs a live claim covering it from a linked worktree. The full judgement
 order, every denial reason, and the JSON verdict shape are
 `specs/protect.spec.md`'s own.
 
@@ -214,9 +214,9 @@ uses. Start the session with the name the head claims under
 (`ACO_AGENT="Claude head" claude`), or pin it in the hook line
 (`"command": "ACO_AGENT='Claude head' aco protect"`). Without one, a write
 that reaches a claim check -- a recognized write in a `Bash` or `Monitor`
-command included -- denies `agent identity is required: ...`; reads, the
+command included -- denies `agent identity is required: ...`. Reads, the
 read-only session tools, and writes outside every repository need no
-identity.
+identity; `Monitor` is a session tool too, but it is judged like `Bash`.
 
 Way out: install the hook in the git-ignored `.claude/settings.local.json`,
 never a tracked settings file. A session whose hook misbehaves removes the

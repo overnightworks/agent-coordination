@@ -801,6 +801,20 @@ def fast_forward_default_branch(remote: str, branch: str, *, directory: Path | N
 def resolved_agent(explicit: str | None) -> str:
     if explicit is not None:
         return _outbound_text(explicit, "agent", maximum=128)
+    agent = session_agent()
+    if agent is None:
+        raise ClaimError(
+            "agent identity is required: pass --agent or set "
+            f"{ACO_AGENT_ENV}, {GROK_SESSION_ID_ENV}, or {CLAUDE_SESSION_ID_ENV}"
+        )
+    return agent
+
+
+def session_agent() -> str | None:
+    """This session's own agent identity from its environment, or `None`
+    when it names none -- each caller says how to supply one, since only
+    the CLI commands have an `--agent` flag (`protect`'s hook line does
+    not, issue #448)."""
     configured = os.environ.get(ACO_AGENT_ENV)
     if configured:
         return _outbound_text(configured, "agent", maximum=128)
@@ -810,10 +824,7 @@ def resolved_agent(explicit: str | None) -> str:
     claude_session = os.environ.get(CLAUDE_SESSION_ID_ENV)
     if claude_session:
         return _outbound_text(f"Claude {claude_session}", "agent", maximum=128)
-    raise ClaimError(
-        "agent identity is required: pass --agent or set "
-        f"{ACO_AGENT_ENV}, {GROK_SESSION_ID_ENV}, or {CLAUDE_SESSION_ID_ENV}"
-    )
+    return None
 
 
 # One owner for `start`'s own path/branch naming scheme (issue #322): the
