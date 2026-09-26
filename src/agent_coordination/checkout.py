@@ -420,9 +420,8 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
     path inside a git directory itself -- a checkout's `.git/` or a bare
     repository -- must never read as "no repository here"). A `directory`
     that does not exist yet is never inside a repository -- `git -C` cannot
-    even enter it -- so it stays `None` whatever sits above it: `start`'s
-    own not-yet-created worktree path (START-01) may well have an outer
-    checkout's `.git` above it.
+    even enter it -- so it stays `None` whatever sits above it, even an
+    outer checkout's `.git`.
     """
     try:
         return _resolve_checkout(directory)
@@ -998,10 +997,7 @@ def resolve_or_create_worktree(path: Path, branch: str, *, remote: str) -> None:
     without being a worktree of this repository at all (issue #322
     review/gate finding: `git worktree add` must never be left to adopt, and
     potentially remove, an existing directory nobody offered up for this)."""
-    existing = resolve_path_checkout(path)
-    if existing is None:
-        if path.exists():
-            raise ClaimError(NOT_A_WORKTREE_REFUSAL)
+    if not path.exists():
         if branch_exists(branch):
             raise ClaimError(
                 f"branch {branch!r} already exists and is not this item's worktree; "
@@ -1009,6 +1005,9 @@ def resolve_or_create_worktree(path: Path, branch: str, *, remote: str) -> None:
             )
         create_linked_worktree(path, branch=branch, remote=remote)
         return
+    existing = resolve_path_checkout(path)
+    if existing is None:
+        raise ClaimError(NOT_A_WORKTREE_REFUSAL)
     _refuse_foreign_worktree(path, existing)
     if existing.branch != branch:
         raise ClaimError(

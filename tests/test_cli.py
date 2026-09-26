@@ -17339,15 +17339,12 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
     """The one named exception to proof 3 (head ruling 26.09.2026): the
     created worktree's second toplevel read is `checkout._scope_directories`'
     own, for a scope entry that is no git tree (the width gate, #326);
-    checkout reads it outside the run's context, and #418 slice B owns it.
-    The third is `checkout.resolve_or_create_worktree`'s own combined
-    `rev-parse`, which checks nothing already sits at the worktree path
-    before creating it -- equally the checkout's, outside the context."""
+    checkout reads it outside the run's context, and #418 slice B owns it."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-fresh-slug-title"
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
-        toplevel_reads={None: 1, worktree: 3},
+        toplevel_reads={None: 1, worktree: 2},
         config_reads={repo: 1, worktree: 1},
     )
 
