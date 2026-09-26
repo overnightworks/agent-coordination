@@ -14,11 +14,12 @@ record's own fields this command reads (CLAIM-01, CLAIM-05, CLAIM-47), and
 `specs/storage-pin.spec.md` owns the item-reference grammar `<item>`
 accepts (PIN-08) and the state-ref forge gate (PIN-04, PIN-05). `<item>`
 is the argument as given; `<n>` its resolved number; `<step>` is one of
-`build`, `review`, `fix`, `land`; `<trunk>` is the first of
-the canonical remote `<remote>`'s recorded `HEAD`, `<remote>/main`,
-`<remote>/master`, the local `main`, and the local `master` that resolves
-in this checkout. A refusal reaching the shared collection
-point prints `ERROR: <sentence>` on stderr, exit `2`.
+`build`, `review`, `fix`, `land`; `<trunk>` is the target the canonical
+remote `<remote>`'s `HEAD` records when `<remote>` records one -- taken as
+recorded, even when that target no longer resolves -- otherwise the first
+of `<remote>/main`, `<remote>/master`, the local `main`, and the local
+`master` that resolves in this checkout. A refusal reaching the shared
+collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 ## Behavior table
 
@@ -26,7 +27,7 @@ point prints `ERROR: <sentence>` on stderr, exit `2`.
 |---|---|---|
 | a live issue claim, lane branch resolves | BRIEF-01, BRIEF-02, BRIEF-11, BRIEF-05 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch gone | BRIEF-04 | BRIEF-06, BRIEF-10 |
-| a live issue claim, lane branch read fails outright | BRIEF-18 | BRIEF-18 |
+| a live issue claim, lane branch read or `<trunk>` diff fails outright | BRIEF-18 | BRIEF-18 |
 | a live issue claim, lane branch resolves, no `<trunk>` resolves | BRIEF-20 | BRIEF-20 |
 | no live issue claim | BRIEF-03 | BRIEF-06 |
 | `<item>` names no item at all | BRIEF-08 | BRIEF-08 |
@@ -42,7 +43,7 @@ point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-03] With no live issue claim, `CLAIM` prints exactly `no active claim`; `TIP` prints no value line at all; `TOUCHED` lists nothing (see E-BRIEF-02).
 - [ ] [BRIEF-04] With a live claim whose branch resolves neither locally nor as `origin/<branch>` -- git itself answering "no such ref" -- `TIP` prints `branch not found` and `TOUCHED` lists nothing (see E-BRIEF-03).
 - [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from `git diff --name-only <trunk>...<tip>` (see E-BRIEF-01, E-BRIEF-14).
-- [ ] [BRIEF-18] When a live claim's branch read fails instead of answering not-found, `aco brief` refuses with git's own failure detail, exit `2`, `reason: unavailable` under `--json` (see E-BRIEF-12).
+- [ ] [BRIEF-18] A live claim's branch read failing instead of answering not-found, or its `<trunk>...<tip>` diff failing, refuses with git's own detail, exit `2`, `reason: unavailable` (see E-BRIEF-12).
 - [ ] [BRIEF-20] A resolving lane tip with no `<trunk>` refuses `cannot determine the trunk: none of <candidates> resolves`, `<candidates>` as `<trunk>` lists them, exit `2`, `reason: unavailable` (see E-BRIEF-15).
 - [ ] [BRIEF-08] `<item>` naming no item at all prints one empty line for the missing body, then every section exactly as BRIEF-01..06 describe with no live claim -- never a refusal (see E-BRIEF-06).
 
