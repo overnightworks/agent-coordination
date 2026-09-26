@@ -12,8 +12,9 @@ owns the board-configuration precondition (PIN-01) every store command
 shares -- this file cites those IDs rather than restating them. `aco rescope`
 shares `protect`'s own checkout resolver and relative-path grammar (the
 `relative payload path`, `not in a repository`, and `no commit on this
-branch` denials) but is otherwise a different lane's own spec; only as far
-as those denials are `protect`'s own verdict are they documented here.
+branch` sentences) but is otherwise a different lane's own spec; those
+sentences are documented here, where `not in a repository` is `rescope`'s
+refusal alone -- `protect` allows such a path (PROT-32).
 `<path>` is the payload's own absolute file path; `<remote>` is the
 canonical remote name.
 
@@ -26,9 +27,8 @@ canonical remote name.
 | tool name in neither table | — | — | — | — | PROT-06 (unknown) |
 | tool name is read-only | — | — | — | — | PROT-05 |
 | no resolvable path in the payload | PROT-07 | PROT-07 | PROT-07 | PROT-30 (no pattern) | — |
-| agent identity cannot be resolved | PROT-08 | PROT-08 | PROT-08 | PROT-08 (last, see below) | — |
 | payload path not absolute | PROT-09 | PROT-09 | PROT-09 (each path) | PROT-31 (allow) | — |
-| path's directory outside every repository | PROT-10 | PROT-10 | PROT-10 | PROT-32 (allow) | — |
+| path's directory outside every repository | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | — |
 | checkout has no commit yet | PROT-11 | PROT-11 | PROT-11 | PROT-11 | — |
 | shared main checkout, or on the default branch | PROT-12 | PROT-12 | PROT-12 | PROT-12 | — |
 | default branch cannot be resolved | PROT-13 | PROT-13 | PROT-13 | PROT-13 | — |
@@ -36,6 +36,7 @@ canonical remote name.
 | board-configuration precondition fails | PROT-29 | PROT-29 | PROT-29 | PROT-29 | — |
 | a store fetch failure | PROT-15 | PROT-15 | PROT-15 | PROT-15 | — |
 | `refs/aco/state` missing | PROT-16 | PROT-16 | PROT-16 | PROT-16 | — |
+| agent identity cannot be resolved | PROT-08 | PROT-08 | PROT-08 | PROT-08 | — |
 | an unexpected crash | PROT-17 | PROT-17 | PROT-17 | PROT-17 | — |
 | no live claim on this branch at all | PROT-18 | PROT-18 | PROT-18 | PROT-33 (names pattern) | — |
 | a live claim whose scope misses the path | PROT-19 | PROT-19 | PROT-20 | PROT-33 (names pattern) | — |
@@ -48,13 +49,12 @@ canonical remote name.
 | a decoy path key the tool never sends | — | PROT-27 | — | — | — |
 | `--repo`, or a non-GitHub canonical remote | PROT-28 | PROT-28 | PROT-28 | PROT-28 | PROT-28 |
 
-`Bash`'s own precedence differs from every other column's: PROT-30's allow
-(no recognized pattern) and PROT-31's allow (a still-relative path) both
-fire before agent identity is ever resolved, unlike PROT-08's own position
-before every per-path gate for a generic mutating tool -- Bash resolves
-identity last, only once a checkout, its live state, and a repository-
-relative path are already in hand, since a pattern that never gets that far
-never needed an identity at all.
+Every column resolves agent identity last (issue #448), only once a
+checkout, its live state, and a repository-relative path are already in
+hand: a write that never gets that far -- outside every repository, in the
+main checkout, or a Bash command naming no pattern -- never needed an
+identity at all, so a session without one is stopped only where a claim
+could answer for it.
 
 ## The JSON envelope
 
@@ -78,9 +78,9 @@ marks each read-only: `Monitor`, `ToolSearch`, `SendMessage`, `TaskStop`,
 ## The payload path and its own checkout
 
 - [ ] [PROT-07] A mutating tool call with no resolvable path -- a missing key, an empty string, or an `apply_patch` command matching no patch-file grammar -- denies `path required`.
-- [ ] [PROT-08] A failure resolving this session's own agent identity, before any per-path checkout gate runs, denies that failure's own bare sentence, no `ERROR:` prefix.
+- [ ] [PROT-08] A failure resolving this session's own agent identity, reached only once a live state is in hand, denies that failure's own bare sentence, no `ERROR:` prefix.
 - [ ] [PROT-09] A payload path that is not absolute denies `relative payload path`, never guessed against the hook process's own cwd (see E-PROT-07).
-- [ ] [PROT-10] A payload path whose directory sits outside every git repository denies `not in a repository`.
+- [ ] [PROT-10] A path whose directory sits outside every git repository is `not in a repository`, the sentence `rescope` refuses with; `protect` allows it instead (PROT-32).
 - [ ] [PROT-11] A checkout with no commit yet (an unborn branch) denies `no commit on this branch`.
 - [ ] [PROT-12] The shared main checkout, or a linked worktree on the repository's own resolved default branch, denies `not main` (see E-PROT-03).
 - [ ] [PROT-13] A checkout whose default branch cannot be resolved at all denies `default branch unknown`, never falling back to a `main`/`master` guess.
@@ -167,14 +167,12 @@ PROT-12/PROT-13 not main, PROT-14 the checkout root -- including a path that
 names a linked worktree's own root directory exactly, judged by that
 checkout rather than by its parent, the store's own
 PROT-29/PROT-15/PROT-16/PROT-17, PROT-21/PROT-22 a covering claim), except a
-path outside every repository allows instead of PROT-10's deny, agent
-identity resolves only once a checkout and its live state are already in
-hand rather than before any path runs, and a scope miss denies naming both
-the recognized pattern and the path rather than a bare `claim first`.
+scope miss denies naming both the recognized pattern and the path rather
+than a bare `claim first`.
 
 - [ ] [PROT-30] A `command` naming none of these patterns -- or no string `command` at all -- allows without resolving identity, git, or the store.
 - [ ] [PROT-31] A recognized pattern's relative path resolves against the payload's own `cwd`, as PROT-34 updates it; with no known directory, that path allows outright, before identity resolves.
-- [ ] [PROT-32] A recognized pattern's path outside every repository allows, unlike PROT-10's deny for other tools -- except a checkout's own root, which PROT-14 still denies.
+- [ ] [PROT-32] A write path outside every repository -- any tool's payload path or a recognized Bash pattern's -- allows before identity or the store is read, except a checkout's own root (PROT-14) (see E-PROT-11).
 - [ ] [PROT-33] A recognized pattern's own path outside the live claim's scope denies `<pattern> <path> outside claim scope`, naming both (see E-PROT-08).
 - [ ] [PROT-34] A literal, resolvable `cd` changes the directory every later path in its own `;`/`&&`/`||`/newline list resolves against -- never across a `|`, and only inside its own group.
 - [ ] [PROT-35] An unresolvable `cd` target -- expandable, `-`, or no operand -- ends recognition for the rest of the command outright, allowing it (see E-PROT-10).
@@ -185,7 +183,7 @@ the recognized pattern and the path rather than a bare `claim first`.
 
 ## Never
 
-- `protect` never reads the store for a denial the checkout resolves alone: a "not main", "no commit on this branch", "not in a repository", "relative payload path", or "path required" verdict touches `store.fetch_state` zero times.
+- `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, or a path outside every repository, touches `store.fetch_state` zero times.
 - `protect` never defaults an unrecognized tool name to allowed: PROT-06 fails closed instead.
 - `protect` never trusts a relative payload path by joining it to the hook process's own cwd, even from the one cwd where that guess would happen to be correct.
 - `protect` never accepts `--json`: every verdict is already the one JSON object on every outcome (README, "Refusals and --json").
@@ -316,6 +314,16 @@ $ echo '{"toolName": "Bash", "toolInput": {"command": "cd docs && rm widget.md"}
 {"decision": "deny", "reason": "rm docs/widget.md outside claim scope"}
 exit 2
 $ echo '{"toolName": "Bash", "toolInput": {"command": "cd $SCRATCH && rm widget.md"}, "cwd": "<worktree>"}' | aco protect
+{"decision": "allow"}
+exit 0
+```
+
+### E-PROT-11 -- a write outside every repository allows, without identity
+
+Setup: bare-remote, no live claim, `ACO_AGENT` unset
+
+```console
+$ echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/scratch/notes.md"}}' | aco protect
 {"decision": "allow"}
 exit 0
 ```

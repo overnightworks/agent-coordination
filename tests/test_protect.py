@@ -19,7 +19,6 @@ from board_fixtures import BASE, REPOSITORY, _active_claim
 from cli_fixtures import (
     _assert_missing_identity_message,
     _forbid_forge_resolution,
-    _forbid_git_fill,
     _forbid_github_construction,
     _forbid_protect_git_github_and_identity,
     _patch_command,
@@ -505,22 +504,26 @@ def test_protect_mutating_tool_without_path_denies_path_required(
     _assert_protect_decision(capsys, decision="deny", reason="path required")
 
 
-def test_protect_missing_identity_denies_without_github(
+def test_protect_missing_identity_denies_a_claimable_write_without_github(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """PROT-08 (issue #448): identity resolves last, once the path's own
+    linked worktree and its live state are in hand -- a write that reaches
+    a claim check with no `ACO_AGENT`, `GROK_SESSION_ID`, or
+    `CLAUDE_SESSION_ID` denies naming all three, never GitHub."""
     _isolate_protect_home(monkeypatch, tmp_path)
+    work = tmp_path / "work"
     _set_agent_identity_env(monkeypatch)
     _forbid_github_construction(monkeypatch)
-    _forbid_git_fill(monkeypatch)
+    _patch_protect_git(monkeypatch, work)
+    _patch_protect_claim(monkeypatch, scope=("src",))
 
     assert (
         _protect_main(
             monkeypatch,
-            # Identity resolution fails before this path is ever read
-            # (`_forbid_git_fill` proves it), so it needs no real checkout.
-            {"toolName": "write", "toolInput": {"path": "src/widget.py"}},
+            {"toolName": "write", "toolInput": {"path": str(work / "src/widget.py")}},
         )
         == 2
     )
@@ -875,34 +878,6 @@ def test_protect_bash_judges_a_recognized_pattern_path_by_claim_scope(
         == status
     )
     _assert_protect_decision(capsys, decision="deny" if reason else "allow", reason=reason)
-
-
-def test_protect_bash_allows_a_recognized_pattern_path_outside_every_repository(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """PROT-32: unlike an `Edit` path (PROT-10's own "not in a repository"
-    deny), a Bash-recognized path outside every git checkout allows -- a
-    shell command routinely touches `/tmp` or a system path `protect` holds
-    no claim to judge. The absolute path here also proves PROT-09 does not
-    apply to Bash: no `cwd` is given at all, yet the write is still judged
-    (and allowed) rather than denied as a relative payload path."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    outside = tmp_path / "not-a-repository"
-    outside.mkdir()
-    _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
-
-    assert (
-        _protect_main(
-            monkeypatch,
-            {"toolName": "Bash", "toolInput": {"command": f"rm {outside / 'x'}"}},
-        )
-        == 0
-    )
-    _assert_protect_decision(capsys, decision="allow")
 
 
 def test_protect_bash_allows_a_relative_path_when_the_payload_carries_no_cwd(
@@ -1690,30 +1665,28 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
     _assert_protect_decision(capsys, decision="deny", reason="claim first")
 
 
-def test_protect_denies_a_path_outside_every_repository_as_such(
+@pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
+def test_protect_allows_a_path_outside_every_repository_without_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    payload_for: Callable[[Path], dict[str, object]],
 ) -> None:
-    """Issue #314's own second case: a payload path whose directory sits
-    outside every git repository denies with its own named reason, never
-    "path required" (which would suggest the payload itself was malformed)."""
+    """PROT-32 (issue #448): a write outside every git checkout -- the
+    session's memory, its scratchpad, `/tmp` -- is not aco's to judge, so an
+    `Edit` path and a Bash-recognized one alike allow before identity or the
+    store is ever read (neither is set up here, and both would fail)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
+    _set_agent_identity_env(monkeypatch)
     outside = tmp_path / "not-a-repository"
     outside.mkdir()
     monkeypatch.chdir(outside)
 
-    assert (
-        _protect_main(
-            monkeypatch,
-            {"toolName": "write", "toolInput": {"path": str(outside / "widget.py")}},
-        )
-        == 2
-    )
-    _assert_protect_decision(capsys, decision="deny", reason="not in a repository")
+    assert _protect_main(monkeypatch, payload_for(outside / "widget.py")) == 0
+    _assert_protect_decision(capsys, decision="allow")
+
 
 
 def test_protect_apply_patch_judges_two_worktrees_separately_and_one_deny_wins(
