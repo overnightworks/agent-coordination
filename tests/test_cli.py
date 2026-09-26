@@ -51,6 +51,7 @@ from cli_fixtures import (
     _set_agent_identity_env,
     _stub_one_git_call,
     arrange_scope_width,
+    count_context_reads,
     run_context_over,
     stub_board_config_tracked,
 )
@@ -17145,3 +17146,82 @@ def test_cli_reset_recovers_from_a_deleted_ref_this_worktree_had_already_observe
     assert lines[4].startswith("bootstrapped a fresh empty state at ")
     fresh_state = store.fetch_state(worktree=repository, remote=str(bare_remote))
     assert fresh_state.tip is not None
+
+
+def _status_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> list[str]:
+    _patch_status_store(monkeypatch)
+    return ["--repo", REPOSITORY, "status"]
+
+
+def _next_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _configured_board_client(
+        monkeypatch, tmp_path, open_issues=_TOP_AND_BLOCKED, dependencies=_BLOCKED_BY_ELEVEN
+    )
+    return ["--repo", REPOSITORY, "next", "--json"]
+
+
+def _rule_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
+    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    return ["--repo", REPOSITORY, "rule", str(RULE_ITEM), "--line", "1", "--yes"]
+
+
+def _claim_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> list[str]:
+    _arranged_claim_client(monkeypatch)
+    return _claim_argv("--scope", "README.md")
+
+
+def _cut_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    toml_text = (
+        f"{MINIMAL_BLOCK_TOML}"
+        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
+        '[[slice]]\nindex = 2\ntitle = "Scheibe 2"\n'
+    )
+    _configured_board_client(monkeypatch, tmp_path, open_issues=(_cut_container_issue(toml_text),))
+    _write_block_pin(tmp_path)
+    return ["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), "--title", "Scheibe 1"]
+
+
+def _release_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    return ["--repo", REPOSITORY, "release", "314", "--abandoned", "stopped for the day"]
+
+
+def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    return ["start", "314", "--scope", "src/x.py"]
+
+
+@pytest.mark.parametrize(
+    ("arrange", "toplevel_reads"),
+    [
+        pytest.param(_status_command, 1, id="forge-free-status"),
+        pytest.param(_next_command, 1, id="github-read-next"),
+        pytest.param(_rule_command, 1, id="one-write-rule"),
+        pytest.param(_claim_command, 1, id="claim"),
+        pytest.param(_release_command, 1, id="release"),
+        pytest.param(_cut_command, 1, id="two-write-cut"),
+        # The worktree's second toplevel read is `checkout._scope_directories`'
+        # own, for a scope entry that is no git tree (the width gate, #326):
+        # checkout reads it outside the run's context (#418 carries it).
+        pytest.param(_start_command, 2, id="two-directory-state-ref-start"),
+    ],
+)
+def test_a_command_reads_its_toplevel_and_board_config_once_per_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+    toplevel_reads: int,
+) -> None:
+    """Issue #457 proof 3: a run's static facts are read the first time a
+    command asks and held after that -- one toplevel and one board
+    configuration read per directory the command works in, however many of
+    its steps ask again."""
+    command = arrange(monkeypatch, tmp_path)
+    reads = count_context_reads(monkeypatch)
+
+    exit_code = issue_claim.main(command)
+
+    assert (exit_code, *reads.most_per_directory()) == (0, toplevel_reads, 1)

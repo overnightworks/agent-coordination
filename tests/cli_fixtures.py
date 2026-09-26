@@ -9,13 +9,15 @@ rootless collection puts `tests/` on `sys.path`, so a plain
 from __future__ import annotations
 
 import subprocess
+from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 from board_fixtures import BASE
 
-from agent_coordination import checkout, forge, github, process, store
+from agent_coordination import board, checkout, forge, github, process, store
 from agent_coordination.protocol import ClaimError
 from agent_coordination.session import RunContext
 
@@ -245,3 +247,38 @@ def run_context_over(client: forge.ForgeReader) -> RunContext:
     helper that takes a context reads the same toplevel and tracked
     `board.toml` a command would, with its own fake forge behind them."""
     return RunContext(None, build_forge=lambda _context: client)
+
+
+@dataclass
+class ContextReads:
+    """Every toplevel and board-configuration read one command made, keyed
+    by the directory it was read from (issue #457)."""
+
+    toplevels: Counter[Path | None] = field(default_factory=Counter)
+    configs: Counter[Path | None] = field(default_factory=Counter)
+
+    def most_per_directory(self) -> tuple[int, int]:
+        return max(self.toplevels.values(), default=0), max(self.configs.values(), default=0)
+
+
+def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
+    """Counts `rev-parse --show-toplevel` and the `board.toml` tracked check
+    through whatever git fakes the test already installed, so it is called
+    after the arrangement and before the command."""
+    reads = ContextReads()
+    git_output = checkout._git_output
+    path_is_tracked = checkout.path_is_tracked
+
+    def counting_git_output(arguments: list[str], *, directory: Path | None = None) -> str:
+        if arguments == ["rev-parse", "--show-toplevel"]:
+            reads.toplevels[directory] += 1
+        return git_output(arguments, directory=directory)
+
+    def counting_path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
+        if path == board.CONFIG_PATH.as_posix():
+            reads.configs[directory] += 1
+        return path_is_tracked(path, directory=directory)
+
+    monkeypatch.setattr(checkout, "_git_output", counting_git_output)
+    monkeypatch.setattr(checkout, "path_is_tracked", counting_path_is_tracked)
+    return reads

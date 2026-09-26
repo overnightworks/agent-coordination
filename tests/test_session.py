@@ -4,12 +4,14 @@ answered per directory."""
 
 from __future__ import annotations
 
+import io
+import sys
 from pathlib import Path
 
 import pytest
 from cli_fixtures import stub_board_config_tracked
 
-from agent_coordination import checkout, forge, github, session
+from agent_coordination import checkout, cli, forge, github, session
 from agent_coordination.protocol import ClaimUnavailableError
 from agent_coordination.session import RunContext
 
@@ -130,3 +132,50 @@ def test_default_branch_under_state_ref_reads_origin_head_of_the_context_directo
     branch = _context().for_directory(worktree).default_branch
 
     assert (branch, read_from) == ("main", [worktree])
+
+
+def _exit_code(command: list[str]) -> int | str | None:
+    """`main`'s exit code, whether it returns it or argparse exits with it."""
+    try:
+        return cli.main(command)
+    except SystemExit as exit_request:
+        return exit_request.code
+
+
+def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every fact a context holds starts from its toplevel or its worktree,
+    so forbidding both forbids every read a context could make."""
+
+    def unused(_context: RunContext) -> Path:
+        pytest.fail("this command must not read the run's repository context")
+
+    monkeypatch.setattr(RunContext, "toplevel", property(unused))
+    monkeypatch.setattr(RunContext, "worktree", property(unused))
+
+
+@pytest.mark.parametrize(
+    ("command", "stdin", "exit_code"),
+    [
+        pytest.param(["claim", "--no-such-flag"], "", 2, id="parse-error"),
+        pytest.param(["body"], "", 2, id="body-without-its-mode"),
+        pytest.param(["--repo", "owner/repo", "run"], "", 2, id="workspace-run"),
+        pytest.param(["run"], "", 2, id="workspace-run-without-a-configuration"),
+        pytest.param(["protect"], "not json", 2, id="protect"),
+    ],
+)
+def test_a_command_that_needs_no_repository_reads_no_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    command: list[str],
+    stdin: str,
+    exit_code: int,
+) -> None:
+    """Issue #457 proof 2: the run's context is built only after the
+    workspace and `protect` dispatch, and lazily, so a parse refusal, a
+    workspace command, and `protect` (which judges from its own payload)
+    never read the repository a context would answer for."""
+    _forbid_context_reads(monkeypatch)
+    monkeypatch.setattr(cli, "_workspace_config_path", lambda: tmp_path / "workspace.toml")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
+
+    assert _exit_code(command) == exit_code
