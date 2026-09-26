@@ -4191,9 +4191,10 @@ def _cmd_brief(parsed: argparse.Namespace, session: _ReadSession) -> int:
     the forge, its live claim from the store, the claim branch's current tip,
     and the files the lane itself changes since its merge base with trunk.
     Never a new data source, and never a write. Every refusal on this path --
-    BRIEF-07, BRIEF-09's PIN-04/PIN-05, BRIEF-15, BRIEF-18's lane-tip read, and the
-    item read itself, which is a forge call like any other (issue #432) --
-    reports through `_refuse` under this command's own vocabulary."""
+    BRIEF-07, BRIEF-09's PIN-04/PIN-05, BRIEF-15, BRIEF-18's lane-tip read and
+    trunk diff, BRIEF-20's trunk read, and the item read itself, which is a
+    forge call like any other (issue #432) -- reports through `_refuse` under
+    this command's own vocabulary."""
     as_json = parsed.json
     try:
         return _brief_report(parsed, session)
