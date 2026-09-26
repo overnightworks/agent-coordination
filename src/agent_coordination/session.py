@@ -166,7 +166,9 @@ class RunContext:
         target = (
             self.repo
             if self.repo is not None
-            else github.discover_repository(remote_url=self._origin_remote_url)
+            else github.discover_repository(
+                remote_url=self._origin_remote_url, directory=self.directory
+            )
         )
         refuse_canonical_remote_mismatch(target, self.remote_location)
         return target

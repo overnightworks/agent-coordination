@@ -311,8 +311,10 @@ def run_captured(
     *,
     env: dict[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    cwd: Path | None = None,
 ) -> CapturedResult:
-    """Run `command` to completion with stdout and stderr captured separately.
+    """Run `command` to completion with stdout and stderr captured separately,
+    in `cwd` when given, else in this process's own working directory.
 
     Raises `ExecutableMissingError` or `ProcessTimedOutError`; a nonzero exit status
     comes back as an ordinary `CapturedResult`. Bytes are returned undecoded,
@@ -322,7 +324,7 @@ def run_captured(
     """
     try:
         completed = subprocess.run(
-            command, check=False, capture_output=True, timeout=timeout, env=env
+            command, check=False, capture_output=True, timeout=timeout, env=env, cwd=cwd
         )
     except FileNotFoundError as error:
         raise ExecutableMissingError(command[0]) from error

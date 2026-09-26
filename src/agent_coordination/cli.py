@@ -162,7 +162,7 @@ def _reject_wide_scope(
     versioned: tuple[str, ...],
     whole_reason: str | None,
     *,
-    directory: Path | None = None,
+    context: RunContext,
     whole_from_body: Callable[[], str | None] | None = None,
 ) -> tuple[int, int, float, str | None]:
     """`scope`'s own width gate (issue #326), `whole_reason`'s own text
@@ -174,7 +174,9 @@ def _reject_wide_scope(
     `rescope` passes no `whole_from_body` at all, and keeps the plain
     refusal: it never reads an item's own body for this."""
     n, total, share = _scope_cost(versioned, scope)
-    directories = checkout._scope_directories(scope, directory=directory)
+    directories = checkout._scope_directories(
+        scope, directory=context.directory, toplevel=lambda: context.toplevel
+    )
     trip = protocol.wide_scope_trip(
         scope, directories=directories, covered_file_count=n, versioned_file_count=total
     )
@@ -263,7 +265,7 @@ def _resolved_claim_branch(arguments: argparse.Namespace, *, directory: Path | N
     request) both bind to, so it stays a single owner rather than two copies
     of the same git call and validation."""
     branch = (
-        checkout._git_output(["branch", "--show-current"], directory=directory)
+        checkout.current_branch(directory=directory)
         if arguments.branch is None
         else arguments.branch
     )
@@ -4523,9 +4525,8 @@ class _RescopePreconditionError(protocol.ClaimError):
 def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     path_checkout = _rescope_checkout(parsed)
     requested = _rescope_command(parsed, path_checkout)
-    worktree, canonical_remote, observed = _store_observation(
-        run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
-    )
+    checkout_context = run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
+    worktree, canonical_remote, observed = _store_observation(checkout_context)
     _require_state_ref(observed)
     try:
         selected = _selected_store_claim(
@@ -4550,7 +4551,7 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
             combined,
             versioned,
             requested.whole_reason or selected.whole_reason,
-            directory=worktree,
+            context=checkout_context,
         )
     except protocol.ClaimError as error:
         raise _RescopePreconditionError(str(error)) from error
@@ -4770,24 +4771,24 @@ def _scope_versioning(
     scope: tuple[str, ...],
     whole_reason: str | None,
     *,
-    directory: Path | None = None,
+    context: RunContext,
     whole_from_body: Callable[[], str | None] | None = None,
 ) -> tuple[ScopeVersioning, str | None]:
     """`claim`'s local, forge-free scope checks (issue #207's comma guard,
     the wide-scope width gate) against the real checkout, run once the
     requested scope is final -- whether it came from `--scope` or was
-    derived from the item's own body. Read from `directory` via `-C` when
-    given (issue #322: `start`'s own resolved worktree, never a
-    process-wide `os.chdir`) or the calling process's own cwd otherwise.
-    The second element is the effective `whole_reason` the width gate
-    actually admitted the scope with (issue #399): `whole_reason` itself, or
-    `whole_from_body()`'s own result when the gate tripped and needed it --
-    the caller's own claim persists this, not the raw `whole_reason` it
-    passed in."""
-    versioned = checkout.versioned_paths(directory=directory)
+    derived from the item's own body. Read from `context`'s directory via
+    `-C` when it names one (issue #322: `start`'s own resolved worktree,
+    never a process-wide `os.chdir`) or the calling process's own cwd
+    otherwise. The second element is the effective `whole_reason` the width
+    gate actually admitted the scope with (issue #399): `whole_reason`
+    itself, or `whole_from_body()`'s own result when the gate tripped and
+    needed it -- the caller's own claim persists this, not the raw
+    `whole_reason` it passed in."""
+    versioned = checkout.versioned_paths(directory=context.directory)
     _reject_ungrounded_comma_scope(scope, versioned, flag="--scope")
     n, total, share, effective_whole_reason = _reject_wide_scope(
-        scope, versioned, whole_reason, directory=directory, whole_from_body=whole_from_body
+        scope, versioned, whole_reason, context=context, whole_from_body=whole_from_body
     )
     return ScopeVersioning(n, total, share), effective_whole_reason
 
@@ -4884,8 +4885,7 @@ class _ClaimConflictError(protocol.ClaimError):
 
 def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
     context = session.context
-    directory = context.directory
-    requested = _request(parsed, directory=directory)
+    requested = _request(parsed, directory=context.directory)
     if isinstance(requested.identity, protocol.LaneIdentity) and not requested.scope:
         raise protocol.ClaimUnavailableError(LANE_CLAIM_SCOPE_REQUIRED)
     open_by_number: dict[int, board.Issue] | None = None
@@ -4900,7 +4900,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
         versioning, effective_whole = _scope_versioning(
             requested.scope,
             requested.whole_reason,
-            directory=directory,
+            context=context,
             whole_from_body=_whole_from_item_body(session, requested.identity, open_by_number=None),
         )
         requested = replace(requested, whole_reason=effective_whole)
@@ -4919,7 +4919,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
         versioning, effective_whole = _scope_versioning(
             requested.scope,
             requested.whole_reason,
-            directory=directory,
+            context=context,
             whole_from_body=_whole_from_item_body(
                 session, requested.identity, open_by_number=open_by_number
             ),
@@ -4974,7 +4974,7 @@ def _print_start_resume(
     storage: body.Storage,
     parsed: argparse.Namespace,
     *,
-    directory: Path,
+    context: RunContext,
 ) -> None:
     """`start`'s own resume path (issue #322 review finding 1): prints the
     same `CLAIMED ...`/cost-line grammar a fresh claim prints, for the live
@@ -4991,7 +4991,7 @@ def _print_start_resume(
     versioning, _effective_whole = _scope_versioning(
         live.scope,
         parsed.whole if parsed.whole is not None else live.whole_reason,
-        directory=directory,
+        context=context,
     )
     touches = protocol.conflicting_claims(tuple(observed.claims.values()), live)
     print(
@@ -5045,7 +5045,7 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
         and live.role == DEFAULT_CLAIM_ROLE
         and live.branch == branch
     ):
-        _print_start_resume(live, observed, storage, parsed, directory=worktree_path)
+        _print_start_resume(live, observed, storage, parsed, context=worktree_context)
         return 0
     claim_parsed = argparse.Namespace(
         issue=number,
@@ -5235,17 +5235,19 @@ def _cleanup_landed_worktree(
     since both read only this process's own cwd and worktree listing. A git
     failure at any step -- including one resolving which worktree matches
     `branch` at all -- is reported in the same `kept` line rather than
-    swallowed. The remote branch stays the forge merge's own business
-    either way."""
+    swallowed. The run's own checkout is judged from the toplevel its
+    context already holds, never resolved a second time (issue #472). The
+    remote branch stays the forge merge's own business either way."""
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
     try:
         toplevel = context.toplevel
-        matching = checkout.worktree_on_branch(store.list_worktrees(toplevel), branch)
+        others = tuple(path for path in store.list_worktrees(toplevel) if path != toplevel)
+        if checkout.current_branch(directory=toplevel) == branch:
+            return checkout.worktree_cleanup_kept(WORKTREE_KEPT_RAN_FROM_INSIDE_REASON)
+        matching = checkout.worktree_on_branch(others, branch)
         if matching is None:
             return checkout.worktree_cleanup_kept(WORKTREE_KEPT_NO_WORKTREE_REASON)
-        if matching == toplevel:
-            return checkout.worktree_cleanup_kept(WORKTREE_KEPT_RAN_FROM_INSIDE_REASON)
         return checkout.cleanup_landed_worktree(matching, branch, remote=context.canonical_remote)
     except protocol.ClaimError as error:
         return checkout.worktree_cleanup_kept(f"git failure: {error}")
@@ -6813,7 +6815,7 @@ def _release_branch_for(parsed: argparse.Namespace) -> str | None:
         return parsed.branch
     if parsed.issue is not None and parsed.claim_id is not None:
         return None
-    release_branch = checkout._git_output(["branch", "--show-current"])
+    release_branch = checkout.current_branch()
     if release_branch:
         return release_branch
     if parsed.issue is None:

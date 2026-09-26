@@ -10,6 +10,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from types import MappingProxyType
 from typing import TypeVar
 
@@ -151,14 +152,17 @@ def repository_id(text: str) -> forge.RepositoryId:
     return forge.RepositoryId(GITHUB_HOST, (namespace,), name)
 
 
-def discover_repository(*, remote_url: Callable[[], str]) -> forge.RepositoryId:
+def discover_repository(
+    *, remote_url: Callable[[], str], directory: Path | None = None
+) -> forge.RepositoryId:
     """Resolve the repository `--repo` did not name.
 
     Reads the git remote first (issue #245): almost every checkout's remote
     already names its GitHub repository, and that read is a local `git
     config` lookup, not a network round trip -- so `gh repo view` (a real
     `gh` API call, `GH_TIMEOUT_SECONDS` long) only runs as a fallback, when
-    the remote's own URL names no repository at all.
+    the remote's own URL names no repository at all. That fallback asks
+    about the checkout at `directory`, not this process's own cwd (issue #472).
     """
     match = GITHUB_REMOTE_PATTERN.search(remote_url())
     if match is not None:
@@ -168,6 +172,7 @@ def discover_repository(*, remote_url: Callable[[], str]) -> forge.RepositoryId:
             ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
             env=github_command_environment(),
             timeout=GH_TIMEOUT_SECONDS,
+            cwd=directory,
         )
     except process.ExecutableMissingError:
         raise ClaimError("gh is required for issue claims") from None

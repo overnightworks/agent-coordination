@@ -82,6 +82,14 @@ def test_run_git_launches_the_directory_scoped_git_command(
     assert result.stdout == b"ok\n"
 
 
+def test_run_captured_runs_the_command_in_the_given_directory(tmp_path: Path) -> None:
+    result = process.run_captured(
+        [sys.executable, "-c", "import os; print(os.getcwd())"], cwd=tmp_path
+    )
+
+    assert Path(result.stdout.decode().strip()) == tmp_path
+
+
 def test_inspect_native_process_reads_a_bounded_live_receipt_without_persisting_argv(
     tmp_path: Path,
 ) -> None:

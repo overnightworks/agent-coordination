@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -81,6 +83,12 @@ def _git_output(arguments: list[str], *, directory: Path | None = None) -> str:
     # a leading space before the path) -- a leading strip silently turned that
     # into `M path` and `_dirty_paths` then sliced into the filename itself.
     return result.stdout.decode().rstrip("\n")
+
+
+def current_branch(*, directory: Path | None = None) -> str:
+    """The branch checked out in `directory` (or the calling process's own
+    cwd), empty on a detached HEAD."""
+    return _git_output(["branch", "--show-current"], directory=directory)
 
 
 # `git rev-parse --verify --quiet <ref>` (git(1)): exit 1 is the one
@@ -205,7 +213,7 @@ def versioned_paths(*, directory: Path | None = None) -> tuple[str, ...]:
 def path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
     """Whether `path` (repo-relative, forward slashes) is tracked in git's
     index right now, read from `directory` via `-C` when given (issue #314:
-    `_board_config`'s own resolved checkout, never the calling process's
+    `session.board_config`'s own resolved checkout, never the calling process's
     cwd) or the process's own checkout otherwise (issue #315) -- absent,
     untracked, and ignored all read as `False`, since
     `git ls-files --error-unmatch` exits 1, and only 1, for a path it does
@@ -249,14 +257,18 @@ def paths_under_scope(paths: tuple[str, ...], scope: tuple[str, ...]) -> tuple[s
     )
 
 
-def _scope_directories(paths: tuple[str, ...], *, directory: Path | None = None) -> tuple[str, ...]:
+def _scope_directories(
+    paths: tuple[str, ...], *, directory: Path | None, toplevel: Callable[[], Path]
+) -> tuple[str, ...]:
     """Return the scope entries that name a git tree or on-disk directory,
     read from `directory` via `-C` when given (issue #314 gate B4:
     `rescope`'s own resolved checkout, never the calling process's cwd) or
     the process's own checkout otherwise (`claim`'s own precondition,
-    unaffected by #314)."""
+    unaffected by #314). `toplevel` is the caller's own held toplevel
+    (issue #472: its run context's, never a second git read), asked once
+    and only for an entry that is no git tree."""
     directories: list[str] = []
-    toplevel: str | None = None
+    checkout_root = functools.cache(lambda: _toplevel_or_none(toplevel))
     for path in paths:
         try:
             kind = _git_output(["cat-file", "-t", f"HEAD:{path}"], directory=directory)
@@ -265,14 +277,20 @@ def _scope_directories(paths: tuple[str, ...], *, directory: Path | None = None)
         if kind == "tree":
             directories.append(path)
             continue
-        if toplevel is None:
-            try:
-                toplevel = _git_output(["rev-parse", "--show-toplevel"], directory=directory)
-            except ClaimError:
-                toplevel = ""
-        if toplevel and (Path(toplevel) / path).is_dir():
+        root = checkout_root()
+        if root is not None and (root / path).is_dir():
             directories.append(path)
     return tuple(directories)
+
+
+def _toplevel_or_none(toplevel: Callable[[], Path]) -> Path | None:
+    """`toplevel()`, or `None` when it fails: the width gate then counts no
+    untracked directory, and the command's own toplevel refusal, which runs
+    after it, reports the failure (issue #472)."""
+    try:
+        return toplevel()
+    except ClaimError:
+        return None
 
 
 ISOLATED_WORKTREE_RECIPE = (
@@ -342,7 +360,7 @@ def _validate_worktree_branch(
         raise ClaimError(
             f"{ISOLATED_NON_MAIN_BRANCH_REFUSAL}{_worktree_repair_instruction(repair, branch=None)}"
         )
-    current = _git_output(["branch", "--show-current"], directory=directory)
+    current = current_branch(directory=directory)
     git_directory = Path(_git_output(["rev-parse", "--git-dir"], directory=directory)).resolve()
     common_directory = Path(
         _git_output(["rev-parse", "--git-common-dir"], directory=directory)
@@ -490,7 +508,7 @@ def _resolve_checkout(directory: Path) -> PathCheckout:
         toplevel, git_directory, common_directory = combined.splitlines()
     except ValueError as error:
         raise ClaimError(f"git returned a malformed checkout description: {combined!r}") from error
-    branch = _git_output(["branch", "--show-current"], directory=directory)
+    branch = current_branch(directory=directory)
     kind = CheckoutKind.MAIN if git_directory == common_directory else CheckoutKind.LINKED_WORKTREE
     try:
         _git_output(["rev-parse", "--verify", "HEAD"], directory=directory)
@@ -634,7 +652,7 @@ def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> 
     branch = default_branch_name(directory=directory)
     if branch is None:
         raise ClaimError(DEFAULT_BRANCH_UNKNOWN_REASON)
-    current = _git_output(["branch", "--show-current"], directory=directory)
+    current = current_branch(directory=directory)
     dirty = _git_output(["status", "--porcelain"], directory=directory)
     if current != branch or dirty:
         raise ClaimError(f"land must run from a clean checkout of the default branch {branch!r}")

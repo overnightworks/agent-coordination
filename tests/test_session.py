@@ -110,12 +110,33 @@ def test_repository_id_checks_erwartung_6_against_a_github_remote(
     monkeypatch.setattr(
         github,
         "discover_repository",
-        lambda remote_url: forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
+        lambda **_kwargs: forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
     )
 
     target = _context().repository_id
 
     assert target == forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo")
+
+
+def test_repository_id_discovers_the_repository_of_the_context_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #472: a context for another directory asks about that
+    directory's repository, never the calling process's own cwd."""
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: "git@github.com:owner/repo.git"
+    )
+    discovered_for: list[Path | None] = []
+
+    def discover_repository(*, directory: Path | None, **_kwargs: object) -> forge.RepositoryId:
+        discovered_for.append(directory)
+        return forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo")
+
+    monkeypatch.setattr(github, "discover_repository", discover_repository)
+
+    _ = _context().for_directory(tmp_path, is_toplevel=True).repository_id
+
+    assert discovered_for == [tmp_path]
 
 
 def test_default_branch_under_state_ref_reads_origin_head_of_the_context_directory(
