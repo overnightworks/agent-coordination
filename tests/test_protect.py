@@ -218,11 +218,13 @@ def _assert_protect_decision(
     reason: str | None = None,
 ) -> None:
     captured = capsys.readouterr()
-    payload = json.loads(captured.out)
     if decision == "allow":
-        assert (payload, captured.err) == ({"decision": "allow"}, "")
+        assert (captured.out, captured.err) == ("", "")
         return
-    assert (payload, captured.err) == ({"decision": "deny", "reason": reason}, f"{reason}\n")
+    assert (json.loads(captured.out), captured.err) == (
+        {"decision": "deny", "reason": reason},
+        f"{reason}\n",
+    )
 
 
 def test_protect_denied_checkout_validation_never_reads_the_store(
@@ -1753,6 +1755,61 @@ def test_protect_allows_a_path_outside_every_repository_without_identity(
     _assert_protect_decision(capsys, decision="allow")
 
 
+def _claude_code_write(target: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PreToolUse",
+        "session_id": "claude-session",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(target), "content": "x"},
+    }
+
+
+def _codex_apply_patch(target: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PreToolUse",
+        "turn_id": "codex-turn",
+        "tool_name": "apply_patch",
+        "tool_input": {"command": f"*** Begin Patch\n*** Add File: {target}\n+x\n*** End Patch"},
+    }
+
+
+def _grok_write(target: Path) -> dict[str, object]:
+    return {
+        "hookEventName": "pre_tool_use",
+        "hook_event_name": "PreToolUse",
+        "sessionId": "grok-session",
+        "toolName": "write",
+        "toolInput": {"path": str(target)},
+    }
+
+
+@pytest.mark.parametrize(
+    "host_payload_for",
+    [_claude_code_write, _codex_apply_patch, _grok_write],
+    ids=["claude-code", "codex", "grok"],
+)
+def test_protect_allow_is_silent_exit_zero_for_every_host(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    host_payload_for: Callable[[Path], dict[str, object]],
+) -> None:
+    """PROT-01 (issue #454): each host's own documented allow is exit 0 with
+    nothing on stdout -- Claude Code rejects a `decision` outside
+    approve/block as a hook error notice, and an `approve` or
+    `permissionDecision: allow` would skip its permission prompt."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch)
+    outside = tmp_path / "not-a-repository"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    assert _protect_main(monkeypatch, host_payload_for(outside / "widget.py")) == 0
+    assert capsys.readouterr() == ("", "")
+
+
 def test_protect_apply_patch_judges_two_worktrees_separately_and_one_deny_wins(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2070,11 +2127,11 @@ def _file_outside_every_repository(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
 @pytest.mark.parametrize(
-    ("build_target", "decision", "exit_code"),
+    ("build_target", "exit_code"),
     [
-        (_real_main_checkout_target, "deny", 2),
-        (_hook_in_a_bare_repository, "deny", 2),
-        (_file_outside_every_repository, "allow", 0),
+        (_real_main_checkout_target, 2),
+        (_hook_in_a_bare_repository, 2),
+        (_file_outside_every_repository, 0),
     ],
     ids=[
         "inside-main-checkout-denies",
@@ -2085,10 +2142,8 @@ def _file_outside_every_repository(tmp_path: Path) -> Path:
 def test_protect_never_reads_a_git_failure_as_outside_every_repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
     payload_for: Callable[[Path], dict[str, object]],
     build_target: Callable[[Path], Path],
-    decision: str,
     exit_code: int,
 ) -> None:
     """Issue #448 review finding: with git unavailable, a path below a
@@ -2109,7 +2164,6 @@ def test_protect_never_reads_a_git_failure_as_outside_every_repository(
     monkeypatch.setattr(process, "run_git", git_missing)
 
     assert _protect_main(monkeypatch, payload_for(target)) == exit_code
-    assert json.loads(capsys.readouterr().out)["decision"] == decision
 
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])

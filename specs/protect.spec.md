@@ -2,10 +2,10 @@
 
 `aco protect` is the `PreToolUse` hook entry point (issue #176, #238, #252,
 #314): reading one hook payload from stdin, it judges a single mutating tool
-call against this session's own live claim and prints its verdict as one JSON
-object, never a second time; a denial repeats its sentence on stderr. This file owns the payload
-envelope, every denial reason and the order they are judged in, and the
-allow/deny JSON shape and exit codes. `specs/claim-record.spec.md` owns a
+call against this session's own live claim: an allow prints nothing, a denial
+prints one JSON object and repeats its sentence on stderr. This file owns the
+payload envelope, every denial reason and the order they are judged in, and
+the allow/deny output and exit codes. `specs/claim-record.spec.md` owns a
 claim's own identity, scope grammar and overlap; `specs/ref-store-cas.spec.md`
 owns `refs/aco/state`'s own transport failures; `specs/storage-pin.spec.md`
 owns the board-configuration precondition (PIN-01) every store command
@@ -58,17 +58,25 @@ main checkout, or a Bash command naming no pattern -- never needed an
 identity at all, so a session without one is stopped only where a claim
 could answer for it.
 
-## The JSON envelope
+## The verdict's output
 
-- [ ] [PROT-01] A write `protect` authorizes prints exactly `{"decision": "allow"}` to stdout, nothing to stderr, exit `0` (see E-PROT-01).
+- [ ] [PROT-01] A write `protect` authorizes prints nothing to stdout or stderr, exit `0` (see E-PROT-01).
 - [ ] [PROT-02] A write `protect` refuses prints exactly `{"decision": "deny", "reason": "<sentence>"}` to stdout, the same sentence, newline-terminated, on stderr, exit `2` (see E-PROT-02).
 
-Who reads which channel: Claude Code blocks on exit `2` and hands its agent
-the stderr sentence, since the stdout object is not its own hook schema
-(Claude Code hooks reference, "Exit code 2"); Codex does the same ("You can
-also use exit code 2 and write the blocking reason to stderr", Codex hooks
-reference, PreToolUse); Grok reads the stdout object. All three see the same
-sentence, so no tool's agent is left without a reason.
+Who reads which channel: an allow is the one form all three hosts document as
+"no objection" -- Claude Code ("Exit code 0 with no output means the hook has
+no decision to report, so the tool call continues through the normal
+permission flow", hooks reference), Codex ("Exit 0 with no output is treated
+as success and Codex continues", hooks reference), and Grok (exit `0` is
+"Success / allow", Hooks, "Exit Codes"). An allow object would not be:
+Claude Code takes `decision` only as `approve` or `block` and shows any other
+object as a hook error notice, while `approve` or `permissionDecision:
+"allow"` would skip its permission prompt. A denial: Claude Code blocks on
+exit `2` and hands its agent the stderr sentence, since the stdout object is
+not its own hook schema (Claude Code hooks reference, "Exit code 2"); Codex
+does the same ("You can also use exit code 2 and write the blocking reason to
+stderr", Codex hooks reference, PreToolUse); Grok reads the stdout object.
+All three see the same sentence, so no tool's agent is left without a reason.
 
 ## The hook payload
 
@@ -86,7 +94,7 @@ session; a new gated tool joins both the table and that matcher.
 
 - [ ] [PROT-03] Unreadable stdin, invalid JSON, or a payload that is not a JSON object denies `invalid hook payload` (PROT-02's shape).
 - [ ] [PROT-04] A payload naming no string tool name under either `toolName` or `tool_name` denies `invalid hook payload`.
-- [ ] [PROT-05] A tool name this table marks read-only allows `{"decision": "allow"}` without reading identity, git, the store, or GitHub (see E-PROT-05).
+- [ ] [PROT-05] A tool name this table marks read-only allows (PROT-01) without reading identity, git, the store, or GitHub (see E-PROT-05).
 - [ ] [PROT-37] Each read-only session tool named above allows like PROT-05, `Monitor` is judged like `Bash`, and a tool outside the README's hook matcher never reaches `protect` (see E-PROT-05).
 - [ ] [PROT-06] A tool name in neither the read nor the mutating table denies `'<name>' is not in aco's hook tool table`, fix `add it there as read-only or mutating before use` (see E-PROT-06).
 
@@ -114,8 +122,8 @@ session; a new gated tool joins both the table and that matcher.
 - [ ] [PROT-18] This session holding no live claim on the checkout's own branch at all denies `claim first`.
 - [ ] [PROT-19] A live claim for this session and branch whose scope misses the path denies `claim first`, the same reason as no claim at all, for every tool but `apply_patch`.
 - [ ] [PROT-20] The same scope miss under `apply_patch` denies `<path> outside claim scope`, naming the one path the payload's own grammar can name.
-- [ ] [PROT-21] A live claim covering the path allows `{"decision": "allow"}` (see E-PROT-01).
-- [ ] [PROT-22] A lane (issueless) claim covering the path allows `{"decision": "allow"}` exactly like an issue claim.
+- [ ] [PROT-21] A live claim covering the path allows (PROT-01) (see E-PROT-01).
+- [ ] [PROT-22] A lane (issueless) claim covering the path allows (PROT-01) exactly like an issue claim.
 
 ## `apply_patch`'s own multi-path payload
 
@@ -239,7 +247,6 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `
 
 ```console
 $ echo '{"toolName": "Write", "toolInput": {"file_path": "<worktree>/README.md"}}' | aco protect
-{"decision": "allow"}
 exit 0
 ```
 
@@ -282,10 +289,8 @@ Setup: bare-remote, no live claim
 
 ```console
 $ echo '{"toolName": "Read", "toolInput": {"path": "src/secret.py"}}' | aco protect
-{"decision": "allow"}
 exit 0
 $ echo '{"tool_name": "StructuredOutput", "tool_input": {"pr": 1}}' | aco protect
-{"decision": "allow"}
 exit 0
 ```
 
@@ -328,10 +333,8 @@ Setup: bare-remote, no live claim
 
 ```console
 $ echo '{"toolName": "Bash", "toolInput": {"command": "rm /tmp/scratch.txt"}}' | aco protect
-{"decision": "allow"}
 exit 0
 $ echo '{"toolName": "Bash", "toolInput": {"command": "git diff"}}' | aco protect
-{"decision": "allow"}
 exit 0
 ```
 
@@ -345,7 +348,6 @@ $ echo '{"toolName": "Bash", "toolInput": {"command": "cd docs && rm widget.md"}
 2> rm docs/widget.md outside claim scope
 exit 2
 $ echo '{"toolName": "Bash", "toolInput": {"command": "cd $SCRATCH && rm widget.md"}, "cwd": "<worktree>"}' | aco protect
-{"decision": "allow"}
 exit 0
 ```
 
@@ -355,7 +357,6 @@ Setup: bare-remote, no live claim, `ACO_AGENT` unset
 
 ```console
 $ echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/scratch/notes.md"}}' | aco protect
-{"decision": "allow"}
 exit 0
 ```
 
@@ -365,7 +366,6 @@ Setup: bare-remote, bootstrapped, a tracked `.claude/settings.json`, `.claude/se
 
 ```console
 $ echo '{"tool_name": "Edit", "tool_input": {"file_path": "<main>/.claude/settings.local.json"}}' | aco protect
-{"decision": "allow"}
 exit 0
 $ echo '{"tool_name": "Edit", "tool_input": {"file_path": "<main>/.claude/settings.json"}}' | aco protect
 {"decision": "deny", "reason": "not main"}

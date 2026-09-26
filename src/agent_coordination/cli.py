@@ -3798,10 +3798,9 @@ def _protect() -> int:
         verdict = protect.judge(payload, canonical_remote_for=_canonical_remote_name)
     except Exception as error:
         verdict = protect.Verdict.deny(str(error))
-    print(json.dumps(verdict.to_json()))
+    if verdict.stdout_text is not None:
+        print(verdict.stdout_text)
     if verdict.stderr_text is not None:
-        # Claude Code ignores stdout JSON outside its own schema on exit 2 and
-        # hands its agent the stderr text as the blocking reason (PROT-02).
         print(verdict.stderr_text, file=sys.stderr)
     return verdict.exit_code
 

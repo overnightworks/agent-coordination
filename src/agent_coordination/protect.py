@@ -20,6 +20,7 @@ for.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from . import checkout, hook_input, protocol, store
 
 
 class Decision(StrEnum):
-    """The two words `protect`'s own JSON envelope prints (PROT-01/PROT-02)."""
+    """`judge`'s two outcomes (PROT-01/PROT-02)."""
 
     ALLOW = "allow"
     DENY = "deny"
@@ -39,9 +40,9 @@ class Decision(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Verdict:
-    """`judge`'s own typed result: `decision` and `reason` are exactly the
-    JSON envelope's own two fields (PROT-01/PROT-02) -- `reason` is always
-    `None` for `ALLOW` and always a sentence for `DENY`."""
+    """`judge`'s own typed result and the one owner of what each output
+    channel carries (PROT-01/PROT-02) -- `reason` is always `None` for
+    `ALLOW` and always a sentence for `DENY`."""
 
     decision: Decision
     reason: str | None = None
@@ -58,10 +59,14 @@ class Verdict:
     def exit_code(self) -> int:
         return 0 if self.decision is Decision.ALLOW else 2
 
-    def to_json(self) -> dict[str, object]:
+    @property
+    def stdout_text(self) -> str | None:
+        """What stdout carries (PROT-01/PROT-02): nothing for an allow, since
+        an allow object would fail Claude Code's hook schema, and the deny
+        object Grok reads."""
         if self.decision is Decision.ALLOW:
-            return {"decision": "allow"}
-        return {"decision": "deny", "reason": self.reason}
+            return None
+        return json.dumps({"decision": "deny", "reason": self.reason})
 
     @property
     def stderr_text(self) -> str | None:
