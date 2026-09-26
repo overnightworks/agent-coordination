@@ -3870,9 +3870,15 @@ class TestCliStateRefForge:
     ) -> None:
         """Issue #471 proof 1: with `CHILD_A` claimed, a second claim on it,
         closing it, and releasing the unclaimed `CHILD_B` refuse naming the
-        item by the id the next command takes back, never `#<n>`; the same
-        sentences under `storage = "github"` keep `#<n>` (CLAIM-11, REL-09,
-        CAS-52 in `test_cli.py`)."""
+        item by the id the next command takes back, never `#<n>`. The github
+        half keeps `#<n>` through the same entry:
+        `test_cli_claim_replay_refuses_a_live_claim_with_different_retry_fields`
+        (CLAIM-11) and
+        `test_cli_release_without_a_claim_names_the_github_item_by_its_forge_number`
+        (REL-09). `item close` under github refuses outright
+        (`ITEM_CLOSE_GITHUB_REFUSAL`), so PIN-26's `#<n>` form is pinned only
+        at store level: CAS-52's
+        `test_item_close_refuses_a_claim_that_lands_between_its_first_attempt_and_the_retry`."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
         self._claim_child_a(monkeypatch, capsys)
 

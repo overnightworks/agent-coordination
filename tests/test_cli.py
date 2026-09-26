@@ -7669,6 +7669,20 @@ def test_cli_release_wrong_agent_or_branch_or_two_matches_fails_without_post(
     assert "conflicting claims" not in captured.err
 
 
+def test_cli_release_without_a_claim_names_the_github_item_by_its_forge_number(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """REL-09 under `storage = "github"` (issue #471 proof 1, github half):
+    releasing an item nobody claims refuses naming it `#<n>`, byte-identical
+    to the sentence before the state-ref renderer existed."""
+    _patch_release_session(monkeypatch, FakeForge())
+
+    released = issue_claim.main(["--repo", REPOSITORY, "release", "72", "--abandoned", "stopped"])
+
+    assert released == 2
+    assert capsys.readouterr().err == "ERROR: issue #72 has no active build claim\n"
+
+
 def test_cli_release_explicit_claim_id_ignores_checkout_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -9244,6 +9258,10 @@ def test_cli_claim_replay_refuses_a_live_claim_with_different_retry_fields(
     branch: str,
     scope: tuple[str, ...],
 ) -> None:
+    """CLAIM-11 under `storage = "github"` (issue #471 proof 1, github
+    half): a claim on a claimed item refuses naming both the item and the
+    holder's claim `#<n>`, byte-identical to the sentence before the
+    state-ref renderer existed."""
     existing = request("live-claim", "Ada", issue=72, branch="codex/issue-72", scope=("src",))
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
@@ -9272,7 +9290,9 @@ def test_cli_claim_replay_refuses_a_live_claim_with_different_retry_fields(
         == 2
     )
 
-    assert "ERROR: issue #72 is claimed by Ada (builder)" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        "ERROR: issue #72 is claimed by Ada (builder) on issue #72 branch codex/issue-72\n"
+    )
     assert store.fetch_state(worktree=Path("."), remote="origin").claims
 
 
