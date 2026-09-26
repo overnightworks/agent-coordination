@@ -3681,10 +3681,12 @@ class TestCliStateRefForge:
             ),
             pytest.param(["check", "{item}"], "ISSUE {item} body incomplete: ", id="check"),
             pytest.param(["next"], "{item}: body incomplete: ", id="next"),
+            pytest.param(["next", "--json"], '"command": "aco claim {seeded} ', id="next-json"),
             pytest.param(["status", "{item}"], "UNCLAIMED issue {item}", id="status"),
             pytest.param(
                 ["item", "edit", "{item}", "--size", "L"], "EDITED {item} size=L", id="item-edit"
             ),
+            pytest.param(["item", "close", "{item}"], "CLOSED {item}", id="item-close"),
         ],
     )
     def test_every_output_names_a_state_ref_item_by_its_id_never_its_decimal_number(
@@ -3698,18 +3700,21 @@ class TestCliStateRefForge:
         expected: str,
     ) -> None:
         """Issue #467 proof 1: under `storage = state-ref` a command names a
-        fresh (still incomplete) item as `aco-xxxxxx` -- the form it takes
-        back -- never as `#<n>` of the id's own decimal value."""
+        fresh (still incomplete) item, or the seeded actionable `CHILD_A`,
+        as `aco-xxxxxx` -- the form it takes back -- never as `#<n>` or a
+        quoted string of the id's own decimal value."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
         _stub_claim_checkout(monkeypatch)
         item_id = _run_ok(["item", "new", "--title", "Fresh work"], capsys).strip()
+        named = {"item": item_id, "seeded": CHILD_A_ID}
 
-        issue_claim.main([argument.format(item=item_id) for argument in arguments])
+        issue_claim.main([argument.format(**named) for argument in arguments])
 
         captured = capsys.readouterr()
         output = captured.out + captured.err
-        assert expected.format(item=item_id) in output
-        assert f"#{items.item_number(item_id)}" not in output
+        assert expected.format(**named) in output
+        decimals = [items.item_number(identifier) for identifier in named.values()]
+        assert not any(f"#{n}" in output or f'"{n}"' in output for n in decimals)
 
     def test_readme_week_without_a_forge_runs_end_to_end_against_a_fresh_bare_remote(
         self,
