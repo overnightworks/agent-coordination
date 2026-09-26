@@ -1988,29 +1988,57 @@ class TestCliStateRefForge:
         remaining = locate_agent_claim_block(container_body).data
         assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
 
-    def test_cut_row_refuses_a_missing_row_under_state_ref(
+    @pytest.mark.parametrize(
+        ("item_files", "row", "refusal"),
+        [
+            pytest.param(
+                _item_files_with_container_slices(((1, "Slice C"),)),
+                ["--row", "9"],
+                f"{CONTAINER_ID} has no row 9; cuttable rows: 1",
+                id="missing-row",
+            ),
+            pytest.param(
+                {
+                    **_item_files(),
+                    "aco-0000aa.md": _state_ref_body(
+                        _CONTAINER_PROJECTION,
+                        _record(title="Outer", state="open", kind="container"),
+                    ).encode(),
+                    f"{CONTAINER_ID}.md": _state_ref_body(
+                        _CONTAINER_PROJECTION,
+                        _record(title="Epic", state="open", kind="container", parent="aco-0000aa"),
+                    ).encode(),
+                },
+                [],
+                f"{CONTAINER_ID} is itself a child of aco-0000aa; "
+                "nested containers are not supported",
+                id="nested-container",
+            ),
+        ],
+    )
+    def test_cut_refuses_by_item_id_before_any_write_under_state_ref(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        item_files: dict[str, bytes],
+        row: list[str],
+        refusal: str,
     ) -> None:
-        """Issue #291 proof 2 (refusal): `--row 9` names no entry while row 1
-        is still cuttable -- the same by-name refusal GitHub's own
-        `test_cut_refuses_a_row_with_no_cuttable_row` proves, and nothing
-        reaches the remote."""
-        item_files = _item_files_with_container_slices(((1, "Slice C"),))
+        """Issue #291 proof 2 (refusal) and issue #467: `--row 9` naming no
+        entry, or a container that is itself a child, refuses by the item
+        id -- the same by-name refusals GitHub's own cut tests prove -- and
+        nothing reaches the remote."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         remote_url = f"file://{bare_remote}"
         before = store.fetch_state(worktree=worktree, remote=remote_url)
 
-        status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "X", "--row", "9"])
+        status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "X", *row])
 
         assert status == 2
-        assert capsys.readouterr().err == (
-            f"ERROR: {CONTAINER_ID} has no row 9; cuttable rows: 1\n"
-        )
+        assert capsys.readouterr().err == f"ERROR: {refusal}\n"
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
 
