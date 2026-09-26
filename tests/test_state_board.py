@@ -3748,6 +3748,11 @@ class TestCliStateRefForge:
                 PAST_THE_ID_SPACE_REFUSAL,
                 id="claim-past-the-id-space",
             ),
+            pytest.param(
+                ["check", str(PAST_THE_ID_SPACE)],
+                PAST_THE_ID_SPACE_REFUSAL,
+                id="check-past-the-id-space",
+            ),
         ],
     )
     def test_every_output_names_a_state_ref_item_by_its_id_never_its_decimal_number(

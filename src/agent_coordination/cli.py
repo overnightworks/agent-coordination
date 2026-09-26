@@ -7491,16 +7491,21 @@ def _reached_levels(
         parser, tokens = subcommands.chosen, subcommands.handed_down
 
 
+# Every argparse `type=` that reads an item reference. `check`'s subject also
+# reads a trunk commit id, which parses to a string and so names no item.
+_ITEM_ARGUMENT_TYPES = frozenset({board.parse_item_reference, _parse_check_subject})
+
+
 def _item_arguments(
     root: argparse.ArgumentParser, given: list[str], parsed: argparse.Namespace
 ) -> Iterator[int]:
-    """Every item number this invocation named: the parsed value of each
-    argument `board.parse_item_reference` types, on every parser the parse
-    reached."""
+    """Every item number this invocation named: the parsed integer of each
+    argument an `_ITEM_ARGUMENT_TYPES` parser types, on every parser the
+    parse reached."""
     for parser, _tokens in _reached_levels(root, given):
         for action in parser._actions:
             value = getattr(parsed, action.dest, None)
-            if action.type is board.parse_item_reference and value is not None:
+            if action.type in _ITEM_ARGUMENT_TYPES and isinstance(value, int):
                 yield value
 
 
