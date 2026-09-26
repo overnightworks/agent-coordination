@@ -17,7 +17,8 @@ import pytest
 from board_fixtures import _active_claim, request
 from test_store import _STATE_WITH_TIP, _claim_intent
 
-from agent_coordination import protocol
+from agent_coordination import board, protocol
+from agent_coordination.body import Storage
 from agent_coordination.protocol import (
     ClaimError,
     ClaimRequest,
@@ -473,4 +474,39 @@ def test_a_claim_conflict_names_its_item_in_the_form_the_caller_asks_for(
     assert (str(refused.value), refused.value.named(lambda number: f"item-{number}")) == (
         forge_sentence,
         named_sentence,
+    )
+
+
+@pytest.mark.parametrize(
+    ("holder", "holder_label"),
+    [
+        pytest.param(42, "aco-00002a", id="in-the-id-space"),
+    ],
+)
+def test_a_state_ref_resource_conflict_names_its_holder_by_a_name_a_command_takes_back(
+    holder: int, holder_label: str
+) -> None:
+    """CLAIM-42 under `storage = "state-ref"` (issue #471, #476 review
+    finding 3): the holder's item is named by its id through the renderer
+    the CLI hands the refusal. The CLI offers no explicit resource value, so
+    the refusal is driven at the store's own transition."""
+    held = protocol.apply(
+        _STATE_WITH_TIP,
+        _claim_intent(
+            identity=protocol.IssueIdentity(holder), resource_name="display", resource_value=2
+        ),
+    )
+    conflicting = _claim_intent(
+        identity=protocol.IssueIdentity(7),
+        claim_id="a2",
+        operation_id="op-2",
+        resource_name="display",
+        resource_value=2,
+    )
+
+    with pytest.raises(protocol.ClaimConflictError) as refused:
+        protocol.apply(held, conflicting)
+
+    assert refused.value.named(board.item_labeller(Storage.STATE_REF)) == (
+        f"display 2 is held by Ada (builder) on issue {holder_label}"
     )
