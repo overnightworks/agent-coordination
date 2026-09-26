@@ -3863,8 +3863,12 @@ def _rescope_checkout(parsed: argparse.Namespace) -> checkout.PathCheckout:
     `git branch --show-current` this replaces, so it fails the same way
     regardless of where else in the tree a bare cwd fallback might have
     looked. A checkout with no commit yet denies here too (gate G3), the
-    same precondition `protect` enforces on its own resolved checkout."""
-    path_checkout = checkout.resolve_path_checkout(_rescope_location(parsed.add, parsed.drop))
+    same precondition `protect` enforces on its own resolved checkout. A
+    path in a directory not created yet resolves from its nearest existing
+    ancestor, as `protect` judges it (issue #474)."""
+    path_checkout = checkout.resolve_nearest_existing_checkout(
+        _rescope_location(parsed.add, parsed.drop)
+    )
     if path_checkout is None:
         raise protocol.ClaimUnavailableError(checkout.NOT_IN_A_REPOSITORY_REASON)
     if not path_checkout.has_commit:

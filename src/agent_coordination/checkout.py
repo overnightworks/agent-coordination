@@ -458,6 +458,25 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
         return None
 
 
+def resolve_nearest_existing_checkout(directory: Path) -> PathCheckout | None:
+    """The checkout owning `directory`, judged from its nearest existing
+    ancestor when it does not exist yet (PROT-39): a file about to be
+    written may sit in directories not created yet either, and resolving a
+    missing directory would read as "outside every repository". The one
+    resolver `protect` and `rescope` share for a path's directory (issue
+    #474: `rescope --add` of a file in a new directory refused `not in a
+    repository` while `protect` judged the same path by its checkout)."""
+    return resolve_path_checkout(_nearest_existing_directory(directory))
+
+
+def _nearest_existing_directory(directory: Path) -> Path:
+    """`directory` itself when it exists, else its closest existing ancestor
+    -- the filesystem root at the latest, which always exists."""
+    while not directory.is_dir():
+        directory = directory.parent
+    return directory
+
+
 def _has_repository_marker_above(directory: Path) -> bool:
     """Whether `directory` or any ancestor is a git directory itself (a bare
     repository, or a checkout's own `.git/`) or holds a `.git` marker: a

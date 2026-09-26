@@ -17658,12 +17658,14 @@ def _rescope_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> _Count
     """`rescope` reads the checkout its own `--add` path resolves to, never
     the process's cwd; `_git_checkout` places that checkout at `/repo`, and
     the toplevel that resolution already read is the one its store context
-    uses, never read there a second time."""
+    uses, never read there a second time. `/repo` exists only in the fake
+    git, so the resolution reads from its nearest existing ancestor, the
+    filesystem root (RESC-18)."""
     _arranged_claim_client(monkeypatch)
     claimed = request(agent="Ada", issue=72, branch="codex/issue-72", scope=("src/widget.py",))
     _patch_store_write(monkeypatch, _store_claim_from_request(claimed))
     argv = ["--repo", REPOSITORY, "rescope", "72", "--agent", "Ada", "--add", "/repo/new.py"]
-    return _read_once(argv, toplevel=Path("/repo"), directory=Path("/repo"))
+    return _read_once(argv, toplevel=Path("/repo"), directory=Path("/"))
 
 
 def _cut_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:

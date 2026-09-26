@@ -405,21 +405,13 @@ def _file_checkout(
     stays outside (issue #448 review finding). The link's own directory
     wins whenever it is in a checkout, so no link can move a write out of
     the gate that directory already imposes."""
-    own_checkout = checkout.resolve_path_checkout(_nearest_existing_directory(path.parent))
+    own_checkout = checkout.resolve_nearest_existing_checkout(path.parent)
     if own_checkout is not None or not writes_through_file_symlink:
         return own_checkout
     target = Path(os.path.realpath(path))
     if target == path:
         return None
-    return checkout.resolve_path_checkout(_nearest_existing_directory(target.parent))
-
-
-def _nearest_existing_directory(directory: Path) -> Path:
-    """`directory` itself when it exists, else its closest existing ancestor
-    -- the filesystem root at the latest, which always exists."""
-    while not directory.is_dir():
-        directory = directory.parent
-    return directory
+    return checkout.resolve_nearest_existing_checkout(target.parent)
 
 
 def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None:

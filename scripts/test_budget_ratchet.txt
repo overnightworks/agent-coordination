@@ -80,3 +80,5 @@
 # budget: issue #467 needs one parametrized proof that every state-ref command -- claim, check, next, next --json, status, item edit, item close -- names an item by its id, never its decimal value; driving each through the real CLI against a live bare remote repeats the arrangement other `TestCliStateRefForge` proofs share, a new family rather than a data variant of an existing one [PIN-30, PIN-28]
 
 # budget: issue #467's proof 1 asks for the same commands under `github` naming `#<n>`, a twin family on test_cli's fake-forge arrangement the live-bare-remote family cannot share; and #469's review needs two state-ref proofs a fresh incomplete item cannot give -- a claim overlapping a standing claim and a rescope of it -- each on one shared standing-claim helper [PIN-30, CLM-14]
+
+# budget: issue #474 needs one real-worktree proof that rescope --add admits a file in a not-yet-existing directory and protect then allows writing it; a two-command round trip across rescope and protect, not a data variant of the single-command rescope or protect families [RESC-18, PROT-39]
