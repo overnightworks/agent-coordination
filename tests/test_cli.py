@@ -17321,11 +17321,15 @@ def _release_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Counte
 
 
 def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """Proof 6: `land`'s fast-forward writes the landed trunk into this very
-    checkout, so its release reads the toplevel and configuration once more,
-    afterwards -- as it did before #457. Its worktree cleanup then resolves
-    each registered worktree through `checkout.worktree_on_branch`, the
-    checkout's own combined `rev-parse`, outside the run's context."""
+    """All three toplevel reads are of `repo`, the process's cwd: two through
+    the context (`None`), one by explicit path. Proof 6: `land`'s
+    fast-forward writes the landed trunk into this very checkout, so its
+    release reads the toplevel and configuration once more, afterwards -- as
+    it did before #457. Proof 3's named exception (b) (head ruling
+    26.09.2026): its worktree cleanup then resolves the main checkout through
+    `checkout.worktree_on_branch` -> `_resolve_checkout`, outside the run's
+    context, because that read's failure feeds the reported "git failure: ..."
+    kept reason; #418 slice B owns it."""
     repo, _client = _land_scenario(monkeypatch, tmp_path)
     return _CountedRun(
         ["--repo", REPOSITORY, "land", "12"],
@@ -17335,7 +17339,7 @@ def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRu
 
 
 def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """The one named exception to proof 3 (head ruling 26.09.2026): the
+    """Proof 3's named exception (a) (head ruling 26.09.2026): the
     created worktree's second toplevel read is `checkout._scope_directories`'
     own, for a scope entry that is no git tree (the width gate, #326);
     checkout reads it outside the run's context, and #418 slice B owns it."""
@@ -17372,7 +17376,10 @@ def test_a_command_reads_its_toplevel_and_board_config_once_per_directory(
     command asks and held after that -- one toplevel and one board
     configuration read per directory the command works in, however many of
     its steps ask again, unless the command itself wrote that directory's
-    checkout in between (proof 6, `land`)."""
+    checkout in between (proof 6, `land`). The two named exceptions, both
+    #418 slice B, are pinned in their own rows and nowhere else: (a) the
+    second read of `start`'s worktree by `checkout._scope_directories`, and
+    (b) the read of the main checkout by `land`'s worktree cleanup."""
     run = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
 
