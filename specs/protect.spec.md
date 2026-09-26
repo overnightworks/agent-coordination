@@ -61,7 +61,7 @@ could answer for it.
 ## The JSON envelope
 
 - [ ] [PROT-01] A write `protect` authorizes prints exactly `{"decision": "allow"}` to stdout, nothing to stderr, exit `0` (see E-PROT-01).
-- [ ] [PROT-02] A write `protect` refuses prints exactly `{"decision": "deny", "reason": "<sentence>"}` to stdout, the bare sentence as one stderr line, exit `2` (see E-PROT-02).
+- [ ] [PROT-02] A write `protect` refuses prints exactly `{"decision": "deny", "reason": "<sentence>"}` to stdout, the same sentence, newline-terminated, on stderr, exit `2` (see E-PROT-02).
 
 Who reads which channel: Claude Code blocks on exit `2` and hands its agent
 the stderr sentence, since the stdout object is not its own hook schema
