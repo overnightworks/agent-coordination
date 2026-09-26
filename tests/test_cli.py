@@ -7266,7 +7266,7 @@ def test_claim_and_release_parse_omitted_agent(
             {
                 "ACO_AGENT": "Other",
                 "GROK_SESSION_ID": "grok-session",
-                "CLAUDE_SESSION_ID": "claude-session",
+                "CLAUDE_CODE_SESSION_ID": "claude-session",
             },
             "Ada",
         ),
@@ -7274,16 +7274,16 @@ def test_claim_and_release_parse_omitted_agent(
         (None, {"ACO_AGENT": "", "GROK_SESSION_ID": "sess-1"}, "Grok sess-1"),
         (
             None,
-            {"GROK_SESSION_ID": "sess-1", "CLAUDE_SESSION_ID": "sess-2"},
+            {"GROK_SESSION_ID": "sess-1", "CLAUDE_CODE_SESSION_ID": "sess-2"},
             "Grok sess-1",
         ),
-        (None, {"CLAUDE_SESSION_ID": "sess-2"}, "Claude sess-2"),
+        (None, {"CLAUDE_CODE_SESSION_ID": "sess-2"}, "Claude sess-2"),
         (
             None,
             {
                 "ACO_AGENT": "",
                 "GROK_SESSION_ID": "",
-                "CLAUDE_SESSION_ID": "sess-2",
+                "CLAUDE_CODE_SESSION_ID": "sess-2",
             },
             "Claude sess-2",
         ),
@@ -7319,8 +7319,8 @@ def test_request_and_cli_claim_fill_agent_from_documented_else_chain(
     [
         ("", {"ACO_AGENT": "Ada"}),
         (None, {"ACO_AGENT": " ", "GROK_SESSION_ID": "sess-1"}),
-        (None, {"GROK_SESSION_ID": "bad\nid", "CLAUDE_SESSION_ID": "sess-2"}),
-        (None, {"GROK_SESSION_ID": "x" * 200, "CLAUDE_SESSION_ID": "sess-2"}),
+        (None, {"GROK_SESSION_ID": "bad\nid", "CLAUDE_CODE_SESSION_ID": "sess-2"}),
+        (None, {"GROK_SESSION_ID": "x" * 200, "CLAUDE_CODE_SESSION_ID": "sess-2"}),
     ],
 )
 def test_invalid_agent_identity_fails_before_git_and_github(
@@ -7361,7 +7361,7 @@ def test_invalid_agent_identity_fails_before_git_and_github(
         {
             "ACO_AGENT": "",
             "GROK_SESSION_ID": "",
-            "CLAUDE_SESSION_ID": "",
+            "CLAUDE_CODE_SESSION_ID": "",
         },
         {"GROK_AGENT": "should-not-fill"},
     ],
@@ -7471,7 +7471,7 @@ def test_cli_two_session_claimants_cannot_release_without_extra_comment(
     )
     capsys.readouterr()
 
-    _set_agent_identity_env(monkeypatch, {"CLAUDE_SESSION_ID": "session-2"})
+    _set_agent_identity_env(monkeypatch, {"CLAUDE_CODE_SESSION_ID": "session-2"})
     released = issue_claim.main(
         [
             "--repo",

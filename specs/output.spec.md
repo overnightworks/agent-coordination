@@ -45,7 +45,7 @@ issue #432).
 - A parser refusal without `--json` never changes shape (issue #432): stdout stays empty and stderr carries argparse's own usage block and sentence, exactly as it did before the envelope reached this refusal at all.
 - A command that declares no `--json` never answers in this envelope (issue #432): `aco bootstrap --json` stays argparse's own text; an abbreviation of a declared `--json` does ask for it.
 - A non-zero exit never means a refusal on its own: a command may name a further code for an answer it did give, and its own spec owns that code.
-- `protect` never joins this envelope, migrated or not: its hook protocol (`{"decision": …}`, exit `0`/`2`) is a permanent exception (`specs/protect.spec.md`).
+- `protect` never joins this envelope, migrated or not: its hook protocol (a silent exit `0`, or the deny object on exit `2`; PROT-01/PROT-02) is a permanent exception (`specs/protect.spec.md`).
 - `board --serve` never prints this file's own `--json` envelope either: its own request/response wire contract is permanently `specs/board.spec.md`'s own, not this file's.
 - `bootstrap`, `reset`, `start`, `register`, `run`, and `login` never gain a `--json` mode of their own (each command's own product decision, not a pending migration): each names it in its own `## Never` (`specs/bootstrap.spec.md`, `specs/reset.spec.md`, `specs/start.spec.md`, `specs/workspace.spec.md`).
 
@@ -79,12 +79,12 @@ exit 2
 
 ### E-OUT-03 -- a refusal before the named command starts
 
-Setup: bare-remote, bootstrapped, `ACO_AGENT`, `GROK_SESSION_ID` and `CLAUDE_SESSION_ID` all unset
+Setup: bare-remote, bootstrapped, `ACO_AGENT`, `GROK_SESSION_ID` and `CLAUDE_CODE_SESSION_ID` all unset
 
 ```console
 $ aco claim 42 --scope src --json
-2> ERROR: agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_SESSION_ID
-{"ok": false, "reason": "precondition_failed", "message": "agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_SESSION_ID"}
+2> ERROR: agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID
+{"ok": false, "reason": "precondition_failed", "message": "agent identity is required: pass --agent or set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID"}
 exit 2
 ```
 

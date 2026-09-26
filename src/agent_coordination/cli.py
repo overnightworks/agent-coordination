@@ -321,8 +321,8 @@ JSON_HELP = "print the result as JSON instead of the human lines"
 # `None` default (flag absent) -- `_cmd_board_html` treats it as "stdout".
 STDOUT_HTML_PATH = ""
 AGENT_HELP = (
-    "the acting agent's name; filled from a non-empty ACO_AGENT, GROK_SESSION_ID or "
-    "CLAUDE_SESSION_ID when omitted"
+    f"the acting agent's name; filled from a non-empty {checkout.IDENTITY_ENVIRONMENT_ORDER} "
+    "when omitted"
 )
 EXPECTED_CLAIM_ID_HELP = (
     "assert which claim you are acting on; the issue number or lane branch selects it, and "
@@ -3690,7 +3690,10 @@ def _protect() -> int:
         verdict = protect.judge(payload, canonical_remote_for=_canonical_remote_name)
     except Exception as error:
         verdict = protect.Verdict.deny(str(error))
-    print(json.dumps(verdict.to_json()))
+    if verdict.stdout_text is not None:
+        print(verdict.stdout_text)
+    if verdict.stderr_text is not None:
+        print(verdict.stderr_text, file=sys.stderr)
     return verdict.exit_code
 
 

@@ -3,12 +3,13 @@ distributor #389 finding 2): `judge` reads one already-parsed hook payload
 and returns a typed `Verdict` -- allow or deny, with the deny reason -- from
 the payload envelope checks (PROT-03..) through the shared Checkout/
 Default-Branch/Claim-Scope/Bash-pattern chain every mutating tool call runs.
-`cli` keeps only reading stdin, calling `judge`, and printing the verdict's
-own JSON envelope under one `except Exception` frame (PROT-17); this module
-never touches stdin or stdout itself. `specs/protect.spec.md` owns every
-denial reason, the order they are judged in, and the JSON shape and exit
-codes `Verdict.to_json`/`Verdict.exit_code` produce -- this file cites those
-IDs rather than restating them.
+`cli` keeps only reading stdin, calling `judge`, and printing whatever the
+verdict's `stdout_text` and `stderr_text` carry -- nothing for an allow, the
+deny object on stdout and its sentence on stderr for a deny -- under one
+`except Exception` frame (PROT-17); this module never touches stdin, stdout,
+or stderr itself. `specs/protect.spec.md` owns every denial reason, the order
+they are judged in, and the output and exit codes `Verdict` produces -- this
+file cites those IDs rather than restating them.
 
 `judge` takes `canonical_remote_for` as an explicit dependency rather than
 resolving it itself: reading `.agent-claim/board.toml`'s own storage pin
@@ -19,6 +20,7 @@ for.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -30,7 +32,7 @@ from . import checkout, hook_input, protocol, store
 
 
 class Decision(StrEnum):
-    """The two words `protect`'s own JSON envelope prints (PROT-01/PROT-02)."""
+    """`judge`'s two outcomes (PROT-01/PROT-02)."""
 
     ALLOW = "allow"
     DENY = "deny"
@@ -38,9 +40,9 @@ class Decision(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Verdict:
-    """`judge`'s own typed result: `decision` and `reason` are exactly the
-    JSON envelope's own two fields (PROT-01/PROT-02) -- `reason` is always
-    `None` for `ALLOW` and always a sentence for `DENY`."""
+    """`judge`'s own typed result and the one owner of what each output
+    channel carries (PROT-01/PROT-02) -- `reason` is always `None` for
+    `ALLOW` and always a sentence for `DENY`."""
 
     decision: Decision
     reason: str | None = None
@@ -57,10 +59,20 @@ class Verdict:
     def exit_code(self) -> int:
         return 0 if self.decision is Decision.ALLOW else 2
 
-    def to_json(self) -> dict[str, object]:
+    @property
+    def stdout_text(self) -> str | None:
+        """What stdout carries (PROT-01/PROT-02): nothing for an allow, since
+        an allow object would fail Claude Code's hook schema, and the deny
+        object Grok reads."""
         if self.decision is Decision.ALLOW:
-            return {"decision": "allow"}
-        return {"decision": "deny", "reason": self.reason}
+            return None
+        return json.dumps({"decision": "deny", "reason": self.reason})
+
+    @property
+    def stderr_text(self) -> str | None:
+        """What stderr carries (PROT-01/PROT-02): nothing for an allow, the
+        deny's own sentence for the hosts that read it on exit 2."""
+        return self.reason
 
 
 _CanonicalRemoteFor = Callable[[Path], str]
@@ -175,8 +187,8 @@ def _hook_path(tool_input: dict[str, object], *, keys: tuple[str, ...]) -> str |
 
 PATH_REQUIRED = "path required"
 MISSING_HOOK_IDENTITY = (
-    f"agent identity is required: set {checkout.ACO_AGENT_ENV} (e.g. in the hook line), "
-    f"{checkout.GROK_SESSION_ID_ENV}, or {checkout.CLAUDE_SESSION_ID_ENV}"
+    f"agent identity is required: set {checkout.IDENTITY_ENVIRONMENT_ORDER} "
+    f"({checkout.ACO_AGENT_ENV} can sit in the hook line)"
 )
 
 

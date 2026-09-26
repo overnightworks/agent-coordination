@@ -1304,9 +1304,9 @@ def test_validate_slug_refuses_a_value_the_derived_rule_would_never_produce(slug
             {"ACO_AGENT": "Claude head (coordinator)"}, "claude", id="aco-agent-first-word"
         ),
         pytest.param({"GROK_SESSION_ID": "sess-1"}, "grok", id="grok-session"),
-        pytest.param({"CLAUDE_SESSION_ID": "sess-1"}, "claude", id="claude-session"),
+        pytest.param({"CLAUDE_CODE_SESSION_ID": "sess-1"}, "claude", id="claude-session"),
         pytest.param(
-            {"ACO_AGENT": "Grok", "CLAUDE_SESSION_ID": "sess-1"},
+            {"ACO_AGENT": "Grok", "CLAUDE_CODE_SESSION_ID": "sess-1"},
             "grok",
             id="aco-agent-wins-over-a-session-id",
         ),
@@ -1320,12 +1320,25 @@ def test_branch_prefix_for_identity_reads_the_same_precedence_as_resolved_agent(
     assert checkout.branch_prefix_for_identity() == prefix
 
 
-def test_branch_prefix_for_identity_refuses_with_no_identity_signal(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("environ", "refusal"),
+    [
+        pytest.param({}, "branch prefix is required", id="no-identity-signal"),
+        pytest.param(
+            {"ACO_AGENT": " Ada "},
+            "agent must be one bounded non-empty line",
+            id="aco-agent-with-surrounding-space",
+        ),
+    ],
+)
+def test_branch_prefix_for_identity_refuses_an_identity_claim_would_refuse(
+    monkeypatch: pytest.MonkeyPatch, environ: dict[str, str], refusal: str
 ) -> None:
-    _set_agent_identity_env(monkeypatch)
+    """START-03: `start` refuses before any worktree exists whatever the
+    `claim` inside it would refuse, with the same sentence."""
+    _set_agent_identity_env(monkeypatch, environ)
 
-    with pytest.raises(ClaimError, match="branch prefix is required"):
+    with pytest.raises(ClaimError, match=refusal):
         checkout.branch_prefix_for_identity()
 
 

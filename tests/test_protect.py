@@ -218,12 +218,13 @@ def _assert_protect_decision(
     reason: str | None = None,
 ) -> None:
     captured = capsys.readouterr()
-    assert captured.err == ""
-    payload = json.loads(captured.out)
     if decision == "allow":
-        assert payload == {"decision": "allow"}
+        assert (captured.out, captured.err) == ("", "")
         return
-    assert payload == {"decision": "deny", "reason": reason}
+    assert (json.loads(captured.out), captured.err) == (
+        {"decision": "deny", "reason": reason},
+        f"{reason}\n",
+    )
 
 
 def test_protect_denied_checkout_validation_never_reads_the_store(
@@ -503,19 +504,65 @@ def test_protect_mutating_tool_without_path_denies_path_required(
     _assert_protect_decision(capsys, decision="deny", reason="path required")
 
 
+@pytest.mark.parametrize(
+    ("identity_variable", "claim_holder"),
+    [
+        pytest.param(checkout.ACO_AGENT_ENV, "sess-1", id="aco-agent"),
+        pytest.param(checkout.GROK_SESSION_ID_ENV, "Grok sess-1", id="grok-session"),
+        pytest.param(
+            checkout.CLAUDE_CODE_SESSION_ID_ENV, "Claude sess-1", id="claude-code-session"
+        ),
+    ],
+)
+def test_protect_each_session_variable_alone_identifies_the_claim_holder(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    identity_variable: str,
+    claim_holder: str,
+) -> None:
+    """PROT-08 (issue #454): the session variable Claude Code actually sets,
+    `CLAUDE_CODE_SESSION_ID`, identifies its session on its own, like the
+    other two, so a covered write from the claimed worktree allows."""
+    _isolate_protect_home(monkeypatch, tmp_path)
+    work = tmp_path / "work"
+    _set_agent_identity_env(monkeypatch, {identity_variable: "sess-1"})
+    _patch_protect_git(monkeypatch, work)
+    _patch_protect_claim(monkeypatch, agent=claim_holder)
+
+    assert (
+        _protect_main(
+            monkeypatch,
+            {"tool_name": "Write", "tool_input": {"file_path": str(work / "src/widget.py")}},
+        )
+        == 0
+    )
+    _assert_protect_decision(capsys, decision="allow")
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        pytest.param({}, id="no-variable"),
+        pytest.param({"CLAUDE_SESSION_ID": "sess-1"}, id="retired-claude-session-id-only"),
+    ],
+)
 def test_protect_missing_identity_denies_a_claimable_write_without_github(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    environ: dict[str, str],
 ) -> None:
     """PROT-08 (issue #448): identity resolves last, once the path's own
     linked worktree and its live state are in hand -- a write that reaches
     a claim check with no `ACO_AGENT`, `GROK_SESSION_ID`, or
-    `CLAUDE_SESSION_ID` denies naming all three, never GitHub -- and never
-    `--agent`, a flag the hook line does not have."""
+    `CLAUDE_CODE_SESSION_ID` denies naming all three, never GitHub -- and never
+    `--agent`, a flag the hook line does not have. The retired
+    `CLAUDE_SESSION_ID` names no identity either (issue #454, no
+    compatibility layer)."""
     _isolate_protect_home(monkeypatch, tmp_path)
     work = tmp_path / "work"
-    _set_agent_identity_env(monkeypatch)
+    _set_agent_identity_env(monkeypatch, environ)
     _forbid_github_construction(monkeypatch)
     _patch_protect_git(monkeypatch, work)
     _patch_protect_claim(monkeypatch, scope=("src",))
@@ -527,13 +574,13 @@ def test_protect_missing_identity_denies_a_claimable_write_without_github(
         )
         == 2
     )
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    payload = json.loads(captured.out)
-    assert payload["decision"] == "deny"
-    assert payload["reason"] == (
-        "agent identity is required: set ACO_AGENT (e.g. in the hook line), "
-        "GROK_SESSION_ID, or CLAUDE_SESSION_ID"
+    _assert_protect_decision(
+        capsys,
+        decision="deny",
+        reason=(
+            "agent identity is required: set ACO_AGENT, GROK_SESSION_ID, or "
+            "CLAUDE_CODE_SESSION_ID (ACO_AGENT can sit in the hook line)"
+        ),
     )
 
 
@@ -1038,9 +1085,9 @@ def test_protect_unknown_tool_name_denies_with_a_repair_sentence(
 
     assert _protect_main(monkeypatch, {"toolName": "invented_tool"}) == 2
     captured = capsys.readouterr()
-    assert captured.err == ""
     payload = json.loads(captured.out)
     assert payload["decision"] == "deny"
+    assert captured.err == f"{payload['reason']}\n"
     assert "invented_tool" in payload["reason"]
     assert "HOOK_TOOL_EFFECTS" in payload["reason"]
     assert "238" in payload["reason"]
@@ -1241,10 +1288,7 @@ def test_protect_claim_error_from_write_path_denies_json_without_error_prefix(
         )
         == 2
     )
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    assert "ERROR:" not in captured.out
-    assert json.loads(captured.out) == {"decision": "deny", "reason": "adapter failed"}
+    _assert_protect_decision(capsys, decision="deny", reason="adapter failed")
 
 
 def test_protect_non_claim_error_from_write_path_denies_json_without_traceback(
@@ -1269,13 +1313,7 @@ def test_protect_non_claim_error_from_write_path_denies_json_without_traceback(
         )
         == 2
     )
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    assert "ERROR:" not in captured.out
-    assert json.loads(captured.out) == {
-        "decision": "deny",
-        "reason": "write path crashed",
-    }
+    _assert_protect_decision(capsys, decision="deny", reason="write path crashed")
 
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
@@ -1717,6 +1755,61 @@ def test_protect_allows_a_path_outside_every_repository_without_identity(
     _assert_protect_decision(capsys, decision="allow")
 
 
+def _claude_code_write(target: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PreToolUse",
+        "session_id": "claude-session",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(target), "content": "x"},
+    }
+
+
+def _codex_apply_patch(target: Path) -> dict[str, object]:
+    return {
+        "hook_event_name": "PreToolUse",
+        "turn_id": "codex-turn",
+        "tool_name": "apply_patch",
+        "tool_input": {"command": f"*** Begin Patch\n*** Add File: {target}\n+x\n*** End Patch"},
+    }
+
+
+def _grok_write(target: Path) -> dict[str, object]:
+    return {
+        "hookEventName": "pre_tool_use",
+        "hook_event_name": "PreToolUse",
+        "sessionId": "grok-session",
+        "toolName": "write",
+        "toolInput": {"path": str(target)},
+    }
+
+
+@pytest.mark.parametrize(
+    "host_payload_for",
+    [_claude_code_write, _codex_apply_patch, _grok_write],
+    ids=["claude-code", "codex", "grok"],
+)
+def test_protect_allow_is_silent_exit_zero_for_every_host(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    host_payload_for: Callable[[Path], dict[str, object]],
+) -> None:
+    """PROT-01 (issue #454): each host's own documented allow is exit 0 with
+    nothing on stdout -- Claude Code rejects a `decision` outside
+    approve/block as a hook error notice, and an `approve` or
+    `permissionDecision: allow` would skip its permission prompt."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch)
+    outside = tmp_path / "not-a-repository"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    assert _protect_main(monkeypatch, host_payload_for(outside / "widget.py")) == 0
+    assert capsys.readouterr() == ("", "")
+
+
 def test_protect_apply_patch_judges_two_worktrees_separately_and_one_deny_wins(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2034,11 +2127,11 @@ def _file_outside_every_repository(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
 @pytest.mark.parametrize(
-    ("build_target", "decision", "exit_code"),
+    ("build_target", "exit_code"),
     [
-        (_real_main_checkout_target, "deny", 2),
-        (_hook_in_a_bare_repository, "deny", 2),
-        (_file_outside_every_repository, "allow", 0),
+        (_real_main_checkout_target, 2),
+        (_hook_in_a_bare_repository, 2),
+        (_file_outside_every_repository, 0),
     ],
     ids=[
         "inside-main-checkout-denies",
@@ -2049,10 +2142,8 @@ def _file_outside_every_repository(tmp_path: Path) -> Path:
 def test_protect_never_reads_a_git_failure_as_outside_every_repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
     payload_for: Callable[[Path], dict[str, object]],
     build_target: Callable[[Path], Path],
-    decision: str,
     exit_code: int,
 ) -> None:
     """Issue #448 review finding: with git unavailable, a path below a
@@ -2073,7 +2164,6 @@ def test_protect_never_reads_a_git_failure_as_outside_every_repository(
     monkeypatch.setattr(process, "run_git", git_missing)
 
     assert _protect_main(monkeypatch, payload_for(target)) == exit_code
-    assert json.loads(capsys.readouterr().out)["decision"] == decision
 
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])

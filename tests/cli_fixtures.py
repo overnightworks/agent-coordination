@@ -158,7 +158,7 @@ def _set_agent_identity_env(
     for name in (
         checkout.ACO_AGENT_ENV,
         checkout.GROK_SESSION_ID_ENV,
-        checkout.CLAUDE_SESSION_ID_ENV,
+        checkout.CLAUDE_CODE_SESSION_ID_ENV,
     ):
         monkeypatch.delenv(name, raising=False)
     for name, value in (environ or {}).items():
@@ -184,7 +184,7 @@ def _assert_missing_identity_message(message: str) -> None:
     assert "--agent" in message
     assert checkout.ACO_AGENT_ENV in message
     assert checkout.GROK_SESSION_ID_ENV in message
-    assert checkout.CLAUDE_SESSION_ID_ENV in message
+    assert checkout.CLAUDE_CODE_SESSION_ID_ENV in message
     assert "GROK_AGENT" not in message
 
 
