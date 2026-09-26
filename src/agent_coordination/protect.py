@@ -345,30 +345,38 @@ def _resolved_path_checkout(absolute_path: str) -> checkout.PathCheckout | None:
     outside every repository (PROT-32: not aco's to judge, issue #448) --
     resolved from the path itself (issue #314), never from the hook
     process's cwd, so the same absolute path yields the same verdict from
-    any cwd. `absolute_path`'s own parent is tried first -- it need not
-    exist yet for an Edit's new file, but its parent always does inside a
-    real checkout -- and `absolute_path` itself only as a fallback: a path
-    that names a checkout root exactly (its parent sits outside every
-    repository) is still judged by that checkout, never silently treated as
-    outside every repository (issue #380 delta, gate finding: `rm -rf
-    ../<repo>-worktrees/issue-1-x` must not bypass the gate this way);
-    PROT-14 then denies it as the checkout root itself. A directory is
-    resolved as itself first, before its parent, when it is itself a
-    checkout root: a nested checkout's own root -- one whose parent
-    directory happens to sit inside an outer repository -- would otherwise
-    have the outer checkout's parent-first lookup answer for it (PROT-36). A
-    non-directory path never names a checkout root, so it keeps the cheaper
-    parent-first order. `absolute_path` is normalized lexically first
+    any cwd. A file path -- existing or not yet written -- is resolved from
+    its nearest existing ancestor directory: an Edit's new file may sit in a
+    directory that does not exist yet either, and resolving that missing
+    directory would read as "outside every repository" and allow a write
+    into a checkout unjudged (issue #448 drive finding). A directory is
+    resolved as itself first when it is itself a checkout root -- a
+    nested checkout's own root, whose parent directory happens to sit inside
+    an outer repository, would otherwise have the outer checkout answer for
+    it (PROT-36) -- then from its parent, and from itself only as a
+    fallback: a path that names a checkout root exactly (its parent sits
+    outside every repository) is still judged by that checkout (issue #380
+    delta, gate finding: `rm -rf ../<repo>-worktrees/issue-1-x` must not
+    bypass the gate this way); PROT-14 then denies it as the checkout root
+    itself. `absolute_path` is normalized lexically first
     (`os.path.normpath`, no symlink resolution): a lexically equivalent
     payload like `nested/../nested` or `nested/.` must reach this comparison
     the same way `nested` does (issue #380 delta, gate finding)."""
     path = Path(os.path.normpath(absolute_path))
     if not path.is_dir():
-        return checkout.resolve_path_checkout(path.parent) or checkout.resolve_path_checkout(path)
+        return checkout.resolve_path_checkout(_nearest_existing_directory(path.parent))
     self_checkout = checkout.resolve_path_checkout(path)
     if self_checkout is not None and self_checkout.toplevel == path:
         return self_checkout
     return checkout.resolve_path_checkout(path.parent) or self_checkout
+
+
+def _nearest_existing_directory(directory: Path) -> Path:
+    """`directory` itself when it exists, else its closest existing ancestor
+    -- the filesystem root at the latest, which always exists."""
+    while not directory.is_dir():
+        directory = directory.parent
+    return directory
 
 
 def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None:

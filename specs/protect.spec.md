@@ -86,6 +86,7 @@ marks each read-only: `Monitor`, `ToolSearch`, `SendMessage`, `TaskStop`,
 - [ ] [PROT-12] The shared main checkout, or a linked worktree on the repository's own resolved default branch, denies `not main` (see E-PROT-03).
 - [ ] [PROT-13] A checkout whose default branch cannot be resolved at all denies `default branch unknown`, never falling back to a `main`/`master` guess.
 - [ ] [PROT-14] A payload path that resolves to exactly the checkout root denies `path required`, the same reason as no path at all.
+- [ ] [PROT-39] A path whose directories do not exist yet is judged by the checkout of its nearest existing ancestor, never allowed as outside every repository (PROT-32).
 - [ ] [PROT-38] A path under the checkout's own `.claude/` that git ignores allows in any checkout, main included, before identity or the store is read (see E-PROT-12).
 - [ ] [PROT-36] A payload path naming a nested checkout's own root is judged by that checkout, never by an outer one its parent directory sits inside, before PROT-14 denies it.
 

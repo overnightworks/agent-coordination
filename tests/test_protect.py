@@ -2232,3 +2232,37 @@ def test_protect_lets_the_main_checkout_write_only_its_ignored_session_settings(
 
     assert _protect_main(monkeypatch, payload_for(main_checkout / relative)) == status
     _assert_protect_decision(capsys, decision="deny" if reason else "allow", reason=reason)
+
+
+@pytest.mark.parametrize(
+    ("payload_for", "relative", "status", "reason"),
+    [
+        (_write_target_payload, "src/new/package/module.py", 0, None),
+        (_write_target_payload, "docs/new/page.md", 2, "claim first"),
+        (_bash_rm_target_payload, "src/new/package/module.py", 0, None),
+        (_bash_rm_target_payload, "docs/new/page.md", 2, "rm docs/new/page.md outside claim scope"),
+    ],
+    ids=["write-inside-scope", "write-outside-scope", "bash-inside-scope", "bash-outside-scope"],
+)
+def test_protect_judges_a_file_in_a_not_yet_existing_directory_by_its_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    payload_for: Callable[[Path], dict[str, object]],
+    relative: str,
+    status: int,
+    reason: str | None,
+) -> None:
+    """Issue #448 drive finding: a new file whose directories do not exist
+    yet is judged by the checkout its nearest existing ancestor belongs to,
+    never allowed as a path outside every repository (PROT-32)."""
+    branch = "codex/issue-72-claims"
+    worktree = _judge_worktree(tmp_path, branch=branch)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    claim = _protect_active_claim("Ada", scope=("src",), branch=branch)
+    monkeypatch.setattr(
+        store, "fetch_state", lambda *, worktree, remote: _protect_state_with_claim(claim)
+    )
+
+    assert _protect_main(monkeypatch, payload_for(worktree / relative)) == status
+    _assert_protect_decision(capsys, decision="deny" if reason else "allow", reason=reason)
