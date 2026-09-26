@@ -279,6 +279,24 @@ def test_protect_denied_checkout_validation_never_reads_the_store(
         {"tool_name": "grep", "tool_input": {"pattern": "secret"}},
         {"toolName": "list_dir", "toolInput": {"path": "src"}},
         {"tool_name": "spawn_subagent", "tool_input": {"prompt": "edit src"}},
+        *(
+            {"tool_name": name, "tool_input": {}}
+            for name in (
+                "Monitor",
+                "ToolSearch",
+                "SendMessage",
+                "TaskStop",
+                "TaskOutput",
+                "StructuredOutput",
+                "Skill",
+                "AskUserQuestion",
+                "ListAgents",
+                "ScheduleWakeup",
+                "SendFeedback",
+                "Workflow",
+                "Artifact",
+            )
+        ),
     ],
 )
 def test_protect_non_mutating_tools_allow_without_identity_git_or_github(

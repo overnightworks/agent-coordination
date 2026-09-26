@@ -104,6 +104,22 @@ HOOK_TOOL_EFFECTS: Mapping[str, HookToolEffect] = {
     "TodoWrite": HookToolEffect.READ,
     "Task": HookToolEffect.READ,
     "Agent": HookToolEffect.READ,
+    # Claude Code's own session tools (issue #448): each steers the session,
+    # a subagent, or a workflow, or talks to the operator, and none takes a
+    # file path to write -- failing closed on them stalled every session.
+    "Monitor": HookToolEffect.READ,
+    "ToolSearch": HookToolEffect.READ,
+    "SendMessage": HookToolEffect.READ,
+    "TaskStop": HookToolEffect.READ,
+    "TaskOutput": HookToolEffect.READ,
+    "StructuredOutput": HookToolEffect.READ,
+    "Skill": HookToolEffect.READ,
+    "AskUserQuestion": HookToolEffect.READ,
+    "ListAgents": HookToolEffect.READ,
+    "ScheduleWakeup": HookToolEffect.READ,
+    "SendFeedback": HookToolEffect.READ,
+    "Workflow": HookToolEffect.READ,
+    "Artifact": HookToolEffect.READ,
     "shell": HookToolEffect.READ,
     # Other providers' names for the same read-only or path-blind operations
     # (Grok, Codex): a snake_case terminal command is the same blind spot as

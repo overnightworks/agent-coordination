@@ -63,9 +63,16 @@ never needed an identity at all.
 
 ## The hook payload
 
+Claude Code's own session tools steer the session, a subagent, or a
+workflow, or talk to the operator; none names a file to write, so the table
+marks each read-only: `Monitor`, `ToolSearch`, `SendMessage`, `TaskStop`,
+`TaskOutput`, `StructuredOutput`, `Skill`, `AskUserQuestion`, `ListAgents`,
+`ScheduleWakeup`, `SendFeedback`, `Workflow`, and `Artifact` (issue #448).
+
 - [ ] [PROT-03] Unreadable stdin, invalid JSON, or a payload that is not a JSON object denies `invalid hook payload` (PROT-02's shape).
 - [ ] [PROT-04] A payload naming no string tool name under either `toolName` or `tool_name` denies `invalid hook payload`.
 - [ ] [PROT-05] A tool name this table marks read-only allows `{"decision": "allow"}` without reading identity, git, the store, or GitHub (see E-PROT-05).
+- [ ] [PROT-37] Each Claude Code session tool named above allows exactly like PROT-05, so a session that steers subagents, workflows, or the operator is never stalled by the hook (see E-PROT-05).
 - [ ] [PROT-06] A tool name in neither the read nor the mutating table denies `'<name>' is not in aco's hook tool table`, fix `add it there as read-only or mutating before use` (see E-PROT-06).
 
 ## The payload path and its own checkout
@@ -250,6 +257,9 @@ Setup: bare-remote, no live claim
 
 ```console
 $ echo '{"toolName": "Read", "toolInput": {"path": "src/secret.py"}}' | aco protect
+{"decision": "allow"}
+exit 0
+$ echo '{"tool_name": "StructuredOutput", "tool_input": {"pr": 1}}' | aco protect
 {"decision": "allow"}
 exit 0
 ```
