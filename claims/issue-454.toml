@@ -1,8 +1,0 @@
-claim_id = "add1d9e8b07845a389128f9630ecbf74"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "e8219fee0f0cc3785d845a14589a104e70d3e354"
-branch = "claude/issue-454-hook-speaks-claude"
-scope = ["README.md", "specs/output.spec.md", "specs/protect.spec.md", "specs/start.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/hook_input.py", "src/agent_coordination/protect.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_hook_input.py", "tests/test_protect.py"]
-opened_commit = "7f1f1dc2e9be98fa3959a438197def097fdcc177"
-whole_reason = "ein Hook, der mit Claude Code spricht: der Grund einer Verweigerung und die Identität der Session erreichen ihr Ziel"
