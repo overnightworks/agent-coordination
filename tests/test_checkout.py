@@ -1403,6 +1403,23 @@ def test_resolve_or_create_worktree_builds_once_and_resumes_on_a_second_call(
     assert resolved.branch == branch
 
 
+def test_resolve_or_create_worktree_builds_a_repository_nested_in_an_outer_working_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #448 review finding (START-01): an outer checkout's `.git` above
+    the not-yet-created worktree path -- a home directory that is itself a
+    git repository -- never turns git's "cannot change to" into a refusal."""
+    _real_git(tmp_path, "init", "-q")
+    repo = _bare_remote_repository_with_one_commit(tmp_path)
+    worktree = tmp_path / "repo-worktrees" / "issue-9-widget"
+    branch = "codex/issue-9-widget"
+    monkeypatch.chdir(repo)
+
+    checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+
+    assert _real_git(worktree, "branch", "--show-current").stdout.strip() == branch
+
+
 def test_resolve_or_create_worktree_refuses_a_dirty_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

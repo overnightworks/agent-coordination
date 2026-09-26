@@ -196,13 +196,26 @@ def path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
     not track. A dedicated call, not `path in versioned_paths()`: that
     listing's exact membership and count are a different concern
     (scope-width math over every tracked file), so a test fixing one axis
-    never has to carry the other.
+    never has to carry the other."""
+    return _git_yes_or_no(["ls-files", "--error-unmatch", "--", path], directory=directory)
 
-    Exit 1 is the one status `--error-unmatch` defines for "not tracked";
-    any other nonzero exit (e.g. 128 outside a git repository) is a real git
+
+def path_is_ignored(path: str, *, directory: Path) -> bool:
+    """Whether git's own exclude rules (`.gitignore`, `.git/info/exclude`,
+    the global excludes file) ignore `path` (repo-relative) in the checkout
+    at `directory` -- for a path that need not exist yet, and never for a
+    tracked one, which no exclude rule can ignore (issue #448: `protect`'s
+    escape for a session's own ignored `.claude/` settings)."""
+    return _git_yes_or_no(["check-ignore", "--quiet", "--", path], directory=directory)
+
+
+def _git_yes_or_no(arguments: list[str], *, directory: Path | None) -> bool:
+    """A git question answered by exit status alone: `0` yes, `1` no -- the
+    one "no" both `ls-files --error-unmatch` and `check-ignore` define. Any
+    other nonzero exit (e.g. 128 outside a git repository) is a real git
     failure, matching `versioned_paths`'s handling in this module -- it must
-    not read as an untrusted pin instead of a git error."""
-    result = _git_run(["ls-files", "--error-unmatch", "--", path], directory=directory)
+    never read as a plain "no" instead of a git error."""
+    result = _git_run(arguments, directory=directory)
     if result.exit_status == 0:
         return True
     if result.exit_status == 1:
@@ -392,11 +405,52 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
     toplevel/git-dir/common-dir comparison below meaningful: git's default,
     relative-to-`-C`-directory paths would otherwise have to be re-resolved
     against `directory` itself, not the caller's own cwd.
+
+    A git failure on an existing `directory` is "outside every repository"
+    only when no repository marker sits in it or any of its ancestors
+    either; below one, the failure is raised instead (issue #448 review
+    finding: `protect` allows a `None` path unjudged, so a missing git, or a
+    path inside a git directory itself -- a checkout's `.git/` or a bare
+    repository -- must never read as "no repository here"). A `directory`
+    that does not exist yet is never inside a repository -- `git -C` cannot
+    even enter it -- so it stays `None` whatever sits above it: `start`'s
+    own not-yet-created worktree path (START-01) may well have an outer
+    checkout's `.git` above it.
     """
     try:
         return _resolve_checkout(directory)
     except ClaimError:
+        if directory.is_dir() and _has_repository_marker_above(directory):
+            raise
         return None
+
+
+def _has_repository_marker_above(directory: Path) -> bool:
+    """Whether `directory` or any ancestor is a git directory itself (a bare
+    repository, or a checkout's own `.git/`) or holds a `.git` marker: a
+    `.git` file (a linked worktree's) or a `.git` git directory (a main
+    checkout's) -- a stray empty `.git` directory is no repository to git
+    either. Judged on the symlink-resolved path, the one git's own
+    discovery walks."""
+    resolved = directory.resolve()
+    return any(
+        _is_git_directory(candidate) or _is_repository_marker(candidate / ".git")
+        for candidate in (resolved, *resolved.parents)
+    )
+
+
+def _is_repository_marker(dot_git: Path) -> bool:
+    return dot_git.is_file() or _is_git_directory(dot_git)
+
+
+def _is_git_directory(candidate: Path) -> bool:
+    """The layout git's own discovery takes for a repository directory:
+    `HEAD` beside `objects/` and `refs/`."""
+    return (
+        (candidate / "HEAD").is_file()
+        and (candidate / "objects").is_dir()
+        and (candidate / "refs").is_dir()
+    )
 
 
 def _resolve_checkout(directory: Path) -> PathCheckout:
@@ -752,6 +806,20 @@ def fast_forward_default_branch(remote: str, branch: str, *, directory: Path | N
 def resolved_agent(explicit: str | None) -> str:
     if explicit is not None:
         return _outbound_text(explicit, "agent", maximum=128)
+    agent = session_agent()
+    if agent is None:
+        raise ClaimError(
+            "agent identity is required: pass --agent or set "
+            f"{ACO_AGENT_ENV}, {GROK_SESSION_ID_ENV}, or {CLAUDE_SESSION_ID_ENV}"
+        )
+    return agent
+
+
+def session_agent() -> str | None:
+    """This session's own agent identity from its environment, or `None`
+    when it names none -- each caller says how to supply one, since only
+    the CLI commands have an `--agent` flag (`protect`'s hook line does
+    not, issue #448)."""
     configured = os.environ.get(ACO_AGENT_ENV)
     if configured:
         return _outbound_text(configured, "agent", maximum=128)
@@ -761,10 +829,7 @@ def resolved_agent(explicit: str | None) -> str:
     claude_session = os.environ.get(CLAUDE_SESSION_ID_ENV)
     if claude_session:
         return _outbound_text(f"Claude {claude_session}", "agent", maximum=128)
-    raise ClaimError(
-        "agent identity is required: pass --agent or set "
-        f"{ACO_AGENT_ENV}, {GROK_SESSION_ID_ENV}, or {CLAUDE_SESSION_ID_ENV}"
-    )
+    return None
 
 
 # One owner for `start`'s own path/branch naming scheme (issue #322): the

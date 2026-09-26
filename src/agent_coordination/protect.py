@@ -104,6 +104,21 @@ HOOK_TOOL_EFFECTS: Mapping[str, HookToolEffect] = {
     "TodoWrite": HookToolEffect.READ,
     "Task": HookToolEffect.READ,
     "Agent": HookToolEffect.READ,
+    # Claude Code's own session tools (issue #448): each steers the session,
+    # a subagent, or a workflow, or talks to the operator, and none takes a
+    # file path to write -- failing closed on them stalled every session.
+    "ToolSearch": HookToolEffect.READ,
+    "SendMessage": HookToolEffect.READ,
+    "TaskStop": HookToolEffect.READ,
+    "TaskOutput": HookToolEffect.READ,
+    "StructuredOutput": HookToolEffect.READ,
+    "Skill": HookToolEffect.READ,
+    "AskUserQuestion": HookToolEffect.READ,
+    "ListAgents": HookToolEffect.READ,
+    "ScheduleWakeup": HookToolEffect.READ,
+    "SendFeedback": HookToolEffect.READ,
+    "Workflow": HookToolEffect.READ,
+    "Artifact": HookToolEffect.READ,
     "shell": HookToolEffect.READ,
     # Other providers' names for the same read-only or path-blind operations
     # (Grok, Codex): a snake_case terminal command is the same blind spot as
@@ -116,8 +131,10 @@ HOOK_TOOL_EFFECTS: Mapping[str, HookToolEffect] = {
     # Command-text: no path key at all -- `hook_input.hook_command_paths`
     # scans the call's own `command` for a recognized write pattern (issue
     # #380); each recognized path then runs the same judgement chain as a
-    # mutating tool's own path.
+    # mutating tool's own path. `Monitor` runs its own `command` as a shell
+    # script exactly like `Bash` does (issue #448 review finding).
     "Bash": HookToolEffect.COMMAND_TEXT,
+    "Monitor": HookToolEffect.COMMAND_TEXT,
     # Mutating: gated on a live claim whose scope overlaps the written path.
     "Edit": HookToolEffect.MUTATING,
     "MultiEdit": HookToolEffect.MUTATING,
@@ -157,6 +174,10 @@ def _hook_path(tool_input: dict[str, object], *, keys: tuple[str, ...]) -> str |
 
 
 PATH_REQUIRED = "path required"
+MISSING_HOOK_IDENTITY = (
+    f"agent identity is required: set {checkout.ACO_AGENT_ENV} (e.g. in the hook line), "
+    f"{checkout.GROK_SESSION_ID_ENV}, or {checkout.CLAUDE_SESSION_ID_ENV}"
+)
 
 
 class _HookPathSource(StrEnum):
@@ -324,113 +345,152 @@ def _protect_not_main_denial(path_checkout: checkout.PathCheckout) -> str | None
     return None
 
 
-def _protect_checkout_denial(
-    absolute_path: str, *, outside_repository_denial: str | None
-) -> tuple[checkout.PathCheckout | None, str | None]:
-    """`absolute_path`'s own resolved checkout, or an early denial reason
-    when the checkout it names cannot even be weighed against a live claim
-    -- resolved from the path itself (issue #314), never from the hook
+def _resolved_path_checkout(
+    absolute_path: str, *, writes_through_file_symlink: bool
+) -> checkout.PathCheckout | None:
+    """The checkout `absolute_path` belongs to, or `None` when it sits
+    outside every repository (PROT-32: not aco's to judge, issue #448) --
+    resolved from the path itself (issue #314), never from the hook
     process's cwd, so the same absolute path yields the same verdict from
-    any cwd. `outside_repository_denial` is the one difference between a
-    generic mutating tool's own path (PROT-10's "not in a repository" deny)
-    and a Bash-recognized one (PROT-32's allow, `None` here) -- issue #380
-    delta, gate finding: the two used to run separate copies of this gate,
-    with a Bash path's symlinks resolved before checkout discovery and a
-    payload path's resolved only after (`checkout.relative_scope_entry`), so
-    the same symlink could pick a different checkout depending on which tool
-    named it; sharing one function keeps every other gate, and now the
-    symlink handling too, identical between them. A checkout with no
-    commit yet denies (gate G3 -- its branch name could otherwise
-    coincidentally match a still-live claim's); a path in the shared main
-    checkout, or in a checkout on the repository's default branch at all
-    (gate G4 -- a linked worktree can sit on that branch after the
-    repository's default branch changes), denies "not main"; a checkout
-    whose default branch cannot even be resolved there denies outright
-    (gate G4 -- never `claim`'s own `{main, master}` guess, since a
-    repository whose default branch is `trunk` would otherwise slip through
-    unnoticed as "not the default branch"). `absolute_path`'s own parent is
-    tried first -- it need not exist yet for an Edit's new file, but its
-    parent always does inside a real checkout -- and `absolute_path` itself
-    only as a fallback: a path that names a checkout root exactly (its
-    parent sits outside every repository) is still judged by that checkout,
-    never silently treated as outside every repository (issue #380 delta,
-    gate finding: `rm -rf ../<repo>-worktrees/issue-1-x` must not bypass
-    PROT-32 this way); PROT-14 then denies it as the checkout root itself.
-    A directory is resolved as itself first, before its parent, when it is
-    itself a checkout root: a nested checkout's own root -- one whose parent
-    directory happens to sit inside an outer repository, e.g. a worktrees
-    directory the outer checkout tracks -- would otherwise have the outer
-    checkout's parent-first lookup answer for it, letting that outer
-    checkout's own scope silently stand in for the nested root's own PROT-14
-    gate (issue #380 delta, gate finding). A non-directory path (an
-    ordinary file, existing or not yet written) never names a checkout root,
-    so it keeps the cheaper parent-first order. `absolute_path` is
-    normalized lexically first (`os.path.normpath`, no symlink resolution):
-    a lexically equivalent payload like `nested/../nested` or `nested/.`
-    must reach this comparison the same way `nested` does, or a covering
-    outer claim could stand in for the nested checkout root's own PROT-14
-    gate (issue #380 delta, gate finding)."""
+    any cwd. A file path -- existing or not yet written -- is resolved from
+    its nearest existing ancestor directory: an Edit's new file may sit in a
+    directory that does not exist yet either, and resolving that missing
+    directory would read as "outside every repository" and allow a write
+    into a checkout unjudged (issue #448 drive finding). A directory is
+    resolved as itself first when it is itself a checkout root -- a
+    nested checkout's own root, whose parent directory happens to sit inside
+    an outer repository, would otherwise have the outer checkout answer for
+    it (PROT-36) -- then from its parent, and from itself only as a
+    fallback: a path that names a checkout root exactly (its parent sits
+    outside every repository) is still judged by that checkout (issue #380
+    delta, gate finding: `rm -rf ../<repo>-worktrees/issue-1-x` must not
+    bypass the gate this way); PROT-14 then denies it as the checkout root
+    itself. `absolute_path` is normalized lexically first
+    (`os.path.normpath`, no symlink resolution): a lexically equivalent
+    payload like `nested/../nested` or `nested/.` must reach this comparison
+    the same way `nested` does (issue #380 delta, gate finding).
+    `writes_through_file_symlink` is `_file_checkout`'s own."""
     path = Path(os.path.normpath(absolute_path))
-    if path.is_dir():
-        self_checkout = checkout.resolve_path_checkout(path)
-        if self_checkout is not None and self_checkout.toplevel == path:
-            path_checkout = self_checkout
-        else:
-            path_checkout = checkout.resolve_path_checkout(path.parent) or self_checkout
-    else:
-        path_checkout = checkout.resolve_path_checkout(
-            path.parent
-        ) or checkout.resolve_path_checkout(path)
-    if path_checkout is None:
-        return None, outside_repository_denial
+    if not path.is_dir():
+        return _file_checkout(path, writes_through_file_symlink=writes_through_file_symlink)
+    self_checkout = checkout.resolve_path_checkout(path)
+    if self_checkout is not None and self_checkout.toplevel == path:
+        return self_checkout
+    return checkout.resolve_path_checkout(path.parent) or self_checkout
+
+
+def _file_checkout(
+    path: Path, *, writes_through_file_symlink: bool
+) -> checkout.PathCheckout | None:
+    """The checkout a file path belongs to: its own directory's first, and
+    -- only when that sits outside every repository and the operation
+    `writes_through_file_symlink` -- its symlink-resolved target's. A write
+    through a file symlink outside every repository still lands in whichever
+    checkout its target lies in, so it is judged by that checkout rather
+    than allowed as outside (issue #448 review finding: a
+    `~/.claude/CLAUDE.md` link into a main checkout); an operation on the
+    link itself -- `rm` or `mv` of it -- never touches the target, so it
+    stays outside (issue #448 review finding). The link's own directory
+    wins whenever it is in a checkout, so no link can move a write out of
+    the gate that directory already imposes."""
+    own_checkout = checkout.resolve_path_checkout(_nearest_existing_directory(path.parent))
+    if own_checkout is not None or not writes_through_file_symlink:
+        return own_checkout
+    target = Path(os.path.realpath(path))
+    if target == path:
+        return None
+    return checkout.resolve_path_checkout(_nearest_existing_directory(target.parent))
+
+
+def _nearest_existing_directory(directory: Path) -> Path:
+    """`directory` itself when it exists, else its closest existing ancestor
+    -- the filesystem root at the latest, which always exists."""
+    while not directory.is_dir():
+        directory = directory.parent
+    return directory
+
+
+def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None:
+    """The denial a resolved checkout earns before any live claim is weighed:
+    a checkout with no commit yet (gate G3 -- its branch name could
+    otherwise coincidentally match a still-live claim's), or the "not main"
+    family `_protect_not_main_denial` owns (gate G4)."""
     if not path_checkout.has_commit:
-        return None, checkout.NO_COMMIT_CHECKOUT_REASON
-    not_main_denial = _protect_not_main_denial(path_checkout)
-    if not_main_denial is not None:
-        return None, not_main_denial
-    return path_checkout, None
+        return checkout.NO_COMMIT_CHECKOUT_REASON
+    return _protect_not_main_denial(path_checkout)
+
+
+_SESSION_SETTINGS_DIRECTORY = ".claude/"
+
+
+def _is_ignored_session_setting(relative: str, path_checkout: checkout.PathCheckout) -> bool:
+    """Whether `relative` is a file under the checkout's own `.claude/` that
+    git ignores -- the session's own settings, `.claude/settings.local.json`
+    with the hook itself among them (PROT-38, issue #448). Such a file never
+    reaches a commit, so no claim can answer for it, and denying it made a
+    misconfigured hook impossible to switch off without the operator. A
+    tracked `.claude/` file is shared configuration and stays gated like any
+    other path; Claude Code's own permission prompt for settings edits is
+    untouched by this allow."""
+    return relative.startswith(_SESSION_SETTINGS_DIRECTORY) and checkout.path_is_ignored(
+        relative, directory=path_checkout.toplevel
+    )
 
 
 _ProtectMissDenialBuilder = Callable[[protocol.ClaimState, checkout.PathCheckout, str, str], str]
 
 
+def _hook_session_agent() -> str:
+    """This session's own agent, or `MISSING_HOOK_IDENTITY` raised for
+    `cli`'s deny frame (PROT-08): the hook line has no `--agent` flag, so
+    the sentence names only the ways a hook can be given one."""
+    agent = checkout.session_agent()
+    if agent is None:
+        raise protocol.ClaimError(MISSING_HOOK_IDENTITY)
+    return agent
+
+
 def _protect_checkout_scope_denial(
     raw_path: str,
     *,
-    outside_repository_denial: str | None,
+    writes_through_file_symlink: bool,
     context: _ProtectContext,
-    resolve_agent: Callable[[], str],
     miss_denial: _ProtectMissDenialBuilder,
 ) -> str | None:
-    """The Checkout/Default-Branch/Claim-Scope chain a payload path's own
-    write (`_protect_path_denial`) and a Bash-recognized path
-    (`_protect_bash_path_denial`) both run once `raw_path` is already known
-    absolute -- checkout, relative scope entry, live state, agent identity,
-    then overlap -- parameterised only by `raw_path` and each caller's own
-    denial sentence (issue #380 delta, gate finding: the two used to run two
-    separately written copies of this same four-step orchestration instead
-    of one shared chain).
+    """The one Outside-Repository/Checkout/Default-Branch/Claim-Scope chain
+    every already-absolute write path runs -- a payload path's own
+    (`_protect_path_denial`) and a Bash-recognized one
+    (`_protect_bash_path_denial`) alike -- parameterised only by `raw_path`
+    and each caller's own scope-miss sentence (issue #380 delta, gate
+    finding: the two used to run two separately written copies of it).
 
-    `resolve_agent` is called only once a live state is already in hand:
-    `_protect_path_denial`'s own caller already resolved it eagerly and
-    hands back that value here for free (PROT-08: an unresolvable identity
-    must deny before any per-path checkout gate runs, so it cannot wait this
-    long); `_protect_bash_path_denial` resolves it only here instead
-    (PROT-31: a pattern that never gets this far never needed an identity at
-    all). `miss_denial` builds each caller's own scope-miss sentence from
-    the state, checkout, agent, and relative scope entry now in hand."""
-    path_checkout, denial = _protect_checkout_denial(
-        raw_path, outside_repository_denial=outside_repository_denial
+    A path outside every repository allows before anything else is read
+    (PROT-32, issue #448): the session's memory, scratchpad, and `/tmp` are
+    not aco's to judge; so does an ignored session setting under `.claude/`
+    (PROT-38), in any checkout, the main one included. Agent identity
+    resolves last, only once a checkout, a relative scope entry, and a live
+    state are in hand (PROT-08, issue #448): a write that never gets that
+    far never needed an identity, so a session without one is gated only
+    where a claim could answer for it.
+    `miss_denial` builds each caller's own scope-miss sentence from the
+    state, checkout, agent, and relative scope entry now in hand."""
+    path_checkout = _resolved_path_checkout(
+        raw_path, writes_through_file_symlink=writes_through_file_symlink
     )
     if path_checkout is None:
-        return denial
+        return None
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
+    if relative is not None and _is_ignored_session_setting(relative, path_checkout):
+        return None
+    denial = _protect_checkout_denial(path_checkout)
+    if denial is not None:
+        return denial
     if relative is None:
         return PATH_REQUIRED
     state, denial = _protect_cached_claim_state_or_denial(path_checkout, context=context)
     if state is None:
         return denial
-    agent = resolve_agent()
+    agent = _hook_session_agent()
     return _protect_scope_denial(
         state,
         agent=agent,
@@ -441,7 +501,7 @@ def _protect_checkout_scope_denial(
 
 
 def _protect_path_denial(
-    agent: str, raw_path: str, *, distinguish_scope: bool, context: _ProtectContext
+    raw_path: str, *, distinguish_scope: bool, context: _ProtectContext
 ) -> str | None:
     """The deny reason for one payload path's write, or `None` to allow.
 
@@ -468,11 +528,7 @@ def _protect_path_denial(
         )
 
     return _protect_checkout_scope_denial(
-        raw_path,
-        outside_repository_denial=checkout.NOT_IN_A_REPOSITORY_REASON,
-        context=context,
-        resolve_agent=lambda: agent,
-        miss_denial=miss_denial,
+        raw_path, writes_through_file_symlink=True, context=context, miss_denial=miss_denial
     )
 
 
@@ -516,13 +572,12 @@ def _protect_write(
     raw_paths = _protect_hook_paths(tool_name, payload)
     if not raw_paths:
         return Verdict.deny(PATH_REQUIRED)
-    agent = checkout.resolved_agent(None)
     distinguish_scope = tool_name == APPLY_PATCH_TOOL_NAME
     return _protect_first_denial(
         raw_paths,
         canonical_remote_for=canonical_remote_for,
         denial_for=lambda raw_path, context: _protect_path_denial(
-            agent, raw_path, distinguish_scope=distinguish_scope, context=context
+            raw_path, distinguish_scope=distinguish_scope, context=context
         ),
     )
 
@@ -530,6 +585,12 @@ def _protect_write(
 def _protect_bash_cwd(payload: dict[str, object]) -> str | None:
     cwd = _hook_field(payload, "cwd")
     return cwd if isinstance(cwd, str) and cwd else None
+
+
+# `rm` removes a symlink and `mv` renames one -- as a source or as the file
+# destination it replaces -- without ever opening its target; every other
+# recognized pattern may write through it.
+_LINK_ITSELF_PATTERNS = frozenset({hook_input.PATTERN_REMOVE, hook_input.PATTERN_MOVE})
 
 
 def _protect_bash_path_denial(
@@ -542,21 +603,16 @@ def _protect_bash_path_denial(
     ever resolving identity, a checkout, or the store (PROT-31) -- the same
     "no identity, no repository lookup at all" order a command naming no
     recognized pattern gets. Every remaining, absolute path runs
-    `_protect_checkout_scope_denial`'s own shared chain, except: a path
-    outside every repository allows instead of PROT-10's deny (PROT-32);
-    agent identity resolves last, only once a live claim state is actually
-    in hand, rather than before any path even runs (review finding:
-    resolving it eagerly made an unresolvable identity deny a path PROT-31
-    should have allowed); and a scope miss denies naming both the
-    recognized pattern and the path (PROT-33) rather than a bare `claim
-    first`, since a command's own several paths need telling apart."""
+    `_protect_checkout_scope_denial`'s own shared chain, whose scope miss
+    here denies naming both the recognized pattern and the path (PROT-33)
+    rather than a bare `claim first`, since a command's own several paths
+    need telling apart."""
     if not Path(raw_path).is_absolute():
         return None
     return _protect_checkout_scope_denial(
         raw_path,
-        outside_repository_denial=None,
+        writes_through_file_symlink=pattern not in _LINK_ITSELF_PATTERNS,
         context=context,
-        resolve_agent=lambda: checkout.resolved_agent(None),
         miss_denial=lambda _state, _path_checkout, _agent, relative: (
             f"{pattern} {relative} outside claim scope"
         ),
@@ -566,7 +622,7 @@ def _protect_bash_path_denial(
 def _protect_bash(
     payload: dict[str, object], *, canonical_remote_for: _CanonicalRemoteFor
 ) -> Verdict:
-    """`Bash`'s own command-text judgment (issue #380): every
+    """`Bash`'s (and `Monitor`'s) own command-text judgment (issue #380): every
     `(pattern, path)` pair `hook_input.hook_command_paths` recognizes in
     the call's own `command` runs `_protect_bash_path_denial`'s chain via
     `_protect_first_denial`, the first denial winning. A missing or
