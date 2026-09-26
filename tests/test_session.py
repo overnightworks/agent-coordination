@@ -215,11 +215,12 @@ def test_a_command_that_needs_no_repository_reads_no_context(
 
 
 def test_protect_judges_its_payload_without_ever_building_a_run_context(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Issue #457 proof 2: `protect` is dispatched before the run's context
     exists and judges from its own payload's path -- here a real one
-    outside every repository, which it allows unjudged."""
+    outside every repository, which it allows unjudged. What an allow
+    prints is the hook protocol's (PROT-01), not this proof's."""
 
     def unused(*_args: object, **_kwargs: object) -> None:
         pytest.fail("protect must never build a run context")
@@ -228,7 +229,4 @@ def test_protect_judges_its_payload_without_ever_building_a_run_context(
     payload = {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "notes.txt")}}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
 
-    assert (_exit_code(["protect"]), json.loads(capsys.readouterr().out)) == (
-        0,
-        {"decision": "allow"},
-    )
+    assert _exit_code(["protect"]) == 0
