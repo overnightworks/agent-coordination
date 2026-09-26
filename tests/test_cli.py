@@ -8713,6 +8713,33 @@ def _claim_argv(*flags: str) -> list[str]:
     ]
 
 
+def test_claim_with_an_untracked_scope_entry_outside_a_working_tree_keeps_the_checkout_refusal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #472's trap: the width gate asks the run's toplevel for an
+    entry that is no git tree before the claim's own toplevel refusal runs;
+    that failed read must leave the refusal exactly as the claim reports it
+    without the gate."""
+    scope_directories = checkout._scope_directories
+    _arranged_claim_client(monkeypatch)
+    monkeypatch.setattr(checkout, "_scope_directories", scope_directories)
+    git_values = _git_checkout()
+
+    def outside_a_working_tree(arguments: list[str], **_kwargs: object) -> str:
+        if arguments[0] in {"cat-file", "rev-parse"}:
+            raise ClaimError("fatal: this operation must be run in a work tree")
+        return git_values[tuple(arguments)]
+
+    monkeypatch.setattr(checkout, "_git_output", outside_a_working_tree)
+
+    assert issue_claim.main(_claim_argv("--scope", "scratch")) == 2
+    assert capsys.readouterr().err == (
+        "ERROR: this command reads the repository's body contract from "
+        ".agent-claim/board.toml and needs a checkout (a shallow one is "
+        "enough): fatal: this operation must be run in a work tree\n"
+    )
+
+
 @pytest.mark.parametrize(
     (
         "item_scope",
@@ -17479,6 +17506,17 @@ def _claim_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> _Counted
     return _read_once(_claim_argv("--scope", "README.md"), toplevel=Path("/repo"))
 
 
+def _claim_untracked_scope_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    """Issue #472 proof 1: a scope entry that is no git tree sends the width
+    gate to the run's own held toplevel, never to a second git read."""
+    repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    worktree = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", "-b", "codex/issue-314-lane", str(worktree))
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    return _read_once(["claim", "314", "--scope", "src/x.py"], toplevel=worktree)
+
+
 def _rescope_command(monkeypatch: pytest.MonkeyPatch, _tmp_path: Path) -> _CountedRun:
     """`rescope` reads the checkout its own `--add` path resolves to, never
     the process's cwd; `_git_checkout` places that checkout at `/repo`, and
@@ -17512,33 +17550,28 @@ def _release_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Counte
 
 
 def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """All three toplevel reads are of `repo`, the process's cwd: two through
-    the context (`None`), one by explicit path. Proof 6: `land`'s
-    fast-forward writes the landed trunk into this very checkout, so its
-    release reads the toplevel and configuration once more, afterwards -- as
-    it did before #457. Proof 3's named exception (b) (head ruling
-    26.09.2026): its worktree cleanup then resolves the main checkout through
-    `checkout.worktree_on_branch` -> `_resolve_checkout`, outside the run's
-    context, because that read's failure feeds the reported "git failure: ..."
-    kept reason; #418 slice B owns it."""
+    """Both toplevel reads are of `repo`, the process's cwd, through the
+    context. Proof 6: `land`'s fast-forward writes the landed trunk into
+    this very checkout, so its release reads the toplevel and configuration
+    once more, afterwards -- as it did before #457. Its worktree cleanup
+    judges the main checkout from that held toplevel, never resolving it
+    again (issue #472 proof 2)."""
     repo, _client = _land_scenario(monkeypatch, tmp_path)
     return _CountedRun(
         ["--repo", REPOSITORY, "land", "12"],
-        toplevel_reads={None: 2, repo: 1},
+        toplevel_reads={None: 2},
         config_reads={repo: 2},
     )
 
 
 def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """Proof 3's named exception (a) (head ruling 26.09.2026): the
-    created worktree's second toplevel read is `checkout._scope_directories`'
-    own, for a scope entry that is no git tree (the width gate, #326);
-    checkout reads it outside the run's context, and #418 slice B owns it."""
+    """The created worktree's scope entry is no git tree, so the width gate
+    (#326) asks the worktree context's held toplevel (issue #472)."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-fresh-slug-title"
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
-        toplevel_reads={None: 1, worktree: 2},
+        toplevel_reads={None: 1, worktree: 1},
         config_reads={repo: 1, worktree: 1},
     )
 
@@ -17551,6 +17584,7 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
         pytest.param(_state_ref_next_command, id="state-ref-read-next"),
         pytest.param(_rule_command, id="one-write-rule"),
         pytest.param(_claim_command, id="claim"),
+        pytest.param(_claim_untracked_scope_command, id="claim-untracked-scope-entry"),
         pytest.param(_rescope_command, id="rescope"),
         pytest.param(_release_command, id="release"),
         pytest.param(_cut_command, id="two-write-cut"),
@@ -17567,10 +17601,7 @@ def test_a_command_reads_its_toplevel_and_board_config_once_per_directory(
     command asks and held after that -- one toplevel and one board
     configuration read per directory the command works in, however many of
     its steps ask again, unless the command itself wrote that directory's
-    checkout in between (proof 6, `land`). The two named exceptions, both
-    #418 slice B, are pinned in their own rows and nowhere else: (a) the
-    second read of `start`'s worktree by `checkout._scope_directories`, and
-    (b) the read of the main checkout by `land`'s worktree cleanup."""
+    checkout in between (proof 6, `land`). No exception (issue #472)."""
     run = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
 

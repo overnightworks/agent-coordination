@@ -72,35 +72,40 @@ def test_remote_url_reads_the_git_config_of_the_given_directory(
     assert read_remote(**where) == remote_urls[remote]
 
 
-def test_scope_directories_detects_a_git_tree(monkeypatch: pytest.MonkeyPatch) -> None:
-    def git(arguments: list[str], **_kwargs: object) -> str:
-        if arguments == ["cat-file", "-t", "HEAD:docs"]:
-            return "tree"
-        if arguments == ["cat-file", "-t", "HEAD:README.md"]:
-            return "blob"
-        raise ClaimError("not a git object")
-
-    monkeypatch.setattr(checkout, "_git_output", git)
-
-    assert checkout._scope_directories(("docs", "README.md")) == ("docs",)
-
-
-def test_scope_directories_detects_an_untracked_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("toplevel_readable", "expected"),
+    [(True, ("scratch", "docs")), (False, ("docs",))],
+    ids=["held-toplevel", "failed-toplevel-read"],
+)
+def test_scope_directories_finds_git_trees_and_untracked_directories_under_the_held_toplevel(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    toplevel_readable: bool,
+    expected: tuple[str, ...],
 ) -> None:
+    """Issue #472: an entry that is no git tree is looked up under the
+    caller's own held toplevel, never a second `rev-parse`; a failed read of
+    it counts no untracked directory, and a later git tree still counts."""
     (tmp_path / "scratch").mkdir()
     (tmp_path / "file.py").write_text("x\n")
 
     def git(arguments: list[str], **_kwargs: object) -> str:
-        if arguments[:2] == ["cat-file", "-t"]:
-            raise ClaimError("not in HEAD")
-        if arguments == ["rev-parse", "--show-toplevel"]:
-            return str(tmp_path)
-        raise ClaimError("unexpected git")
+        if arguments == ["cat-file", "-t", "HEAD:docs"]:
+            return "tree"
+        raise ClaimError("not in HEAD")
+
+    def toplevel() -> Path:
+        if toplevel_readable:
+            return tmp_path
+        raise ClaimError("fatal: not a git repository")
 
     monkeypatch.setattr(checkout, "_git_output", git)
 
-    assert checkout._scope_directories(("scratch", "file.py")) == ("scratch",)
+    directories = checkout._scope_directories(
+        ("scratch", "file.py", "docs"), directory=None, toplevel=toplevel
+    )
+
+    assert directories == expected
 
 
 def test_paths_under_scope_matches_prefix_or_exact_entry() -> None:
