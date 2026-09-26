@@ -2986,10 +2986,11 @@ def _canonical_remote_name(toplevel: Path) -> str:
 class _StoreItemWriter:
     """`state_board.ItemWriter`, implemented over `store` (issue #283): the
     one place this tool hashes an item's finished bytes into a blob and
-    writes it through one `ItemWriteIntent` CAS transition (issue #279).
+    writes it through one CAS transition -- an `ItemWriteIntent` (issue
+    #279), or for a close an `ItemCloseIntent` (issue #459).
     `state_board.py` itself may not import `store` (Layers contract), so
-    every actual git call a state-ref item write makes funnels through this
-    one method.
+    every actual git call a state-ref item write makes funnels through
+    this class's `_commit`.
     """
 
     worktree: Path

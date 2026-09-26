@@ -12,8 +12,9 @@ already-fetched data. Every write (`create_item`, `create_child`,
 port: one
 compare-and-swap write to `items/<id>.md`, implemented in `cli.py` over
 `store` (hash-object once, then one `commit_transition` with an
-`ItemWriteIntent`, issue #279) -- so this module still never imports
-`store` itself.
+`ItemWriteIntent`, issue #279; `close_item` through the port's own
+`close_item` and an `ItemCloseIntent`, issue #459) -- so this module still
+never imports `store` itself.
 
 `LANDING` and the two pull-request listings answer `Capability.UNSUPPORTED`:
 this adapter has no data for any of them. The two pull-request listings
@@ -80,9 +81,10 @@ class ItemWriter(Protocol):
     freshly written blob's oid, so the caller can update its own in-memory
     state without a re-fetch. Implemented in `cli.py`, over `store`
     (hash-object once, then one `commit_transition` with an
-    `ItemWriteIntent`, issue #279): this module may not import `store`
-    itself (Layers contract), so every actual git call for an item write
-    stays behind this one method.
+    `ItemWriteIntent`, issue #279, or for a close an `ItemCloseIntent`,
+    issue #459): this module may not import `store` itself (Layers
+    contract), so every actual git call for an item write stays behind
+    this port's two methods.
     """
 
     def write_item(
