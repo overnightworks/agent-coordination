@@ -1,8 +1,0 @@
-claim_id = "6d1c412ec4ba473981572c10b43c24a9"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "cb884df543fdbb7a43f2c878da81f78f895d2563"
-branch = "claude/issue-468-touched-merge-base"
-scope = ["scripts/test_budget_ratchet.txt", "specs/brief.spec.md", "src/agent_coordination/brief.py", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "tests/cli_fixtures.py", "tests/test_brief.py", "tests/test_checkout.py", "tests/test_cli.py"]
-opened_commit = "270d16abea7a54c6efc854c7955684cf492f578c"
-whole_reason = "TOUCHED zählt nur die eigene Änderung der Lane, damit die Scope-Regel aus #463 nach einem Trunk-Pull nicht falsch anschlägt"
