@@ -6534,27 +6534,32 @@ class _ServedBoardCache:
     -- marks `built` stale, so the next `GET` rebuilds it; an explicit
     `?reload=1` rebuilds on that very `GET`. `lock` serializes a rebuild
     against a concurrent request: `ThreadingHTTPServer` runs each one on its
-    own thread. Every rebuild reads through a fresh context (issues #447,
-    #457): a state-ref forge is a snapshot of the store at resolution, so one
-    held for the server's lifetime would never show a later write."""
+    own thread. A rebuild reads through the asking request's own context
+    (issues #447, #457), never one held by the cache: a state-ref forge is a
+    snapshot of the store at resolution, so one held for the server's
+    lifetime would never show a later write."""
 
-    context: RunContext
     built: tuple[board_html.BoardPage, datetime] | None = None
     stale: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def held(self, *, reload: bool) -> tuple[board_html.BoardPage, datetime, str | None]:
+    def held(
+        self, context: RunContext, *, reload: bool
+    ) -> tuple[board_html.BoardPage, datetime, str | None]:
         """The held page, when it was built, and PIN-29's refusal when the
-        rebuild it needed met one (issue #447): rebuilt first when nothing is
-        held yet, it is stale, or `reload` asks. A refused rebuild keeps the
-        last page built, so the served page names the malformed item beside
-        that page's age instead of failing the request; only a first build
-        has no page to keep, and raises."""
+        rebuild it needed met one (issue #447): rebuilt through `context`
+        first when nothing is held yet, it is stale, or `reload` asks -- a
+        request the held page answers never reads `context` at all. A
+        refused rebuild keeps the last page built, so the served page names
+        the malformed item beside that page's age instead of failing the
+        request; only a first build has no page to keep, and raises."""
         with self.lock:
             if self.built is None or self.stale or reload:
-                fresh = _ReadSession(forge=_LazyForge(self.context.fresh()))
                 try:
-                    self.built = (_board_page(fresh), datetime.now(UTC))
+                    self.built = (
+                        _board_page(_ReadSession(forge=_LazyForge(context))),
+                        datetime.now(UTC),
+                    )
                 except protocol.MalformedStateTreeError as refusal:
                     if self.built is None:
                         raise
@@ -6575,6 +6580,8 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
     transport only, so this function is still the one place that resolves
     the forge, the persistent token (issue #388: `workspace.board_token`,
     `--new-token` mints a fresh one), renders a page, and rules a line.
+    Every HTTP request reads through its own fresh child of the run's
+    context (issue #457), never one memoised across requests.
     `resolve_token` is only called by `start` itself once the socket is
     already bound, so `render_page`'s own closure reads the resolved value
     back out of `token_holder` -- never a token read before the busy-port
@@ -6583,7 +6590,7 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
     it without blocking."""
     client = session.forge.writer()
     token_holder: list[str] = []
-    cache = _ServedBoardCache(session.context)
+    cache = _ServedBoardCache()
 
     def resolve_token() -> str:
         token = workspace.board_token(
@@ -6593,7 +6600,7 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
         return token
 
     def render_page(refused: str | None, reload: bool) -> str:
-        page, built_at, store_refusal = cache.held(reload=reload)
+        page, built_at, store_refusal = cache.held(session.context.fresh(), reload=reload)
         notices = dict.fromkeys(
             sentence for sentence in (refused, store_refusal) if sentence is not None
         )
@@ -6630,7 +6637,8 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
     # Building the first page before `start` makes a store PIN-29 refuses
     # (issue #447) stop the server before any token write or ruling click;
     # the first `GET` then serves this very page instead of building again.
-    cache.held(reload=False)
+    # No request exists yet, so it reads through the run's own context.
+    cache.held(session.context, reload=False)
     return board_serve.start(
         port=parsed.port, resolve_token=resolve_token, render_page=render_page, rule_item=post_rule
     )

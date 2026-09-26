@@ -257,6 +257,14 @@ class ContextReads:
     toplevels: Counter[Path | None] = field(default_factory=Counter)
     configs: Counter[Path | None] = field(default_factory=Counter)
 
+    def drain(self) -> tuple[dict[Path | None, int], dict[Path | None, int]]:
+        """The reads counted since the last drain, forgotten after: one step
+        of a longer sequence (`board --serve`'s requests) counted alone."""
+        taken = dict(self.toplevels), dict(self.configs)
+        self.toplevels.clear()
+        self.configs.clear()
+        return taken
+
 
 def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
     """Counts `rev-parse --show-toplevel` and the `board.toml` tracked check

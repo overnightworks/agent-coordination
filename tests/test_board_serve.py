@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from board_fixtures import REPOSITORY, board_issue, complete_contract, proposed_expectation
-from cli_fixtures import run_context_over, stub_board_config_tracked
+from cli_fixtures import count_context_reads, run_context_over, stub_board_config_tracked
 from test_cli import (
     FakeForge,
     _assert_json_refusal_object,
@@ -413,6 +413,48 @@ def test_the_reload_link_redirects_so_a_later_plain_refresh_does_not_rebuild(
     assert plain_response.status == 200
     assert "Plain item" in plain_body
     assert "Renamed item" not in plain_body
+
+
+def _served_request(served: ServedBoard, request: str) -> None:
+    token = served.server.token
+    if request == "post":
+        served.post_rule(
+            {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes", "note": ""}
+        )
+    else:
+        served.get(token=token, reload=request == "reload")
+
+
+@pytest.mark.parametrize(
+    ("requests", "rereads"),
+    [
+        pytest.param(("reload", "reload"), (True, True), id="two-reloading-gets"),
+        pytest.param(("get", "post", "get"), (False, True, True), id="get-post-get"),
+    ],
+)
+def test_every_request_reads_the_repository_through_its_own_fresh_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    requests: tuple[str, ...],
+    rereads: tuple[bool, ...],
+) -> None:
+    """Issue #457 proof 5: startup reads the checkout once; after that each
+    request that needs the repository -- a rebuild or a ruling click --
+    reads it afresh through its own child context, exactly once, and a
+    request the held page answers reads nothing. A context memoised across
+    requests would leave the second of two reloads reading nothing."""
+    client = _served_board_environment(monkeypatch, tmp_path)
+    reads = count_context_reads(monkeypatch)
+    once = ({None: 1}, {tmp_path: 1})
+    nothing: tuple[dict[Path | None, int], dict[Path | None, int]] = ({}, {})
+
+    with _serving(client) as served:
+        counted = [reads.drain()]
+        for request in requests:
+            _served_request(served, request)
+            counted.append(reads.drain())
+
+    assert counted == [once, *(once if reread else nothing for reread in rereads)]
 
 
 def _arrange_sized_items(
