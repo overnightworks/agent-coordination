@@ -15765,6 +15765,12 @@ def test_cli_brief_json_prints_one_object_with_body_claim_tip_and_touched(
     assert json.loads(output) == expected
 
 
+_NO_TRUNK_SENTENCE = (
+    "cannot determine the trunk: none of origin/HEAD, origin/main, origin/master,"
+    " main or master resolves"
+)
+
+
 def _land_on_trunk_and_pull_into_lane(repository: Path, path: str) -> None:
     """Another lane lands `path` on `main`; the lane then merges trunk in."""
     _real_git(repository, "checkout", "-q", "main")
@@ -15810,6 +15816,44 @@ def test_cli_brief_touched_lists_only_the_lane_own_change_after_a_trunk_pull(
 
     assert status == 0
     assert read_touched(capsys.readouterr().out) == ["README.md"]
+
+
+@pytest.mark.parametrize(
+    ("output_flags", "expected_stdout"),
+    [
+        ((), ""),
+        (
+            ("--json",),
+            json.dumps({"ok": False, "reason": "unavailable", "message": _NO_TRUNK_SENTENCE})
+            + "\n",
+        ),
+    ],
+)
+def test_cli_brief_refuses_naming_the_trunk_when_no_trunk_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    output_flags: tuple[str, ...],
+    expected_stdout: str,
+) -> None:
+    """Issue #468 BRIEF-20: with no remote and no local `main` or `master`,
+    TOUCHED has no trunk to diff from, so `brief` refuses by naming every
+    trunk candidate it tried."""
+    repository, base, _tip = _scratch_lane_repository(tmp_path)
+    _real_git(repository, "branch", "-m", "main", "trunk")
+    client = FakeForge()
+    client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "No trunk.")
+    monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
+    claim = _brief_claim(base)
+    _patch_store_write(monkeypatch, claim, ages={claim.claim_id: datetime(2026, 8, 20, tzinfo=UTC)})
+    monkeypatch.chdir(repository)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "brief", "258", *output_flags])
+
+    captured = capsys.readouterr()
+    assert status == 2
+    assert captured.err == f"ERROR: {_NO_TRUNK_SENTENCE}\n"
+    assert captured.out == expected_stdout
 
 
 _DEFAULT_BRIEF_TOML = '[build]\nrules = ["Stay in scope."]\nchecks = ["ruff check ."]\n'

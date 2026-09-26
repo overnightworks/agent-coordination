@@ -644,10 +644,10 @@ def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> 
 def _trunk_ref(remote: str, *, directory: Path | None = None) -> str:
     """`remote`'s trunk ref, read from `directory` via `-C` when given or
     the calling process's own cwd otherwise: its recorded `HEAD` symbolic
-    ref, or the historical `{main, master}` guess when `remote` never
-    recorded one (issue #304, generalizing `_origin_head_ref`'s
-    `origin`-only read to the caller's own canonical remote --
-    `default_branch_name`/`is_default_branch` keep reading `origin`
+    ref, or the historical `{main, master}` guess -- `remote`'s own, then
+    the local branch -- when `remote` never recorded one (issue #304,
+    generalizing `_origin_head_ref`'s `origin`-only read to the caller's
+    own canonical remote -- `default_branch_name`/`is_default_branch` keep reading `origin`
     specifically, since GitHub-repository discovery is a separate axis from
     a repository's configured canonical remote)."""
     try:
@@ -669,7 +669,10 @@ def _trunk_ref(remote: str, *, directory: Path | None = None) -> str:
             return candidate
         except ClaimError:
             continue
-    raise ClaimError("cannot determine the main branch for ruling age")
+    raise ClaimError(
+        f"cannot determine the trunk: none of {remote}/HEAD, {remote}/main, "
+        f"{remote}/master, main or master resolves"
+    )
 
 
 def _git_hex_placeholder(character: str) -> str:

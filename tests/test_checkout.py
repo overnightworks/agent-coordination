@@ -925,7 +925,7 @@ def test_trunk_ref_fails_loud_when_no_candidate_branch_resolves(
         raise ClaimError("fatal: not a git repository")
 
     monkeypatch.setattr(checkout, "_git_output", git_output)
-    with pytest.raises(ClaimError, match="cannot determine the main branch for ruling age"):
+    with pytest.raises(ClaimError, match="cannot determine the trunk: none of "):
         _LIVE_TRUNK_LANDINGS("hub", 20)
 
 
