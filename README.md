@@ -196,8 +196,9 @@ process, cwd included (issue #314). `protect` judges a write from the
 payload's own path, never from that shared process cwd, and fails closed on
 any tool name it does not recognize. A write outside every repository (the
 session's memory, scratchpad, `/tmp`) and a git-ignored file under a
-checkout's `.claude/` always allow; every other write inside a repository
-needs a live claim covering it from a linked worktree. The full judgement
+checkout's `.claude/` allow -- unless the write goes through a file symlink
+into a checkout, which that checkout then judges; every other write inside
+a repository needs a live claim covering it from a linked worktree. The full judgement
 order, every denial reason, and the JSON verdict shape are
 `specs/protect.spec.md`'s own.
 
