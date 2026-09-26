@@ -16,8 +16,8 @@ claim's own `--json` field order (CLAIM-69); `specs/body-block.spec.md`
 owns a malformed body's own defect sentence (BODY-50) and an incomplete
 projection's own skip (BODY-51); `aco claim` reuses either sentence
 verbatim before any write (BODY-52). This file cites those IDs rather than
-restating them. `<n>` is a claimed issue number, a printed `#<n>` its
-`storage = "github"` form and the item id under `storage = "state-ref"`
+restating them. `<n>` is a claimed issue number, a printed `#<n>` (or
+CLM-14's `#<parent>`) its `storage = "github"` form and the item id under `storage = "state-ref"`
 (PIN-30), `<path>` a repository-relative path, `<reason>` a free-text
 sentence.
 

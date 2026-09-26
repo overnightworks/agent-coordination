@@ -3707,6 +3707,11 @@ class TestCliStateRefForge:
                 "{item} body incomplete: ",
                 id="claim",
             ),
+            pytest.param(
+                ["claim", "{item}", "--agent", "Codex Sol", "--scope", "README"],
+                f"looks like slice 2 of {CONTAINER_ID} but is no sub-issue of {CONTAINER_ID};",
+                id="claim-slice-title",
+            ),
             pytest.param(["check", "{item}"], "ISSUE {item} body incomplete: ", id="check"),
             pytest.param(["next"], "{item}: body incomplete: ", id="next"),
             pytest.param(["next", "--json"], '"command": "aco claim {seeded} ', id="next-json"),
@@ -3730,10 +3735,13 @@ class TestCliStateRefForge:
         """Issue #467 proof 1: under `storage = state-ref` a command names a
         fresh (still incomplete) item, or the seeded actionable `CHILD_A`,
         as `aco-xxxxxx` -- the form it takes back -- never as `#<n>` or a
-        quoted string of the id's own decimal value."""
+        quoted string of the id's own decimal value. The fresh item's title
+        is slice-shaped, naming `CONTAINER` as its parent without recording
+        it, so `claim` also warns about that parent by its id."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
         _stub_claim_checkout(monkeypatch)
-        item_id = _run_ok(["item", "new", "--title", "Fresh work"], capsys).strip()
+        fresh_title = f"Fresh work (#{items.item_number(CONTAINER_ID)} slice 2)"
+        item_id = _run_ok(["item", "new", "--title", fresh_title], capsys).strip()
         named = {"item": item_id, "seeded": CHILD_A_ID}
 
         issue_claim.main([argument.format(**named) for argument in arguments])

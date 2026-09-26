@@ -2230,7 +2230,7 @@ def _blocked_check(
 
 
 def _parent_checks(
-    client: forge.ForgeReader, repository: str, issue: int, title: str
+    client: forge.ForgeReader, repository: str, issue: int, title: str, storage: body.Storage
 ) -> SliceCheck | None:
     """Warn when a slice-shaped title names a parent GitHub does not record as one."""
     match = board.slice_title_match(title)
@@ -2240,11 +2240,12 @@ def _parent_checks(
     parent = client.parent_issue(issue)
     if parent is not None and parent.reference == board.IssueReference(repository, parent_issue):
         return None
+    parent_label = board.item_label(parent_issue, storage)
     return SliceCheck(
         "warning",
         "missing-parent",
-        f"looks like slice {slice_number} of #{parent_issue} but is no sub-issue "
-        f"of #{parent_issue}; the parent inherits nothing",
+        f"looks like slice {slice_number} of {parent_label} but is no sub-issue "
+        f"of {parent_label}; the parent inherits nothing",
         slice=slice_number,
         issue=parent_issue,
     )
@@ -2330,7 +2331,7 @@ def _slice_rule_checks(
     if item is not None:
         checks.extend(_body_contract_checks(item, storage))
     if title is not None:
-        parent_check = _parent_checks(lookup.client, lookup.repository, issue, title)
+        parent_check = _parent_checks(lookup.client, lookup.repository, issue, title, storage)
         if parent_check is not None:
             checks.append(parent_check)
     return tuple(checks)
