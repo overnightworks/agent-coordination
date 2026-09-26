@@ -28,7 +28,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | a live issue claim, lane branch resolves | BRIEF-01, BRIEF-02, BRIEF-11, BRIEF-05 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch gone | BRIEF-04 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch read or `<trunk>` diff fails outright | BRIEF-18 | BRIEF-18 |
-| a live issue claim, lane branch resolves, no `<trunk>` resolves | BRIEF-20 | BRIEF-20 |
+| a live issue claim, lane branch resolves, no `<trunk>` | BRIEF-20 | BRIEF-20 |
 | no live issue claim | BRIEF-03 | BRIEF-06 |
 | `<item>` names no item at all | BRIEF-08 | BRIEF-08 |
 | a non-GitHub canonical remote | BRIEF-07 | BRIEF-07 |
@@ -76,7 +76,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | refusal | `reason` |
 |---|---|
 | PIN-04 (`--repo` under `storage = state-ref`) | `invalid_usage` |
-| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-19 (the item read fails), BRIEF-20 (no `<trunk>` resolves) | `unavailable` |
+| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-19 (the item read fails), BRIEF-20 (no `<trunk>`) | `unavailable` |
 
 ## Never
 
@@ -324,7 +324,7 @@ $ aco brief 42 --json
 exit 0
 ```
 
-### E-BRIEF-15 -- no `<trunk>` resolves
+### E-BRIEF-15 -- no `<trunk>`
 
 Setup: as E-BRIEF-04, but `origin`'s default branch is `trunk` and it
 carries no `main` or `master`, `origin/HEAD` is not recorded (`git remote
