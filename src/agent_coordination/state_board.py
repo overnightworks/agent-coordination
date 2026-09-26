@@ -572,10 +572,10 @@ class StateRefBoard:
         `current.oid`, this instance's own already-read snapshot -- never a
         re-read -- so a second writer holding the same stale oid refuses
         with issue #279's own sentence rather than merging or overwriting.
-        Every blocker the write adds must resolve to another readable item
-        before the write (issue #450), since a dangling one would stop every
-        later `board`/`next` (PIN-17); a blocker the item already carries is
-        never re-judged, so `cut`, `rule`, `ask` and `--size` write as before.
+        Every blocker the write adds must resolve to another readable item,
+        and none may repeat, before the write (issue #450), since either
+        would stop every later `board`/`next` (PIN-17); a write that carries
+        the stored record through never re-judges it.
         A malformed item (issue #447) has no stored record to merge into:
         `body`'s own complete `[record]` repairs it once its relations
         resolve (`_refuse_unresolved_repair`), else it refuses by name."""

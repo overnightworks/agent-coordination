@@ -644,6 +644,20 @@ class TestMalformedItem:
 
         assert str(refused.value) == refusal
 
+    def test_an_edit_adding_a_malformed_blocker_refuses_naming_its_repair(self) -> None:
+        """Issue #450, ITEM-43: a blocker naming a malformed item refuses its
+        repair before any write; `_UnusedItemWriter` fails any write."""
+        adapter = _state_ref_board(_item_files_with_a_malformed_item(_blank_title_item()))
+        edit = _state_ref_body(
+            _CHILD_A_PROJECTION,
+            _record(title="Slice A", state="open", kind="task", blocked_by=(MALFORMED_ID,)),
+        )
+
+        with pytest.raises(MalformedStateTreeError) as refused:
+            adapter.update_item_body(CHILD_A_NUMBER, edit)
+
+        assert str(refused.value) == _malformed_item_refusal()
+
     def test_a_malformed_item_whose_title_still_reads_stays_a_twin_candidate(self) -> None:
         """Issue #447: an item malformed only by another field keeps its
         title in `item new`'s twin search, so no exact duplicate of it can
@@ -1898,7 +1912,7 @@ class TestCliStateRefForge:
         worktree: Path,
         stored_blocker: str,
     ) -> None:
-        """Issue #450: ITEM-43 refuses only a blocker a write adds, so a
+        """Issue #450: ITEM-44 refuses only a blocker a write adds, so a
         container already carrying a self or unknown blocker still has its
         cut row removed -- never CUT-18's partial write that a re-run could
         not finish."""
