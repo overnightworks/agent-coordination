@@ -167,15 +167,18 @@ exact preconditions and refusals are also `specs/workspace.spec.md`'s own.
 
 ## PreToolUse write gate
 
-Copy this hook once into the file the provider actually loads. Skip when a
-`PreToolUse` hook already runs `aco protect`.
+Copy this hook once into the file the provider actually loads. When a
+`PreToolUse` hook already runs `aco protect`, add no second entry: set that
+entry's `matcher` to the one shown. The formerly documented `"matcher": "*"`
+sends every tool -- MCP tools, plan mode, task lists -- to `protect`, which
+denies each unknown name and stalls the session.
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "*",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|Monitor|write|search_replace|apply_patch|create_file|str_replace_editor",
         "hooks": [
           {
             "type": "command",
@@ -192,10 +195,41 @@ Copy this hook once into the file the provider actually loads. Skip when a
 Install this in the settings of the session that actually runs the
 subagents -- the orchestrating head's settings, not each worktree's own --
 since every dispatched subagent's tool calls share that one session's
-process, cwd included (issue #314). `protect` judges a write from the
-payload's own path, never from that shared process cwd, and fails closed on
-any tool name it does not recognize. The full judgement order, every denial
-reason, and the JSON verdict shape are `specs/protect.spec.md`'s own.
+process, cwd included (issue #314). The matcher names every tool the table
+gates -- each name `HOOK_TOOL_EFFECTS` marks mutating, plus the command-text
+tools `Bash` and `Monitor` -- so every other tool (MCP tools, plan mode, task
+lists, worktree and cron tools) never reaches the hook and cannot stall the
+session; a new gated tool joins both that table and this matcher. A named
+limit: `shell` and `run_terminal_command` can write, but their payload names
+no path to judge, so the table clears them as read-only and the matcher leaves
+them out -- like MCP write tools and the worktree tools, the gate does not see
+those writes. `protect` judges a write from the payload's own path,
+never from that shared process cwd, and fails closed on any tool name that
+reaches it unrecognized. A write outside every repository (the session's
+memory, scratchpad, `/tmp`) allows, unless it goes through a file symlink
+into a checkout -- then that checkout judges it. A git-ignored file under a
+checkout's `.claude/` allows too; every other write inside a repository
+needs a live claim covering it from a linked worktree. The full judgement
+order, every denial reason, and the JSON verdict shape are
+`specs/protect.spec.md`'s own.
+
+Identity: the hook inherits the session's own environment and weighs a
+write against the claim of the agent it resolves there -- `ACO_AGENT`, else
+`GROK_SESSION_ID`, else `CLAUDE_SESSION_ID`, the same order `aco claim`
+uses. Start the session with the name the head claims under
+(`ACO_AGENT="Claude head" claude`), or pin it in the hook line
+(`"command": "ACO_AGENT='Claude head' aco protect"`). Without one, a write
+that reaches a claim check -- a recognized write in a `Bash` or `Monitor`
+command included -- denies `agent identity is required: ...`. Reads, the
+read-only session tools, and writes outside every repository need no
+identity; `Monitor` is a session tool too, but it is judged like `Bash`.
+
+Way out: install the hook in the git-ignored `.claude/settings.local.json`,
+never a tracked settings file. A session whose hook misbehaves removes the
+`PreToolUse` entry there itself -- `protect` allows that write even in the
+main checkout, so no operator is needed. Claude Code reads hooks at session
+start; whether an edit also applies mid-session depends on its version
+(unverified here), and the next session start always picks it up.
 
 ## Configuration
 
