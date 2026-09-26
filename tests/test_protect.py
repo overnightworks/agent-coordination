@@ -1914,12 +1914,8 @@ def _symlink_outside_every_repository_into_main_checkout(tmp_path: Path) -> Path
 )
 @pytest.mark.parametrize(
     "build_target",
-    [
-        _real_main_checkout_target,
-        _real_worktree_on_default_branch_target,
-        _symlink_outside_every_repository_into_main_checkout,
-    ],
-    ids=["main-checkout", "linked-worktree-on-default-branch", "symlink-into-main-checkout"],
+    [_real_main_checkout_target, _real_worktree_on_default_branch_target],
+    ids=["main-checkout", "linked-worktree-on-default-branch"],
 )
 def test_protect_denies_not_main_for_a_real_checkout(
     monkeypatch: pytest.MonkeyPatch,
@@ -1960,6 +1956,47 @@ def _hook_in_a_bare_repository(tmp_path: Path) -> Path:
     served.mkdir()
     _real_git(served, "init", "-q", "--bare")
     return served / "hooks" / "pre-receive"
+
+
+def _bash_payload(command: str) -> dict[str, object]:
+    return {"toolName": "Bash", "toolInput": {"command": command}}
+
+
+@pytest.mark.parametrize(
+    ("payload_for", "decision", "exit_code"),
+    [
+        (_write_target_payload, "deny", 2),
+        (lambda link: _bash_payload(f"echo hi >> {link}"), "deny", 2),
+        (_bash_rm_target_payload, "allow", 0),
+        (_monitor_rm_target_payload, "allow", 0),
+        (lambda link: _bash_payload(f"mv {link} {link}.old"), "allow", 0),
+    ],
+    ids=["write", "bash-append", "bash-rm", "monitor-rm", "bash-mv"],
+)
+def test_protect_judges_a_symlink_outside_every_repository_by_what_the_operation_touches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    payload_for: Callable[[Path], dict[str, object]],
+    decision: str,
+    exit_code: int,
+) -> None:
+    """Issue #448 review findings: a write through a file symlink outside
+    every repository lands in its target's main checkout and denies `not
+    main`; removing or renaming the link itself never touches that target,
+    so it stays outside every repository and allows (PROT-32)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
+    link = _symlink_outside_every_repository_into_main_checkout(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _forbid_github_construction(monkeypatch)
+
+    assert _protect_main(monkeypatch, payload_for(link)) == exit_code
+    _assert_protect_decision(
+        capsys, decision=decision, reason=None if decision == "allow" else "not main"
+    )
 
 
 def _file_outside_every_repository(tmp_path: Path) -> Path:

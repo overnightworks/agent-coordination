@@ -341,7 +341,9 @@ def _protect_not_main_denial(path_checkout: checkout.PathCheckout) -> str | None
     return None
 
 
-def _resolved_path_checkout(absolute_path: str) -> checkout.PathCheckout | None:
+def _resolved_path_checkout(
+    absolute_path: str, *, writes_through_file_symlink: bool
+) -> checkout.PathCheckout | None:
     """The checkout `absolute_path` belongs to, or `None` when it sits
     outside every repository (PROT-32: not aco's to judge, issue #448) --
     resolved from the path itself (issue #314), never from the hook
@@ -362,27 +364,33 @@ def _resolved_path_checkout(absolute_path: str) -> checkout.PathCheckout | None:
     itself. `absolute_path` is normalized lexically first
     (`os.path.normpath`, no symlink resolution): a lexically equivalent
     payload like `nested/../nested` or `nested/.` must reach this comparison
-    the same way `nested` does (issue #380 delta, gate finding)."""
+    the same way `nested` does (issue #380 delta, gate finding).
+    `writes_through_file_symlink` is `_file_checkout`'s own."""
     path = Path(os.path.normpath(absolute_path))
     if not path.is_dir():
-        return _file_checkout(path)
+        return _file_checkout(path, writes_through_file_symlink=writes_through_file_symlink)
     self_checkout = checkout.resolve_path_checkout(path)
     if self_checkout is not None and self_checkout.toplevel == path:
         return self_checkout
     return checkout.resolve_path_checkout(path.parent) or self_checkout
 
 
-def _file_checkout(path: Path) -> checkout.PathCheckout | None:
+def _file_checkout(
+    path: Path, *, writes_through_file_symlink: bool
+) -> checkout.PathCheckout | None:
     """The checkout a file path belongs to: its own directory's first, and
-    -- only when that sits outside every repository -- its symlink-resolved
-    target's. A file symlink outside every repository still writes into
-    whichever checkout its target lies in, so it is judged by that checkout
-    rather than allowed as outside (issue #448 review finding: a
-    `~/.claude/CLAUDE.md` link into a main checkout). The link's own
-    directory wins whenever it is in a checkout, so no link can move a
-    write out of the gate that directory already imposes."""
+    -- only when that sits outside every repository and the operation
+    `writes_through_file_symlink` -- its symlink-resolved target's. A write
+    through a file symlink outside every repository still lands in whichever
+    checkout its target lies in, so it is judged by that checkout rather
+    than allowed as outside (issue #448 review finding: a
+    `~/.claude/CLAUDE.md` link into a main checkout); an operation on the
+    link itself -- `rm` or `mv` of it -- never touches the target, so it
+    stays outside (issue #448 review finding). The link's own directory
+    wins whenever it is in a checkout, so no link can move a write out of
+    the gate that directory already imposes."""
     own_checkout = checkout.resolve_path_checkout(_nearest_existing_directory(path.parent))
-    if own_checkout is not None:
+    if own_checkout is not None or not writes_through_file_symlink:
         return own_checkout
     target = Path(os.path.realpath(path))
     if target == path:
@@ -429,7 +437,11 @@ _ProtectMissDenialBuilder = Callable[[protocol.ClaimState, checkout.PathCheckout
 
 
 def _protect_checkout_scope_denial(
-    raw_path: str, *, context: _ProtectContext, miss_denial: _ProtectMissDenialBuilder
+    raw_path: str,
+    *,
+    writes_through_file_symlink: bool,
+    context: _ProtectContext,
+    miss_denial: _ProtectMissDenialBuilder,
 ) -> str | None:
     """The one Outside-Repository/Checkout/Default-Branch/Claim-Scope chain
     every already-absolute write path runs -- a payload path's own
@@ -448,7 +460,9 @@ def _protect_checkout_scope_denial(
     where a claim could answer for it.
     `miss_denial` builds each caller's own scope-miss sentence from the
     state, checkout, agent, and relative scope entry now in hand."""
-    path_checkout = _resolved_path_checkout(raw_path)
+    path_checkout = _resolved_path_checkout(
+        raw_path, writes_through_file_symlink=writes_through_file_symlink
+    )
     if path_checkout is None:
         return None
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
@@ -499,7 +513,9 @@ def _protect_path_denial(
             distinguish_scope=distinguish_scope,
         )
 
-    return _protect_checkout_scope_denial(raw_path, context=context, miss_denial=miss_denial)
+    return _protect_checkout_scope_denial(
+        raw_path, writes_through_file_symlink=True, context=context, miss_denial=miss_denial
+    )
 
 
 _ProtectItem = TypeVar("_ProtectItem")
@@ -557,6 +573,12 @@ def _protect_bash_cwd(payload: dict[str, object]) -> str | None:
     return cwd if isinstance(cwd, str) and cwd else None
 
 
+# `rm` removes a symlink and `mv` renames one -- as a source or as the file
+# destination it replaces -- without ever opening its target; every other
+# recognized pattern may write through it.
+_LINK_ITSELF_PATTERNS = frozenset({hook_input.PATTERN_REMOVE, hook_input.PATTERN_MOVE})
+
+
 def _protect_bash_path_denial(
     pattern: str, raw_path: str, *, context: _ProtectContext
 ) -> str | None:
@@ -575,6 +597,7 @@ def _protect_bash_path_denial(
         return None
     return _protect_checkout_scope_denial(
         raw_path,
+        writes_through_file_symlink=pattern not in _LINK_ITSELF_PATTERNS,
         context=context,
         miss_denial=lambda _state, _path_checkout, _agent, relative: (
             f"{pattern} {relative} outside claim scope"
