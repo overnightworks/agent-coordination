@@ -14798,17 +14798,24 @@ def test_check_sha_answers_in_text_and_json(
     assert (json_status, envelope) == (exit_code, _expected_trunk_envelope(sha, reason, message))
 
 
+@pytest.mark.parametrize(
+    "number", [CHECKED_ISSUE, 16777216], ids=["in-the-id-space", "past-the-id-space"]
+)
 def test_check_names_a_number_that_exists_in_neither_number_space(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    number: int,
 ) -> None:
     """GitHub gives issues and pull requests one number space, so an absent
-    number was never proven to be either -- the refusal names no kind word."""
+    number was never proven to be either -- the refusal names no kind word.
+    A number past `aco-ffffff` is an ordinary GitHub number: PIN-31 refuses
+    it only under `storage = "state-ref"` (#469 review)."""
     client = issue_check_client(monkeypatch, tmp_path, body="", state=forge.ItemState.MISSING)
+    client.issue_references[number] = client.issue_references[CHECKED_ISSUE]
 
-    assert run_check(CHECKED_ISSUE) == 2
-    assert capsys.readouterr().err == (
-        f"REFUSED: #{CHECKED_ISSUE} does not exist in {REPOSITORY}\n"
-    )
+    assert run_check(number) == 2
+    assert capsys.readouterr().err == f"REFUSED: #{number} does not exist in {REPOSITORY}\n"
     assert client.requests == 1
 
 

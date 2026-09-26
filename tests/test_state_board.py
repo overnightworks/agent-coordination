@@ -3753,6 +3753,13 @@ class TestCliStateRefForge:
                 PAST_THE_ID_SPACE_REFUSAL,
                 id="check-past-the-id-space",
             ),
+            pytest.param(
+                ["item", "show", str(PAST_THE_ID_SPACE), "--json"],
+                '"ok": false, "reason": "invalid_usage", "message": "'
+                + PAST_THE_ID_SPACE_REFUSAL.removeprefix("ERROR: ")
+                + '"',
+                id="item-show-json-past-the-id-space",
+            ),
         ],
     )
     def test_every_output_names_a_state_ref_item_by_its_id_never_its_decimal_number(
