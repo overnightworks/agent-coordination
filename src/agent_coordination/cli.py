@@ -2976,9 +2976,9 @@ def _verify_merged_release(
 
 def _canonical_remote_name(toplevel: Path) -> str:
     """The configured `canonical_remote` of the checkout at `toplevel`, for
-    `protect` (handed into `protect.judge` as `canonical_remote_for`) and
-    `rescope`, which judge from their own payload's resolved checkout rather
-    than from a `RunContext` (issue #457)."""
+    `protect` (handed into `protect.judge` as `canonical_remote_for`), which
+    judges from its own payload's resolved checkout and never builds a
+    `RunContext` (issue #457)."""
     return board_config(toplevel).canonical_remote
 
 
@@ -4491,12 +4491,12 @@ class _RescopePreconditionError(protocol.ClaimError):
     `precondition_failed`."""
 
 
-def _rescope_write(parsed: argparse.Namespace) -> int:
+def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     path_checkout = _rescope_checkout(parsed)
     requested = _rescope_command(parsed, path_checkout)
-    worktree = path_checkout.toplevel
-    canonical_remote = _canonical_remote_name(worktree)
-    observed = store.fetch_state(worktree=worktree, remote=canonical_remote)
+    worktree, canonical_remote, observed = _store_observation(
+        run_context.for_directory(path_checkout.toplevel)
+    )
     _require_state_ref(observed)
     try:
         selected = _selected_store_claim(
@@ -4547,7 +4547,7 @@ def _rescope_write(parsed: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_rescope(parsed: argparse.Namespace, _session: _WriteSession) -> int:
+def _cmd_rescope(parsed: argparse.Namespace, session: _WriteSession) -> int:
     """`rescope`'s own `--json` refusals (issue #406, `RescopeReason`):
     `_rescope_write`'s two typed exceptions choose `invalid_usage`/
     `precondition_failed`; every other `protocol.ClaimError` -- an
@@ -4555,7 +4555,7 @@ def _cmd_rescope(parsed: argparse.Namespace, _session: _WriteSession) -> int:
     falls to `unavailable`, matching `ask`/`rule`/`brief`'s own catch-all."""
     as_json = parsed.json
     try:
-        return _rescope_write(parsed)
+        return _rescope_write(parsed, session.context)
     except _RescopeInvalidUsageError as error:
         return _refuse(RescopeReason.INVALID_USAGE, error, as_json=as_json)
     except _RescopePreconditionError as error:

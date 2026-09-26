@@ -257,9 +257,6 @@ class ContextReads:
     toplevels: Counter[Path | None] = field(default_factory=Counter)
     configs: Counter[Path | None] = field(default_factory=Counter)
 
-    def most_per_directory(self) -> tuple[int, int]:
-        return max(self.toplevels.values(), default=0), max(self.configs.values(), default=0)
-
 
 def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
     """Counts `rev-parse --show-toplevel` and the `board.toml` tracked check

@@ -8,8 +8,9 @@ read the first time a command asks for it and held for the rest of that run,
 never before: a command that refuses early, or never needs a fact, never
 pays the git, filesystem, or `gh` read behind it.
 
-One context stands for one directory. `for_directory` answers for a second
-checkout (`start`'s freshly created worktree); `fresh` re-reads the same
+One context stands for one directory. `for_directory` answers for another
+checkout (`start`'s freshly created worktree, `rescope`'s checkout resolved
+from its own paths); `fresh` re-reads the same
 directory from scratch (`board --serve` takes one per request, so nothing is
 held across requests). `protect` never builds one: it judges from its own
 payload's path.
@@ -93,8 +94,9 @@ class RunContext:
         self._build_forge = build_forge
 
     def for_directory(self, directory: Path) -> RunContext:
-        """A context for a second checkout of the same run (`start`'s
-        created worktree): nothing this context read carries over."""
+        """A context for another checkout of the same run (`start`'s
+        created worktree, `rescope`'s resolved checkout): nothing this
+        context read carries over."""
         return RunContext(self.repo, build_forge=self._build_forge, directory=directory)
 
     def fresh(self) -> RunContext:
