@@ -26,7 +26,7 @@ a bare number against the reading repository before printing it again.
 `<label>` is an item as every printed sentence names it (PIN-30):
 `#<n>` under `storage = "github"` (this file's default assumption unless a
 criterion says otherwise), `aco-xxxxxx` under `storage = "state-ref"`,
-`specs/storage-pin.spec.md` PIN-30 owning both forms; a `--json` integer
+`specs/storage-pin.spec.md` PIN-30 owning the `state-ref` form; a `--json` integer
 field never uses `<label>` -- it is always the bare number. `<sha>` is a commit id,
 `<branch>` a git branch name, `<author>` a pull request's author, `<kind>`
 `docs` or `fix`. A trailer block is read through git's own trailer parsing
