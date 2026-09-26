@@ -7769,8 +7769,7 @@ def _stub_canonical_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every CLI store command refuses a forge-target / canonical-remote
     mismatch (issue #176 done-when 6). Tests talk to `--repo example/agent-coordination`
     against a fake; this stub is the matching remote URL so they are not
-    refused before the behaviour under test. Tests of `remote_url` itself
-    (`tests/test_checkout.py`) rebind `_LIVE_REMOTE_URL`.
+    refused before the behaviour under test.
     """
     monkeypatch.setattr(
         checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"

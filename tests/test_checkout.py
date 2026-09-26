@@ -31,7 +31,6 @@ from agent_coordination.protocol import ClaimError, ClaimRequest
 
 _LIVE_VERSIONED_PATHS = checkout.versioned_paths
 _LIVE_TRUNK_LANDINGS = checkout.trunk_landings
-_LIVE_REMOTE_URL = checkout.remote_url
 
 
 @pytest.mark.parametrize(
@@ -711,11 +710,6 @@ def test_checkout_git_calls_fail_loud_when_git_is_missing_or_times_out(
     direct `subprocess.run` callers (`_git_output` backs `origin_remote_url`)
     -- must translate a missing executable or a timeout to the same
     `ClaimError` text."""
-    # `_stub_canonical_remote` (autouse) replaces `checkout.remote_url` with a
-    # fixed string so every other store-command test skips a real git call;
-    # `origin_remote_url` looks that name up dynamically, so this test must
-    # restore the live implementation to actually reach `subprocess.run`.
-    monkeypatch.setattr(checkout, "remote_url", _LIVE_REMOTE_URL)
 
     def fails(*_arguments, **_kwargs):
         raise raised
