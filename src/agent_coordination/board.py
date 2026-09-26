@@ -397,7 +397,7 @@ class BoardConfig:
     # place a repository overrides it.
     canonical_remote: str = "origin"
     # Which adapter owns this repository's board and item data (issue #248):
-    # `cli._resolved_forge_target` builds the one the pin names, never
+    # `RunContext.repository_id` resolves the one the pin names, never
     # guessed from the remote's own host. `github` is the default -- every
     # repository pinned today lives there.
     storage: Storage = Storage.GITHUB
