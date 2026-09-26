@@ -11,7 +11,8 @@ envelope itself (OUT-nn: key order, `ok`, `message`); this file names only
 `check`'s own `reason` values. `specs/body-block.spec.md`
 owns the exact `body malformed:`/`body incomplete:` sentences an issue's own
 shape can carry (BODY-01..BODY-52); `specs/storage-pin.spec.md` owns the
-`'<value>' is not an item reference` refusal for `<n>` itself (PIN-08) and
+`'<value>' is not an item reference` refusal for `<n>` itself (PIN-08), its
+state-ref `<n> names no state-ref item` refusal past `aco-ffffff` (PIN-31), and
 gates this command like any other resolving the item forge (PIN-04, PIN-05)
 under `storage = "state-ref"`. `<n>` is the argument as given, an issue's
 printed `#<n>` its `storage = "github"` form and the item id under
@@ -23,7 +24,7 @@ an unreachable forge) prints `ERROR: <sentence>` on stderr and, with
 `aco check <sha>` (a trunk commit, not a bare number) is a fourth answer
 this file owns like the other three: `specs/landing-grammar.spec.md` owns
 the trailer grammar that mode reads and the sentences it refuses with
-(LAND-03, LAND-48, LAND-57, LAND-58, LAND-60), this file its exits and its
+(LAND-03, LAND-48, LAND-57, LAND-58, LAND-60, LAND-68), this file its exits and its
 `--json` envelope.
 
 ## Behavior table
@@ -85,7 +86,7 @@ own text (BODY-01..BODY-50, BODY-12).
 
 `<declaration>` and `<trunk defect sentence>` are
 `specs/landing-grammar.spec.md`'s own text (LAND-48; LAND-03, LAND-57,
-LAND-58, LAND-60).
+LAND-58, LAND-60, LAND-68).
 
 - [ ] [CHECK-12] `<sha>` naming a trunk commit whose own trailer classifies prints `<sha> declares <declaration>` on stdout, exit `0` (see E-CHECK-08).
 - [ ] [CHECK-13] A `<sha>` the trunk grammar refuses prints `REFUSED: <sha> <trunk defect sentence>` on stderr, exit `2`, and reads no forge at all (see E-CHECK-08).
