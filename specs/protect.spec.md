@@ -20,7 +20,7 @@ canonical remote name.
 
 ## Behavior table
 
-| state \ trigger | generic mutating tool | `NotebookEdit` | `apply_patch` | `Bash` | a read-effect tool |
+| state \ trigger | generic mutating tool | `NotebookEdit` | `apply_patch` | `Bash`, `Monitor` | a read-effect tool |
 |---|---|---|---|---|---|
 | malformed or non-object payload | PROT-03 | PROT-03 | PROT-03 | PROT-03 | PROT-03 |
 | no string tool name under either key | PROT-04 | PROT-04 | PROT-04 | PROT-04 | PROT-04 |
@@ -66,14 +66,16 @@ could answer for it.
 
 Claude Code's own session tools steer the session, a subagent, or a
 workflow, or talk to the operator; none names a file to write, so the table
-marks each read-only: `Monitor`, `ToolSearch`, `SendMessage`, `TaskStop`,
+marks each read-only: `ToolSearch`, `SendMessage`, `TaskStop`,
 `TaskOutput`, `StructuredOutput`, `Skill`, `AskUserQuestion`, `ListAgents`,
 `ScheduleWakeup`, `SendFeedback`, `Workflow`, and `Artifact` (issue #448).
+`Monitor` is the one session tool that runs a shell script, its own
+`command`, so it is judged exactly like `Bash`.
 
 - [ ] [PROT-03] Unreadable stdin, invalid JSON, or a payload that is not a JSON object denies `invalid hook payload` (PROT-02's shape).
 - [ ] [PROT-04] A payload naming no string tool name under either `toolName` or `tool_name` denies `invalid hook payload`.
 - [ ] [PROT-05] A tool name this table marks read-only allows `{"decision": "allow"}` without reading identity, git, the store, or GitHub (see E-PROT-05).
-- [ ] [PROT-37] Each Claude Code session tool named above allows exactly like PROT-05, so a session that steers subagents, workflows, or the operator is never stalled by the hook (see E-PROT-05).
+- [ ] [PROT-37] Each read-only session tool named above allows like PROT-05, and `Monitor` is judged like `Bash` (PROT-30 to PROT-35), so a session is never stalled by the hook (see E-PROT-05).
 - [ ] [PROT-06] A tool name in neither the read nor the mutating table denies `'<name>' is not in aco's hook tool table`, fix `add it there as read-only or mutating before use` (see E-PROT-06).
 
 ## The payload path and its own checkout
@@ -123,7 +125,8 @@ fail-closed rather than guessing which paths it touches.
 
 ## `Bash`'s own command-text payload
 
-`Bash` carries no path key at all: its `command` text is scanned for a
+`Bash` -- and `Monitor`, whose `command` is a shell script too -- carries no
+path key at all: its `command` text is scanned for a
 short, fixed list of write patterns -- a real, unquoted `>`/`>>` redirection
 (a heredoc target such as `cat > path <<EOF` included), `tee`'s own file
 operands, `sed -i` (or `-i<suffix>`/`--in-place[=suffix]`, skipping
@@ -196,7 +199,7 @@ than a bare `claim first`.
 - `protect` never reads working-tree dirtiness: a dirty checkout still allows a covered write, unlike `claim`'s own precondition.
 - `protect` never binds the resolved checkout's `HEAD` to a claim's own `base`: it judges the live claim's branch and scope alone.
 - `shell` and other providers' equivalents never deny a missing path: the hook payload names no file path for those, so `protect` cannot gate what it cannot see (README, "PreToolUse write gate").
-- `Bash` (issue #380) is the one exception, judging only the fixed pattern list PROT-30 owns.
+- `Bash` (issue #380) and `Monitor` (issue #448) are the one exception, judging only the fixed pattern list PROT-30 owns.
 - A `python -c ...` one-liner or an opaque script invocation stays invisible on purpose: recognizing a pattern is a best-effort aid against forgetting the claim, never a security boundary.
 - `protect` never guesses a Bash-recognized relative path's `cwd` from the hook process's own cwd: a payload naming no `cwd` allows that path outright (PROT-31).
 - This is PROT-09's own "never guess a relative path" principle, applied as an allow instead of a deny since Bash's own path is expected to be relative.

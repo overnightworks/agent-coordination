@@ -107,7 +107,6 @@ HOOK_TOOL_EFFECTS: Mapping[str, HookToolEffect] = {
     # Claude Code's own session tools (issue #448): each steers the session,
     # a subagent, or a workflow, or talks to the operator, and none takes a
     # file path to write -- failing closed on them stalled every session.
-    "Monitor": HookToolEffect.READ,
     "ToolSearch": HookToolEffect.READ,
     "SendMessage": HookToolEffect.READ,
     "TaskStop": HookToolEffect.READ,
@@ -132,8 +131,10 @@ HOOK_TOOL_EFFECTS: Mapping[str, HookToolEffect] = {
     # Command-text: no path key at all -- `hook_input.hook_command_paths`
     # scans the call's own `command` for a recognized write pattern (issue
     # #380); each recognized path then runs the same judgement chain as a
-    # mutating tool's own path.
+    # mutating tool's own path. `Monitor` runs its own `command` as a shell
+    # script exactly like `Bash` does (issue #448 review finding).
     "Bash": HookToolEffect.COMMAND_TEXT,
+    "Monitor": HookToolEffect.COMMAND_TEXT,
     # Mutating: gated on a live claim whose scope overlaps the written path.
     "Edit": HookToolEffect.MUTATING,
     "MultiEdit": HookToolEffect.MUTATING,
@@ -584,7 +585,7 @@ def _protect_bash_path_denial(
 def _protect_bash(
     payload: dict[str, object], *, canonical_remote_for: _CanonicalRemoteFor
 ) -> Verdict:
-    """`Bash`'s own command-text judgment (issue #380): every
+    """`Bash`'s (and `Monitor`'s) own command-text judgment (issue #380): every
     `(pattern, path)` pair `hook_input.hook_command_paths` recognizes in
     the call's own `command` runs `_protect_bash_path_denial`'s chain via
     `_protect_first_denial`, the first denial winning. A missing or

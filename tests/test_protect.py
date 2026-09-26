@@ -821,6 +821,10 @@ def _bash_rm_target_payload(target: Path) -> dict[str, object]:
 _TARGET_PATH_PAYLOAD_BUILDERS = (_write_target_payload, _bash_rm_target_payload)
 
 
+def _monitor_rm_target_payload(target: Path) -> dict[str, object]:
+    return {"tool_name": "Monitor", "tool_input": {"command": f"rm {target}"}}
+
+
 _BASH_OUTSIDE_SCOPE_PATH = "docs/widget.md"
 _BASH_INSIDE_SCOPE_PATH = "src/widget.py"
 
@@ -1903,7 +1907,11 @@ def _symlink_outside_every_repository_into_main_checkout(tmp_path: Path) -> Path
     return link
 
 
-@pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
+@pytest.mark.parametrize(
+    "payload_for",
+    [*_TARGET_PATH_PAYLOAD_BUILDERS, _monitor_rm_target_payload],
+    ids=["write", "bash-rm", "monitor-rm"],
+)
 @pytest.mark.parametrize(
     "build_target",
     [
@@ -1929,7 +1937,9 @@ def test_protect_denies_not_main_for_a_real_checkout(
     stopped catching this once issue #314 dropped the old branch-name check,
     so a live claim matching that worktree's agent/branch/scope would
     otherwise be honoured there exactly as if it were a real lane). A
-    Bash-recognized path runs the identical gate (issue #380)."""
+    Bash-recognized path runs the identical gate (issue #380), and so does
+    one in a `Monitor` script, which the shell runs just the same (issue
+    #448)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
