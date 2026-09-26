@@ -93,7 +93,7 @@ class Storage(StrEnum):
     """Where a repository's board and item data live (`.agent-claim/board.toml`
     `storage`, issue #248): `GITHUB` reads issues, `STATE_REF` reads
     `items/<id>.md` files in the tree of `refs/aco/state`. The pin decides
-    which adapter `cli._resolved_forge_target` builds; it never guesses from
+    which adapter `RunContext.repository_id` resolves for; it never guesses from
     the remote's own host."""
 
     GITHUB = "github"
