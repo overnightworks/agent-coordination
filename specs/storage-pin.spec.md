@@ -18,7 +18,7 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 | `.agent-claim/board.toml` untracked, absent, or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
-| `storage = "state-ref"` | PIN-04\*, PIN-05\* | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08 |
+| `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08, PIN-31 |
 | a state-ref item file itself is malformed | PIN-13..17, PIN-29 | ITEM-37 | ITEM-39, PIN-29 | LAND-65 | — |
 | a fresh item id, minted | PIN-06, PIN-07 | PIN-06, PIN-07 | — | — | — |
 
@@ -47,7 +47,11 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 - [ ] [PIN-06] `aco item new --title TITLE` under `storage = "state-ref"` prints exactly one line, the minted id `aco-` plus six lowercase hex characters, exit `0` (see E-PIN-03).
 - [ ] [PIN-07] `aco item new --title TITLE --json` prints `specs/output.spec.md`'s envelope: `{"ok": true, "reason": "created", "item": "aco-xxxxxx", "number": n}`.
+- [ ] [PIN-30] Under `storage = "state-ref"` a printed sentence or string `--json` field names an item `aco-xxxxxx`, never `#<n>`; the paragraph below names its exceptions.
 - [ ] [PIN-08] An id argument matching none of `aco-xxxxxx`, `#n`, or the bare number `n` refuses `'<value>' is not an item reference; use aco-xxxxxx, #n, or the bare number n` (see E-PIN-04).
+- [ ] [PIN-31] Under `storage = "state-ref"` an id argument past `aco-ffffff` refuses `<n> names no state-ref item; an item id ends at aco-ffffff` before any lookup, under `--json` OUT-06's envelope.
+
+PIN-30's exceptions keep `#<n>`: `item show`'s header (ITEM-07), and until #471 the claim-ledger sentences whose `issue #<n>`/`#<n>` comes from `protocol.py` -- CLAIM-11 (START-16), CLAIM-42, REL-09/REL-10, RESC-14, PIN-26.
 
 ## Commands refused by the wrong pin
 
@@ -67,7 +71,7 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 ## Writing a fresh state-ref item
 
-- [ ] [PIN-18] `aco item new --title TITLE --parent PARENT` against a `PARENT` no `items/` entry carries refuses `#<parent> does not exist`, before any write.
+- [ ] [PIN-18] `aco item new --title TITLE --parent PARENT` against a `PARENT` no `items/` entry carries refuses `<parent-id> does not exist`, before any write.
 - [ ] [PIN-19] Three failed random-hex mint attempts against an already-full six-character neighbourhood refuse `could not mint a fresh item id in 3 attempts; retry`, before any write.
 - [ ] [PIN-20] `aco item new --title TITLE --origin gitlab#514` stores that reference in `record.origin`, so `aco item show <item-id>` ends its header `origin gitlab#514`, never `origin none`.
 - [ ] [PIN-21] `aco item new` under `storage = "state-ref"` writes through the same one CAS write path `aco cut`'s own child creation uses (`specs/ref-store-cas.spec.md`, CAS-19..CAS-21).
@@ -75,12 +79,12 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 ## Editing and closing a state-ref item
 
 - [ ] [PIN-22] `aco item edit ITEM < body.md` under `storage = "state-ref"` replaces the item's stored body and prints `EDITED aco-xxxxxx`, exit `0` (see E-PIN-08).
-- [ ] [PIN-23] `aco item edit ITEM` against an `ITEM` no `items/` entry carries refuses `#<n> does not exist in <owner/repo>`.
+- [ ] [PIN-23] `aco item edit ITEM` against an `ITEM` no `items/` entry carries refuses `<item-id> does not exist in <repository>` (`<repository>`: PIN-28).
 - [ ] [PIN-24] `aco item edit ITEM` piping a body with no valid `agent-claim` block refuses with that body's own first defect sentence (`specs/body-block.spec.md`, BODY-01..BODY-50).
 - [ ] [PIN-25] `aco item close ITEM` under `storage = "state-ref"` prints `CLOSED aco-xxxxxx` then a `freed: ` line naming every item `ITEM`'s own close just freed, or `freed: none`, exit `0` (see E-PIN-09).
 - [ ] [PIN-26] `aco item close ITEM` against an item still carrying a live claim refuses `#<n> has a live claim (<agent> (<role>)); release the claim first`, before any write.
-- [ ] [PIN-27] A second `aco item close ITEM` on an already-closed item refuses `#<n> is already closed (closed on <closed_at>)`.
-- [ ] [PIN-28] `aco item close ITEM` against an `ITEM` no `items/` entry carries refuses `#<n> does not exist in <owner/repo>`, the same sentence PIN-23 gives `item edit`.
+- [ ] [PIN-27] A second `aco item close ITEM` on an already-closed item refuses `<item-id> is already closed (closed on <closed_at>)`.
+- [ ] [PIN-28] `aco item close ITEM` for an `ITEM` no `items/` entry carries refuses `<item-id> does not exist in <repository>`: `owner/repo` on a forge host, a forge-less remote's path less `.git` (E-PIN-10).
 
 ## Never
 
@@ -197,6 +201,16 @@ CLOSED <item-id>
 freed: <other-id>
 exit 0
 $ aco item close <item-id>
-2> ERROR: #<n> is already closed (closed on <closed_at>)
+2> ERROR: <item-id> is already closed (closed on <closed_at>)
+exit 2
+```
+
+### E-PIN-10 — closing an item no entry carries, forge-less remote
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, no `items/aco-ffffff.md`
+
+```console
+$ aco item close aco-ffffff
+2> ERROR: aco-ffffff does not exist in <remote>
 exit 2
 ```

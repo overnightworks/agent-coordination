@@ -8,7 +8,7 @@ it derives, its own refusals, and how it mints or reuses the claim id underneath
 restates `aco claim`'s own preconditions, checks, or `CLAIMED ...`/cost-line grammar
 (`specs/claim.spec.md`, `specs/body-block.spec.md`): `start` acquires that same claim, inside the
 worktree, through the unchanged claim machinery, and cites those files' IDs rather than repeating
-them. `<n>` is the claimed item number, `<slug>` the derived or given slug, `<prefix>` the derived
+them. `<n>` is the claimed item number, a printed `#<n>` its `storage = "github"` form (PIN-30), `<slug>` the derived or given slug, `<prefix>` the derived
 branch prefix, `<claim-id>` the acquired claim's own id.
 
 ## Behavior table

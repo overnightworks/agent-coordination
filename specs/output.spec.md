@@ -75,8 +75,8 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-00
 
 ```console
 $ aco ask aco-000001 --text "New question?" --json
-2> ERROR: #<n> body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
-{"ok": false, "reason": "invalid_item", "message": "#<n> body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block"}
+2> ERROR: aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
+{"ok": false, "reason": "invalid_item", "message": "aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block"}
 exit 2
 ```
 

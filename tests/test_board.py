@@ -3655,7 +3655,19 @@ def test_measurements_lines_shows_no_measurements_line_when_nothing_is_measured(
     assert not any(line.startswith("Messungen (Stand") for line in lines)
 
 
-def test_board_json_carries_estimate_and_measurements() -> None:
+@pytest.mark.parametrize(
+    ("storage", "estimated_item"),
+    [
+        pytest.param(Storage.GITHUB, "206", id="github-bare-number"),
+        pytest.param(Storage.STATE_REF, "aco-0000ce", id="state-ref-item-id"),
+    ],
+)
+def test_board_json_carries_estimate_and_measurements(
+    storage: Storage, estimated_item: str
+) -> None:
+    """The estimate names its item the way a command takes it back (issue
+    #467): the bare number under `github`, the item id under `state-ref`,
+    never the id's decimal value."""
     lane_events = tuple(
         _lane_event(
             str(number),
@@ -3669,7 +3681,7 @@ def test_board_json_carries_estimate_and_measurements() -> None:
         (),
         (),
         (),
-        board.BoardConfig(),
+        board.BoardConfig(storage=storage),
         now=datetime(2026, 8, 21, tzinfo=UTC),
         lane_events=lane_events,
     )
@@ -3678,7 +3690,7 @@ def test_board_json_carries_estimate_and_measurements() -> None:
     item = next(entry for entry in _payload_items(payload) if entry["number"] == 206)
     assert item["size"] == "M"
     assert item["estimate"] == {
-        "item": "206",
+        "item": estimated_item,
         "size": "M",
         "median_hours": 5,
         "n": 3,

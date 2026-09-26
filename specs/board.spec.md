@@ -106,11 +106,11 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-18] The page carries exactly five `<h2>` sections in order: `Wartet auf dich <N>`, `Lanes <N>`, `Themen` (uncounted), `Landungen <N>`, `Messungen` (uncounted, issue #357) (see E-BOARD-05).
 - [ ] [BOARD-19] An empty `Wartet auf dich`/`Lanes` list renders `<p class="empty">nichts</p>`; an empty `Themen` list renders `<li class="empty">nichts</li>`.
 - [ ] [BOARD-20] `Landungen` renders each row `<label> <date> <sha7>` or `<label> <date> PR #<n>` (LAND-45/46); empty renders plain `nichts`, never a capability-gated line.
-- [ ] [BOARD-21] The static page (no `--serve`) shows each open card's three outcomes as copyable `aco rule <n> --line <k> --<outcome>` lines, never a live form.
+- [ ] [BOARD-21] The static page (no `--serve`) shows each open card's three outcomes as copyable `aco rule <n> --line <k> --<outcome>` lines, never a live form; `<n>` is `n`, the id under `state-ref`.
 - [ ] [BOARD-28] `Messungen` renders BOARD-25's own first line as a `<p>`, every further line as one `<li>`; empty, it renders `<p class="empty">…</p>` instead, never an empty `<ul>`.
 - [ ] [BOARD-36] An already-ruled `[[expectation]]` line never renders as a "Wartet auf dich" card: it moves into its own item's `Themen` entry instead (see E-BOARD-08).
 - [ ] [BOARD-37] That history renders `<li class="ruled"><span>TEXT</span><span class="ruled-state">ruled OUTCOME DATE</span></li>`, the same wording `aco rulings` prints for a ruled line (RUL-02).
-- [ ] [BOARD-38] The history is followed by one sentence naming the ruling's immutability and the way to a new one, `<p class="ruled-hint">` pointing at `aco ask <n> --text`, never a button.
+- [ ] [BOARD-38] One sentence after the history names the ruling's immutability and the way to a new one, `<p class="ruled-hint">` pointing at `aco ask <n> --text` (`<n>` as in BOARD-21), never a button.
 - [ ] [BOARD-45] The page's `<title>` and its first masthead line both name the repository this board belongs to and the checkout it was rendered from (see E-BOARD-17).
 
 ## `--serve`

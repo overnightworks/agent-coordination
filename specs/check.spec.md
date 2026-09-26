@@ -11,17 +11,20 @@ envelope itself (OUT-nn: key order, `ok`, `message`); this file names only
 `check`'s own `reason` values. `specs/body-block.spec.md`
 owns the exact `body malformed:`/`body incomplete:` sentences an issue's own
 shape can carry (BODY-01..BODY-52); `specs/storage-pin.spec.md` owns the
-`'<value>' is not an item reference` refusal for `<n>` itself (PIN-08) and
+`'<value>' is not an item reference` refusal for `<n>` itself (PIN-08), its
+state-ref `<n> names no state-ref item` refusal past `aco-ffffff` (PIN-31), and
 gates this command like any other resolving the item forge (PIN-04, PIN-05)
-under `storage = "state-ref"`. `<n>` is the argument as given, `<repository>`
-the checked repository's own `owner/repo` path. A refusal that never even
+under `storage = "state-ref"`. `<n>` is the argument as given, an issue's
+printed `#<n>` its `storage = "github"` form and the item id under
+`storage = "state-ref"` (PIN-30), `<repository>` the checked repository's
+own `owner/repo` path. A refusal that never even
 reaches this command's own dispatch (no checkout, an untracked storage pin,
 an unreachable forge) prints `ERROR: <sentence>` on stderr and, with
 `--json`, the envelope with `reason: "unavailable"`; exit `2` either way.
 `aco check <sha>` (a trunk commit, not a bare number) is a fourth answer
 this file owns like the other three: `specs/landing-grammar.spec.md` owns
 the trailer grammar that mode reads and the sentences it refuses with
-(LAND-03, LAND-48, LAND-57, LAND-58, LAND-60), this file its exits and its
+(LAND-03, LAND-48, LAND-57, LAND-58, LAND-60, LAND-68), this file its exits and its
 `--json` envelope.
 
 ## Behavior table
@@ -83,7 +86,7 @@ own text (BODY-01..BODY-50, BODY-12).
 
 `<declaration>` and `<trunk defect sentence>` are
 `specs/landing-grammar.spec.md`'s own text (LAND-48; LAND-03, LAND-57,
-LAND-58, LAND-60).
+LAND-58, LAND-60, LAND-68).
 
 - [ ] [CHECK-12] `<sha>` naming a trunk commit whose own trailer classifies prints `<sha> declares <declaration>` on stdout, exit `0` (see E-CHECK-08).
 - [ ] [CHECK-13] A `<sha>` the trunk grammar refuses prints `REFUSED: <sha> <trunk defect sentence>` on stderr, exit `2`, and reads no forge at all (see E-CHECK-08).
@@ -102,7 +105,7 @@ is enough): <git detail>`.
 - `aco check` never writes: no mode ever changes an item's body, and the pull-request mode's own claims read is a pure fetch of the already-observed state ref.
 - The issue mode of `check` never fetches the state ref: only the pull-request mode reads the live claims LAND-15/LAND-16 need.
 - Under `storage = "state-ref"`, `check <n>` never reaches the pull-request path: no number under that storage is ever reported as a landing, so every `<n>` resolves to ISSUE or MISSING.
-- `check` names its subject bare: `#<n>` in every number mode, the `<sha>` it was asked about in the trunk mode (CHECK-12, CHECK-13), never the storage-aware `<label>` form `specs/landing-grammar.spec.md` defines for `aco next`/`release`'s own narrative lines.
+- `check` never names its subject any other way than as `specs/landing-grammar.spec.md`'s `<label>` in every number mode and as the `<sha>` it was asked about in the trunk mode (CHECK-12, CHECK-13).
 - `blocked` (CHECK-08) is the only outcome that exits `3`; every other refusal exits `2` (see the `reason`/exit table above), and no outcome exits `1` any more.
 - The trunk mode never reads a forge: a commit's own trailer is local history, so `check <sha>` answers from the walked trunk alone.
 - No mode of `check` ever prints a `refused` key: `specs/output.spec.md`'s envelope names every refusal by `reason` and `message` instead.

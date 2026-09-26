@@ -16,8 +16,10 @@ claim's own `--json` field order (CLAIM-69); `specs/body-block.spec.md`
 owns a malformed body's own defect sentence (BODY-50) and an incomplete
 projection's own skip (BODY-51); `aco claim` reuses either sentence
 verbatim before any write (BODY-52). This file cites those IDs rather than
-restating them. `<n>` is a claimed issue number, `<path>` a repository-
-relative path, `<reason>` a free-text sentence.
+restating them. `<n>` is a claimed issue number, a printed `#<n>` (or
+CLM-14's `#<parent>`) its `storage = "github"` form and the item id under `storage = "state-ref"`
+(PIN-30). `<path>` a repository-relative path, `<reason>` a free-text
+sentence.
 
 ## Behavior table
 
@@ -37,7 +39,7 @@ relative path, `<reason>` a free-text sentence.
 | target is closed or missing | CLM-12 | CLM-12 | — |
 | target body is malformed | BODY-50, BODY-52 | BODY-50, BODY-52 | — |
 | target body is incomplete | CLM-13 | CLM-13 | — |
-| slice-shaped title, no recorded parent | CLM-14 | CLM-14 | — |
+| slice-shaped title, no recorded parent | CLM-14, CLM-28 | CLM-14, CLM-28 | — |
 | a replayed (interrupted) request | CLM-15, CLAIM-13 | CLM-15, CLAIM-13 | CLM-15, CLAIM-13 |
 | every check clears, with `--json` | CLM-16 | CLM-16 | CLM-16 |
 | a check refuses, with `--json` | CLM-17 | CLM-17 | CLM-17 |
@@ -77,6 +79,7 @@ to the clause each names below.
 - [ ] [CLM-12] A closed or missing target refuses `issue #<n> is closed` or `issue #<n> does not exist here`, exit `2`.
 - [ ] [CLM-13] A target whose body is complete but empty on its projection keys refuses `#<n> body incomplete: <fields>`, exit `2`.
 - [ ] [CLM-14] A slice-shaped title with no recorded parent prints `WARNING: looks like slice <n> of #<parent> but is no sub-issue of #<parent>; the parent inherits nothing`, still claims, exit `0`.
+- [ ] [CLM-28] Under `storage = "state-ref"` a slice-shaped title whose `#<parent>` lies past `aco-ffffff` names no item, so CLM-14 warns nothing.
 
 ## Replay and JSON
 

@@ -3441,7 +3441,7 @@ def test_cut_names_the_created_child_when_the_relation_post_fails(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]
@@ -3573,7 +3573,7 @@ def test_cut_creates_a_child_and_removes_the_first_cuttable_slice(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER, created_scope),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, created_scope),
             body.ItemKind.TASK,
         )
     ]
@@ -3792,7 +3792,7 @@ def test_cut_names_the_created_child_when_linking_fails(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]
@@ -3819,7 +3819,7 @@ def _forge_with_existing_child(
     pass `_orphan_names_container`, exactly like a real linked issue: a
     broken `parent_issue` filter in `_adoptable_child` would then double-count
     it as its own orphan, and the surrounding test would fail."""
-    child_body = issue_claim._cut_child_body(CUT_CONTAINER)
+    child_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB)
     open_issues = (_one_slice_container(),)
     if child_state is board.ChildState.OPEN:
         open_issues = (
@@ -3904,7 +3904,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
     orphan = board_issue(
         951,
         "Scheibe 1",
-        issue_claim._cut_child_body(CUT_CONTAINER),
+        issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
         kind=body.ItemKind.TASK,
     )
     monkeypatch.setattr(client, "list_open_board_issues", lambda: (_one_slice_container(), orphan))
@@ -3940,7 +3940,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
             board_issue(
                 951,
                 "Scheibe 1",
-                issue_claim._cut_child_body(CUT_CONTAINER),
+                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
                 labels=("idea",),
                 kind=body.ItemKind.TASK,
             ),
@@ -3951,14 +3951,19 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
             board_issue(
                 CUT_CONTAINER,
                 "Scheibe 1",
-                issue_claim._cut_child_body(CUT_CONTAINER),
+                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
                 kind=body.ItemKind.TASK,
             ),
             None,
             id="the_container_itself",
         ),
         pytest.param(
-            board_issue(951, "Scheibe 1", issue_claim._cut_child_body(80), kind=body.ItemKind.TASK),
+            board_issue(
+                951,
+                "Scheibe 1",
+                issue_claim._cut_child_body(80, body.Storage.GITHUB),
+                kind=body.ItemKind.TASK,
+            ),
             None,
             id="orphan_names_a_different_container_as_parent",
         ),
@@ -3996,7 +4001,7 @@ def test_cut_never_adopts_an_orphan_that_is_not_this_containers_recovery_shape(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]
@@ -4157,7 +4162,7 @@ def test_cut_adopts_the_orphan_after_a_relation_partial_failure(
 
     assert first_exit_code == 2
     child = client.next_created_child_number - 1
-    expected_body = issue_claim._cut_child_body(CUT_CONTAINER)
+    expected_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB)
     assert client.created_issues == [("Scheibe 1", expected_body, body.ItemKind.TASK)]
     assert client.linked_children == [(CUT_CONTAINER, child)]
     capsys.readouterr()
@@ -5322,7 +5327,7 @@ def test_next_prints_a_cut_command_that_cut_accepts(
         (
             case.container_number,
             case.expected_created_title,
-            issue_claim._cut_child_body(case.container_number),
+            issue_claim._cut_child_body(case.container_number, body.Storage.GITHUB),
             body.ItemKind.TASK,
         )
     ]
@@ -5842,7 +5847,7 @@ def test_body_contract_checks_names_a_blockless_container_by_its_no_block_defect
     )
     item = next(item for item in projected.items if item.number == 201)
 
-    checks = issue_claim._body_contract_checks(item)
+    checks = issue_claim._body_contract_checks(item, body.Storage.GITHUB)
 
     assert checks == (
         issue_claim.SliceCheck(
@@ -5864,7 +5869,7 @@ def test_body_contract_checks_names_a_malformed_body_by_its_first_defect() -> No
     )
     item = next(item for item in projected.items if item.number == 202)
 
-    checks = issue_claim._body_contract_checks(item)
+    checks = issue_claim._body_contract_checks(item, body.Storage.GITHUB)
 
     assert checks == (
         issue_claim.SliceCheck(
@@ -6583,14 +6588,16 @@ def test_release_merged_refuses_a_trunk_item_the_state_ref_has_no_entry_for(
     status = issue_claim.main(["release", "12", "--agent", "Codex Sol", "--merged", sha])
 
     assert status == 2
-    assert capsys.readouterr().err == f"ERROR: #12 does not exist in {client.repository.path}\n"
+    assert capsys.readouterr().err == (
+        f"ERROR: aco-00000c does not exist in {client.repository.path}\n"
+    )
 
 
 @pytest.mark.parametrize(
     ("landing_ref", "reason"),
     [
         pytest.param("main~3", "carries no `Work-Item:` trailer", id="no-trailer"),
-        pytest.param("main~1", "does not name work item #10", id="foreign-item"),
+        pytest.param("main~1", "does not name work item aco-00000a", id="foreign-item"),
         pytest.param("feature", "is not on the first-parent trunk", id="off-trunk"),
     ],
 )
@@ -6767,7 +6774,7 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
     )
 
     assert replay_status == 2
-    assert capsys.readouterr().err.startswith("ERROR: #10 is already closed (closed on ")
+    assert capsys.readouterr().err.startswith("ERROR: aco-00000a is already closed (closed on ")
     assert _state_ref_tip(repo, remote) == tip_after
 
 
@@ -8165,6 +8172,58 @@ def test_cli_status_issue_with_no_claim_prints_unclaimed_issue(
 
     assert issue_claim.main(["--repo", REPOSITORY, "status", "72"]) == 0
     assert capsys.readouterr().out == "UNCLAIMED issue #72\n"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        pytest.param(
+            ["claim", "10", "--agent", "Codex Sol", "--scope", "src/work.py"],
+            "ERROR: #10 body incomplete: ",
+            id="claim",
+        ),
+        pytest.param(["check", "10"], "ISSUE #10 body incomplete: ", id="check"),
+        pytest.param(["next"], "#10: body incomplete: ", id="next"),
+        pytest.param(["next", "--json"], '"command": "aco claim 11 ', id="next-json"),
+        pytest.param(["status", "10"], "UNCLAIMED issue #10", id="status"),
+        pytest.param(["board", "--json"], '"actionable_reason": "blocked by #11"', id="board-json"),
+    ],
+)
+def test_every_output_names_a_github_item_by_its_number(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arguments: list[str],
+    expected: str,
+) -> None:
+    """Issue #467 proof 1, the `storage = github` twin of
+    `TestCliStateRefForge`'s id proof: the same commands name an item
+    `#<n>`, and a pasteable argument its bare `n`. `item edit`/`close` have
+    no twin: under `github` they refuse outright (PIN-10, PIN-11)."""
+    incomplete = board_issue(10, "Fresh work", body.BLOCK_CHILD_SKELETON)
+    actionable = board_issue(11, "Slice A", complete_contract("Ship slice A."))
+    blocked, dependencies = blocked_issue(12, "Slice B", block_dependency(11))
+    client = _configured_board_client(
+        monkeypatch,
+        tmp_path,
+        open_issues=(incomplete, actionable, blocked),
+        dependencies=dependencies,
+    )
+    client.issue_references[10] = forge.ItemReference(
+        forge.ItemState.OPEN, "Fresh work", body.BLOCK_CHILD_SKELETON
+    )
+    monkeypatch.setattr(
+        issue_claim,
+        "_request",
+        lambda _arguments, **_kwargs: request(issue=10, scope=("src/work.py",)),
+    )
+
+    issue_claim.main(["--repo", REPOSITORY, *arguments])
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert expected in output
+    assert "aco-" not in output
 
 
 def test_cli_status_shows_a_live_store_claim(
@@ -10620,13 +10679,14 @@ def test_claim_cost_lists_an_overlapping_standing_claim_as_a_touch() -> None:
     )
 
     assert [claim.claim_id for claim in overlapping] == ["claim-a"]
-    assert issue_claim._touch_summary(narrow_scope, overlapping) == (
+    github = body.Storage.GITHUB
+    assert issue_claim._touch_summary(narrow_scope, overlapping, github) == (
         "overlaps issue #55 on src/widget.py"
     )
-    assert issue_claim._touch_summary(wide_scope, both) == (
+    assert issue_claim._touch_summary(wide_scope, both, github) == (
         "overlaps issue #55 on src, lane docs/foo on docs"
     )
-    assert issue_claim._touch_summary(wide_scope, ()) == "overlaps no other open claims"
+    assert issue_claim._touch_summary(wide_scope, (), github) == "overlaps no other open claims"
 
 
 def test_claim_cost_names_a_directory_scope_meeting_a_single_file_of_a_standing_claim() -> None:
@@ -10643,7 +10703,7 @@ def test_claim_cost_names_a_directory_scope_meeting_a_single_file_of_a_standing_
         (standing,), request("challenger", issue=1401, scope=own_scope)
     )
 
-    assert issue_claim._touch_summary(own_scope, touches) == (
+    assert issue_claim._touch_summary(own_scope, touches, body.Storage.GITHUB) == (
         "overlaps issue #1400 on tests/adapters/test_agent_claim_cli.py"
     )
 
@@ -10662,7 +10722,7 @@ def test_claim_cost_counts_overflow_when_many_paths_collide_in_one_claim() -> No
         (standing,), request("challenger", issue=56, scope=own_scope)
     )
 
-    assert issue_claim._touch_summary(own_scope, touches) == (
+    assert issue_claim._touch_summary(own_scope, touches, body.Storage.GITHUB) == (
         "overlaps issue #55 on docs/b.md, scripts/d.py, src/a.py, and 1 more"
     )
 
@@ -10679,7 +10739,7 @@ def test_claim_cost_lists_every_overlapping_claim_separately() -> None:
         (first, second, third), request("challenger", issue=56, scope=own_scope)
     )
 
-    assert issue_claim._touch_summary(own_scope, touches) == (
+    assert issue_claim._touch_summary(own_scope, touches, body.Storage.GITHUB) == (
         "overlaps issue #55 on src/a.py, issue #57 on docs/b.md, lane docs/foo on tests/c.py"
     )
 
@@ -12866,18 +12926,18 @@ _CONTRADICTORY_TRAILERS = (
 )
 
 
-def _contradictory_trailer_repository(
+def _refused_trailer_repository(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, trailer: str
 ) -> Path:
-    """A real trunk repository (issue #359, LAND-60/61) whose one commit
-    carries a contradictory trailer block: shared arrangement for both
-    `check <sha>`'s and `release --merged <sha>`'s own refusal proofs, which
-    read the identical classification."""
+    """A real trunk repository (issue #359, LAND-60/61, LAND-68) whose one
+    commit carries a trailer block `check <sha>` refuses: shared arrangement
+    for both `check <sha>`'s and `release --merged <sha>`'s own refusal
+    proofs, which read the identical classification."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo, _remote = _real_repository_with_bare_remote(tmp_path)
     (repo / "work.txt").write_text("work\n")
     _real_git(repo, "add", "work.txt")
-    _real_git(repo, "commit", "-q", "-m", "contradictory landing", "-m", trailer)
+    _real_git(repo, "commit", "-q", "-m", "refused landing", "-m", trailer)
     _push_repository_trunk(repo, "origin")
     monkeypatch.chdir(repo)
     return repo
@@ -12897,7 +12957,7 @@ def test_check_sha_refuses_a_contradictory_trailer(
     nothing the way `aco board`'s own trunk-trailer reading does (LAND-42).
     The `--json` form carries the same refusal through the one envelope,
     its `message` the line's own finding (issue #435)."""
-    repo = _contradictory_trailer_repository(monkeypatch, tmp_path, trailer)
+    repo = _refused_trailer_repository(monkeypatch, tmp_path, trailer)
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["check", sha])
@@ -12910,6 +12970,57 @@ def test_check_sha_refuses_a_contradictory_trailer(
     assert "one is required" not in printed.err
     finding = printed.err.removeprefix(f"REFUSED: {sha} ").strip()
     assert envelope == _expected_trunk_envelope(sha, "invalid_classification", finding)
+
+
+_PAST_THE_ID_SPACE_FINDING = (
+    "carries `Work-Item:` 16777216, which names no state-ref item; an item id ends at aco-ffffff"
+)
+
+
+@pytest.mark.parametrize(
+    ("pin_state_ref", "exit_code", "line", "reason", "message"),
+    [
+        (
+            True,
+            2,
+            "REFUSED: {sha} " + _PAST_THE_ID_SPACE_FINDING,
+            "invalid_classification",
+            _PAST_THE_ID_SPACE_FINDING,
+        ),
+        (False, 0, "{sha} declares Work-Item: #16777216", "valid", None),
+    ],
+    ids=["state-ref-refuses", "github-declares"],
+)
+def test_check_sha_refuses_a_trailer_number_past_the_id_space_only_under_state_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    pin_state_ref: bool,
+    exit_code: int,
+    line: str,
+    reason: str,
+    message: str | None,
+) -> None:
+    """LAND-68, issue #467 (#469 review): under `storage = "state-ref"` a
+    trailer's `#16777216` names no item -- six hex digits end at 16777215 --
+    so `check <sha>` refuses it as an invalid classification and never
+    prints an id `aco` cannot take back; under `storage = "github"` the same
+    trailer names a forge issue and declares as before."""
+    if pin_state_ref:
+        _write_state_ref_pin(tmp_path)
+    repo = _refused_trailer_repository(monkeypatch, tmp_path, "Work-Item: #16777216")
+    sha = _real_git(repo, "rev-parse", "main").stdout.strip()
+
+    status = issue_claim.main(["check", sha])
+    printed = capsys.readouterr()
+    json_status = issue_claim.main(["check", sha, "--json"])
+    envelope = json.loads(capsys.readouterr().out)
+
+    expected_line = line.format(sha=sha) + "\n"
+    expected_streams = ("", expected_line) if message is not None else (expected_line, "")
+    assert (status, printed.out, printed.err) == (exit_code, *expected_streams)
+    assert re.search(r"aco-[0-9a-f]{7}", printed.out + printed.err) is None
+    assert (json_status, envelope) == (exit_code, _expected_trunk_envelope(sha, reason, message))
 
 
 @pytest.mark.parametrize("trailer", _CONTRADICTORY_TRAILERS)
@@ -12925,7 +13036,7 @@ def test_release_merged_by_sha_refuses_a_contradictory_trailer(
     exit `2`, before any write -- `_landed_commit_by_sha`'s own
     `ClassificationDefect` branch."""
     _write_state_ref_pin(tmp_path)
-    repo = _contradictory_trailer_repository(monkeypatch, tmp_path, trailer)
+    repo = _refused_trailer_repository(monkeypatch, tmp_path, trailer)
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["release", "20", "--agent", "Codex Sol", "--merged", sha])
@@ -12949,7 +13060,7 @@ def test_release_merged_empty_refuses_when_no_trunk_commit_names_the_item(
 
     assert status == 2
     assert capsys.readouterr().err == (
-        "ERROR: no trunk commit carries a Work-Item: trailer naming #99\n"
+        "ERROR: no trunk commit carries a Work-Item: trailer naming aco-000063\n"
     )
     remaining = store.fetch_state(worktree=Path("."), remote="origin").claims
     assert len(remaining) == len(_LANDING_ITEM_NUMBERS)
@@ -14737,17 +14848,24 @@ def test_check_sha_answers_in_text_and_json(
     assert (json_status, envelope) == (exit_code, _expected_trunk_envelope(sha, reason, message))
 
 
+@pytest.mark.parametrize(
+    "number", [CHECKED_ISSUE, 16777216], ids=["in-the-id-space", "past-the-id-space"]
+)
 def test_check_names_a_number_that_exists_in_neither_number_space(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    number: int,
 ) -> None:
     """GitHub gives issues and pull requests one number space, so an absent
-    number was never proven to be either -- the refusal names no kind word."""
+    number was never proven to be either -- the refusal names no kind word.
+    A number past `aco-ffffff` is an ordinary GitHub number: PIN-31 refuses
+    it only under `storage = "state-ref"` (#469 review)."""
     client = issue_check_client(monkeypatch, tmp_path, body="", state=forge.ItemState.MISSING)
+    client.issue_references[number] = client.issue_references[CHECKED_ISSUE]
 
-    assert run_check(CHECKED_ISSUE) == 2
-    assert capsys.readouterr().err == (
-        f"REFUSED: #{CHECKED_ISSUE} does not exist in {REPOSITORY}\n"
-    )
+    assert run_check(number) == 2
+    assert capsys.readouterr().err == f"REFUSED: #{number} does not exist in {REPOSITORY}\n"
     assert client.requests == 1
 
 
@@ -14879,8 +14997,9 @@ def test_issue_check_labels_a_local_blocker_under_the_state_ref_pin() -> None:
         storage=body.Storage.STATE_REF,
     )
 
+    checked_label = board.item_label(CHECKED_ISSUE, body.Storage.STATE_REF)
     local_label = board.item_label(7, body.Storage.STATE_REF)
-    assert outcome.line == f"ISSUE #{CHECKED_ISSUE} blocked by {local_label}, other/repo#9"
+    assert outcome.line == f"ISSUE {checked_label} blocked by {local_label}, other/repo#9"
 
 
 def test_check_reads_a_pull_request_in_one_dispatch_landing_and_classification_request(
@@ -15570,6 +15689,24 @@ def test_untracked_board_config_refuses_every_store_command_by_name(
     captured = capsys.readouterr()
     assert status == 2
     assert captured.err == _UNTRACKED_BOARD_CONFIG_ERROR
+
+
+@pytest.mark.parametrize("item", ["5", "16777216"], ids=["in-the-id-space", "past-the-id-space"])
+def test_untracked_board_config_refuses_item_show_in_its_own_json_envelope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], item: str
+) -> None:
+    """ITEM-17 (#469 review finding 2): an untracked pin is `item show`'s own
+    `precondition_failed` refusal under `--json` whatever number it names --
+    PIN-31's guard reads no pin it cannot trust, so it never takes the
+    refusal from the command."""
+    monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
+
+    status = issue_claim.main(["item", "show", item, "--json"])
+
+    captured = capsys.readouterr()
+    assert status == 2
+    assert captured.err == _UNTRACKED_BOARD_CONFIG_ERROR
+    _assert_json_refusal_object(captured.err, captured.out, reason="precondition_failed")
 
 
 def _scratch_lane_repository(tmp_path: Path) -> tuple[Path, str, str]:

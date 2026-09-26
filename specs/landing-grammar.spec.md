@@ -18,16 +18,17 @@ once it has the merge commit's own sha from the forge: the trunk's trailer
 block is that release's authority for which item it closes, never the pull
 request's own -- separately mutable -- body.
 
-`<n>` is a bare issue or pull request number, always printed `#<n>`. `<item>`
+`<n>` is a bare issue or pull request number, always printed `#<n>`;
+`<number>` is a trailer's number printed bare, without `#`. `<item>`
 and `<ref>` are a parsed `Work-Item:` value or closing reference, always
 printed fully qualified as `<owner>/<repo>#n` -- even where the line or
 argument that named it used a bare `#n` -- because `IssueReference` resolves
 a bare number against the reading repository before printing it again.
-`<label>` is an item as `aco next`/`release`'s own narrative lines print it:
+`<label>` is an item as every printed sentence names it (PIN-30):
 `#<n>` under `storage = "github"` (this file's default assumption unless a
-criterion says otherwise), `aco-xxxxxx` under `storage = "state-ref"`
-(README "What is still different under `state-ref`"); `--json` output never
-uses `<label>` -- it is always the bare number. `<sha>` is a commit id,
+criterion says otherwise), `aco-xxxxxx` under `storage = "state-ref"`,
+`specs/storage-pin.spec.md` PIN-30 owning the `state-ref` form; a `--json` integer
+field never uses `<label>` -- it is always the bare number. `<sha>` is a commit id,
 `<branch>` a git branch name, `<author>` a pull request's author, `<kind>`
 `docs` or `fix`. A trailer block is read through git's own trailer parsing
 (`%(trailers:key=...,valueonly)`), never by scanning the message body for a
@@ -44,6 +45,7 @@ matching line.
 | valid `No-Item:` + lane claim | — | LAND-05 | LAND-37 | — |
 | no classification / no trailer | — | LAND-06, LAND-58 | LAND-32, LAND-52, LAND-62 | — |
 | contradictory trunk trailer (both, or repeated `No-Item:`) | — (lands nothing, LAND-42) | LAND-60 | LAND-61 | — |
+| state-ref `Work-Item:` trailer number past `aco-ffffff` | — | LAND-68 | — | — |
 | classification line inside a fenced block | — | LAND-07 | — | — |
 | two classification lines | — | LAND-08 | LAND-32 | — |
 | two `Work-Item:` lines | — | LAND-09 | LAND-32 | — |
@@ -77,11 +79,12 @@ matching line.
 - [ ] [LAND-01] A merge or squash commit whose own trailer block carries `Work-Item: #10` marks #10 `code-landed` in `aco board`'s STAGE column, whether or not any pull request body also names it.
 - [ ] [LAND-02] A trailer block repeating `Work-Item:` (a squash commit carrying `Work-Item: #11` and `Work-Item: #12`) marks every named item `code-landed`, unlike a pull request body, which allows only one.
 - [ ] [LAND-03] A control-byte trailer value (`#12\x1f#13`) reads as one literal value: a defect that lands nothing (LAND-42), `aco board` exit `0`; `check <sha>` refuses the defect sentence, exit `2`.
-- [ ] [LAND-48] `aco check <sha>` reads `<sha>`'s own trailer: `Work-Item:` prints `<sha> declares Work-Item: #<n>`, `No-Item:` prints `<sha> declares No-Item: <kind>`, exit `0`.
+- [ ] [LAND-48] `aco check <sha>` reads `<sha>`'s own trailer: `Work-Item:` prints `<sha> declares Work-Item: <label>`, `No-Item:` prints `<sha> declares No-Item: <kind>`, exit `0`.
 - [ ] [LAND-57] A `<sha>` outside the walked first-parent trunk refuses `<sha> is not on the first-parent trunk`, exit `2`.
 - [ ] [LAND-58] A trunk `<sha>` carrying neither trailer refuses `<sha> carries no \`Work-Item:\` or \`No-Item:\` trailer`, exit `2`.
 - [ ] [LAND-60] A trunk `<sha>` whose trailer block is contradictory -- both `Work-Item:` and `No-Item:`, or `No-Item:` repeated -- makes `check <sha>` refuse `REFUSED: <sha> <that defect sentence>`, exit `2`.
 - [ ] [LAND-61] That same contradictory `<sha>` makes `release --merged <sha>` refuse `ERROR: <sha> <that defect sentence>`, exit `2`, before any write.
+- [ ] [LAND-68] Under state-ref `check <sha>` refuses a trunk `Work-Item: #<number>` past `aco-ffffff`: `<sha> carries \`Work-Item:\` <number>, which names no state-ref item; an item id ends at aco-ffffff`, exit `2`.
 
 ## The pull request body's own grammar
 

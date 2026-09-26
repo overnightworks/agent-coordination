@@ -15,7 +15,10 @@ accepts (PIN-08), the fresh child's own state-ref CAS write, the same path
 (PIN-16); `specs/ref-store-cas.spec.md` owns the stale-write sentence a
 raced state-ref write meets (CAS-20). This file cites those IDs rather than
 restating them. `<n>` is the container's own number, `<child>` the fresh or
-adopted child's, `<idx>` a `[[slice]]` row's `index`. A refusal reaching the
+adopted child's, `<idx>` a `[[slice]]` row's `index`. A printed `#<n>` or
+`#<child>` below, outside `item show`'s own header (ITEM-07), is the
+`storage = "github"` form of `specs/landing-grammar.spec.md`'s `<label>`;
+under `storage = "state-ref"` it prints the item id (PIN-30). A refusal reaching the
 shared collection point prints `ERROR: <sentence>` on stderr, exit `2`, and
 with `--json` also `specs/output.spec.md`'s envelope, `reason`
 `precondition_failed` -- except CUT-17/CUT-18/CUT-32's own partial write, whose
@@ -80,7 +83,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 - [ ] [CUT-11] A successful cut prints `CUT #<n>[ row <idx>] -> #<child>`, the `row <idx>` clause present only when a row was linked, exit `0` (see E-CUT-02, E-CUT-04).
 - [ ] [CUT-12] `aco cut ... --json` prints `specs/output.spec.md`'s envelope, `reason` `cut` or `adopted` (CUT-13), then `container`, `row`, `child` (see E-CUT-02).
-- [ ] [CUT-25] The fresh child's body is a `Parent: #<n>` line, a blank line, the same unfilled `task` skeleton `item new` writes (ITEM-01), plus `scope` from CUT-20/CUT-23 (see E-CUT-02, E-CUT-06).
+- [ ] [CUT-25] The fresh child's body is a `Parent: <label>` line naming `<n>`, a blank line, the same unfilled `task` skeleton `item new` writes (ITEM-01), plus `scope` from CUT-20/CUT-23 (see E-CUT-02, E-CUT-06).
 
 ## Adopting instead of duplicating
 
@@ -122,8 +125,8 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 - `aco cut` never reaches CUT-17's own relation-write failure under `storage = "state-ref"`: the child's own mint is one CAS write that can fail before any child exists -- a plain re-run then starts over as a fresh cut, nothing to adopt -- and CUT-18's row-removal step can fail once the child exists.
 - `aco cut` never touches the container's own `now`, `next`, or `done_when` fields, or any `[[slice]]` row but the one linked: a row removal's own rewrite carries every other field forward unchanged (CUT-26).
 - `aco cut` never re-parents an issue by title alone: an orphan is adopted only through CUT-16's own recovery-shape check, never a bare string match.
-- `aco cut`'s own printed `CUT`/`ADOPTED` line and `--json` object are never the storage-aware `<label>` form (`specs/landing-grammar.spec.md`): `<n>` and `<child>` are always the bare number, under either storage pin.
-- CUT-25's own body shape is identical under either storage pin; only `storage = "state-ref"` additionally sets `[record].parent` (CUT-27) -- GitHub carries no such field, so its own retry (CUT-19) reads the `Parent:` prose line instead, while a state-ref retry reads `record.parent` alone.
+- `aco cut`'s own `--json` object never uses the storage-aware `<label>` form (`specs/landing-grammar.spec.md`): `container`, `child`, and `written` are always the bare number, under either storage pin.
+- CUT-25's own body shape differs between the storage pins only in its `Parent:` line's `<label>`; only `storage = "state-ref"` additionally sets `[record].parent` (CUT-27) -- GitHub carries no such field, so its own retry (CUT-19) reads the `Parent:` prose line instead, while a state-ref retry reads `record.parent` alone.
 - Under `storage = "state-ref"`, a CUT-19 retry caused by a competing write names CAS-20's own "written since it was read" sentence as CUT-18's own `<cause>`.
 
 ## Examples
@@ -249,11 +252,11 @@ C`, `index = 2` titled `Slice D`
 
 ````console
 $ aco cut <n> --title "Slice C"
-CUT #<n> row 1 -> #<child>
+CUT aco-000001 row 1 -> <child-id>
 exit 0
-$ aco item show <child>
-<item-id> · #<child> · open · parent aco-000001 · origin none
-Parent: #<n>
+$ aco item show <child-id>
+<child-id> · #<child> · open · parent aco-000001 · origin none
+Parent: aco-000001
 
 ```agent-claim
 version = 1
