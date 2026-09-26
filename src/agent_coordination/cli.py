@@ -2237,6 +2237,8 @@ def _parent_checks(
     if match is None:
         return None
     slice_number, parent_issue = match
+    if storage is body.Storage.STATE_REF and not items.is_item_number(parent_issue):
+        return None
     parent = client.parent_issue(issue)
     if parent is not None and parent.reference == board.IssueReference(repository, parent_issue):
         return None

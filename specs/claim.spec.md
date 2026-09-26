@@ -18,7 +18,8 @@ projection's own skip (BODY-51); `aco claim` reuses either sentence
 verbatim before any write (BODY-52). This file cites those IDs rather than
 restating them. `<n>` is a claimed issue number, a printed `#<n>` (or
 CLM-14's `#<parent>`) its `storage = "github"` form and the item id under `storage = "state-ref"`
-(PIN-30), `<path>` a repository-relative path, `<reason>` a free-text
+(PIN-30); a title's parent past `aco-ffffff` names no state-ref item, so
+CLM-14 stays silent there. `<path>` a repository-relative path, `<reason>` a free-text
 sentence.
 
 ## Behavior table

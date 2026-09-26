@@ -113,6 +113,13 @@ def format_item_id(number: int) -> str:
     return f"aco-{number:06x}"
 
 
+def is_item_number(number: int) -> bool:
+    """Whether `number` lies in the id space: `format_item_id` renders it as
+    an id `ITEM_ID_PATTERN` accepts back (issue #467). A `#16777216` in free
+    text names no item, since six hex digits end at 16777215."""
+    return ITEM_ID_PATTERN.fullmatch(format_item_id(number)) is not None
+
+
 def item_id_from_filename(filename: str) -> str:
     """The item id `filename` names, or a loud refusal: every file directly
     under `items/` must be `aco-<six hex>.md`, never anything else (issue

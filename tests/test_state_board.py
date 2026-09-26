@@ -3755,6 +3755,26 @@ class TestCliStateRefForge:
         decimals = [items.item_number(identifier) for identifier in named.values()]
         assert not any(f"#{n}" in output or f'"{n}"' in output for n in decimals)
 
+    def test_a_slice_title_naming_a_parent_beyond_the_id_space_prints_no_slice_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #467 (#469 review finding 3): a title's `#16777216` names no
+        state-ref item -- six hex digits end at 16777215 -- so `claim` has no
+        parent to warn about and never prints an id it cannot take back."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        _stub_claim_checkout(monkeypatch)
+        item_id = _run_ok(["item", "new", "--title", "Fresh work (#16777216 slice 2)"], capsys)
+
+        issue_claim.main(["claim", item_id.strip(), "--agent", "Codex Sol", "--scope", "README"])
+
+        captured = capsys.readouterr()
+        assert "looks like slice" not in captured.out + captured.err
+
     def test_a_claim_overlapping_a_standing_claim_names_that_claim_by_its_id(
         self,
         monkeypatch: pytest.MonkeyPatch,
