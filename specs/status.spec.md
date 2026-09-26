@@ -27,7 +27,8 @@ shared sink `specs/ref-store-cas.spec.md`'s own preamble already documents.
 | one holder, no extra fields | — | STAT-07, STAT-09 | STAT-11 | STAT-13 |
 | more than one holder of one path | — | — | STAT-12 | STAT-13 |
 | `storage = "state-ref"` | STAT-14 | STAT-15 | — | — |
-| `--repo`, or a non-GitHub canonical remote | STAT-16 | STAT-16 | STAT-16 | STAT-16 |
+| an OWNER/REPO `--repo`, or a non-GitHub canonical remote | STAT-16 | STAT-16 | STAT-16 | STAT-16 |
+| `--repo` not shaped OWNER/REPO | OUT-08 | OUT-08 | OUT-08 | OUT-08 |
 | the fetched state ref itself is rewritten or malformed | STAT-18 | STAT-18 | STAT-18 | STAT-18 |
 
 ## The empty repository and an unclaimed issue
@@ -76,11 +77,11 @@ the peer and its claim id, never the meeting paths.
 
 ## Forge-free
 
-- [ ] [STAT-16] `aco status` never resolves an item forge or reads a remote's own URL beyond its board-config check; `--repo` and a non-GitHub remote are no error, in text, `--json`, or `--path` (see E-STAT-04).
+- [ ] [STAT-16] `aco status` resolves no item forge and reads no remote URL beyond its board-config check; an OWNER/REPO `--repo` and a non-GitHub remote are no error, in text, `--json`, or `--path` (see E-STAT-04).
 
 ## Every other refusal
 
-- [ ] [STAT-18] A rewritten `refs/aco/state` (CLAIM-50) or a malformed claim record reports through the shared sink and, under `--json`, `reason: "unavailable"`, exit `2`; `status` names no `invalid_usage` (STAT-16).
+- [ ] [STAT-18] A rewritten `refs/aco/state` (CLAIM-50) or a malformed claim record reports through the shared sink and, under `--json`, `reason: "unavailable"`, exit `2`, never `invalid_usage` (STAT-16).
 
 ## Never
 
