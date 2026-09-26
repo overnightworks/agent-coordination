@@ -92,7 +92,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-26] Each item object carries `size` (`"S"`/`"M"`/`"L"`/`null`) and `estimate` (`null`, or the fields below) alongside its other fields.
 
   ```
-  {"size": "M", "estimate": {"item": "aco-1", "size": "M", "median_hours": 5, "n": 4, "weak": false}}
+  {"size": "M", "estimate": {"item": "aco-000001", "size": "M", "median_hours": 5, "n": 4, "weak": false}}
   {"size": null, "estimate": null}
   ```
 - [ ] [BOARD-27] The top-level `measurements` object carries exactly `{"classes", "unfinished", "unparsed", "since", "as_of"}` (see E-BOARD-04).

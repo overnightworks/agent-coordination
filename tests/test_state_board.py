@@ -3574,7 +3574,7 @@ class TestCliStateRefForge:
 
         err = _run_refused(["item", "close", str(CLOSE_BLOCKER_NUMBER)], capsys)
 
-        assert f"#{CLOSE_BLOCKER_NUMBER} has a live claim (Codex Sol (builder))" in err
+        assert f"{CLOSE_BLOCKER_ID} has a live claim (Codex Sol (builder))" in err
 
     def test_item_close_refuses_a_live_claim_then_succeeds_after_release_abandoned(
         self,
@@ -3834,6 +3834,58 @@ class TestCliStateRefForge:
         assert f"overlaps issue {CHILD_A_ID} on README" in overlapping
         assert f"#{CHILD_A_NUMBER}" not in overlapping
 
+    _CHILD_A_BRANCH = "codex/issue-2-slice-a"
+    _CLAIMANT = ("--agent", "Codex Sol", "--base", "a" * 40, "--scope", "README")
+
+    @pytest.mark.parametrize(
+        ("arguments", "refusal"),
+        [
+            pytest.param(
+                ["claim", CHILD_A_ID, "--branch", "codex/second", *_CLAIMANT],
+                f"issue {CHILD_A_ID} is claimed by Codex Sol (builder) on issue {CHILD_A_ID} "
+                f"branch {_CHILD_A_BRANCH}",
+                id="claim",
+            ),
+            pytest.param(
+                ["item", "close", CHILD_A_ID],
+                f"{CHILD_A_ID} has a live claim (Codex Sol (builder)); release the claim first",
+                id="item-close",
+            ),
+            pytest.param(
+                ["release", CHILD_B_ID, "--agent", "Codex Sol", "--abandoned", "not started"],
+                f"issue {CHILD_B_ID} has no active build claim",
+                id="release",
+            ),
+        ],
+    )
+    def test_a_claim_ledger_refusal_names_the_state_ref_item_by_its_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        arguments: list[str],
+        refusal: str,
+    ) -> None:
+        """Issue #471 proof 1: with `CHILD_A` claimed, a second claim on it,
+        closing it, and releasing the unclaimed `CHILD_B` refuse naming the
+        item by the id the next command takes back, never `#<n>`. The github
+        half keeps `#<n>` through the same entry:
+        `test_cli_claim_replay_refuses_a_live_claim_with_different_retry_fields`
+        (CLAIM-11) and
+        `test_cli_release_without_a_claim_names_the_github_item_by_its_forge_number`
+        (REL-09). `item close` under github refuses outright
+        (`ITEM_CLOSE_GITHUB_REFUSAL`), so PIN-26's `#<n>` form is pinned only
+        at store level: CAS-52's
+        `test_item_close_refuses_a_claim_that_lands_between_its_first_attempt_and_the_retry`."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        self._claim_child_a(monkeypatch, capsys)
+
+        err = _run_refused(arguments, capsys)
+
+        assert err == f"ERROR: {refusal}\n"
+
     def test_a_rescope_names_the_state_ref_claim_by_its_id(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -3866,9 +3918,6 @@ class TestCliStateRefForge:
         )
 
         assert rescoped.startswith(f"RESCOPED issue {CHILD_A_ID}: ")
-
-    _CHILD_A_BRANCH = "codex/issue-2-slice-a"
-    _CLAIMANT = ("--agent", "Codex Sol", "--base", "a" * 40, "--scope", "README")
 
     def _claim_child_a(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

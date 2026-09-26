@@ -16,8 +16,8 @@ claim's own `--json` field order (CLAIM-69); `specs/body-block.spec.md`
 owns a malformed body's own defect sentence (BODY-50) and an incomplete
 projection's own skip (BODY-51); `aco claim` reuses either sentence
 verbatim before any write (BODY-52). This file cites those IDs rather than
-restating them. `<n>` is a claimed issue number, a printed `#<n>` (or
-CLM-14's `#<parent>`) its `storage = "github"` form and the item id under `storage = "state-ref"`
+restating them. `<n>` is a claimed issue number, a printed `#<n>` its
+`storage = "github"` form and the item id under `storage = "state-ref"`
 (PIN-30). `<path>` a repository-relative path, `<reason>` a free-text
 sentence.
 
@@ -78,7 +78,7 @@ to the clause each names below.
 - [ ] [CLM-11] A target that is a container refuses `#<n> is a container; claim a child`, exit `2`, unaffected by `--out-of-order`.
 - [ ] [CLM-12] A closed or missing target refuses `issue #<n> is closed` or `issue #<n> does not exist here`, exit `2`.
 - [ ] [CLM-13] A target whose body is complete but empty on its projection keys refuses `#<n> body incomplete: <fields>`, exit `2`.
-- [ ] [CLM-14] A slice-shaped title with no recorded parent prints `WARNING: looks like slice <n> of #<parent> but is no sub-issue of #<parent>; the parent inherits nothing`, still claims, exit `0`.
+- [ ] [CLM-14] A slice-shaped title with no recorded parent prints `WARNING: looks like slice <n> of #<parent> but is no sub-issue of #<parent>; the parent inherits nothing` (PIN-30), claims, exit `0`.
 - [ ] [CLM-28] Under `storage = "state-ref"` a slice-shaped title whose `#<parent>` lies past `aco-ffffff` names no item, so CLM-14 warns nothing.
 
 ## Replay and JSON
