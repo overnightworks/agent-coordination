@@ -1892,11 +1892,26 @@ def _real_worktree_on_default_branch_target(tmp_path: Path) -> Path:
     return worktree / "README.md"
 
 
+def _symlink_outside_every_repository_into_main_checkout(tmp_path: Path) -> Path:
+    """Issue #448 review finding: a file symlink sitting outside every
+    repository (the shape of `~/.claude/CLAUDE.md`) whose target is a
+    tracked file in a real main checkout -- the write lands in that
+    checkout, so it must never pass as outside every repository."""
+    link = tmp_path / "not-a-repository" / "linked-readme.md"
+    link.parent.mkdir()
+    link.symlink_to(_real_main_checkout_target(tmp_path))
+    return link
+
+
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
 @pytest.mark.parametrize(
     "build_target",
-    [_real_main_checkout_target, _real_worktree_on_default_branch_target],
-    ids=["main-checkout", "linked-worktree-on-default-branch"],
+    [
+        _real_main_checkout_target,
+        _real_worktree_on_default_branch_target,
+        _symlink_outside_every_repository_into_main_checkout,
+    ],
+    ids=["main-checkout", "linked-worktree-on-default-branch", "symlink-into-main-checkout"],
 )
 def test_protect_denies_not_main_for_a_real_checkout(
     monkeypatch: pytest.MonkeyPatch,

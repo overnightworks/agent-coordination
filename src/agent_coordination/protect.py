@@ -364,11 +364,29 @@ def _resolved_path_checkout(absolute_path: str) -> checkout.PathCheckout | None:
     the same way `nested` does (issue #380 delta, gate finding)."""
     path = Path(os.path.normpath(absolute_path))
     if not path.is_dir():
-        return checkout.resolve_path_checkout(_nearest_existing_directory(path.parent))
+        return _file_checkout(path)
     self_checkout = checkout.resolve_path_checkout(path)
     if self_checkout is not None and self_checkout.toplevel == path:
         return self_checkout
     return checkout.resolve_path_checkout(path.parent) or self_checkout
+
+
+def _file_checkout(path: Path) -> checkout.PathCheckout | None:
+    """The checkout a file path belongs to: its own directory's first, and
+    -- only when that sits outside every repository -- its symlink-resolved
+    target's. A file symlink outside every repository still writes into
+    whichever checkout its target lies in, so it is judged by that checkout
+    rather than allowed as outside (issue #448 review finding: a
+    `~/.claude/CLAUDE.md` link into a main checkout). The link's own
+    directory wins whenever it is in a checkout, so no link can move a
+    write out of the gate that directory already imposes."""
+    own_checkout = checkout.resolve_path_checkout(_nearest_existing_directory(path.parent))
+    if own_checkout is not None:
+        return own_checkout
+    target = Path(os.path.realpath(path))
+    if target == path:
+        return None
+    return checkout.resolve_path_checkout(_nearest_existing_directory(target.parent))
 
 
 def _nearest_existing_directory(directory: Path) -> Path:
