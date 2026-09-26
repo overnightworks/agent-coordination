@@ -959,9 +959,10 @@ class ReleaseIntent:
 @dataclass(frozen=True)
 class ItemWriteIntent:
     """Replaces `items/<item_id>.md`'s stored blob oid via oid-based CAS
-    (issue #279). Create, edit, and close are all "replace this blob" and
-    differ only in how the caller computed `new_oid`'s bytes -- never in a
-    separate intent shape, so there is one `ItemWriteIntent`, not three.
+    (issue #279). Create and edit are both "replace this blob" and differ
+    only in how the caller computed `new_oid`'s bytes, so they share this
+    one shape. A close is the same blob write wrapped in `ItemCloseIntent`,
+    which adds the live-claim check every attempt re-applies (issue #459).
 
     `expected=None` means "this item must not exist yet"; any other value
     must equal the item's current oid or the write refuses loud, never
