@@ -1292,6 +1292,30 @@ class TestStateRefBoardWrites:
                 == before_record
             )
 
+    def test_update_item_body_keeps_a_stored_unknown_blocker_beside_a_new_one(
+        self, bare_remote: Path, worktree: Path
+    ) -> None:
+        """Issue #450, ITEM-44: only a blocker the write adds is judged, so
+        a stored blocker naming no item survives an edit that adds a
+        resolving one -- the edit is never refused for what it carried."""
+        stored_unknown = "aco-ffffff"
+        item_files = _item_files_with_container_slices((), blocked_by=(stored_unknown,))
+        _push_item_tree(bare_remote, worktree, item_files)
+        adapter = _fetch_state_ref_board(
+            bare_remote, worktree, writer=self._writer(bare_remote, worktree)
+        )
+        delivered_blockers = (stored_unknown, CHILD_A_ID)
+        delivered_body = _state_ref_body(
+            _CONTAINER_PROJECTION,
+            _record(title="Epic", state="open", kind="container", blocked_by=delivered_blockers),
+        )
+
+        adapter.update_item_body(CONTAINER_NUMBER, delivered_body)
+
+        after = adapter.item_reference(CONTAINER_NUMBER)
+        assert after.body is not None
+        assert _decoded_record(after.body, CONTAINER_ID).blocked_by == delivered_blockers
+
     def test_a_second_write_from_the_same_read_state_refuses_and_overwrites_nothing(
         self, bare_remote: Path, worktree: Path
     ) -> None:
