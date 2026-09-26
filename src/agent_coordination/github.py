@@ -133,15 +133,18 @@ def github_command_environment() -> dict[str, str]:
     return environment
 
 
-def _repository_id(text: str) -> forge.RepositoryId:
+def repository_id(text: str) -> forge.RepositoryId:
+    """The one judge of the OWNER/REPO shape, for `--repo` as for a remote
+    URL's or `gh`'s answer: anything else -- a path, a bare owner, a third
+    segment -- is refused by name, never read as a place to look."""
     if re.fullmatch(REPOSITORY_PATTERN, text) is None:
-        raise ClaimError("repository must be OWNER/REPO")
+        raise ClaimError(f"repository must be OWNER/REPO, not {text}")
     namespace, _, name = text.partition("/")
     return forge.RepositoryId(GITHUB_HOST, (namespace,), name)
 
 
 def discover_repository(
-    explicit: str | None, *, remote_url: Callable[[], str]
+    explicit: forge.RepositoryId | None, *, remote_url: Callable[[], str]
 ) -> forge.RepositoryId:
     """Resolve the repository `--repo` did not name.
 
@@ -151,11 +154,11 @@ def discover_repository(
     `gh` API call, `GH_TIMEOUT_SECONDS` long) only runs as a fallback, when
     the remote's own URL names no repository at all.
     """
-    if explicit:
-        return _repository_id(explicit)
+    if explicit is not None:
+        return explicit
     match = GITHUB_REMOTE_PATTERN.search(remote_url())
     if match is not None:
-        return _repository_id(f"{match.group(1)}/{match.group(2)}")
+        return repository_id(f"{match.group(1)}/{match.group(2)}")
     try:
         result = process.run_captured(
             ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
@@ -170,7 +173,7 @@ def discover_repository(
     # warning can neither corrupt a good answer nor mask a real failure.
     cleaned = strip_ansi(result.stdout.decode("utf-8")).strip()
     if result.exit_status == 0 and cleaned:
-        return _repository_id(cleaned)
+        return repository_id(cleaned)
     raise ClaimError("cannot resolve GitHub repository; pass --repo OWNER/REPO")
 
 

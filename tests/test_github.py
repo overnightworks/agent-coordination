@@ -55,7 +55,7 @@ def test_only_the_github_adapter_speaks_gh_argv() -> None:
 
 def board_issue_page_client(*rows: dict[str, object]) -> GitHubForge:
     return GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: "\n".join(json.dumps(row) for row in rows),
     )
 
@@ -136,7 +136,7 @@ def test_github_adapter_fails_loud_on_a_malformed_board_issue(
 
 def test_github_adapter_fails_loud_when_a_board_issue_is_not_an_object() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: '"not an object"'
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: '"not an object"'
     )
 
     with pytest.raises(ClaimError, match="malformed board issue"):
@@ -151,7 +151,7 @@ def _paged_board_issue_client(page_rows: Callable[[int], list[dict[str, object]]
         page = int(arguments[1].rsplit("page=", 1)[1])
         return "\n".join(json.dumps(row) for row in page_rows(page))
 
-    return GitHubForge(github._repository_id(REPOSITORY), run=run)
+    return GitHubForge(github.repository_id(REPOSITORY), run=run)
 
 
 def test_github_adapter_fetches_board_pages_until_one_comes_back_short(
@@ -193,7 +193,7 @@ def test_github_adapter_accepts_pretty_and_ansi_colored_json() -> None:
         + json.dumps(raw_board_issue(number=2), indent=2)
     )
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: f"\x1b[32m{pretty}\x1b[0m",
     )
 
@@ -207,7 +207,7 @@ def test_github_adapter_accepts_concatenated_pretty_json_objects() -> None:
         raw_board_issue(number=2), indent=2
     )
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: raw
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: raw
     )
 
     assert [issue.number for issue in client.list_open_board_issues()] == [1, 2]
@@ -227,7 +227,7 @@ def raw_board_pull_request(**overrides: object) -> dict[str, object]:
 
 def test_github_adapter_reads_an_open_board_pull_request() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(raw_board_pull_request()),
     )
 
@@ -238,7 +238,7 @@ def test_github_adapter_reads_an_open_board_pull_request() -> None:
 
 def test_github_adapter_reads_a_board_pull_request_with_no_body_as_empty() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(raw_board_pull_request(body=None)),
     )
 
@@ -261,7 +261,7 @@ def test_github_adapter_fails_loud_on_a_malformed_board_pull_request(
     overrides: dict[str, object],
 ) -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(raw_board_pull_request(**overrides)),
     )
 
@@ -271,7 +271,7 @@ def test_github_adapter_fails_loud_on_a_malformed_board_pull_request(
 
 def test_github_adapter_fails_loud_when_a_board_pull_request_is_not_an_object() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: '"not an object"'
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: '"not an object"'
     )
 
     with pytest.raises(ClaimError, match="malformed board pull request"):
@@ -292,7 +292,7 @@ def test_github_adapter_creates_a_child_and_links_it_as_a_sub_issue() -> None:
             return "555444"
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     child = client.create_child(
         parent=79, title="Scheibe 4", body=BLOCK_CHILD_SKELETON, kind=ItemKind.TASK
@@ -323,7 +323,7 @@ def test_github_adapter_creates_a_child_and_links_it_as_a_sub_issue() -> None:
     ],
 )
 def test_github_adapter_fails_loud_on_a_malformed_created_child(payload: str) -> None:
-    client = GitHubForge(github._repository_id(REPOSITORY), run=lambda *_a, **_k: payload)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=lambda *_a, **_k: payload)
 
     with pytest.raises(ClaimError, match=r"created.issue"):
         client.create_child(parent=79, title="Scheibe 4", body="", kind=ItemKind.TASK)
@@ -339,7 +339,7 @@ def test_github_adapter_names_the_created_child_when_the_relation_post_fails() -
             return json.dumps({"id": 555444, "number": 101, "type": {"name": "Task"}})
         raise forge.ForgeError("HTTP 422 could not create sub-issue relation")
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     with pytest.raises(forge.ForgePartialChildCreationError) as excinfo:
         client.create_child(parent=79, title="Scheibe 4", body="", kind=ItemKind.TASK)
@@ -362,7 +362,7 @@ def test_github_adapter_creates_an_issue_without_linking_it_as_a_child(
         observed.append((arguments, input_data))
         return json.dumps({"id": 555444, "number": 101, "type": {"name": returned_type_name}})
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     number = client.create_issue(title="Scheibe 4", body=BLOCK_CHILD_SKELETON, kind=ItemKind.TASK)
 
@@ -393,7 +393,7 @@ def test_github_adapter_names_the_created_issue_github_left_without_its_type(
     still to set, never a plain success -- nor a generic malformed-response
     error once the response has named the created issue."""
     payload = json.dumps(created)
-    client = GitHubForge(github._repository_id(REPOSITORY), run=lambda *_a, **_k: payload)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=lambda *_a, **_k: payload)
 
     with pytest.raises(forge.ForgeIssueTypeNotSetError) as excinfo:
         client.create_issue(title="Scheibe 4", body="", kind=ItemKind.CONTAINER)
@@ -430,7 +430,7 @@ def test_github_adapter_lists_only_issues_closed_since_the_cutoff() -> None:
         observed.append(arguments)
         return "\n".join(json.dumps(row) for row in rows)
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
     since = datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
 
     closed = client.list_recently_closed_issues(since)
@@ -462,7 +462,7 @@ def test_github_adapter_lists_only_issues_closed_since_the_cutoff() -> None:
 )
 def test_github_adapter_fails_loud_on_a_malformed_closed_issue(row: object) -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda *_arguments, **_options: json.dumps(row)
+        github.repository_id(REPOSITORY), run=lambda *_arguments, **_options: json.dumps(row)
     )
     since = datetime(2026, 8, 27, tzinfo=UTC)
 
@@ -481,7 +481,7 @@ def test_github_adapter_links_an_existing_child_by_reading_its_internal_id() -> 
         observed.append((arguments, input_data))
         return "555444" if arguments[1].endswith("/issues/101") else ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     client.link_child(79, 101)
 
@@ -502,7 +502,7 @@ def test_github_adapter_links_an_existing_child_by_reading_its_internal_id() -> 
     ],
 )
 def test_github_adapter_fails_loud_on_a_malformed_child_identifier(payload: str) -> None:
-    client = GitHubForge(github._repository_id(REPOSITORY), run=lambda *_a, **_k: payload)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=lambda *_a, **_k: payload)
 
     with pytest.raises(ClaimError, match="malformed issue id"):
         client.link_child(79, 101)
@@ -515,7 +515,7 @@ def test_github_adapter_updates_an_item_body() -> None:
         observed.append((arguments, input_data))
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     client.update_item_body(79, "new body")
 
@@ -548,7 +548,7 @@ def test_github_adapter_closes_a_landed_item_with_a_comment_first() -> None:
         observed.append((arguments, input_data))
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     client.close_landed_item(79, pull_request=101)
 
@@ -578,7 +578,7 @@ def test_github_adapter_closing_a_landed_item_never_reaches_close_when_the_comme
             return ""
         raise forge.ForgeError("HTTP 500 comment failed")
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     with pytest.raises(forge.ForgeError, match="comment failed"):
         client.close_landed_item(79, pull_request=101)
@@ -600,7 +600,7 @@ def test_github_adapter_closing_a_landed_item_skips_a_repeated_comment() -> None
         calls.append(arguments)
         return already_posted if input_data is None else ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     client.close_landed_item(79, pull_request=101)
 
@@ -639,7 +639,7 @@ def test_github_adapter_finds_a_landing_comment_past_the_first_page() -> None:
             raise forge.ForgeError("HTTP 500 close failed")
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     with pytest.raises(forge.ForgeError, match="close failed"):
         client.close_landed_item(79, pull_request=101)
@@ -655,7 +655,7 @@ def test_github_adapter_finds_a_landing_comment_past_the_first_page() -> None:
 
 def test_github_adapter_fails_loud_on_a_malformed_issue_comment() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps({"body": 5}),
     )
 
@@ -713,7 +713,7 @@ def _readiness_client(
         page = int(path.rsplit("page=", 1)[1])
         return "\n".join(json.dumps(row) for row in name_page) if page == 1 else ""
 
-    return GitHubForge(github._repository_id(REPOSITORY), run=fake_run), calls
+    return GitHubForge(github.repository_id(REPOSITORY), run=fake_run), calls
 
 
 def test_github_adapter_reads_landing_readiness_from_the_pull_request_and_its_checks() -> None:
@@ -836,7 +836,7 @@ def test_github_adapter_reads_a_pending_combined_status_aggregate_with_an_empty_
         assert path.startswith(_READINESS_STATUS_PATH)
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     readiness = client.landing_readiness(57)
 
@@ -861,7 +861,7 @@ def test_github_adapter_reads_a_failing_combined_status_aggregate() -> None:
         assert path.startswith(_READINESS_STATUS_PATH)
         return json.dumps({"name": "sonarcloud"})
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     readiness = client.landing_readiness(57)
 
@@ -887,7 +887,7 @@ def test_github_adapter_reads_an_error_combined_status_aggregate() -> None:
         assert path.startswith(_READINESS_STATUS_PATH)
         return json.dumps({"name": "sonarcloud"})
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     readiness = client.landing_readiness(57)
 
@@ -931,7 +931,7 @@ def test_github_adapter_landing_rejects_a_malformed_status_summary_shape() -> No
         assert path.startswith(_READINESS_STATUS_PATH)
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     with pytest.raises(ClaimError, match="malformed commit status summary"):
         client.landing_readiness(57)
@@ -957,7 +957,7 @@ def test_github_adapter_landing_rejects_a_malformed_status_summary_fields() -> N
         assert path.startswith(_READINESS_STATUS_PATH)
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     with pytest.raises(ClaimError, match="malformed commit status summary"):
         client.landing_readiness(57)
@@ -981,7 +981,7 @@ def test_github_adapter_landing_rejects_a_malformed_status_name() -> None:
         assert path.startswith(_READINESS_STATUS_PATH)
         return json.dumps({"name": ""})
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     with pytest.raises(ClaimError, match=r"malformed commit status$"):
         client.landing_readiness(57)
@@ -1004,7 +1004,7 @@ def test_github_adapter_accepts_a_mergeable_state_it_has_never_seen_before() -> 
             return json.dumps({"state": "success", "total": 0})
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     readiness = client.landing_readiness(57)
 
@@ -1013,7 +1013,7 @@ def test_github_adapter_accepts_a_mergeable_state_it_has_never_seen_before() -> 
 
 def test_github_adapter_fails_loud_on_an_empty_mergeable_state() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(
             {"state": "open", "headSha": MERGE_COMMIT_SHA, "mergeableState": ""}
         ),
@@ -1033,7 +1033,7 @@ def test_github_adapter_merges_a_pull_request_with_a_pinned_sha() -> None:
         observed.append((arguments, input_data))
         return json.dumps({"merged": True, "sha": MERGE_COMMIT_SHA})
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     sha = client.merge_landing(
         57, head_sha=MERGE_COMMIT_SHA, title="Merge pull request #57", body="Work-Item: #42\n"
@@ -1063,7 +1063,7 @@ def test_github_adapter_reports_a_merge_conflict_when_the_pull_request_changed(
     request's head moved since `landing_readiness` read it -- translated to
     `ForgeMergeConflictError` so `aco land` can name its one recovery: re-run."""
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: (_ for _ in ()).throw(
             forge.ForgeError(f"HTTP {status} pull request changed")
         ),
@@ -1080,7 +1080,7 @@ def test_github_adapter_deletes_a_merged_branch() -> None:
         calls.append(arguments)
         return ""
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     client.delete_branch(LANDING_BRANCH)
 
@@ -1105,7 +1105,7 @@ def test_github_adapter_deleting_an_already_absent_branch_is_idempotent(decoded:
     def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
         raise forge.ForgeNotFoundError(decoded) if "404" in decoded else forge.ForgeError(decoded)
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=fake_run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     client.delete_branch(LANDING_BRANCH)
 
@@ -1116,7 +1116,7 @@ def test_github_adapter_delete_branch_reraises_an_unrelated_422() -> None:
     refusing the delete, say -- is a real failure `delete_branch` must
     still surface, not silently treat as already gone."""
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: (_ for _ in ()).throw(
             forge.ForgeError("HTTP 422 Validation Failed: branch is protected")
         ),
@@ -1146,7 +1146,7 @@ def test_github_adapter_reraises_a_failure_unrelated_to_its_own_classification(
     named case; any other `ForgeError` -- a transient gateway timeout, say
     -- passes through unchanged."""
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: (_ for _ in ()).throw(
             forge.ForgeError("HTTP 500 gateway timeout")
         ),
@@ -1167,7 +1167,7 @@ def test_github_adapter_reraises_a_failure_unrelated_to_its_own_classification(
 )
 def test_github_adapter_fails_loud_on_a_malformed_check_run(value: object) -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: ""
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: ""
     )
 
     with pytest.raises(ClaimError, match="malformed check run"):
@@ -1180,7 +1180,7 @@ def test_github_adapter_fails_loud_on_a_malformed_readiness_response() -> None:
     shape, say -- is a malformed pull request, not a valid readiness."""
     two_values = json.dumps({"state": "open"}) + json.dumps({"state": "closed"})
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: two_values
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: two_values
     )
 
     with pytest.raises(ClaimError, match="malformed pull request"):
@@ -1197,7 +1197,7 @@ def test_github_adapter_fails_loud_on_a_malformed_readiness_response() -> None:
 )
 def test_github_adapter_fails_loud_on_a_malformed_merge_result(result: dict[str, object]) -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(result),
     )
 
@@ -1208,7 +1208,7 @@ def test_github_adapter_fails_loud_on_a_malformed_merge_result(result: dict[str,
 def test_github_adapter_fails_loud_on_a_merge_result_with_more_than_one_value() -> None:
     two_values = json.dumps({"merged": True}) + json.dumps({"merged": True})
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: two_values
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: two_values
     )
 
     with pytest.raises(ClaimError, match="malformed merge result"):
@@ -1221,7 +1221,7 @@ def test_recent_merged_pull_requests_refuses_a_window_that_ends_before_it_starts
     window could cross UTC midnight between this line and the production
     code's own `datetime.now(UTC)` call, sometimes closing the window and
     falling through to a real, unfaked `gh` call instead of raising."""
-    client = GitHubForge(github._repository_id("example/agent-coordination"))
+    client = GitHubForge(github.repository_id("example/agent-coordination"))
     raised_argument_1 = datetime(2099, 1, 1, tzinfo=UTC)
     with pytest.raises(ClaimError, match="merged pull request window ends before it starts"):
         client.list_recent_merged_board_pull_requests(raised_argument_1)
@@ -1249,7 +1249,7 @@ def test_github_adapter_runs_gh_when_no_fake_run_is_given(monkeypatch: pytest.Mo
         return original_popen(substituted, stdin=stdin, stdout=stdout, stderr=stderr, env=env)
 
     monkeypatch.setattr(subprocess, "Popen", start)
-    client = GitHubForge(github._repository_id("example/agent-coordination"))
+    client = GitHubForge(github.repository_id("example/agent-coordination"))
 
     assert client.default_branch() == "main"
     assert observed == [
@@ -1258,7 +1258,7 @@ def test_github_adapter_runs_gh_when_no_fake_run_is_given(monkeypatch: pytest.Mo
 
 
 def test_github_adapter_capability_reads_the_declared_table() -> None:
-    client = GitHubForge(github._repository_id("example/agent-coordination"))
+    client = GitHubForge(github.repository_id("example/agent-coordination"))
 
     assert client.capability(forge.ForgeOperation.ITEM_REFERENCE) is forge.Capability.READ_ONLY
     assert client.capability(forge.ForgeOperation.CREATE_CHILD) is forge.Capability.READ_WRITE
@@ -1266,7 +1266,7 @@ def test_github_adapter_capability_reads_the_declared_table() -> None:
 
 def test_github_adapter_item_reference_reads_state_title_and_body() -> None:
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"),
+        github.repository_id("example/agent-coordination"),
         run=lambda _arguments: json.dumps(
             {"state": "open", "title": "Work", "body": "Do it.", "is_landing": False}
         ),
@@ -1279,7 +1279,7 @@ def test_github_adapter_item_reference_reports_a_pull_request_as_a_landing() -> 
     """The one read `check` distributes on: GitHub answers for a pull request
     at the issues endpoint too, and only this flag tells the two apart."""
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"),
+        github.repository_id("example/agent-coordination"),
         run=lambda _arguments: json.dumps(
             {"state": "open", "title": "Land it", "body": "Work-Item: #7", "is_landing": True}
         ),
@@ -1292,7 +1292,7 @@ def test_github_adapter_item_reference_reports_a_pull_request_as_a_landing() -> 
 
 def test_github_adapter_item_reference_reads_a_closed_issue_with_no_body() -> None:
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"),
+        github.repository_id("example/agent-coordination"),
         run=lambda _arguments: json.dumps(
             {"state": "closed", "title": "Work", "body": None, "is_landing": False}
         ),
@@ -1303,7 +1303,7 @@ def test_github_adapter_item_reference_reads_a_closed_issue_with_no_body() -> No
 
 def test_github_adapter_item_reference_is_missing_after_a_404() -> None:
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"),
+        github.repository_id("example/agent-coordination"),
         run=lambda _arguments: (_ for _ in ()).throw(
             forge.ForgeNotFoundError("GitHub API failed: HTTP 404")
         ),
@@ -1342,7 +1342,7 @@ def test_github_adapter_item_reference_fails_loud_on_a_malformed_response(
     raw: str, match: str
 ) -> None:
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"), run=lambda _arguments: raw
+        github.repository_id("example/agent-coordination"), run=lambda _arguments: raw
     )
 
     with pytest.raises(ClaimError, match=match):
@@ -1404,7 +1404,7 @@ def test_github_adapter_item_references_reads_every_number_from_one_batch(
             + "gh: Could not resolve to an issue or pull request with the number of 30.\n"
         )
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     assert client.item_references((10, 20, 30)) == {
         10: forge.ItemReference(forge.ItemState.OPEN, "Open one", "Do it."),
@@ -1419,7 +1419,7 @@ def test_github_adapter_item_references_of_nothing_costs_no_round_trip() -> None
     def _fail(_arguments: list[str]) -> str:
         raise AssertionError("an empty batch must never call gh")
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=_fail)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=_fail)
 
     assert client.item_references(()) == {}
 
@@ -1448,7 +1448,7 @@ def test_github_adapter_item_references_splits_into_blocks_of_the_batch_size(
             }
         )
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     references = client.item_references(numbers)
 
@@ -1501,7 +1501,7 @@ def test_github_adapter_item_references_fails_loud_on_a_malformed_node(
     node: object, match: str
 ) -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda _arguments: json.dumps({"n0": node}),
     )
 
@@ -1520,7 +1520,7 @@ def test_github_adapter_item_references_fails_loud_on_a_malformed_node(
 def test_github_adapter_item_references_fails_loud_on_a_malformed_response(
     raw: str, match: str
 ) -> None:
-    client = GitHubForge(github._repository_id(REPOSITORY), run=lambda _arguments: raw)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=lambda _arguments: raw)
 
     with pytest.raises(ClaimError, match=match):
         client.item_references((10,))
@@ -1602,7 +1602,7 @@ def test_github_adapter_item_references_reraises_an_unrecovered_graphql_error(
     def run(_arguments: list[str]) -> str:
         raise forge.ForgeError(message)
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     with pytest.raises(forge.ForgeError, match=match):
         client.item_references((10,))
@@ -1633,7 +1633,7 @@ def test_github_reads_board_dependencies_local_and_foreign(
         ]
         return "\n".join(json.dumps(row) for row in rows)
 
-    client = GitHubForge(github._repository_id("example/agent-coordination"), run=run)
+    client = GitHubForge(github.repository_id("example/agent-coordination"), run=run)
 
     assert client.list_board_dependencies(150) == (
         board.IssueDependency(
@@ -1693,7 +1693,7 @@ def test_github_reads_board_dependencies_local_and_foreign(
 )
 def test_github_board_dependency_fails_loud_on_a_malformed_shape(raw: str) -> None:
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"), run=lambda _arguments: raw
+        github.repository_id("example/agent-coordination"), run=lambda _arguments: raw
     )
 
     with pytest.raises(ClaimError, match="malformed board blocked-by dependency"):
@@ -1705,7 +1705,7 @@ def test_github_board_dependency_fails_loud_on_an_uncalendared_closed_timestamp(
     places) while still naming no real calendar date; `datetime.fromisoformat`
     itself is the second, calendar-aware check that catches that."""
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"),
+        github.repository_id("example/agent-coordination"),
         run=lambda _arguments: json.dumps(
             {
                 "number": 151,
@@ -1794,7 +1794,7 @@ def test_merged_pull_request_history_warns_when_it_reaches_the_result_cap(
         for index in range(1, github.MAX_RECENT_MERGED_PULL_REQUESTS + 1)
     ]
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"),
+        github.repository_id("example/agent-coordination"),
         run=lambda arguments: "\n".join(json.dumps(row) for row in saturated_rows),
     )
 
@@ -1826,7 +1826,7 @@ def test_merged_pull_request_history_below_the_cap_warns_of_nothing(
         "mergedAt": "2026-08-01T00:00:00Z",
     }
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"), run=lambda arguments: json.dumps(row)
+        github.repository_id("example/agent-coordination"), run=lambda arguments: json.dumps(row)
     )
 
     client.list_recent_merged_board_pull_requests(since)
@@ -1857,7 +1857,7 @@ def test_recent_merged_pull_requests_skips_an_entry_with_no_merge_time(
         "mergedAt": None,
     }
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"), run=lambda arguments: json.dumps(row)
+        github.repository_id("example/agent-coordination"), run=lambda arguments: json.dumps(row)
     )
 
     assert client.list_recent_merged_board_pull_requests(since) == ()
@@ -1882,7 +1882,7 @@ def test_recent_merged_pull_requests_fails_loud_on_an_uncalendared_merge_time(
         "mergedAt": "9999-99-99T00:00:00Z",
     }
     client = GitHubForge(
-        github._repository_id("example/agent-coordination"), run=lambda arguments: json.dumps(row)
+        github.repository_id("example/agent-coordination"), run=lambda arguments: json.dumps(row)
     )
 
     with pytest.raises(ClaimError, match="malformed merged board pull request"):
@@ -1921,11 +1921,6 @@ def test_repository_resolution_refuses_when_no_remote_matches(
 
     with pytest.raises(ClaimError, match="cannot resolve GitHub repository"):
         github.discover_repository(None, remote_url=lambda: "https://example.com/owner/repo")
-
-
-def test_discover_repository_requires_owner_slash_repo_shape_for_an_explicit_repo() -> None:
-    with pytest.raises(ClaimError, match="repository must be OWNER/REPO"):
-        github.discover_repository("not-a-repository-shape", remote_url=lambda: "")
 
 
 @pytest.mark.parametrize(
@@ -2431,7 +2426,7 @@ def test_bounded_command_classifies_every_forge_failure_signal(
         return outcome
 
     monkeypatch.setattr(process, "run_bounded", fake_run_bounded)
-    client = GitHubForge(github._repository_id("example/agent-coordination"))
+    client = GitHubForge(github.repository_id("example/agent-coordination"))
 
     with pytest.raises(expected_type) as excinfo:
         client.default_branch()
@@ -2457,7 +2452,7 @@ def test_bounded_command_refuses_a_process_error_type_it_does_not_classify(
         raise _UnknownProcessError
 
     monkeypatch.setattr(process, "run_bounded", fake_run_bounded)
-    client = GitHubForge(github._repository_id("example/agent-coordination"))
+    client = GitHubForge(github.repository_id("example/agent-coordination"))
 
     with pytest.raises(AssertionError, match="unhandled process failure type"):
         client.default_branch()
@@ -2485,13 +2480,13 @@ def test_github_adapter_reads_a_pull_request_and_the_default_branch() -> None:
             return json.dumps(api_pull_request())
         return "main"
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     expected = forge.Landing(
         12,
         "ada",
         "Work-Item: #72",
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         LANDING_BRANCH,
         "main",
         True,
@@ -2503,7 +2498,7 @@ def test_github_adapter_reads_a_pull_request_and_the_default_branch() -> None:
 
 def test_github_adapter_reads_a_landing_with_no_body_as_empty() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(api_pull_request(body=None)),
     )
 
@@ -2512,7 +2507,7 @@ def test_github_adapter_reads_a_landing_with_no_body_as_empty() -> None:
 
 def test_github_adapter_reads_a_fork_branch_as_its_own_repository() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(
             api_pull_request(
                 headRepository={"name": "agent-coordination"},
@@ -2521,12 +2516,12 @@ def test_github_adapter_reads_a_fork_branch_as_its_own_repository() -> None:
         ),
     )
 
-    assert client.landing(12).source_repository == github._repository_id("fork/agent-coordination")
+    assert client.landing(12).source_repository == github.repository_id("fork/agent-coordination")
 
 
 def test_github_adapter_fails_loud_when_github_answers_for_another_pull_request() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(api_pull_request(number=13)),
     )
 
@@ -2572,7 +2567,7 @@ def test_github_adapter_fails_loud_when_github_answers_for_another_pull_request(
 )
 def test_github_adapter_fails_loud_on_a_malformed_pull_request(payload: dict[str, object]) -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(payload),
     )
 
@@ -2584,7 +2579,7 @@ def test_github_adapter_fails_loud_on_a_malformed_pull_request(payload: dict[str
 
 def test_github_adapter_fails_loud_when_the_pull_request_payload_is_not_a_dict() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps("not a pull request"),
     )
 
@@ -2596,7 +2591,7 @@ def test_github_adapter_fails_loud_when_the_pull_request_payload_is_not_a_dict()
 
 def test_github_adapter_fails_loud_when_github_answers_with_more_than_one_pull_request() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: (
             f"{json.dumps(api_pull_request())}\n{json.dumps(api_pull_request())}"
         ),
@@ -2610,7 +2605,7 @@ def test_github_adapter_fails_loud_when_github_answers_with_more_than_one_pull_r
 
 def test_github_adapter_fails_loud_when_github_answers_with_no_pull_request() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: ""
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: ""
     )
 
     with pytest.raises(ClaimError) as excinfo:
@@ -2621,7 +2616,7 @@ def test_github_adapter_fails_loud_when_github_answers_with_no_pull_request() ->
 
 def test_github_adapter_fails_loud_on_a_malformed_default_branch() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: "not a branch"
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: "not a branch"
     )
 
     with pytest.raises(ClaimError, match="malformed default branch"):
@@ -2631,7 +2626,7 @@ def test_github_adapter_fails_loud_on_a_malformed_default_branch() -> None:
 def test_github_adapter_refuses_a_default_branch_over_the_length_bound() -> None:
     overlong = "a" * 300
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: overlong
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: overlong
     )
 
     with pytest.raises(ClaimError, match="malformed default branch"):
@@ -2647,7 +2642,7 @@ def api_sub_issue(number: int, state: str) -> dict[str, object]:
 
 def sub_issue_client(*children: dict[str, object]) -> GitHubForge:
     return GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: "\n".join(json.dumps(child) for child in children),
     )
 
@@ -2660,7 +2655,7 @@ def test_github_adapter_reads_a_recorded_parent_and_its_children() -> None:
             )
         return "\n".join(json.dumps(api_sub_issue(number, "open")) for number in (72, 73))
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     assert client.parent_issue(72) == board.ParentIssue(
         board.IssueReference(REPOSITORY, 79), "## Next\nCut."
@@ -2708,7 +2703,7 @@ def test_github_adapter_refuses_a_sub_issue_from_another_repository() -> None:
 
 def test_github_adapter_fails_loud_when_a_sub_issue_is_not_an_object() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: "5"
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: "5"
     )
 
     with pytest.raises(ClaimError, match="malformed sub-issue"):
@@ -2719,7 +2714,7 @@ def test_github_adapter_reads_an_issue_without_a_parent_as_parentless() -> None:
     def run(arguments: list[str], *, input_data: bytes | None = None) -> str:
         raise forge.ForgeNotFoundError("gh: No parent issue found (HTTP 404)")
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     assert (client.parent_issue(72), client.parent_number(72)) == (None, None)
 
@@ -2735,7 +2730,7 @@ def test_github_adapter_reads_the_parents_native_kind() -> None:
             }
         )
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     assert client.parent_issue(72) == board.ParentIssue(
         board.IssueReference(REPOSITORY, 79), "## Next\nCut.", ItemKind.CONTAINER
@@ -2748,7 +2743,7 @@ def test_github_adapter_fails_loud_on_a_malformed_parent_kind() -> None:
             {"number": 79, "repository": API_REPOSITORY_URL, "body": "## Next\nCut.", "kind": 5}
         )
 
-    client = GitHubForge(github._repository_id(REPOSITORY), run=run)
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
     with pytest.raises(ClaimError, match="malformed parent issue"):
         client.parent_issue(72)
@@ -2756,7 +2751,7 @@ def test_github_adapter_fails_loud_on_a_malformed_parent_kind() -> None:
 
 def test_github_adapter_fails_loud_when_the_parent_issue_response_is_not_one_object() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: json.dumps([])
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: json.dumps([])
     )
 
     with pytest.raises(ClaimError, match="malformed parent issue"):
@@ -2765,7 +2760,7 @@ def test_github_adapter_fails_loud_when_the_parent_issue_response_is_not_one_obj
 
 def test_github_adapter_fails_loud_when_the_parent_issue_body_is_not_text() -> None:
     client = GitHubForge(
-        github._repository_id(REPOSITORY),
+        github.repository_id(REPOSITORY),
         run=lambda arguments, input_data=None: json.dumps(
             {"number": 79, "repository": API_REPOSITORY_URL, "body": 5}
         ),
@@ -2787,7 +2782,7 @@ def test_github_adapter_fails_loud_on_a_malformed_parent_reference(
 ) -> None:
     value = {"number": 79, "repository": API_REPOSITORY_URL, "body": "## Next\nCut.", **overrides}
     client = GitHubForge(
-        github._repository_id(REPOSITORY), run=lambda arguments, input_data=None: json.dumps(value)
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: json.dumps(value)
     )
 
     with pytest.raises(ClaimError, match="malformed parent issue"):

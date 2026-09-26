@@ -1408,6 +1408,25 @@ def test_cli_bootstrap_is_idempotent_on_a_second_run(
     assert capsys.readouterr().out == first_output
 
 
+def test_cli_bootstrap_with_a_path_for_repo_writes_no_state_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    bare_remote: Path,
+    worktree: Path,
+) -> None:
+    """Issue #465 proof 2: a path handed to `--repo` refuses instead of
+    bootstrapping the checkout's own `origin` in its place."""
+    _git("remote", "add", "origin", str(bare_remote), cwd=worktree)
+    monkeypatch.chdir(worktree)
+
+    status = issue_claim.main(["--repo", str(worktree), "bootstrap"])
+
+    assert status == 2
+    assert capsys.readouterr().out == ""
+    assert _git("for-each-ref", "refs/aco", cwd=bare_remote).stdout == ""
+    assert _git("for-each-ref", "refs/aco", cwd=worktree).stdout == ""
+
+
 def test_list_tree_fails_loud_when_the_tree_is_unresolvable(worktree: Path) -> None:
     with pytest.raises(protocol.MalformedStateTreeError, match="cannot list the state tree"):
         store._list_tree(worktree, _UNRESOLVABLE_OBJECT_ID, tip=_PLACEHOLDER_TIP, context="state")

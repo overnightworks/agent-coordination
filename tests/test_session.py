@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,8 +27,8 @@ def _forge_never_built(_context: RunContext) -> forge.ForgeReader:
     pytest.fail("this fact must not build the forge")
 
 
-def _context(repo: str | None = None) -> RunContext:
-    return RunContext(repo, build_forge=_forge_never_built)
+def _context() -> RunContext:
+    return RunContext(None, build_forge=_forge_never_built)
 
 
 def _write_board_config(toplevel: Path, text: str) -> None:
@@ -211,6 +212,41 @@ def test_a_command_that_needs_no_repository_reads_no_context(
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
 
     assert _exit_code(command) == exit_code
+
+
+@pytest.mark.parametrize(
+    ("repo", "command", "envelope"),
+    [
+        pytest.param("/tmp/x", ["bootstrap"], "", id="absolute-path"),
+        pytest.param("./x", ["bootstrap"], "", id="relative-path"),
+        pytest.param("owner", ["status"], "", id="bare-owner"),
+        pytest.param(
+            "a/b/c",
+            ["next", "--json"],
+            '{"ok": false, "reason": "invalid_usage", '
+            '"message": "repository must be OWNER/REPO, not a/b/c"}\n',
+            id="three-segments-under-json",
+        ),
+    ],
+)
+def test_a_repo_that_is_not_owner_slash_repo_refuses_before_any_git_or_gh_call(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    repo: str,
+    command: list[str],
+    envelope: str,
+) -> None:
+    """Issue #465 proof 1: `--repo` names a GitHub repository or nothing --
+    a path is never silently dropped for the checkout's own remote."""
+    _forbid_context_reads(monkeypatch)
+
+    def no_process(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("an invalid --repo must refuse before any git or gh process starts")
+
+    monkeypatch.setattr(subprocess, "Popen", no_process)
+
+    assert _exit_code(["--repo", repo, *command]) == 2
+    assert capsys.readouterr() == (envelope, f"ERROR: repository must be OWNER/REPO, not {repo}\n")
 
 
 def test_protect_judges_its_payload_without_ever_building_a_run_context(

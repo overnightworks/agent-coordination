@@ -25,6 +25,7 @@ issue #432).
 | a migrated command's own refusal | OUT-01, OUT-03 |
 | a refusal before the named command starts | OUT-01, OUT-05 |
 | a refusal the argument parser itself raises | OUT-01, OUT-06 |
+| `--repo` given a value not shaped OWNER/REPO | OUT-08 |
 
 ## The envelope
 
@@ -34,6 +35,7 @@ issue #432).
 - [ ] [OUT-05] A refusal raised before the named command starts -- a missing identity, `release`'s branch checks -- prints this envelope, `reason` `precondition_failed`, its sentence as `message`.
 - [ ] [OUT-06] A parser refusal on a command declaring `--json` -- an unknown flag, a missing required one, an unreadable positional -- prints this envelope, `invalid_usage`, exit `2` (see E-OUT-04).
 - [ ] [OUT-07] The exit code answers before the object does: a refusal is never exit `0`, so a caller reads the code, then `ok` and `reason`, then the payload keys.
+- [ ] [OUT-08] On every command, `--repo` not shaped OWNER/REPO refuses `repository must be OWNER/REPO, not <value>`, exit `2`, before any git or forge call; with `--json` as OUT-06 (see E-OUT-05).
 - OUT-04 (retired 20.09.2026, issue #425): the `{"ok": false, "error": "<sentence>"}` fallback it kept for a command whose own spec cited no `OUT-nn` no longer exists; every `--json` command cites this file now.
 
 ## Never
@@ -44,6 +46,7 @@ issue #432).
 - `message` never promises a stderr line beside the object: `ask`'s refusal prints `ERROR: <sentence>` there (E-OUT-02), `check <sha> --json` prints the object alone (`specs/check.spec.md`).
 - A parser refusal without `--json` never changes shape (issue #432): stdout stays empty and stderr carries argparse's own usage block and sentence, exactly as it did before the envelope reached this refusal at all.
 - A command that declares no `--json` never answers in this envelope (issue #432): `aco bootstrap --json` stays argparse's own text; an abbreviation of a declared `--json` does ask for it.
+- A `--repo` path, bare owner, or third segment is never dropped for the checkout's own remote: it refuses by name (OUT-08, issue #465).
 - A non-zero exit never means a refusal on its own: a command may name a further code for an answer it did give, and its own spec owns that code.
 - `protect` never joins this envelope, migrated or not: its hook protocol (a silent exit `0`, or the deny object on exit `2`; PROT-01/PROT-02) is a permanent exception (`specs/protect.spec.md`).
 - `board --serve` never prints this file's own `--json` envelope either: its own request/response wire contract is permanently `specs/board.spec.md`'s own, not this file's.
@@ -102,3 +105,19 @@ exit 2
 Without `--json` the same invocation prints no object at all, only argparse's
 own usage block and `aco release: error: one of the arguments --merged
 --abandoned is required` on stderr, exit `2`.
+
+### E-OUT-05 -- a `--repo` that names no OWNER/REPO
+
+Setup: bare-remote, `storage = "state-ref"` tracked, no `refs/aco/state` yet
+
+```console
+$ aco --repo /tmp/x bootstrap
+2> ERROR: repository must be OWNER/REPO, not /tmp/x
+exit 2
+$ aco --repo a/b/c next --json
+2> ERROR: repository must be OWNER/REPO, not a/b/c
+{"ok": false, "reason": "invalid_usage", "message": "repository must be OWNER/REPO, not a/b/c"}
+exit 2
+```
+
+Neither call reaches git: `origin` still carries no `refs/aco/state`.

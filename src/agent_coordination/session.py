@@ -87,7 +87,11 @@ class RunContext:
     """
 
     def __init__(
-        self, repo: str | None, *, build_forge: ForgeBuilder, directory: Path | None = None
+        self,
+        repo: forge.RepositoryId | None,
+        *,
+        build_forge: ForgeBuilder,
+        directory: Path | None = None,
     ) -> None:
         self.repo = repo
         self.directory = directory
