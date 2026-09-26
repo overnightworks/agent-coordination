@@ -1,0 +1,8 @@
+claim_id = "1e8b6cd909c84a7b8ae49fceb58ea881"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "e0418c2a0ee02bc7000a8f4b203ec34b2026b491"
+branch = "claude/issue-459-atomic-close"
+scope = ["specs/item.spec.md", "specs/ref-store-cas.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "src/agent_coordination/state_board.py", "tests/test_cli.py", "tests/test_protocol.py", "tests/test_state_board.py"]
+opened_commit = "a4e41b7f9eb7aba36b4165ac5fd42905ade62266"
+whole_reason = "ein atomarer Close: die Prüfung auf lebende Claims wandert von der CLI in den Intent, den jeder CAS-Versuch neu anwendet"
