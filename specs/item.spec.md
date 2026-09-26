@@ -52,7 +52,7 @@ runner's own git object ids.
 | an open or recently closed look-alike title, either storage | ITEM-33 | — | — | — |
 | `storage = "github"`, a re-run or an exact duplicate | ITEM-35 | — | — | — |
 | a delivered `[record]`, present or absent | — | — | ITEM-12..ITEM-14 | — |
-| a delivered `blocked_by` the item does not carry, naming no item or the item itself | — | — | ITEM-43, ITEM-44 | — |
+| a delivered `blocked_by` the item does not carry, naming no item, a malformed item or the item itself | — | — | ITEM-43, ITEM-44 | — |
 | `item show`/`edit`/`close --json` | — | ITEM-09 | ITEM-15 | ITEM-16 |
 | a malformed piped body | ITEM-27 | — | ITEM-25 | — |
 | another item malformed | ITEM-37, ITEM-42 | ITEM-37 | — | PIN-29 |
@@ -106,8 +106,8 @@ runner's own git object ids.
 - [ ] [ITEM-12] `aco item edit ITEM < BODY` takes `title`, `labels`, `blocked_by` from a delivered `[record]` when the piped body carries one valid (see E-ITEM-03).
 - [ ] [ITEM-13] `item edit ITEM`'s every other field — `parent`, `state`, `origin`, `kind`, `created_at`, `closed_at` — stays stored, except on a malformed item (ITEM-39); `updated_at` moves to now.
 - [ ] [ITEM-14] A delivered body carrying no `[record]` table at all leaves `title`, `labels`, `blocked_by` unchanged too, exactly `item edit`'s own pre-#287 behaviour, except a malformed item (ITEM-39).
-- [ ] [ITEM-43] A delivered blocker the item does not already carry that names no item refuses PIN-17's sentence before any write; a blocker already carried is never re-judged (see E-ITEM-11).
-- [ ] [ITEM-44] Such a blocker naming the item itself refuses `item <item-id> is listed as its own blocker` before any write (see E-ITEM-11).
+- [ ] [ITEM-43] A delivered blocker the item does not already carry refuses before any write: naming no item PIN-17's sentence, a malformed item PIN-14/PIN-15's then ITEM-38's (see E-ITEM-11).
+- [ ] [ITEM-44] Such a blocker naming the item itself refuses `item <item-id> is listed as its own blocker`; a blocker the item already carries is never re-judged (see E-ITEM-11).
 - [ ] [ITEM-15] `aco item edit ITEM --json` prints the envelope, `reason: "edited"`, then `item`, `number`, `oid` (the freshly written blob's own oid) (see E-ITEM-03).
 - [ ] [ITEM-21] `item edit --size S|M|L` patches only the top-level `size`, reads no stdin, works under both storages; state-ref also bumps `record.updated_at`.
 
