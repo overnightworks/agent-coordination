@@ -104,7 +104,7 @@ is enough): <git detail>`.
 - `aco check` never writes: no mode ever changes an item's body, and the pull-request mode's own claims read is a pure fetch of the already-observed state ref.
 - The issue mode of `check` never fetches the state ref: only the pull-request mode reads the live claims LAND-15/LAND-16 need.
 - Under `storage = "state-ref"`, `check <n>` never reaches the pull-request path: no number under that storage is ever reported as a landing, so every `<n>` resolves to ISSUE or MISSING.
-- `check` names its subject bare: `#<n>` in every number mode, the `<sha>` it was asked about in the trunk mode (CHECK-12, CHECK-13), never the storage-aware `<label>` form `specs/landing-grammar.spec.md` defines for `aco next`/`release`'s own narrative lines.
+- `check` never names its subject any other way than as `specs/landing-grammar.spec.md`'s `<label>` in every number mode and as the `<sha>` it was asked about in the trunk mode (CHECK-12, CHECK-13).
 - `blocked` (CHECK-08) is the only outcome that exits `3`; every other refusal exits `2` (see the `reason`/exit table above), and no outcome exits `1` any more.
 - The trunk mode never reads a forge: a commit's own trailer is local history, so `check <sha>` answers from the walked trunk alone.
 - No mode of `check` ever prints a `refused` key: `specs/output.spec.md`'s envelope names every refusal by `reason` and `message` instead.
