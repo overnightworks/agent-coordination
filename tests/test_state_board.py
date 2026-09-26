@@ -3715,6 +3715,9 @@ class TestCliStateRefForge:
             pytest.param(["check", "{item}"], "ISSUE {item} body incomplete: ", id="check"),
             pytest.param(["next"], "{item}: body incomplete: ", id="next"),
             pytest.param(["next", "--json"], '"command": "aco claim {seeded} ', id="next-json"),
+            pytest.param(
+                ["board", "--json"], '"actionable_reason": "blocked by {seeded}"', id="board-json"
+            ),
             pytest.param(["status", "{item}"], "UNCLAIMED issue {item}", id="status"),
             pytest.param(
                 ["item", "edit", "{item}", "--size", "L"], "EDITED {item} size=L", id="item-edit"

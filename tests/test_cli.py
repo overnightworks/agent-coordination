@@ -8174,6 +8174,58 @@ def test_cli_status_issue_with_no_claim_prints_unclaimed_issue(
     assert capsys.readouterr().out == "UNCLAIMED issue #72\n"
 
 
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        pytest.param(
+            ["claim", "10", "--agent", "Codex Sol", "--scope", "src/work.py"],
+            "ERROR: #10 body incomplete: ",
+            id="claim",
+        ),
+        pytest.param(["check", "10"], "ISSUE #10 body incomplete: ", id="check"),
+        pytest.param(["next"], "#10: body incomplete: ", id="next"),
+        pytest.param(["next", "--json"], '"command": "aco claim 11 ', id="next-json"),
+        pytest.param(["status", "10"], "UNCLAIMED issue #10", id="status"),
+        pytest.param(["board", "--json"], '"actionable_reason": "blocked by #11"', id="board-json"),
+    ],
+)
+def test_every_output_names_a_github_item_by_its_number(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arguments: list[str],
+    expected: str,
+) -> None:
+    """Issue #467 proof 1, the `storage = github` twin of
+    `TestCliStateRefForge`'s id proof: the same commands name an item
+    `#<n>`, and a pasteable argument its bare `n`. `item edit`/`close` have
+    no twin: under `github` they refuse outright (PIN-10, PIN-11)."""
+    incomplete = board_issue(10, "Fresh work", body.BLOCK_CHILD_SKELETON)
+    actionable = board_issue(11, "Slice A", complete_contract("Ship slice A."))
+    blocked, dependencies = blocked_issue(12, "Slice B", block_dependency(11))
+    client = _configured_board_client(
+        monkeypatch,
+        tmp_path,
+        open_issues=(incomplete, actionable, blocked),
+        dependencies=dependencies,
+    )
+    client.issue_references[10] = forge.ItemReference(
+        forge.ItemState.OPEN, "Fresh work", body.BLOCK_CHILD_SKELETON
+    )
+    monkeypatch.setattr(
+        issue_claim,
+        "_request",
+        lambda _arguments, **_kwargs: request(issue=10, scope=("src/work.py",)),
+    )
+
+    issue_claim.main(["--repo", REPOSITORY, *arguments])
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert expected in output
+    assert "aco-" not in output
+
+
 def test_cli_status_shows_a_live_store_claim(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
