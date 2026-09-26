@@ -134,10 +134,11 @@ def github_command_environment() -> dict[str, str]:
 
 
 def repository_id(text: str) -> forge.RepositoryId:
-    """The one judge of the repository a run targets, whether `--repo`, the
-    remote URL, or `gh`'s answer names it: anything but OWNER/REPO -- a path,
+    """The one judge of the OWNER/REPO shape of whatever names the repository
+    -- `--repo`, the remote URL, or `gh`'s answer: anything else -- a path,
     a bare owner, a third segment -- is refused by name, never read as a
-    place to look."""
+    place to look. Which repository a run targets is
+    `session.RunContext.repository_id`'s decision."""
     if re.fullmatch(REPOSITORY_PATTERN, text) is None:
         raise ClaimError(f"repository must be OWNER/REPO, not {text}")
     namespace, _, name = text.partition("/")
