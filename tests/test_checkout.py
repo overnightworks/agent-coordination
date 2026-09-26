@@ -858,9 +858,12 @@ def test_trunk_landings_read_the_named_remotes_trunk_not_the_work_branch(
     landings = _LIVE_TRUNK_LANDINGS("hub", 20)
 
     assert landings == (
-        checkout.TrunkLanding("sha1", datetime(2026, 8, 29, tzinfo=UTC), None),
+        checkout.TrunkLanding("sha1", datetime(2026, 8, 29, tzinfo=UTC), None, ()),
         checkout.TrunkLanding(
-            "sha2", datetime(2026, 8, 30, tzinfo=UTC), board.TrunkWorkItemClassification((10,))
+            "sha2",
+            datetime(2026, 8, 30, tzinfo=UTC),
+            board.TrunkWorkItemClassification((10,)),
+            ("#10",),
         ),
     )
     # Issue #304 proof 4: `hub`, never a hardcoded `origin`, reaches every
