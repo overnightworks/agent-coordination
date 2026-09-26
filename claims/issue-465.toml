@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "d3432abbed526260802d01ba480f498ab6be1918"
 branch = "claude/issue-465-repo-flag-refuses"
-scope = ["specs/bootstrap.spec.md", "specs/output.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/forge.py", "src/agent_coordination/session.py", "tests/test_cli.py", "tests/test_session.py", "tests/test_store.py"]
+scope = ["specs/bootstrap.spec.md", "specs/output.spec.md", "specs/protect.spec.md", "specs/reset.spec.md", "specs/status.spec.md", "specs/storage-pin.spec.md", "specs/workspace.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/forge.py", "src/agent_coordination/github.py", "src/agent_coordination/session.py", "tests/test_board_serve.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_session.py", "tests/test_store.py"]
 opened_commit = "6aefd7db00909e0da6bfc9d7d334fb9ddb6e52a0"
 whole_reason = "eine Validierung an der Grenze: --repo nimmt nur OWNER/REPO an und verweigert alles andere, bevor ein Befehl ein Repository berührt"
