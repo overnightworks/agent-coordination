@@ -210,12 +210,12 @@ memory, scratchpad, `/tmp`) allows, unless it goes through a file symlink
 into a checkout -- then that checkout judges it. A git-ignored file under a
 checkout's `.claude/` allows too; every other write inside a repository
 needs a live claim covering it from a linked worktree. The full judgement
-order, every denial reason, and the JSON verdict shape are
+order, every denial reason, and the verdict's output are
 `specs/protect.spec.md`'s own.
 
 Identity: the hook inherits the session's own environment and weighs a
 write against the claim of the agent it resolves there -- `ACO_AGENT`, else
-`GROK_SESSION_ID`, else `CLAUDE_SESSION_ID`, the same order `aco claim`
+`GROK_SESSION_ID`, else `CLAUDE_CODE_SESSION_ID`, the same order `aco claim`
 uses. Start the session with the name the head claims under
 (`ACO_AGENT="Claude head" claude`), or pin it in the hook line
 (`"command": "ACO_AGENT='Claude head' aco protect"`). Without one, a write

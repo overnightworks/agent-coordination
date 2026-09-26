@@ -22,7 +22,12 @@ from .protocol import (
 
 ACO_AGENT_ENV = "ACO_AGENT"
 GROK_SESSION_ID_ENV = "GROK_SESSION_ID"
-CLAUDE_SESSION_ID_ENV = "CLAUDE_SESSION_ID"
+CLAUDE_CODE_SESSION_ID_ENV = "CLAUDE_CODE_SESSION_ID"
+# `session_agent`'s own order, for the sentences built from it: `claim`'s and
+# `start`'s identity refusals, `protect`'s PROT-08 denial, and `--agent`'s help.
+IDENTITY_ENVIRONMENT_ORDER = (
+    f"{ACO_AGENT_ENV}, {GROK_SESSION_ID_ENV}, or {CLAUDE_CODE_SESSION_ID_ENV}"
+)
 
 
 # One owner for every git-subprocess failure sentence: `_git_run` launches
@@ -809,8 +814,7 @@ def resolved_agent(explicit: str | None) -> str:
     agent = session_agent()
     if agent is None:
         raise ClaimError(
-            "agent identity is required: pass --agent or set "
-            f"{ACO_AGENT_ENV}, {GROK_SESSION_ID_ENV}, or {CLAUDE_SESSION_ID_ENV}"
+            f"agent identity is required: pass --agent or set {IDENTITY_ENVIRONMENT_ORDER}"
         )
     return agent
 
@@ -826,7 +830,7 @@ def session_agent() -> str | None:
     grok_session = os.environ.get(GROK_SESSION_ID_ENV)
     if grok_session:
         return _outbound_text(f"Grok {grok_session}", "agent", maximum=128)
-    claude_session = os.environ.get(CLAUDE_SESSION_ID_ENV)
+    claude_session = os.environ.get(CLAUDE_CODE_SESSION_ID_ENV)
     if claude_session:
         return _outbound_text(f"Claude {claude_session}", "agent", maximum=128)
     return None
@@ -877,25 +881,15 @@ def validate_slug(slug: str) -> str:
 
 
 def branch_prefix_for_identity() -> str:
-    """`start`'s own branch prefix (issue #322) -- my inclination, not a
-    settled decision: read from the same identity signals `resolved_agent`
-    reads, in the same precedence, since it is the same acting identity,
-    only rendered as a short git-branch-safe token instead of a full agent
-    name. The first word of `ACO_AGENT`, lowercased, when set (`"Claude head
-    (coordinator)"` -> `"claude"`); otherwise `"grok"` from
-    `GROK_SESSION_ID`, or `"claude"` from `CLAUDE_SESSION_ID`; refused when
-    none resolves, since a worktree/branch scheme needs a real name, never a
-    guess."""
-    configured = os.environ.get(ACO_AGENT_ENV, "").strip()
-    if configured:
-        return configured.split()[0].lower()
-    if os.environ.get(GROK_SESSION_ID_ENV):
-        return "grok"
-    if os.environ.get(CLAUDE_SESSION_ID_ENV):
-        return "claude"
-    raise ClaimError(
-        "branch prefix is required: set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_SESSION_ID"
-    )
+    """`start`'s own branch prefix (issue #322): `session_agent`'s own
+    identity rendered as a short git-branch-safe token -- its first word,
+    lowercased (`"Claude head (coordinator)"` -> `"claude"`, `"Grok <id>"`
+    -> `"grok"`); refused when none resolves, since a worktree/branch
+    scheme needs a real name, never a guess."""
+    agent = session_agent()
+    if agent is None:
+        raise ClaimError(f"branch prefix is required: set {IDENTITY_ENVIRONMENT_ORDER}")
+    return agent.split()[0].lower()
 
 
 def refuse_unsafe_start_branch(branch: str, *, prefix: str) -> None:
