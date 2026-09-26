@@ -96,7 +96,7 @@ def _resolved_identity(issue: int | None, branch: str) -> protocol.ClaimIdentity
     return protocol.LaneIdentity()
 
 
-def _claim_subject(claim: protocol.ScopedClaim, storage: body.Storage = body.Storage.GITHUB) -> str:
+def _claim_subject(claim: protocol.ScopedClaim, storage: body.Storage) -> str:
     return (
         f"lane {claim.branch}"
         if isinstance(claim.identity, protocol.LaneIdentity)
@@ -4567,9 +4567,8 @@ class _RescopePreconditionError(protocol.ClaimError):
 def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     path_checkout = _rescope_checkout(parsed)
     requested = _rescope_command(parsed, path_checkout)
-    worktree, canonical_remote, observed = _store_observation(
-        run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
-    )
+    context = run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
+    worktree, canonical_remote, observed = _store_observation(context)
     _require_state_ref(observed)
     try:
         selected = _selected_store_claim(
@@ -4616,7 +4615,7 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     if parsed.json:
         _rescope_json(rescoped)
         return 0
-    print(f"RESCOPED {_claim_subject(rescoped)}: {rescoped.claim_id}")
+    print(f"RESCOPED {_claim_subject(rescoped, context.config.storage)}: {rescoped.claim_id}")
     return 0
 
 

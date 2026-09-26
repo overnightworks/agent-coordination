@@ -3756,14 +3756,56 @@ class TestCliStateRefForge:
         prints names the standing claim it overlaps by the id the next
         command takes back, never `issue #<n>`."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
-        _stub_claim_checkout(monkeypatch)
-        claimant = ["--agent", "Codex Sol", "--base", "a" * 40, "--scope", "README"]
-        _run_ok(["claim", CHILD_A_ID, "--branch", "codex/issue-2-slice-a", *claimant], capsys)
+        self._claim_child_a(monkeypatch, capsys)
 
-        overlapping = _run_ok(["claim", "--branch", "docs/overlap", *claimant], capsys)
+        overlapping = _run_ok(["claim", "--branch", "docs/overlap", *self._CLAIMANT], capsys)
 
         assert f"overlaps issue {CHILD_A_ID} on README" in overlapping
         assert f"#{CHILD_A_NUMBER}" not in overlapping
+
+    def test_a_rescope_names_the_state_ref_claim_by_its_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #467 (#469 review finding 6): `RESCOPED` names the claim's
+        item by its id, never `issue #<n>`. The rescope checkout is the
+        claim's own linked worktree, which this single-checkout fixture
+        stands in for."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        self._claim_child_a(monkeypatch, capsys)
+        monkeypatch.setattr(
+            checkout,
+            "resolve_path_checkout",
+            lambda _directory: checkout.PathCheckout(
+                toplevel=worktree,
+                branch=self._CHILD_A_BRANCH,
+                kind=checkout.CheckoutKind.LINKED_WORKTREE,
+                common_directory=worktree / ".git",
+                has_commit=True,
+            ),
+        )
+
+        rescoped = _run_ok(
+            ["rescope", CHILD_A_ID, "--agent", "Codex Sol", "--add", str(worktree / "NOTES")],
+            capsys,
+        )
+
+        assert rescoped.startswith(f"RESCOPED issue {CHILD_A_ID}: ")
+
+    _CHILD_A_BRANCH = "codex/issue-2-slice-a"
+    _CLAIMANT = ("--agent", "Codex Sol", "--base", "a" * 40, "--scope", "README")
+
+    def _claim_child_a(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A standing claim on the seeded actionable `CHILD_A`, scoped to
+        `README` -- the one claim the overlap and rescope proofs share."""
+        _stub_claim_checkout(monkeypatch)
+        _run_ok(["claim", CHILD_A_ID, "--branch", self._CHILD_A_BRANCH, *self._CLAIMANT], capsys)
 
     def test_readme_week_without_a_forge_runs_end_to_end_against_a_fresh_bare_remote(
         self,
