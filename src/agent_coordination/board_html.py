@@ -402,15 +402,15 @@ def _inline(text: str) -> str:
     return re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", out)
 
 
-def _rule_command(item: int, index: int, outcome: str) -> str:
-    return f"aco rule {item} --line {index} --{outcome}"
+def _rule_command(item: int, index: int, outcome: str, *, storage: Storage) -> str:
+    return f"aco rule {board.item_argument(item, storage)} --line {index} --{outcome}"
 
 
 _DEFAULT_TAG = '<span class="tag">Vorgabe</span>'
 
 
-def _render_rule_line(card: ExpectationCard, outcome: str) -> str:
-    command = html.escape(_rule_command(card.item, card.index, outcome))
+def _render_rule_line(card: ExpectationCard, outcome: str, *, storage: Storage) -> str:
+    command = html.escape(_rule_command(card.item, card.index, outcome, storage=storage))
     is_default = outcome == card.default
     return (
         f'<li class="{"rec" if is_default else ""}">'
@@ -473,7 +473,9 @@ def _render_full_sentence(card: ExpectationCard) -> str:
 
 def _render_card(card: ExpectationCard, served: ServedRuleForm | None, *, storage: Storage) -> str:
     if served is None:
-        lines = "".join(_render_rule_line(card, outcome) for outcome in RULE_OUTCOMES)
+        lines = "".join(
+            _render_rule_line(card, outcome, storage=storage) for outcome in RULE_OUTCOMES
+        )
         outcomes = f'<ul class="rule-lines">{lines}</ul>'
     else:
         outcomes = _render_served_form(card, served.token)
@@ -522,7 +524,7 @@ def _part_label(part: TopicPart, *, storage: Storage) -> str:
 
 
 def _render_part(part: TopicPart, *, storage: Storage) -> str:
-    history = _render_part_ruled_history(part)
+    history = _render_part_ruled_history(part, storage=storage)
     return (
         f'<li class="{part.state.value}"><span class="dot" aria-hidden="true"></span>'
         f"<span>{_part_label(part, storage=storage)}</span>"
@@ -537,7 +539,9 @@ def _render_ruled_entry(entry: RuledExpectation) -> str:
     )
 
 
-def _render_ruled_history(ruled: tuple[RuledExpectation, ...], *, item: int) -> str:
+def _render_ruled_history(
+    ruled: tuple[RuledExpectation, ...], *, item: int, storage: Storage
+) -> str:
     """A ruled card's own confirmation (issue #388): once a click leaves
     "Wartet auf dich", its line moves here -- read fresh from
     `RuledExpectation` (never server memory), so a page rendered long after
@@ -555,20 +559,21 @@ def _render_ruled_history(ruled: tuple[RuledExpectation, ...], *, item: int) -> 
     rows = "".join(_render_ruled_entry(entry) for entry in ruled)
     hint = (
         '<p class="ruled-hint">Eine gerulte Zeile ist unveränderlich. '
-        f'Für eine neue Entscheidung: <code>aco ask {item} --text "…"</code>, '
+        "Für eine neue Entscheidung: "
+        f'<code>aco ask {board.item_argument(item, storage)} --text "…"</code>, '
         "dann rulen.</p>"
     )
     return f'<ul class="ruled-history">{rows}</ul>{hint}'
 
 
-def _render_part_ruled_history(part: TopicPart) -> str:
+def _render_part_ruled_history(part: TopicPart, *, storage: Storage) -> str:
     """A container child's own ruled lines (issue #388): a child is never a
     `Topic`, so its history needs its own collapsible home rather than the
     topic's shared one -- nested `<details>` inside its `<li>`, empty for a
     child with no ruled line, same as `_render_ruled_history` alone."""
     if not part.ruled:
         return ""
-    body = _render_ruled_history(part.ruled, item=part.number)
+    body = _render_ruled_history(part.ruled, item=part.number, storage=storage)
     return f'<details class="part-ruled"><summary>Verlauf</summary>{body}</details>'
 
 
@@ -576,7 +581,7 @@ def _render_topic(topic: Topic, *, storage: Storage) -> str:
     share = 0 if topic.total == 0 else round(100 * topic.closed / topic.total)
     parts = "".join(_render_part(part, storage=storage) for part in topic.parts)
     label = board.item_label(topic.item, storage)
-    ruled_history = _render_ruled_history(topic.ruled, item=topic.item)
+    ruled_history = _render_ruled_history(topic.ruled, item=topic.item, storage=storage)
     return f"""
       <li>
         <details>

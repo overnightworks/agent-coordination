@@ -251,8 +251,17 @@ def test_render_labels_cards_topics_and_lanes_with_state_ref_ids() -> None:
     `BoardSources.storage` reaches `open_blocker_label` for `_lane_card`
     too, not just the topic parts around it); the `github` golden page
     above stays byte-identical, so only this storage's own rendering
-    differs."""
-    rendered = board_html.render(_fixture_page(storage=Storage.STATE_REF, lane_blocked=True))
+    differs. Issue #467: a card's copyable `aco rule` command and a ruled
+    history's `aco ask` hint name the item by that same id, so what the
+    page offers to paste is what the command takes back."""
+    rendered = board_html.render(
+        _fixture_page(
+            storage=Storage.STATE_REF,
+            lane_blocked=True,
+            ruled_claimed_item_line=True,
+            ruled_child_line=True,
+        )
+    )
     open_child_id = items.format_item_id(101)  # the card's topic part
     container_id = items.format_item_id(100)  # the container topic
     claimed_item_id = items.format_item_id(102)  # the lane
@@ -266,7 +275,12 @@ def test_render_labels_cards_topics_and_lanes_with_state_ref_ids() -> None:
     assert f"<h3>{claimed_item_id} Laufende Lane</h3>" in lane_html.group()
     assert f"<dt>Blocked by</dt><dd>{lane_blocker_id}</dd>" in lane_html.group()
     assert f'<span class="item-tag">{open_child_id} Zugang klären</span>' in rendered
+    assert f'data-copy="aco rule {open_child_id} --line 1 --yes"' in rendered
+    assert f'<code>aco ask {open_child_id} --text "…"</code>' in rendered
+    assert f'<code>aco ask {claimed_item_id} --text "…"</code>' in rendered
     for number in (50, 60, 100, 101, 102):
+        assert f"aco rule {number} " not in rendered
+        assert f"aco ask {number} " not in rendered
         assert f">#{number} " not in rendered
         assert f"#{number})" not in rendered
 
