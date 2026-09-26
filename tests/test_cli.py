@@ -7226,8 +7226,9 @@ def test_selected_store_claim_refuses_a_lane_identity_without_a_branch() -> None
     function's own boundary check as a direct unit test rather than relying
     on that upstream guarantee never slipping."""
     identity = protocol.LaneIdentity()
+    storage = body.Storage.GITHUB
     with pytest.raises(ClaimUnavailableError, match="lane release requires a non-empty"):
-        issue_claim._selected_store_claim(protocol.EMPTY_STATE, identity, "", None)
+        issue_claim._selected_store_claim(protocol.EMPTY_STATE, identity, "", None, storage)
 
 
 def test_claim_scope_is_optional_at_the_argparse_layer_for_issue_mode() -> None:
@@ -7667,6 +7668,20 @@ def test_cli_release_wrong_agent_or_branch_or_two_matches_fails_without_post(
         "(holder='Ada (reviewer)', this session='Other (reviewer)')\n"
     )
     assert "conflicting claims" not in captured.err
+
+
+def test_cli_release_without_a_claim_names_the_github_item_by_its_forge_number(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """REL-09 under `storage = "github"` (issue #471 proof 1, github half):
+    releasing an item nobody claims refuses naming it `#<n>`, byte-identical
+    to the sentence before the state-ref renderer existed."""
+    _patch_release_session(monkeypatch, FakeForge())
+
+    released = issue_claim.main(["--repo", REPOSITORY, "release", "72", "--abandoned", "stopped"])
+
+    assert released == 2
+    assert capsys.readouterr().err == "ERROR: issue #72 has no active build claim\n"
 
 
 def test_cli_release_explicit_claim_id_ignores_checkout_branch(
@@ -9244,6 +9259,10 @@ def test_cli_claim_replay_refuses_a_live_claim_with_different_retry_fields(
     branch: str,
     scope: tuple[str, ...],
 ) -> None:
+    """CLAIM-11 under `storage = "github"` (issue #471 proof 1, github
+    half): a claim on a claimed item refuses naming both the item and the
+    holder's claim `#<n>`, byte-identical to the sentence before the
+    state-ref renderer existed."""
     existing = request("live-claim", "Ada", issue=72, branch="codex/issue-72", scope=("src",))
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
@@ -9272,7 +9291,9 @@ def test_cli_claim_replay_refuses_a_live_claim_with_different_retry_fields(
         == 2
     )
 
-    assert "ERROR: issue #72 is claimed by Ada (builder)" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        "ERROR: issue #72 is claimed by Ada (builder) on issue #72 branch codex/issue-72\n"
+    )
     assert store.fetch_state(worktree=Path("."), remote="origin").claims
 
 
@@ -12992,6 +13013,7 @@ _PAST_THE_ID_SPACE_FINDING = (
     ],
     ids=["state-ref-refuses", "github-declares"],
 )
+@pytest.mark.parametrize("trailer", ["Work-Item: #16777216", "Work-Item: 16777216"])
 def test_check_sha_refuses_a_trailer_number_past_the_id_space_only_under_state_ref(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -13001,15 +13023,17 @@ def test_check_sha_refuses_a_trailer_number_past_the_id_space_only_under_state_r
     line: str,
     reason: str,
     message: str | None,
+    trailer: str,
 ) -> None:
-    """LAND-68, issue #467 (#469 review): under `storage = "state-ref"` a
-    trailer's `#16777216` names no item -- six hex digits end at 16777215 --
-    so `check <sha>` refuses it as an invalid classification and never
-    prints an id `aco` cannot take back; under `storage = "github"` the same
-    trailer names a forge issue and declares as before."""
+    """LAND-68, issue #467 (#469 review, #471): under `storage = "state-ref"`
+    a trailer's `#16777216` or bare `16777216` names no item -- six hex
+    digits end at 16777215 -- so `check <sha>` refuses it as an invalid
+    classification and never prints an id `aco` cannot take back; under
+    `storage = "github"` the same trailer names a forge issue and declares
+    as before."""
     if pin_state_ref:
         _write_state_ref_pin(tmp_path)
-    repo = _refused_trailer_repository(monkeypatch, tmp_path, "Work-Item: #16777216")
+    repo = _refused_trailer_repository(monkeypatch, tmp_path, trailer)
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["check", sha])
@@ -16802,25 +16826,28 @@ def test_item_close_prints_json_under_the_state_ref_pin(
     }
 
 
+@pytest.mark.parametrize("number", [42, 16777216], ids=["in-the-id-space", "past-the-id-space"])
 def test_item_show_reads_the_fake_forge_body_under_github_storage(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], number: int
 ) -> None:
     """Issue #285 proof 6: under `storage = "github"`, `item show` reads
     the issue body through the ordinary forge reader -- the same output
-    shape `state-ref` prints, an id encoded from the plain issue number."""
+    shape `state-ref` prints, an id encoded from the plain issue number. A
+    number past `aco-ffffff` is an ordinary forge number there: PIN-31
+    refuses it only under `storage = "state-ref"` (#471)."""
     client = FakeForge()
-    client.issue_references[42] = forge.ItemReference(
+    client.issue_references[number] = forge.ItemReference(
         forge.ItemState.OPEN, "Title", "Body text.\n", False
     )
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
 
-    status = issue_claim.main(["--repo", REPOSITORY, "item", "show", "42"])
+    status = issue_claim.main(["--repo", REPOSITORY, "item", "show", str(number)])
 
     assert status == 0
-    expected_id = items.format_item_id(42)
+    expected_id = items.format_item_id(number)
     assert (
         capsys.readouterr().out
-        == f"{expected_id} · #42 · open · parent none · origin none\nBody text.\n"
+        == f"{expected_id} · #{number} · open · parent none · origin none\nBody text.\n"
     )
 
 

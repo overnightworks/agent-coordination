@@ -3482,7 +3482,8 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
         _print_item_close_result(result, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
-        return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
+        named = protocol.ClaimError(error.named(board.item_labeller(body.Storage.STATE_REF)))
+        return _refuse(ItemReason.PRECONDITION_FAILED, named, as_json=as_json)
 
 
 def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]:
@@ -3704,12 +3705,14 @@ def _selected_store_claim(
     identity: protocol.ClaimIdentity,
     branch: str | None,
     claim_id: str | None,
+    storage: body.Storage,
 ) -> protocol.ActiveClaim:
     """The one live store claim `rescope`/`release` names: at most one claim
     is ever live per identity (the store's own invariant), so this is a
     direct key lookup, never the ledger's filter-then-disambiguate walk.
     `claim_id`, when given, is a safety check against that one claim, not a
-    selector among several -- there are never several.
+    selector among several -- there are never several. A refusal names the
+    item in `storage`'s form (issue #471).
     """
     if isinstance(identity, protocol.LaneIdentity) and not branch:
         raise protocol.ClaimUnavailableError(
@@ -3718,9 +3721,8 @@ def _selected_store_claim(
         )
     selected = observed.claims.get(protocol.claim_key(identity, branch or ""))
     if selected is None or (claim_id is not None and selected.claim_id != claim_id):
-        raise protocol.ClaimUnavailableError(
-            f"{protocol._identity_summary(identity, branch or '')} has no active build claim"
-        )
+        subject = protocol.identity_summary(identity, branch or "", board.item_labeller(storage))
+        raise protocol.ClaimUnavailableError(f"{subject} has no active build claim")
     return selected
 
 
@@ -4598,7 +4600,11 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     _require_state_ref(observed)
     try:
         selected = _selected_store_claim(
-            observed, requested.identity, requested.branch, requested.claim_id
+            observed,
+            requested.identity,
+            requested.branch,
+            requested.claim_id,
+            checkout_context.config.storage,
         )
     except protocol.ClaimError as error:
         raise _RescopePreconditionError(str(error)) from error
@@ -5020,7 +5026,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
                 intent=intent,
             )
         except protocol.ClaimConflictError as error:
-            raise _ClaimConflictError(str(error)) from error
+            raise _ClaimConflictError(error.named(board.item_labeller(storage))) from error
         claimed = new_state.claims[protocol.claim_key(requested.identity, requested.branch)]
         live = tuple(new_state.claims.values())
     else:
@@ -5178,8 +5184,9 @@ def _resolve_release_claimant(
     observed: protocol.ClaimState,
     identity: protocol.ClaimIdentity,
     release_branch: str | None,
+    storage: body.Storage,
 ) -> _ResolvedRelease:
-    selected = _selected_store_claim(observed, identity, release_branch, parsed.claim_id)
+    selected = _selected_store_claim(observed, identity, release_branch, parsed.claim_id, storage)
     if (
         parsed.branch is not None
         and parsed.claim_id is not None
@@ -5229,7 +5236,9 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
     canonical_remote = context.canonical_remote
     observed = context.observation
     _require_state_ref(observed)
-    resolved = _resolve_release_claimant(parsed, observed, identity, session.release_branch)
+    resolved = _resolve_release_claimant(
+        parsed, observed, identity, session.release_branch, storage
+    )
     client: github.GitHubForge | None = None
     if isinstance(outcome, protocol.MergedRelease):
         # Authorization above gates every forge read and write here (issue
@@ -5579,6 +5588,7 @@ def _land_preflight(
         observed,
         identity,
         detail.source_branch,
+        context.storage,
     )
     return detail, structural, readiness
 
@@ -5855,7 +5865,9 @@ def _cmd_release_landed(
     worktree = context.toplevel
     observed = context.observation
     _require_state_ref(observed)
-    resolved = _resolve_release_claimant(parsed, observed, identity, session.release_branch)
+    resolved = _resolve_release_claimant(
+        parsed, observed, identity, session.release_branch, storage
+    )
     new_oid = store.hash_blob(worktree, write.content)
     outcome = protocol.LandedRelease(commit=protocol.ObjectId(commit))
     intent = protocol.LandingIntent(
