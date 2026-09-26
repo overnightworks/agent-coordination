@@ -1,8 +1,0 @@
-claim_id = "9c188e25f9d943d2a206f498d1073928"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "a9f22079db4b010a33df08215ce0805082ff87ef"
-branch = "claude/issue-474-rescope-new-dir"
-scope = ["scripts/test_budget_ratchet.txt", "specs/protect.spec.md", "specs/rescope.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/protect.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_protect.py"]
-opened_commit = "fe5ce31e4efae9acaa851a5a241cf5693208d7cf"
-whole_reason = "one resolver shared by rescope and protect"
