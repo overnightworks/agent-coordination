@@ -203,7 +203,9 @@ session; a new gated tool joins both that table and this matcher. A named
 limit: `shell` and `run_terminal_command` can write, but their payload names
 no path to judge, so the table clears them as read-only and the matcher leaves
 them out -- like MCP write tools and the worktree tools, the gate does not see
-those writes. `protect` judges a write from the payload's own path,
+those writes. Likewise a `Bash` command only shows the fixed write patterns:
+an interpreter's own script (`python3 -c`, `python3 - <<EOF`) writes what its
+text names, which the gate never reads. `protect` judges a write from the payload's own path,
 never from that shared process cwd, and fails closed on any tool name that
 reaches it unrecognized. A write outside every repository (the session's
 memory, scratchpad, `/tmp`) allows, unless it goes through a file symlink
