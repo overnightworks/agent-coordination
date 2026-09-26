@@ -249,25 +249,30 @@ def _item_files() -> dict[str, bytes]:
     }
 
 
-def _container_body_with_slices(slice_rows: tuple[tuple[int, str], ...]) -> str:
+def _container_body_with_slices(
+    slice_rows: tuple[tuple[int, str], ...], blocked_by: tuple[str, ...] = ()
+) -> str:
     """`CONTAINER_ID`'s own body, its `[[slice]]` table set to `slice_rows`
-    -- the one shape issue #291's `cut` proofs need and the flat
-    `_CONTAINER_PROJECTION`/`_record` pair above cannot express (neither
-    carries a `slice` array)."""
+    and its stored `blocked_by` to `blocked_by` -- the one shape issue
+    #291's `cut` proofs need and the flat `_CONTAINER_PROJECTION`/`_record`
+    pair above cannot express (neither carries a `slice` array)."""
     data = {
         **_CONTAINER_PROJECTION.block_data(),
         "slice": [{"index": index, "title": title} for index, title in slice_rows],
-        "record": _record(title="Epic", state="open", kind="container"),
+        "record": _record(title="Epic", state="open", kind="container", blocked_by=blocked_by),
     }
     return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
 
 
-def _item_files_with_container_slices(slice_rows: tuple[tuple[int, str], ...]) -> dict[str, bytes]:
+def _item_files_with_container_slices(
+    slice_rows: tuple[tuple[int, str], ...], blocked_by: tuple[str, ...] = ()
+) -> dict[str, bytes]:
     """`_item_files`'s own three-item scenario, `CONTAINER_ID`'s body
-    replaced by one carrying `slice_rows` -- `CHILD_A`/`CHILD_B` stay
-    untouched so a slice-table proof still exercises a container that
-    already has real children, not an invented empty one."""
-    return {**_item_files(), f"{CONTAINER_ID}.md": _container_body_with_slices(slice_rows).encode()}
+    replaced by one carrying `slice_rows` and `blocked_by` -- `CHILD_A`/
+    `CHILD_B` stay untouched so a slice-table proof still exercises a
+    container that already has real children, not an invented empty one."""
+    container_body = _container_body_with_slices(slice_rows, blocked_by)
+    return {**_item_files(), f"{CONTAINER_ID}.md": container_body.encode()}
 
 
 def _item_files_with_one_scoped_slice(
@@ -610,6 +615,13 @@ class TestMalformedItem:
                 id="missing-blocker",
             ),
             pytest.param(
+                _record(
+                    title="Repaired", state="open", kind="task", blocked_by=(CHILD_A_ID, CHILD_A_ID)
+                ),
+                f"item {MALFORMED_ID} lists blocker {CHILD_A_ID} more than once",
+                id="repeated-blocker",
+            ),
+            pytest.param(
                 _record(title="Repaired", state="open", kind="task", parent=MALFORMED_ID),
                 _malformed_item_refusal(),
                 id="itself-as-parent",
@@ -638,6 +650,20 @@ class TestMalformedItem:
             adapter.update_item_body(MALFORMED_NUMBER, repair)
 
         assert str(refused.value) == refusal
+
+    def test_an_edit_adding_a_malformed_blocker_refuses_naming_its_repair(self) -> None:
+        """Issue #450, ITEM-44: a blocker naming a malformed item refuses its
+        repair before any write; `_UnusedItemWriter` fails any write."""
+        adapter = _state_ref_board(_item_files_with_a_malformed_item(_blank_title_item()))
+        edit = _state_ref_body(
+            _CHILD_A_PROJECTION,
+            _record(title="Slice A", state="open", kind="task", blocked_by=(MALFORMED_ID,)),
+        )
+
+        with pytest.raises(MalformedStateTreeError) as refused:
+            adapter.update_item_body(CHILD_A_NUMBER, edit)
+
+        assert str(refused.value) == _malformed_item_refusal()
 
     def test_a_malformed_item_whose_title_still_reads_stays_a_twin_candidate(self) -> None:
         """Issue #447: an item malformed only by another field keeps its
@@ -1266,6 +1292,30 @@ class TestStateRefBoardWrites:
                 == before_record
             )
 
+    def test_update_item_body_keeps_a_stored_unknown_blocker_beside_a_new_one(
+        self, bare_remote: Path, worktree: Path
+    ) -> None:
+        """Issue #450, ITEM-44: only a blocker the write adds is judged, so
+        a stored blocker naming no item survives an edit that adds a
+        resolving one -- the edit is never refused for what it carried."""
+        stored_unknown = "aco-ffffff"
+        item_files = _item_files_with_container_slices((), blocked_by=(stored_unknown,))
+        _push_item_tree(bare_remote, worktree, item_files)
+        adapter = _fetch_state_ref_board(
+            bare_remote, worktree, writer=self._writer(bare_remote, worktree)
+        )
+        delivered_blockers = (stored_unknown, CHILD_A_ID)
+        delivered_body = _state_ref_body(
+            _CONTAINER_PROJECTION,
+            _record(title="Epic", state="open", kind="container", blocked_by=delivered_blockers),
+        )
+
+        adapter.update_item_body(CONTAINER_NUMBER, delivered_body)
+
+        after = adapter.item_reference(CONTAINER_NUMBER)
+        assert after.body is not None
+        assert _decoded_record(after.body, CONTAINER_ID).blocked_by == delivered_blockers
+
     def test_a_second_write_from_the_same_read_state_refuses_and_overwrites_nothing(
         self, bare_remote: Path, worktree: Path
     ) -> None:
@@ -1873,6 +1923,44 @@ class TestCliStateRefForge:
         assert status == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["row"] == 2
+        remote_url = f"file://{bare_remote}"
+        state = store.fetch_state(worktree=worktree, remote=remote_url)
+        assert state.tip is not None
+        container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
+        remaining = locate_agent_claim_block(container_body).data
+        assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
+
+    @pytest.mark.parametrize(
+        "stored_blockers",
+        [
+            pytest.param((CONTAINER_ID,), id="itself"),
+            pytest.param(("aco-ffffff",), id="unknown"),
+            pytest.param(("aco-ffffff", "aco-ffffff"), id="repeated"),
+        ],
+    )
+    def test_cut_row_links_the_row_on_a_container_whose_stored_blocker_does_not_resolve(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        stored_blockers: tuple[str, ...],
+    ) -> None:
+        """Issue #450: ITEM-43/44 never re-judge a stored list delivered
+        unchanged, so a container already carrying a self, unknown or
+        repeated blocker still has its cut row removed -- never CUT-18's
+        partial write that a re-run could not finish."""
+        item_files = _item_files_with_container_slices(
+            ((1, "Slice C"), (2, "Slice D")), blocked_by=stored_blockers
+        )
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        status = issue_claim.main(
+            ["cut", str(CONTAINER_NUMBER), "--title", "Slice D", "--row", "2"]
+        )
+
+        assert (status, capsys.readouterr().err) == (0, "")
         remote_url = f"file://{bare_remote}"
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
@@ -3112,6 +3200,56 @@ class TestCliStateRefForge:
         assert issue_claim.main(["next"]) == 0
         freed_out = capsys.readouterr().out
         assert f"{EDIT_TARGET_ID}: blocked by" not in freed_out
+
+    @pytest.mark.parametrize(
+        ("blocked_by", "refusal"),
+        [
+            pytest.param(
+                ("aco-ffffff",),
+                "item aco-ffffff is listed as a blocker but does not exist",
+                id="unknown-blocker",
+            ),
+            pytest.param(
+                (EDIT_TARGET_ID,),
+                f"item {EDIT_TARGET_ID} is listed as its own blocker",
+                id="itself",
+            ),
+            pytest.param(
+                (EDIT_BLOCKER_ID, EDIT_BLOCKER_ID),
+                f"item {EDIT_TARGET_ID} lists blocker {EDIT_BLOCKER_ID} more than once",
+                id="repeated-blocker",
+            ),
+        ],
+    )
+    def test_item_edit_refuses_an_unresolved_blocker_and_the_board_still_reads(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        blocked_by: tuple[str, ...],
+        refusal: str,
+    ) -> None:
+        """Issue #450 proof 1: a piped `blocked_by` naming no item, the
+        edited item itself, or one item twice refuses before any write, so
+        `board --json` keeps reading instead of refusing from then on."""
+        self._live_state_ref_checkout(
+            monkeypatch, tmp_path, bare_remote, worktree, _edit_target_item_files()
+        )
+        unresolved_body = _state_ref_body(
+            _EDIT_TARGET_PROJECTION,
+            _record(title="Target", state="open", kind="task", blocked_by=blocked_by),
+        )
+        monkeypatch.setattr(sys, "stdin", io.StringIO(unresolved_body))
+        remote_url = f"file://{bare_remote}"
+        before = store.fetch_state(worktree=worktree, remote=remote_url)
+
+        status = issue_claim.main(["item", "edit", EDIT_TARGET_ID])
+
+        assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+        assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
+        assert issue_claim.main(["board", "--json"]) == 0
 
     def test_item_edit_two_processes_from_the_same_snapshot_the_second_refuses(
         self,
