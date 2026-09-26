@@ -106,6 +106,15 @@ def resolved_commit(ref: str) -> str | None:
     return result.stdout.decode().rstrip("\n")
 
 
+def lane_changed_paths(tip: str, *, remote: str, directory: Path | None = None) -> tuple[str, ...]:
+    """The paths `tip` changes since its merge base with `remote`'s trunk
+    (issue #468): the lane's own change only. A diff from the claim's base
+    would also list every path a trunk pull brought in from other lanes."""
+    trunk = _trunk_ref(remote, directory=directory)
+    diff = _git_output(["diff", "--name-only", f"{trunk}...{tip}"], directory=directory)
+    return tuple(diff.splitlines())
+
+
 def remote_url(remote: str, *, directory: Path | None = None) -> str:
     """One named remote's URL, read from `directory` via `-C` when given
     (issue #457: a `RunContext` for another checkout) or the calling

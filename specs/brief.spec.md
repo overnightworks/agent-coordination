@@ -2,8 +2,8 @@
 
 `aco brief <item>`: one dispatch brief composed from reads a lane step's body
 otherwise gets assembled from by hand -- the item's own body, its live issue
-claim, that claim's lane tip, and the files the lane touches against its
-base. `aco brief <item> --step <step>` adds two more sections, this
+claim, that claim's lane tip, and the files the lane itself changes since
+its merge base with trunk. `aco brief <item> --step <step>` adds two more sections, this
 repository's own rules and checks for that lane step, read from the tracked
 `.agent-claim/brief.toml`. This file owns the command's own argument, its
 printed section shape, when each section carries a value versus stays empty,
@@ -14,7 +14,8 @@ record's own fields this command reads (CLAIM-01, CLAIM-05, CLAIM-47), and
 `specs/storage-pin.spec.md` owns the item-reference grammar `<item>`
 accepts (PIN-08) and the state-ref forge gate (PIN-04, PIN-05). `<item>`
 is the argument as given; `<n>` its resolved number; `<step>` is one of
-`build`, `review`, `fix`, `land`. A refusal reaching the shared collection
+`build`, `review`, `fix`, `land`; `<trunk>` is the canonical remote's
+default branch as this checkout last fetched it. A refusal reaching the shared collection
 point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 ## Behavior table
@@ -37,13 +38,13 @@ point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-11] That claim line's indented lines are one per scope path, then `  whole: <reason>` only when the claim carries one (see E-BRIEF-01).
 - [ ] [BRIEF-03] With no live issue claim, `CLAIM` prints exactly `no active claim`; `TIP` prints no value line at all; `TOUCHED` lists nothing (see E-BRIEF-02).
 - [ ] [BRIEF-04] With a live claim whose branch resolves neither locally nor as `origin/<branch>` -- git itself answering "no such ref" -- `TIP` prints `branch not found` and `TOUCHED` lists nothing (see E-BRIEF-03).
-- [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from a `git diff --name-only <base>..<tip>` (see E-BRIEF-01).
+- [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from `git diff --name-only <trunk>...<tip>` (see E-BRIEF-01, E-BRIEF-14).
 - [ ] [BRIEF-18] When a live claim's branch read fails instead of answering not-found, `aco brief` refuses with git's own failure detail, exit `2`, `reason: unavailable` under `--json` (see E-BRIEF-12).
 - [ ] [BRIEF-08] `<item>` naming no item at all prints one empty line for the missing body, then every section exactly as BRIEF-01..06 describe with no live claim -- never a refusal (see E-BRIEF-06).
 
 ## `--json`
 
-- [ ] [BRIEF-06] `aco brief <item> --json` prints `specs/output.spec.md`'s envelope with `reason: "composed"`, then `"body", "claim", "tip", "touched"`, `"claim"` `null` with no live claim (see E-BRIEF-04).
+- [ ] [BRIEF-06] `aco brief <item> --json` prints `specs/output.spec.md`'s envelope, `reason: "composed"`, `"body", "claim", "tip", "touched"` (as `TOUCHED`), `"claim"` `null` without a live claim (see E-BRIEF-14).
 - [ ] [BRIEF-10] A non-`null` `"claim"` object is `{"agent", "role", "branch", "base", "scope", "whole", "age"}`, `"whole"` `null` without one (see E-BRIEF-04).
 
 ## `--step`
@@ -305,4 +306,15 @@ $ aco brief 42 --json
 2> ERROR: <detail>
 {"ok": false, "reason": "unavailable", "message": "<detail>"}
 exit 2
+```
+
+### E-BRIEF-14 -- a trunk pull adds nothing to `TOUCHED`
+
+Setup: as E-BRIEF-04, then another lane lands `b.py` on `origin/main`, and
+`ada/issue-42` merges `origin/main` into itself
+
+```console
+$ aco brief 42 --json
+{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m"}, "tip": "<tip>", "touched": ["README.md"]}
+exit 0
 ```

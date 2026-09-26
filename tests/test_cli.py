@@ -15765,6 +15765,53 @@ def test_cli_brief_json_prints_one_object_with_body_claim_tip_and_touched(
     assert json.loads(output) == expected
 
 
+def _land_on_trunk_and_pull_into_lane(repository: Path, path: str) -> None:
+    """Another lane lands `path` on `main`; the lane then merges trunk in."""
+    _real_git(repository, "checkout", "-q", "main")
+    (repository / path).write_text("landed elsewhere\n")
+    _real_git(repository, "add", path)
+    _real_git(repository, "commit", "-q", "-m", "another lane lands")
+    _real_git(repository, "checkout", "-q", "codex/issue-258-brief")
+    _real_git(repository, "merge", "-q", "--no-edit", "main")
+
+
+def _text_touched(output: str) -> list[str]:
+    lines = output.splitlines()
+    return lines[lines.index("TOUCHED") + 1 :]
+
+
+def _json_touched(output: str) -> list[str]:
+    return json.loads(output)["touched"]
+
+
+@pytest.mark.parametrize(
+    ("output_flags", "read_touched"), [((), _text_touched), (("--json",), _json_touched)]
+)
+def test_cli_brief_touched_lists_only_the_lane_own_change_after_a_trunk_pull(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    output_flags: tuple[str, ...],
+    read_touched: Callable[[str], list[str]],
+) -> None:
+    """Issue #468: a path another lane landed on trunk, pulled into this
+    lane by a merge, is not this lane's change -- TOUCHED diffs from the
+    merge base with trunk, never from the claim's base."""
+    repository, base, _tip = _scratch_lane_repository(tmp_path)
+    _land_on_trunk_and_pull_into_lane(repository, "b.py")
+    client = FakeForge()
+    client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "Pulled.")
+    monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
+    claim = _brief_claim(base)
+    _patch_store_write(monkeypatch, claim, ages={claim.claim_id: datetime(2026, 8, 20, tzinfo=UTC)})
+    monkeypatch.chdir(repository)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "brief", "258", *output_flags])
+
+    assert status == 0
+    assert read_touched(capsys.readouterr().out) == ["README.md"]
+
+
 _DEFAULT_BRIEF_TOML = '[build]\nrules = ["Stay in scope."]\nchecks = ["ruff check ."]\n'
 
 # Captured at import time, before any test's monkeypatching runs.
