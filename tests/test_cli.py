@@ -6878,7 +6878,7 @@ def test_item_close_refuses_a_claim_that_lands_between_its_first_attempt_and_the
     unclaimed state and before its first push, so that push is rejected; the
     retry re-applies the close to the fresh state, meets the live claim, and
     refuses with PIN-26's sentence -- the item stays open, the claim stays."""
-    worktree, bare_remote = _reset_repository(tmp_path)
+    worktree, bare_remote = _reset_repository(monkeypatch, tmp_path)
     _use_real_store(monkeypatch)
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     open_oid = _land_real_item(worktree, bare_remote, issue=10, content=b"open\n")
