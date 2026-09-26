@@ -1952,6 +1952,16 @@ def test_protect_denies_not_main_for_a_real_checkout(
     _assert_protect_decision(capsys, decision="deny", reason="not main")
 
 
+def _hook_in_a_bare_repository(tmp_path: Path) -> Path:
+    """The shape of a forge-free canonical remote (README, "A workflow
+    without a forge"): a bare repository has no `.git` entry at all, yet a
+    write into its hooks is a write into a repository."""
+    served = tmp_path / "served.git"
+    served.mkdir()
+    _real_git(served, "init", "-q", "--bare")
+    return served / "hooks" / "pre-receive"
+
+
 def _file_outside_every_repository(tmp_path: Path) -> Path:
     outside = tmp_path / "not-a-repository"
     outside.mkdir()
@@ -1963,9 +1973,14 @@ def _file_outside_every_repository(tmp_path: Path) -> Path:
     ("build_target", "decision", "exit_code"),
     [
         (_real_main_checkout_target, "deny", 2),
+        (_hook_in_a_bare_repository, "deny", 2),
         (_file_outside_every_repository, "allow", 0),
     ],
-    ids=["inside-main-checkout-denies", "outside-every-repository-allows"],
+    ids=[
+        "inside-main-checkout-denies",
+        "inside-bare-repository-denies",
+        "outside-every-repository-allows",
+    ],
 )
 def test_protect_never_reads_a_git_failure_as_outside_every_repository(
     monkeypatch: pytest.MonkeyPatch,
@@ -1977,9 +1992,10 @@ def test_protect_never_reads_a_git_failure_as_outside_every_repository(
     exit_code: int,
 ) -> None:
     """Issue #448 review finding: with git unavailable, a path below a
-    `.git` entry still denies (PROT-17, the failure's own text) instead of
-    passing as outside every repository (PROT-32); a path with no `.git`
-    entry above it is outside and allows all the same."""
+    `.git` entry or inside a bare repository still denies (PROT-17, the
+    failure's own text) instead of passing as outside every repository
+    (PROT-32); a path with no repository above it is outside and allows all
+    the same."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

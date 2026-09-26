@@ -410,11 +410,12 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
     only when no repository marker sits in it or any of its ancestors
     either; below one, the failure is raised instead (issue #448 review
     finding: `protect` allows a `None` path unjudged, so a missing git, or a
-    path inside a `.git` directory itself, must never read as "no
-    repository here"). A `directory` that does not exist yet is never inside a
-    repository -- `git -C` cannot even enter it -- so it stays `None`
-    whatever sits above it: `start`'s own not-yet-created worktree path
-    (START-01) may well have an outer checkout's `.git` above it.
+    path inside a git directory itself -- a checkout's `.git/` or a bare
+    repository -- must never read as "no repository here"). A `directory`
+    that does not exist yet is never inside a repository -- `git -C` cannot
+    even enter it -- so it stays `None` whatever sits above it: `start`'s
+    own not-yet-created worktree path (START-01) may well have an outer
+    checkout's `.git` above it.
     """
     try:
         return _resolve_checkout(directory)
@@ -425,19 +426,31 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
 
 
 def _has_repository_marker_above(directory: Path) -> bool:
-    """Whether `directory` or any ancestor holds a repository marker: a
-    `.git` file (a linked worktree's) or a `.git` directory holding `HEAD`
-    (a main checkout's) -- a stray empty `.git` directory is no repository
-    to git either. Judged on the symlink-resolved path, the one git's own
+    """Whether `directory` or any ancestor is a git directory itself (a bare
+    repository, or a checkout's own `.git/`) or holds a `.git` marker: a
+    `.git` file (a linked worktree's) or a `.git` git directory (a main
+    checkout's) -- a stray empty `.git` directory is no repository to git
+    either. Judged on the symlink-resolved path, the one git's own
     discovery walks."""
     resolved = directory.resolve()
     return any(
-        _is_repository_marker(candidate / ".git") for candidate in (resolved, *resolved.parents)
+        _is_git_directory(candidate) or _is_repository_marker(candidate / ".git")
+        for candidate in (resolved, *resolved.parents)
     )
 
 
 def _is_repository_marker(dot_git: Path) -> bool:
-    return dot_git.is_file() or (dot_git / "HEAD").is_file()
+    return dot_git.is_file() or _is_git_directory(dot_git)
+
+
+def _is_git_directory(candidate: Path) -> bool:
+    """The layout git's own discovery takes for a repository directory:
+    `HEAD` beside `objects/` and `refs/`."""
+    return (
+        (candidate / "HEAD").is_file()
+        and (candidate / "objects").is_dir()
+        and (candidate / "refs").is_dir()
+    )
 
 
 def _resolve_checkout(directory: Path) -> PathCheckout:
