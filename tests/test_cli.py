@@ -17992,10 +17992,10 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
 ) -> None:
     """Issue #520: a lane worktree whose branch was cut before the adoption
     commit lacks `.agent-claim/board.toml` although the trunk tracks it, so
-    the refusal names the trunk merge (PIN-33), never the adoption PIN-32
-    names; with no ref tracking it PIN-32 stands -- also when the trunk does
+    PIN-32 refuses its merge sentence, never its adoption sentence; with no
+    ref tracking it the adoption sentence stands -- also when the trunk does
     not resolve, a `trunk` branch pushed without `origin/HEAD` -- and an
-    unconfigured canonical remote keeps its own sentence. Nothing is
+    unconfigured canonical remote keeps CHECK-15's sentence. Nothing is
     written."""
     repository, remote = _real_repository_with_bare_remote(tmp_path)
     (repository / "README.md").write_text("hello\n")
