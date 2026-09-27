@@ -3086,7 +3086,8 @@ class _StoreItemWriter:
 
 def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
     """The `state-ref` storage pin's forge (issues #248, #283): repository
-    identity and default branch from `context` (host-neutral, `origin/HEAD`),
+    identity and default branch from `context` (host-neutral, the canonical
+    remote's recorded `HEAD`),
     item content and blob oids read once through
     `store.read_item_files`/`ClaimState.items` of `context.observation` --
     the very snapshot the command's own checks read (issue #477) -- and a

@@ -114,8 +114,8 @@ session; a new gated tool joins both the table and that matcher.
 - [ ] [PROT-10] A path whose directory sits outside every git repository is `not in a repository`, the sentence `rescope` refuses with; `protect` allows it instead (PROT-32).
 - [ ] [PROT-32] A write path outside every repository -- any tool's payload path or a recognized Bash pattern's -- allows before identity or the store is read, except a checkout's own root (PROT-14) (see E-PROT-11).
 - [ ] [PROT-11] A checkout with no commit yet (an unborn branch) denies `no commit on this branch`.
-- [ ] [PROT-12] The shared main checkout, or a linked worktree on the repository's own resolved default branch, denies `not main` (see E-PROT-03).
-- [ ] [PROT-13] A checkout whose default branch cannot be resolved at all denies `default branch unknown`, never falling back to a `main`/`master` guess.
+- [ ] [PROT-12] The shared main checkout, or a linked worktree on the default branch its canonical remote's `HEAD` records, denies `not main` (see E-PROT-03); PROT-29 comes first for that worktree.
+- [ ] [PROT-13] A linked worktree whose canonical remote records no `HEAD`, or one naming no branch that resolves, denies `default branch unknown`, never falling back to a `main`/`master` guess.
 - [ ] [PROT-14] A payload path that resolves to exactly the checkout root denies `<path> is the checkout root itself`, the sentence `rescope` refuses it with (see E-PROT-14).
 - [ ] [PROT-38] A path under the checkout's own `.claude/` that git ignores allows in any checkout, main included, before identity or the store is read (see E-PROT-12).
 - [ ] [PROT-39] A path whose directories do not exist yet is judged by the checkout of its nearest existing ancestor, never allowed as outside every repository (PROT-32).
@@ -138,7 +138,7 @@ between separators is malformed like any other (PROT-41).
 
 ## The live claim state
 
-- [ ] [PROT-29] A board-configuration precondition failure (PIN-01), reached resolving the store's own canonical remote after checkout/root gates clear, denies that failure's own bare sentence, no `ERROR:` prefix.
+- [ ] [PROT-29] A board-configuration failure (PIN-01), reached resolving the canonical remote -- a linked worktree's at PROT-12, else past the root gates -- denies its own bare sentence, no `ERROR:` prefix.
 - [ ] [PROT-15] A store fetch failure -- unreachable, malformed tree, or a lineage break -- denies `cannot reach refs/aco/state: <detail>`.
 - [ ] [PROT-16] A fetched state with no `refs/aco/state` at all denies `cannot reach refs/aco/state: <sentence>`, `<sentence>` the one `specs/ref-store-cas.spec.md` CAS-03 already owns.
 - [ ] [PROT-17] Any other uncaught exception denies `{"decision": "deny", "reason": "<message>"}`, that exception's own bare text, no traceback.

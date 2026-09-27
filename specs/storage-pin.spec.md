@@ -41,7 +41,7 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 ## `storage = "state-ref"` is forge-free
 
 - [ ] [PIN-04] Under `storage = "state-ref"`, a command resolving the item forge refuses an OWNER/REPO `--repo` with `--repo is meaningless under storage = state-ref`; any other `--repo` refuses first (OUT-08).
-- [ ] [PIN-05] Under `storage = "state-ref"`, that same command with no `origin/HEAD` set refuses `cannot resolve the default branch; run aco from a checkout with origin/HEAD set`.
+- [ ] [PIN-05] Under `storage = "state-ref"`, that command without a resolvable canonical `<remote>/HEAD` refuses `cannot resolve the default branch; run aco from a checkout with <remote>/HEAD set`.
 
 ## Item identity: `aco-xxxxxx` versus `#n`
 

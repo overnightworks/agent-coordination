@@ -3208,7 +3208,7 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     branch: str,
     sentence: str,
 ) -> None:
-    """Issue #490 proof 1 (PROT-12, PROT-13, RESC-04, CLM-06): with `hub`
+    """Issue #490 proof 1 (PROT-12, PROT-13, RESC-20, CLM-29): with `hub`
     canonical and `origin/HEAD` naming `main`, a worktree on `hub`'s
     default branch is refused; without a recorded `hub/HEAD`, `protect` and
     `rescope` refuse `default branch unknown` while `claim` guesses
