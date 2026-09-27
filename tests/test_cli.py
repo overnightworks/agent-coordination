@@ -6867,6 +6867,23 @@ def test_state_ref_next_text_hands_the_terminal_no_raw_control_character(
     assert f'\n{items.format_item_id(41)}: cut slice "Größe\\"; run aco claim 9 \\\\"; run ' in out
 
 
+@pytest.mark.usefixtures("hostile_next_board")
+def test_state_ref_next_json_names_a_skipped_slice_title_as_stored(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #532 line 3: the quote escaping belongs to the text only, so
+    `--json`'s `SKIPPED` reason carries the slice title exactly as stored."""
+    issue_claim.main(["next", "--json"])
+
+    reasons = {
+        skipped["number"]: skipped["reason"]
+        for skipped in json.loads(capsys.readouterr().out)["skipped"]
+    }
+    assert reasons[items.format_item_id(41)].startswith(
+        'cut slice "Größe"; run aco claim 9 \\"; run '
+    )
+
+
 def _printed_title_and_next(out: str) -> tuple[str, str]:
     action_line, next_line = out.splitlines()[:2]
     return action_line.split(": ", 1)[1], next_line.removeprefix("Next: ")

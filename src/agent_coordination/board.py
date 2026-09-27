@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import shlex
 import tomllib
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -2490,7 +2490,10 @@ CHECK_DONE_WHEN = "no open children; check done_when"
 
 @dataclass(frozen=True)
 class CutVerdict:
-    """A container with no open child whose uncut row `cut` accepts."""
+    """A container with no open child whose uncut row `cut` accepts, that
+    row titled `title`."""
+
+    title: str
 
 
 @dataclass(frozen=True)
@@ -2551,7 +2554,7 @@ def _childless_container_verdict(
         first = slices[0]
         if terminal_text(first.title) != first.title:
             return UnprintableTitleVerdict(first.index)
-        return CutVerdict()
+        return CutVerdict(first.title)
     if has_further_work(next_line):
         return CheckVerdict(next_line)
     return CloseVerdict()
@@ -2587,10 +2590,8 @@ def _childless_container_reason(
     its `cut` (issue #513) -- or `None` for a closable one, which `close:`
     names."""
     match verdict:
-        case CutVerdict():
-            title = slices[0].title
-            command = cut_command(number, storage, title)
-            return f"cut slice {quoted_terminal_text(title)}; run {command}"
+        case CutVerdict(title=title):
+            return _cut_slice_reason(number, storage, title, _prose_quoted)
         case UnprintableTitleVerdict(row=row):
             return (
                 f"slice row {row} title holds a line break or control character; "
@@ -2602,6 +2603,34 @@ def _childless_container_reason(
             return _nested_container_repair(number, nesting_parent, own_scope, slices, storage)
         case _:
             return None
+
+
+def _prose_quoted(text: str) -> str:
+    return f'"{text}"'
+
+
+def _cut_slice_reason(
+    number: int, storage: Storage, title: str, quote: Callable[[str], str]
+) -> str:
+    """The `SKIPPED` reason of a cuttable container `number` that is not
+    `next`'s first action (issue #513): its first uncut row `title`, shown
+    through `quote`, and the `cut` that row takes."""
+    return f"cut slice {quote(title)}; run {cut_command(number, storage, title)}"
+
+
+def terminal_reason(item: BoardItem, storage: Storage) -> str:
+    """`item`'s `actionable_reason` as `next`'s text prints it under
+    `SKIPPED` (issue #532): a cut slice's title quoted by
+    `quoted_terminal_text`, so it cannot fake a `; run` segment (#310
+    finding 190). `actionable_reason` itself stays as the body holds it,
+    for `--json` and the HTML board, which escape on their own. A
+    container's `CutVerdict` is always its reason: a malformed body, the
+    one reason ranked above it, carries no slice row to cut."""
+    match item.childless_verdict:
+        case CutVerdict(title=title) if item.kind is ItemKind.CONTAINER:
+            return _cut_slice_reason(item.number, storage, title, quoted_terminal_text)
+        case _:
+            return str(item.actionable_reason)
 
 
 def _nested_container_repair(

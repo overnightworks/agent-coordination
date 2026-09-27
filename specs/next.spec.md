@@ -75,7 +75,7 @@ it, `<s>` an integer score.
 
 - [ ] [NEXT-08] Every other unworkable item is named once under a trailing `SKIPPED` block, `<label>: <reason>`; a container `next` itself recommends cutting or closing is left out of that list.
 - [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
-- [ ] [NEXT-34] A NEXT-05 container that is not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, `\` and `"` in `<title>` escaped, never `container; claim a child`.
+- [ ] [NEXT-34] A NEXT-05 container that is not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, text escaping `\` and `"` in `<title>`, never `container; claim a child`.
 - [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED`, in text or `--json` (see E-NEXT-06).
 
 ## `parallel:`
