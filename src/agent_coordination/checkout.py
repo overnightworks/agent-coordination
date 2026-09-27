@@ -206,9 +206,14 @@ def versioned_paths(
     return tuple(dict.fromkeys(path for path in result.stdout.decode().split("\0") if path))
 
 
-def path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
+def path_is_tracked(
+    path: str, *, directory: Path | None = None, revision: str | None = None
+) -> bool:
     """Whether `path` (repo-relative, forward slashes) is tracked in git's
-    index right now, read from `directory` via `-C` when given (issue #314:
+    index right now -- or, given `revision`, in that commit's tree (issue
+    #520: whether the trunk already holds a pin this checkout lacks), where
+    an unresolvable `revision` is a git failure, never a plain "no" --
+    read from `directory` via `-C` when given (issue #314:
     `session.board_config`'s own resolved checkout, never the calling process's
     cwd) or the process's own checkout otherwise (issue #315) -- absent,
     untracked, and ignored all read as `False`, since
@@ -217,6 +222,10 @@ def path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
     listing's exact membership and count are a different concern
     (scope-width math over every tracked file), so a test fixing one axis
     never has to carry the other."""
+    if revision is not None:
+        return bool(
+            _git_output(["ls-tree", "--name-only", revision, "--", path], directory=directory)
+        )
     return _git_yes_or_no(["ls-files", "--error-unmatch", "--", path], directory=directory)
 
 
@@ -814,6 +823,17 @@ def refuse_unclean_default_branch_checkout(default_branch: str, *, directory: Pa
         raise ClaimError(
             f"land must run from a clean checkout of the default branch {default_branch!r}"
         )
+
+
+def trunk_ref(remote: str, *, directory: Path) -> str:
+    """`remote`'s trunk ref in `directory` as the last fetch left it,
+    without fetching: its recorded `HEAD` read now, resolved by
+    `trunk_ref_after` -- a `RunContext`'s trunk, and the trunk an absent
+    board configuration is judged against before any configuration names
+    the canonical remote (issue #520)."""
+    return trunk_ref_after(
+        remote, recorded_head_ref(remote, directory=directory), directory=directory
+    )
 
 
 def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) -> str:

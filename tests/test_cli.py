@@ -107,6 +107,7 @@ _LIVE_TRUNK_LANDINGS = checkout.trunk_landings
 _LIVE_TRUNK_REF_AFTER = checkout.trunk_ref_after
 _LIVE_FETCH_REMOTE = checkout.fetch_remote
 _LIVE_UNCONFIGURED_REMOTE_REFUSAL = checkout.unconfigured_remote_refusal
+_LIVE_PATH_IS_TRACKED = checkout.path_is_tracked
 
 LANDED = protocol.MergedRelease(12)
 
@@ -17950,6 +17951,75 @@ def test_an_untrusted_board_config_refuses_every_store_command_by_name(
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(arguments)
+
+    assert (status, capsys.readouterr().err) == (2, refusal)
+    assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
+
+
+def _adopt_on_trunk(repository: Path) -> None:
+    """The one-time adoption commit lands on `main` and is pushed."""
+    _write_untracked_board_config(repository)
+    _real_git(repository, "add", ".agent-claim/board.toml")
+    _real_git(repository, "commit", "-q", "-m", "adopt aco")
+    _push_repository_trunk(repository, "origin")
+
+
+def _never_adopt(_repository: Path) -> None:
+    """No ref anywhere tracks the board configuration."""
+
+
+def _adopt_then_drop_origin(repository: Path) -> None:
+    """The trunk adopted aco, but this clone no longer configures `origin`."""
+    _adopt_on_trunk(repository)
+    _real_git(repository, "remote", "remove", "origin")
+
+
+@pytest.mark.parametrize(
+    ("arrange_trunk", "refusal"),
+    [
+        pytest.param(
+            _adopt_on_trunk,
+            "ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main "
+            "tracks it; merge origin/main into this branch\n",
+            id="trunk-adopted-after-the-cut",
+        ),
+        pytest.param(_never_adopt, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"),
+        pytest.param(
+            _adopt_then_drop_origin,
+            "ERROR: cannot determine the trunk: canonical remote 'origin' is not configured\n",
+            id="origin-unconfigured",
+        ),
+    ],
+)
+def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    isolated_global_git_config: Path,
+    arrange_trunk: Callable[[Path], None],
+    refusal: str,
+) -> None:
+    """Issue #520: a lane worktree whose branch was cut before the adoption
+    commit lacks `.agent-claim/board.toml` although the trunk tracks it, so
+    the refusal names the trunk merge (PIN-33), never the adoption PIN-32
+    names; with no ref tracking it PIN-32 stands, and an unconfigured
+    canonical remote keeps its own sentence. Nothing is written."""
+    repository, remote = _real_repository_with_bare_remote(tmp_path)
+    (repository / "README.md").write_text("hello\n")
+    _real_git(repository, "add", "README.md")
+    _real_git(repository, "commit", "-q", "-m", "initial")
+    _real_git(repository, "branch", "lane")
+    _push_repository_trunk(repository, "origin")
+    arrange_trunk(repository)
+    lane = tmp_path / "lane"
+    _real_git(repository, "worktree", "add", "-q", str(lane), "lane")
+    _redirect_toplevel(monkeypatch, lane)
+    monkeypatch.chdir(lane)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    monkeypatch.setattr(checkout, "path_is_tracked", _LIVE_PATH_IS_TRACKED)
+    _ask_git_which_remotes_are_configured(monkeypatch)
+
+    status = issue_claim.main(["claim", "1", "--scope", "README.md"])
 
     assert (status, capsys.readouterr().err) == (2, refusal)
     assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
