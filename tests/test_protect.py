@@ -2815,7 +2815,9 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
     (`other/repo`), a main checkout nested inside the worktree's scope
     (`src/nested/repo`), a file outside every repository (`outside.md`),
     and file symlinks from the worktree into the other main checkout
-    (`src/into-other.md`), into the nested one (`src/into-nested.md`),
+    (`src/into-other.md`), into the nested one (`src/into-nested.md`)
+    and outside the claimed scope of its linked worktree
+    (`src/into-nested-worktree.md`),
     within its own scope (`src/into-own.md`), and outside every repository
     (`src/into-outside.md`), and from `claimed/repo` into the worktree
     (`into-worktree.md`); a link from each of the two into the nested
@@ -2826,12 +2828,13 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
     other, _other_worktree = _protect_real_repo_with_worktree(tmp_path / "other")
     source = claimed_worktree / "src"
     (source / "nested").mkdir()
-    nested, _nested_worktree = _protect_real_repo_with_worktree(source / "nested")
+    nested, nested_worktree = _protect_real_repo_with_worktree(source / "nested")
     (source / "x.py").write_text("x = 1\n")
     (tmp_path / "outside.md").write_text("outside\n")
     links = {
         source / "into-other.md": other / "README.md",
         source / "into-nested.md": nested / "README.md",
+        source / "into-nested-worktree.md": nested_worktree / "README.md",
         source / "into-nested-git": nested / ".git" / "description",
         source / "into-own.md": source / "x.py",
         source / "into-outside.md": tmp_path / "outside.md",
@@ -2884,6 +2887,14 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
         (_write_target_payload, f"{_CLAIMED_WORKTREE}/src/into-own.md", "Ada", 0, None, 1),
         (
             _write_target_payload,
+            f"{_CLAIMED_WORKTREE}/src/into-nested-worktree.md",
+            "Ada",
+            2,
+            "claim first",
+            2,
+        ),
+        (
+            _write_target_payload,
             f"{_CLAIMED_WORKTREE}/src/into-outside.md",
             None,
             2,
@@ -2907,6 +2918,7 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
         "claimed-worktree-into-a-git-directory-no-checkout-resolves",
         "main-checkout-into-a-git-directory-no-checkout-resolves",
         "within-the-claimed-worktrees-scope",
+        "claimed-worktree-into-a-nested-worktree-outside-its-claim-reads-both-stores",
         "claimed-worktree-outside-every-repository",
         "bash-rm-of-the-link-itself",
     ],

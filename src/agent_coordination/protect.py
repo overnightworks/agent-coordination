@@ -570,9 +570,10 @@ def _protect_checkout_scope_denial(
     denial denies, and the target's wins when both do, so neither
     checkout's claim answers for the other's bytes. Both checkouts'
     store-free checks run before either store or the identity is read, so
-    a link in a main checkout denies "not main" without them. A target git
-    cannot resolve is the target's denial too, so it denies with that
-    failure before the link's own checkout is judged."""
+    a link in a main checkout denies "not main" without them. Once both
+    pass, each checkout's claim check runs, even after the target's
+    denies. A target git cannot resolve is the target's denial too, so it
+    denies with that failure before the link's own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
@@ -585,12 +586,12 @@ def _protect_checkout_scope_denial(
     for outcome in store_free_outcomes:
         if isinstance(outcome, str):
             return outcome
-    for outcome in store_free_outcomes:
-        if isinstance(outcome, _ClaimQuestion):
-            denial = _protect_claim_denial(outcome, context=context, miss_denial=miss_denial)
-            if denial is not None:
-                return denial
-    return None
+    claim_denials = [
+        _protect_claim_denial(outcome, context=context, miss_denial=miss_denial)
+        for outcome in store_free_outcomes
+        if isinstance(outcome, _ClaimQuestion)
+    ]
+    return next((denial for denial in claim_denials if denial is not None), None)
 
 
 @dataclass(frozen=True, slots=True)
