@@ -5015,7 +5015,7 @@ class _ClaimConflictError(protocol.ClaimError):
     """`apply()`'s own `protocol.ClaimConflictError` -- identity already
     claimed, claim id already consumed, or a resource conflict -- rewrapped
     (`_named_claim_conflict`) where `_checked_claim` runs `apply` on the
-    observed state and around `store.commit_transition`'s one call site in
+    observed state and around the claim's `RunContext.transition` in
     `_committed_claim` (issue #406, CLM-25; issue #479) so `--json` can
     choose `claim_conflict` by type. A transport, git, lineage, or
     retry-exhaustion failure from the commit is a different
