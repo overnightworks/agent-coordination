@@ -402,8 +402,8 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-id>` o
 $ aco item edit <item-id> < vt.md
 2> ERROR: body malformed: slice[0].title: slice[0].title of row 1 holds U+000B; a slice title stays on one line
 exit 2
-$ aco item new --title "$(printf 'a\vb')"
-2> ERROR: body malformed: agent-claim: agent-claim block is not valid TOML: Illegal character '\x0b' (at line 7, column 11); stored, that body would not read back, so nothing was written
+$ aco item new --title "$(printf 'a\377b')"
+2> ERROR: body malformed: item: item file is not valid UTF-8; stored, that body would not read back, so nothing was written
 exit 2
 ```
 

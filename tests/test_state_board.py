@@ -3643,20 +3643,16 @@ class TestCliStateRefForge:
                 )
             ),
             pytest.param(
-                ["item", "edit", EDIT_TARGET_ID],
-                _edit_target_body(record_title="Target\vtwo"),
-                "stored, that body would not read back, so nothing was written",
-                id="record-title-that-would-not-read-back",
-            ),
-            pytest.param(
-                ["item", "new", "--title", "Fresh\vtwo"],
+                ["item", "new", "--title", "Fresh\udcfftwo"],
                 "",
+                "body malformed: item: item file is not valid UTF-8; "
                 "stored, that body would not read back, so nothing was written",
                 id="item-new-title-that-would-not-read-back",
             ),
             pytest.param(
-                ["item", "new", "--title", "Fresh\vtwo", "--parent", EDIT_TARGET_ID],
+                ["item", "new", "--title", "Fresh\udcfftwo", "--parent", EDIT_TARGET_ID],
                 "",
+                "body malformed: item: item file is not valid UTF-8; "
                 "stored, that body would not read back, so nothing was written",
                 id="item-new-under-a-task-parent-that-would-not-read-back",
             ),
@@ -3693,27 +3689,46 @@ class TestCliStateRefForge:
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
         assert (issue_claim.main(["board", "--json"]), issue_claim.main(["next"])) == (0, 0)
 
-    def test_item_edit_writes_a_slice_title_holding_a_tab(
+    @pytest.mark.parametrize(
+        ("piped_body", "shown_title"),
+        [
+            pytest.param(
+                _edit_target_body(slice_title="Left\tright"),
+                'title = "Left\\tright"',
+                id="slice-title-holding-a-tab",
+            ),
+            pytest.param(
+                _edit_target_body(record_title="Target\vtwo"),
+                'title = "Target\\u000Btwo"',
+                id="record-title-holding-U+000B",
+            ),
+        ],
+    )
+    def test_item_edit_writes_a_title_the_read_reads_back(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        piped_body: str,
+        shown_title: str,
     ) -> None:
-        """Issue #517 line 2: TAB is the one control character a slice
-        title keeps; the edit lands and `item show` reads it back."""
+        """Issue #517 lines 1-2: TAB is the one control character a slice
+        title keeps, and a record title may hold any control character,
+        which the writer escapes; the edit lands and `item show` reads it
+        back."""
         self._live_state_ref_checkout(
             monkeypatch, tmp_path, bare_remote, worktree, _edit_target_item_files()
         )
-        monkeypatch.setattr(sys, "stdin", io.StringIO(_edit_target_body(slice_title="Left\tright")))
+        monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body))
 
         edited = issue_claim.main(["item", "edit", EDIT_TARGET_ID])
         capsys.readouterr()
         shown = issue_claim.main(["item", "show", EDIT_TARGET_ID])
 
         assert (edited, shown) == (0, 0)
-        assert 'title = "Left\\tright"' in capsys.readouterr().out
+        assert shown_title in capsys.readouterr().out
 
     def test_item_edit_two_processes_from_the_same_snapshot_the_second_refuses(
         self,

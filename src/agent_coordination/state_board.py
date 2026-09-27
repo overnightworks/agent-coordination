@@ -200,14 +200,21 @@ def _readable_content(text: str) -> bytes:
     """`text`, a body `_with_record` composed for a write, as the bytes to
     store -- refused before any write when the read would set it aside
     (issue #517): the composed `[record]` is always present, so the parse's
-    own first defect is the whole reason."""
-    defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
+    own first defect is the whole reason. A text holding a lone surrogate
+    (an argv byte that was no UTF-8) has no UTF-8 bytes at all, so it is
+    refused with the read's own not-UTF-8 defect."""
+    try:
+        content = text.encode("utf-8")
+    except UnicodeEncodeError:
+        defects: tuple[ContractDefect, ...] = (_NOT_UTF8,)
+    else:
+        defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
     if defects:
         raise ClaimUnavailableError(
             f"{body_defect_text(defects[0])}; stored, that body would not read back, "
             "so nothing was written"
         )
-    return text.encode("utf-8")
+    return content
 
 
 def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | _MalformedItem:
