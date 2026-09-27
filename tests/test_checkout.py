@@ -823,25 +823,55 @@ def test_trunk_ref_after_fails_loud_when_no_candidate_branch_resolves(
     missing ref is git's own, never read as one (issue #492)."""
     if is_repository:
         _real_git(tmp_path, "init", "-q", "-b", "trunk")
+        _add_branchless_hub(tmp_path)
 
     with pytest.raises(ClaimError, match=failure):
         checkout.trunk_ref_after("hub", None, directory=tmp_path)
 
 
-def test_trunk_ref_after_falls_back_to_the_local_branch_name_when_remote_head_was_never_recorded(
-    tmp_path: Path,
+def _add_branchless_hub(repository: Path) -> None:
+    """`hub` configured, but never fetched: it has no branch here yet."""
+    _real_git(repository, "remote", "add", "hub", str(repository.parent / "hub.git"))
+
+
+def _add_only_origin(repository: Path) -> None:
+    """The board names `hub`, but this clone only ever added `origin`."""
+    _real_git(repository, "remote", "add", "origin", str(repository.parent / "origin.git"))
+
+
+def _trunk_or_refusal(remote: str, *, directory: Path) -> str:
+    try:
+        return checkout.trunk_ref_after(
+            remote, checkout.recorded_head_ref(remote, directory=directory), directory=directory
+        )
+    except ClaimError as error:
+        return str(error)
+
+
+@pytest.mark.parametrize(
+    ("add_remote", "expected"),
+    [
+        pytest.param(_add_branchless_hub, "main", id="configured-without-branches"),
+        pytest.param(
+            _add_only_origin,
+            "cannot determine the trunk: canonical remote 'hub' is not configured",
+            id="not-configured",
+        ),
+    ],
+)
+def test_trunk_ref_after_guesses_the_local_branch_only_for_a_configured_remote_without_branches(
+    tmp_path: Path, add_remote: Callable[[Path], None], expected: str
 ) -> None:
     """A clone that never recorded its remote's `HEAD` still resolves
     through the historical `{main, master}` guess (issue #238), generalized
     to the caller's own remote name rather than `origin` alone (issue
-    #304)."""
+    #304) -- but only for a remote it configured: one it never added is
+    named instead, since its local `main` would report an unpushed commit
+    as landed (issue #508)."""
     repository = _scratch_git_repository(tmp_path)
-    recorded_head = checkout.recorded_head_ref("hub", directory=repository)
+    add_remote(repository)
 
-    assert (
-        recorded_head,
-        checkout.trunk_ref_after("hub", recorded_head, directory=repository),
-    ) == (None, "main")
+    assert _trunk_or_refusal("hub", directory=repository) == expected
 
 
 def _record_origin_head(repo: Path, _remote: Path) -> None:

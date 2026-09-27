@@ -3310,7 +3310,7 @@ def test_start_observes_the_state_ref_afresh_and_its_default_branch_after_the_fe
         reads.append(("default branch", remote, directory))
         return recorded_default_branch(remote, directory=directory)
 
-    def noted_fetch_remote(remote: str, *, directory: Path | None = None) -> None:
+    def noted_fetch_remote(remote: str, *, directory: Path) -> None:
         reads.append(("fetch", remote, directory))
         fetch_remote(remote, directory=directory)
 
@@ -3344,7 +3344,7 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     item_id = items.format_item_id(314)
     real_fetch_remote = checkout.fetch_remote
 
-    def fetch_trunk_then_advance_item(remote: str, *, directory: Path | None = None) -> None:
+    def fetch_trunk_then_advance_item(remote: str, *, directory: Path) -> None:
         real_fetch_remote(remote, directory=directory)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
@@ -14432,6 +14432,42 @@ def test_a_command_resolves_origin_main_past_a_dangling_origin_head(
     assert (status, capsys.readouterr().err) == (0, "")
 
 
+def _name_hub_as_the_canonical_remote(repo: Path) -> None:
+    """The board names `hub`, but this clone only ever added `origin`."""
+    configuration = repo / ".agent-claim"
+    configuration.mkdir(exist_ok=True)
+    (configuration / "board.toml").write_text('canonical_remote = "hub"\n')
+
+
+_UNCONFIGURED_HUB = "ERROR: cannot determine the trunk: canonical remote 'hub' is not configured\n"
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_start_on_github, id="start"),
+        pytest.param(_release_merged_with_cleanup, id="release-merged"),
+        pytest.param(_board_on_github, id="board"),
+    ],
+)
+def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+) -> None:
+    """Issue #508 proof 1, against real git: the board names `hub`, which
+    this clone never added, so `start`, `release --merged` and `board`
+    refuse by naming it rather than fetching nothing or reading the local
+    `main` as its trunk."""
+    argv = arrange(monkeypatch, tmp_path)
+    _name_hub_as_the_canonical_remote(tmp_path / "repo")
+
+    status = issue_claim.main(argv)
+
+    assert (status, capsys.readouterr().err) == (2, _UNCONFIGURED_HUB)
+
+
 def _rename_master_to_trunk(repo: Path, remote: Path, *, keep_recorded_head: bool) -> None:
     """The remote renames `master` to `trunk` after `repo` recorded
     `origin/HEAD` naming it: `fetch --prune` leaves that record dangling,
@@ -14472,6 +14508,13 @@ _UNRECORDED_TRUNK = (
             id="renamed-head-missing",
         ),
         pytest.param(_push_nothing, 0, "{sha} declares No-Item: docs\n", "", id="fresh-remote"),
+        pytest.param(
+            lambda repo, _remote: _name_hub_as_the_canonical_remote(repo),
+            2,
+            "",
+            _UNCONFIGURED_HUB,
+            id="unconfigured-canonical-remote",
+        ),
     ],
 )
 def test_check_never_takes_a_local_branch_for_the_trunk_of_a_remote_with_branches(
@@ -14486,7 +14529,9 @@ def test_check_never_takes_a_local_branch_for_the_trunk_of_a_remote_with_branche
     """Issue #492 proof 2, against real git: the remote renamed `master` to
     `trunk` and no resolvable `origin/HEAD` is left, so `check` refuses with
     the set-head repair instead of reporting an unpushed local `master`
-    commit as landed; a remote with no branch at all still guesses `master`."""
+    commit as landed; a remote with no branch at all still guesses `master`,
+    while a canonical remote the clone never configured is named (issue #508
+    proofs 1 and 2)."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo, remote = _real_repository_with_bare_remote(tmp_path)
     _real_git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
@@ -17347,11 +17392,12 @@ def _scratch_lane_repository(
     --name-only`) run against real git history here, never a hand-typed
     `_git_output` fake. It is the isolated toplevel itself (`conftest.py`'s
     `_isolate_git_toplevel`), so the run's context resolves its trunk -- the
-    local `main`, since no remote was ever fetched -- in the lane's own
-    repository (issue #488)."""
+    local `main`, since its configured `origin` was never fetched -- in the
+    lane's own repository (issues #488, #508)."""
     monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
     repository = tmp_path
     _real_git(repository, "init", "-q", "-b", "main")
+    _real_git(repository, "remote", "add", "origin", str(tmp_path / "origin.git"))
     _real_git(repository, "config", "user.name", "Test")
     _real_git(repository, "config", "user.email", "test@example.com")
     (repository / "README.md").write_text("hello\n")
