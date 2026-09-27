@@ -3218,7 +3218,8 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item new` under `storage = "github"` (issue #444): the body piped on
     stdin passes the same shape check `aco check <n>` applies before
     anything else is read or written, so an invalid body creates nothing;
-    `--parent` must name an open container; then the twin search, the only
+    `--parent` must name an open container or Task (a Task is retyped once
+    the twin search passes, `_retype_task_parent`); then the twin search, the only
     guard against a second run: the issue an earlier run created carries
     the same title, so the search names it. Then one issue of the
     organization's type for `--kind`, recorded under `--parent` when given
@@ -3236,8 +3237,11 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     client = context.forge_writer
     open_issues = client.list_open_board_issues()
     storage = context.config.storage
-    if parsed.parent is not None:
-        _open_container(open_issues, parsed.parent, storage)
+    parent = (
+        None
+        if parsed.parent is None
+        else _open_container(open_issues, parsed.parent, storage, ITEM_PARENT_KINDS)
+    )
     if not parsed.not_a_twin:
         _refuse_possible_twin(
             client,
@@ -3246,6 +3250,7 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
             parent=parsed.parent,
             storage=storage,
         )
+    _retype_task_parent(client, parent, storage)
     kind = body.ItemKind(parsed.kind)
     try:
         number = (
@@ -3268,6 +3273,19 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
         board.item_label(number, body.Storage.GITHUB), number, as_json=parsed.json
     )
     return 0
+
+
+def _retype_task_parent(
+    client: forge.ForgeWriter, parent: board.Issue | None, storage: body.Storage
+) -> None:
+    """Retype a Task `--parent` to Container before it gets its first child
+    (issue #503) and say so on stderr, leaving stdout and `--json` the
+    created item's alone; any other parent is already a container."""
+    if parent is None or parent.kind is not body.ItemKind.TASK:
+        return
+    client.set_item_kind(parent.number, body.ItemKind.CONTAINER)
+    label = board.item_label(parent.number, storage)
+    print(f"retyped {label} to Container for its first child", file=sys.stderr)
 
 
 def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> int:
@@ -6362,17 +6380,27 @@ def _print_release_result(report: ReleaseReport, *, as_json: bool) -> None:
         print(f"worktree: {worktree_cleanup_outcome_text(report.worktree)}")
 
 
+CONTAINER_KINDS = frozenset({body.ItemKind.CONTAINER})
+# `item new --parent` also takes a Task: an item becomes a container exactly
+# when it gets its first child, so that write retypes it (issue #503).
+ITEM_PARENT_KINDS = frozenset({body.ItemKind.CONTAINER, body.ItemKind.TASK})
+
+
 def _open_container(
-    open_issues: Iterable[board.Issue], number: int, storage: body.Storage
+    open_issues: Iterable[board.Issue],
+    number: int,
+    storage: body.Storage,
+    accepted_kinds: frozenset[body.ItemKind] = CONTAINER_KINDS,
 ) -> board.Issue:
-    """`number`'s open issue when its type is a container -- `cut`'s own
-    target and `item new --parent` (issue #444) -- or why it is not."""
+    """`number`'s open issue when its type is one of `accepted_kinds` --
+    `cut`'s own target and `item new --parent` (issue #444) -- or why it is
+    not."""
     target = next((issue for issue in open_issues if issue.number == number), None)
     if target is None:
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not an open container"
         )
-    if target.kind is not body.ItemKind.CONTAINER:
+    if target.kind not in accepted_kinds:
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not a container"
         )

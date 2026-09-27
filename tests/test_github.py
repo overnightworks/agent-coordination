@@ -35,7 +35,7 @@ def test_forge_operation_exhaustiveness_matches_the_declared_reader_and_writer_m
         if not name.startswith("_") and name not in {"repository", "capability", "requests"}
     }
     assert {operation.value for operation in forge.ForgeOperation} == declared_methods
-    assert len(forge.ForgeOperation) == 16
+    assert len(forge.ForgeOperation) == 17
     assert set(github.GITHUB_CAPABILITIES) == set(forge.ForgeOperation)
     assert forge.Capability.UNSUPPORTED not in github.GITHUB_CAPABILITIES.values()
 
@@ -276,6 +276,45 @@ def test_github_adapter_fails_loud_when_a_board_pull_request_is_not_an_object() 
 
     with pytest.raises(ClaimError, match="malformed board pull request"):
         client.list_open_board_pull_requests()
+
+
+def test_github_adapter_retypes_an_issue_by_its_type_name() -> None:
+    """Issue #503: `set_item_kind` PATCHes the organization's type by name,
+    the field `create_issue` writes, and reads the type GitHub kept back."""
+    observed: list[tuple[list[str], bytes | None]] = []
+
+    def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        observed.append((arguments, input_data))
+        return "Container\n"
+
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
+
+    client.set_item_kind(484, ItemKind.CONTAINER)
+
+    assert observed == [
+        (
+            [
+                "api",
+                "--method",
+                "PATCH",
+                f"repos/{REPOSITORY}/issues/484",
+                "--input",
+                "-",
+                "--jq",
+                ".type.name",
+            ],
+            json.dumps({"type": "Container"}).encode("utf-8"),
+        )
+    ]
+
+
+def test_github_adapter_fails_loud_when_github_drops_the_new_type() -> None:
+    """GitHub drops the type silently without push access: the read-back
+    type still says Task, so the retype raises by name instead of passing."""
+    client = GitHubForge(github.repository_id(REPOSITORY), run=lambda *_a, **_k: "Task\n")
+
+    with pytest.raises(ClaimError, match=r"GitHub did not set #484's type Container"):
+        client.set_item_kind(484, ItemKind.CONTAINER)
 
 
 def test_github_adapter_creates_a_child_and_links_it_as_a_sub_issue() -> None:

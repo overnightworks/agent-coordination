@@ -172,6 +172,7 @@ class FakeForge:
     created_children: list[tuple[int, str, str, body.ItemKind]] = field(default_factory=list)
     created_issues: list[tuple[str, str, body.ItemKind]] = field(default_factory=list)
     linked_children: list[tuple[int, int]] = field(default_factory=list)
+    retyped_items: list[tuple[int, body.ItemKind]] = field(default_factory=list)
     next_created_child_number: int = 900
     item_bodies: dict[int, str] = field(default_factory=dict)
     fail_update_item_body: bool = False
@@ -263,6 +264,9 @@ class FakeForge:
         if self.fail_update_item_body:
             raise ClaimError("update item body failed (simulated)")
         self.item_bodies[number] = body
+
+    def set_item_kind(self, number: int, kind: body.ItemKind) -> None:
+        self.retyped_items.append((number, kind))
 
     def close_landed_item(self, number: int, *, pull_request: int) -> None:
         """This fake's mirror of `GitHubForge.close_landed_item` (issue
@@ -402,6 +406,9 @@ class ReaderOnlyForge(FakeForge):
 
     def update_item_body(self, number: int, body: str) -> None:
         pytest.fail("a read-only command must never update an item body")
+
+    def set_item_kind(self, number: int, kind: body.ItemKind) -> None:
+        pytest.fail("a read-only command must never retype an item")
 
     def close_landed_item(self, number: int, *, pull_request: int) -> None:
         pytest.fail("a read-only command must never close a landed item")
@@ -17926,6 +17933,33 @@ def test_item_new_creates_a_github_issue_from_the_piped_body(
 
     assert (status, capsys.readouterr().out) == (0, out)
     assert (client.created_issues, client.linked_children) == (created, linked)
+
+
+def test_item_new_retypes_a_task_parent_to_container_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #503, the #484 shape: an item becomes a container exactly when
+    it gets its first child, so `--parent` on an open Task retypes it to
+    Container and names that on stderr, instead of refusing `is not a
+    container`; stdout still carries only the created issue."""
+    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    client.board_issues = (
+        board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
+    )
+    arguments = ["item", "new", "--title", "Write the docs", "--parent", "484"]
+
+    status = issue_claim.main(arguments)
+
+    captured = capsys.readouterr()
+    assert (status, captured.out, captured.err) == (
+        0,
+        "#900\n",
+        "retyped #484 to Container for its first child\n",
+    )
+    assert (client.retyped_items, client.linked_children) == (
+        [(484, body.ItemKind.CONTAINER)],
+        [(484, 900)],
+    )
 
 
 @pytest.mark.parametrize(

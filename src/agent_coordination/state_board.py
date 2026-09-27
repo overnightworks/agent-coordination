@@ -69,6 +69,9 @@ STATE_REF_CAPABILITIES: Mapping[forge.ForgeOperation, forge.Capability] = Mappin
         forge.ForgeOperation.CREATE_ISSUE: forge.Capability.UNSUPPORTED,
         forge.ForgeOperation.CREATE_CHILD: forge.Capability.READ_WRITE,
         forge.ForgeOperation.UPDATE_ITEM_BODY: forge.Capability.READ_WRITE,
+        # A state-ref item's kind never gates `item new --parent`, so
+        # nothing here ever retypes one.
+        forge.ForgeOperation.SET_ITEM_KIND: forge.Capability.UNSUPPORTED,
     }
 )
 

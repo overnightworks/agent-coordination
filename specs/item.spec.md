@@ -85,7 +85,9 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 - [ ] [ITEM-26] Under `storage = "github"`, `aco item new --title T < BODY` opens one GitHub issue titled `T` whose body is the piped one, with `--scope`/`--size`/`--whole` written into its block.
 - [ ] [ITEM-27] The piped body passes `aco check <n>`'s own body check first; a failing body refuses exactly like ITEM-25, and nothing is created (see E-ITEM-08).
 - [ ] [ITEM-28] `--kind task|feature|container` sets the organization's own issue type `Task`, `Feature`, or `Container`, by name.
-- [ ] [ITEM-29] `--parent N` records the issue as `#N`'s sub-issue; `#N` not open refuses `#N is not an open container`, of another type `#N is not a container`, exit `2` (see E-ITEM-08).
+- [ ] [ITEM-29] `--parent N` records the issue as `#N`'s sub-issue; `#N` not open refuses `#N is not an open container`, neither Container nor Task `#N is not a container`, exit `2` (see E-ITEM-08).
+- [ ] [ITEM-45] `--parent N` on an open Task retypes `#N` to Container after the twin search, before the create, and prints `retyped #N to Container for its first child` to stderr (see E-ITEM-12).
+- [ ] [ITEM-46] A retype GitHub drops refuses `GitHub did not set #N's type Container; set that type on the forge by hand`, exit `2`, before anything is created (see E-ITEM-12).
 - [ ] [ITEM-30] Success prints `#<n>`, exit `0`; `--json` prints the envelope, `reason: "created"`, then `item` (`#<n>`) and `number`, the state-ref shape (see E-ITEM-07).
 - [ ] [ITEM-31] `--origin` under `storage = "github"` refuses `--origin needs storage = "state-ref"`, exit `2`, before stdin is read.
 - [ ] [ITEM-32] A failed `--parent` relation write refuses CUT-17's `created` sentence ending `; record that sub-issue relation on the forge by hand`, `--json` shaped as CUT-28.
@@ -289,11 +291,11 @@ exit 0
 
 ### E-ITEM-08 — refused before anything is created
 
-Setup: as E-ITEM-07, `#85` closed
+Setup: as E-ITEM-07, `#85` closed, `#94` an open feature
 
 ```console
-$ aco item new --title "Another slice" --parent 91 < body.md
-2> ERROR: #91 is not a container
+$ aco item new --title "Another slice" --parent 94 < body.md
+2> ERROR: #94 is not a container
 exit 2
 $ aco item new --title "Another slice" --parent 85 < body.md
 2> ERROR: #85 is not an open container
@@ -352,5 +354,19 @@ $ aco item edit <item-id> < itself.md
 exit 2
 $ aco item edit <item-id> < twice.md
 2> ERROR: item <item-id> lists blocker <blocker-id> more than once
+exit 2
+```
+
+### E-ITEM-12 — a Task parent becomes a Container with its first child
+
+Setup: as E-ITEM-07, `#91` still the open task `Ship the importer`; in the second session GitHub drops the type, since the caller lacks push access
+
+```console
+$ aco item new --title "Document the importer" --parent 91 < body.md
+2> retyped #91 to Container for its first child
+#92
+exit 0
+$ aco item new --title "Document the importer" --parent 91 < body.md
+2> ERROR: GitHub did not set #91's type Container; set that type on the forge by hand
 exit 2
 ```
