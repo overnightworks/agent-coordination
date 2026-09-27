@@ -254,7 +254,7 @@ http://127.0.0.1:<port>/?t=<token>
 
 The line above is the whole of this transcript: `--serve` then blocks in
 its request loop, so no further line is printed until it is stopped.
-What a request to that URL returns is BOARD-46..51's (see E-BOARD-18).
+What a request to that URL returns is BOARD-46..52's (see E-BOARD-18).
 
 ### E-BOARD-08 — a ruled line moves into its item's `Themen` entry
 
