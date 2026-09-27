@@ -1466,7 +1466,7 @@ def _board_item(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
             ),
             childless_container_reason=_childless_container_reason(
-                issue.number, childless_verdict, parsed.slices, config.storage
+                issue.number, childless_verdict, parsed.scope, parsed.slices, config.storage
             ),
         )
     )
@@ -1883,10 +1883,29 @@ def _uncut_by_container(board: Board) -> dict[int, UncutSlices]:
     return {finding.item: finding for finding in board.uncut}
 
 
-def _work_item_scope(item: BoardItem, uncut: UncutSlices | None) -> tuple[str, ...] | None:
-    if item.scope is not None:
-        return item.scope
-    return uncut.rows[0].scope if uncut is not None and len(uncut.rows) == 1 else None
+def _work_item_scope(
+    own_scope: tuple[str, ...] | None, rows: tuple[SliceRow, ...]
+) -> tuple[str, ...] | None:
+    """The paths a claim on a work item occupies (issue #510): its own
+    top-level `scope`, else its one `[[slice]]` row's -- the row a retyped
+    nested container keeps -- else `None`, unknown."""
+    if own_scope is not None:
+        return own_scope
+    return rows[0].scope if len(rows) == 1 else None
+
+
+def work_item_claim_command(
+    number: int,
+    storage: Storage,
+    own_scope: tuple[str, ...] | None,
+    occupied_scope: tuple[str, ...] | None,
+) -> str:
+    """The one `claim` advice for work item `number` (NEXT-03, issue #510):
+    no `--scope` when it names its own top-level `scope`, which `claim`
+    derives itself, else the `occupied_scope` `_work_item_scope` named --
+    so a nested container's pre-retype advice and `next`'s `Run:` line
+    after the retype name the same claim."""
+    return claim_command(number, storage, () if own_scope is not None else occupied_scope)
 
 
 def _qualifying_actions(board: Board) -> Iterator[NextAction]:
@@ -1923,7 +1942,9 @@ def _qualifying_actions(board: Board) -> Iterator[NextAction]:
     uncut_by_container = _uncut_by_container(board)
     for item in board.items:
         if item.actionable:
-            yield WorkItemAction(item, _work_item_scope(item, uncut_by_container.get(item.number)))
+            uncut = uncut_by_container.get(item.number)
+            rows = () if uncut is None else uncut.rows
+            yield WorkItemAction(item, _work_item_scope(item.scope, rows))
             continue
         container = item.container
         if item.kind is not ItemKind.CONTAINER or container is None or container.open_children:
@@ -2460,6 +2481,7 @@ def childless_containers_with_uncut_rows(
 def _childless_container_reason(
     number: int,
     verdict: ChildlessContainerVerdict | None,
+    own_scope: tuple[str, ...] | None,
     slices: tuple[SliceRow, ...],
     storage: Storage,
 ) -> str | None:
@@ -2469,24 +2491,30 @@ def _childless_container_reason(
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):
-            return _nested_container_repair(number, nesting_parent, slices, storage)
+            return _nested_container_repair(number, nesting_parent, own_scope, slices, storage)
         case _:
             return None
 
 
 def _nested_container_repair(
-    number: int, nesting_parent: IssueReference, slices: tuple[SliceRow, ...], storage: Storage
+    number: int,
+    nesting_parent: IssueReference,
+    own_scope: tuple[str, ...] | None,
+    slices: tuple[SliceRow, ...],
+    storage: Storage,
 ) -> str:
     """The repair container `number` needs when it is itself a child of
     `nesting_parent` and still carries uncut `[[slice]]` rows (issue #503):
     `cut` refuses it, so `next` never proposes one and names this instead --
     for its one row, the `item edit --kind task` both storages run (ITEM-47)
-    and a claim on that row's exact paths, or `SCOPE_PLACEHOLDER` when the
-    row names none (issue #510); for more rows, their move up to that
+    and the claim `work_item_claim_command` names for the task it becomes
+    (issue #510); for more rows, their move up to that
     parent, named the way `cut`'s own refusal names it."""
     if len(slices) == 1:
         retype = advice_command("item", "edit", item_argument(number, storage), "--kind", "task")
-        claim = claim_command(number, storage, slices[0].scope)
+        claim = work_item_claim_command(
+            number, storage, own_scope, _work_item_scope(own_scope, slices)
+        )
         return f"nested container, which cut refuses; run {retype} and claim it with {claim}"
     return (
         "nested container, which cut refuses; move its slice rows to "

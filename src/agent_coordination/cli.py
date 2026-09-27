@@ -1958,8 +1958,9 @@ def _next_action_command(
     the line runs as printed (issue #510).
     """
     if isinstance(action, board.WorkItemAction):
-        claim_scope = () if action.item.scope is not None else action.scope
-        return board.claim_command(action.item.number, storage, claim_scope)
+        return board.work_item_claim_command(
+            action.item.number, storage, action.item.scope, action.scope
+        )
     container_argument = board.item_argument(action.container.number, storage)
     return board.advice_command("cut", container_argument, "--title", action.cut_title)
 

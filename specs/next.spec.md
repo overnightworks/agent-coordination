@@ -59,7 +59,7 @@ it, `<s>` an integer score.
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
 - [ ] [NEXT-25] A childless container with an uncut row that is a child of any item -- any type, open or closed, any repository -- never gets `cut_slice` (CUT-03); `SKIPPED` names its repair (E-NEXT-09).
-- [ ] [NEXT-29] That repair for one row claims with `aco claim <n> --scope <path>` per path of the row's own `scope`; a row naming none prints `--scope <paths>` (E-NEXT-09).
+- [ ] [NEXT-29] That repair for one row claims as the retyped item's `Run:` will (NEXT-03): bare with a top-level `scope`, else `--scope <path>` per row path, else `--scope <paths>` (E-NEXT-09).
 
 ## `RECOVERY` and `SKIPPED`
 
@@ -261,4 +261,4 @@ $ aco cut 299 --title "Scheibe Z"
 exit 2
 ```
 
-The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; the named claim then claims the row's paths, and once retyped `next`'s own `Run:` line names that same claim (NEXT-30). A row without a `scope` of its own ends the reason `claim it with aco claim 299 --scope <paths>` instead. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
+The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; the named claim then claims the row's paths, and once retyped `next`'s own `Run:` line names that same claim (NEXT-30). A container naming its own top-level `scope` ends the reason `claim it with aco claim 299` instead, the claim that derives that scope (NEXT-03); a row without a `scope` of its own, under a container without one, ends it `claim it with aco claim 299 --scope <paths>`. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.

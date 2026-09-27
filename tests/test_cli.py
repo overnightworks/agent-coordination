@@ -6546,16 +6546,32 @@ def test_next_names_a_nested_containers_repair_where_cut_refuses_its_row(
     assert next_exit_code == (0 if parent_kind is body.ItemKind.FEATURE else 3)
 
 
+@pytest.mark.parametrize(
+    ("top_level_scope", "expected_claim"),
+    [
+        (None, "aco claim 299 --scope docs/nested.md --scope 'src/it'\"'\"'s here.py'"),
+        (("docs/top.md",), "aco claim 299"),
+    ],
+    ids=["row-scope-only", "own-top-level-scope"],
+)
 def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    top_level_scope: tuple[str, ...] | None,
+    expected_claim: str,
 ) -> None:
     """Issue #510 line 3: a nested container's one row carrying a scope gets
-    a claim on exactly those paths, and once retyped `next`'s own `Run:` line
-    names that same claim, which runs unchanged in a real shell and claims
-    the row's paths (#310 finding 168)."""
+    a claim on exactly those paths -- or, when the container names its own
+    top-level `scope`, the bare claim that derives it (NEXT-03) -- and once
+    retyped `next`'s own `Run:` line names that same claim, which runs
+    unchanged in a real shell (#310 finding 168)."""
     row_scope = ("docs/nested.md", "src/it's here.py")
-    nested_contract = complete_contract(
-        "keiner", slice=[{"index": 1, "title": "Scheibe Z", "scope": list(row_scope)}]
+    row = [{"index": 1, "title": "Scheibe Z", "scope": list(row_scope)}]
+    nested_contract = (
+        complete_contract("keiner", slice=row)
+        if top_level_scope is None
+        else complete_contract("keiner", slice=row, scope=list(top_level_scope))
     )
     nested = board.Issue(
         299,
@@ -6580,21 +6596,18 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     retyped = replace(nested, kind=body.ItemKind.TASK, children_closed=None, children_total=None)
     _configured_board_client(monkeypatch, tmp_path, open_issues=(retyped,))
     retyped_exit_code = issue_claim.main(["--repo", REPOSITORY, "next"])
-    run_line = capsys.readouterr().out.split("\nRun: ", 1)[1].splitlines()[0]
+    retyped_out = capsys.readouterr().out
+    run_line = retyped_out.split("\nRun: ", 1)[1].splitlines()[0]
     monkeypatch.setattr(
         issue_claim,
         "_request",
-        lambda arguments, **_kwargs: request(issue=299, scope=tuple(arguments.scope)),
+        lambda arguments, **_kwargs: request(issue=299, scope=tuple(arguments.scope or ())),
     )
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     bash_exit_code, claim_arguments = _arguments_bash_hands_aco(run_line, tmp_path)
     claim_exit_code = issue_claim.main(["--repo", REPOSITORY, *claim_arguments])
 
-    assert (
-        claim_advice
-        == run_line
-        == ("aco claim 299 --scope docs/nested.md --scope 'src/it'\"'\"'s here.py'")
-    )
+    assert claim_advice == run_line == expected_claim
     assert (next_exit_code, retyped_exit_code, bash_exit_code, claim_exit_code) == (
         3,
         0,
@@ -6602,7 +6615,7 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
         0,
     ), capsys.readouterr().err
     claimed = store.fetch_state(worktree=Path("."), remote="origin").claims
-    assert tuple(claim.scope for claim in claimed.values()) == (row_scope,)
+    assert tuple(claim.scope for claim in claimed.values()) == (top_level_scope or row_scope,)
 
 
 def test_next_json_names_a_cuttable_container_slice(
