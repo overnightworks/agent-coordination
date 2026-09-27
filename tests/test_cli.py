@@ -7166,6 +7166,114 @@ def test_one_line_printers_show_foreign_text_as_next_escapes_it(
     assert re.search(expected, printed), printed
 
 
+_FOREIGN_MULTI_LINE_TEXT = (
+    "Hallo\x1b[2J Welt\tÜber\N{RIGHT-TO-LEFT OVERRIDE}RLO\n\N{WORD JOINER}WJ Größe"
+)
+
+
+def _foreign_body_item(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[str, str]:
+    """A state-ref item whose stored body opens with the foreign lines;
+    returns its id and that stored body."""
+    stored = f"{_FOREIGN_MULTI_LINE_TEXT}\n\n{_state_ref_item_body('Foreign body')}"
+    _real_state_ref_repository(monkeypatch, tmp_path, {10: stored})
+    return items.format_item_id(10), stored
+
+
+def _brief_of_foreign_body(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    item, _stored = _foreign_body_item(monkeypatch, tmp_path)
+    return ["brief", item]
+
+
+def _item_show_of_foreign_body(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    item, _stored = _foreign_body_item(monkeypatch, tmp_path)
+    return ["item", "show", item]
+
+
+def _brief_step_under_brief_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str
+) -> list[str]:
+    """`brief --step build` against a tracked `.agent-claim/brief.toml`
+    holding `content`."""
+    item, _stored = _foreign_body_item(monkeypatch, tmp_path)
+    repo = Path.cwd()
+    (repo / board.BRIEF_CONFIG_PATH).write_text(content, encoding="utf-8")
+    _real_git(repo, "add", board.BRIEF_CONFIG_PATH.as_posix())
+    monkeypatch.setattr(checkout, "path_is_tracked", _REAL_PATH_IS_TRACKED)
+    return ["brief", item, "--step", "build"]
+
+
+def _brief_config_with_foreign_top_level_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> list[str]:
+    key = json.dumps(_FOREIGN_MULTI_LINE_TEXT, ensure_ascii=False)
+    return _brief_step_under_brief_config(monkeypatch, tmp_path, f"{key} = 1\n")
+
+
+def _brief_config_with_foreign_step_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> list[str]:
+    key = json.dumps(_FOREIGN_MULTI_LINE_TEXT, ensure_ascii=False)
+    return _brief_step_under_brief_config(monkeypatch, tmp_path, f"[build]\n{key} = 1\n")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "shown_as"),
+    [
+        pytest.param(_brief_of_foreign_body, "{block}\n\nProse.\n", id="brief"),
+        pytest.param(_item_show_of_foreign_body, "{block}\n\nProse.\n", id="item-show"),
+        pytest.param(
+            _brief_config_with_foreign_top_level_key,
+            "ERROR: brief configuration {config} has unknown top-level key {line}\n",
+            id="brief-config-top-level-key",
+        ),
+        pytest.param(
+            _brief_config_with_foreign_step_key,
+            "ERROR: brief configuration {config} [build] has unknown key {line}\n",
+            id="brief-config-step-key",
+        ),
+    ],
+)
+def test_body_and_brief_config_printers_show_foreign_text_as_next_escapes_it(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+    shown_as: str,
+) -> None:
+    """Issue #544 lines 1-3: `brief` and `item show` print a stored body
+    with ESC, RLO and U+2060 as their printable escapes while its line
+    feeds, TAB and Umlauts stay; the brief configuration's unknown-key
+    refusals escape the line feed too, as every one-line printer does."""
+    block = "Hallo\\x1b[2J Welt\tÜber\\u202eRLO\n\\u2060WJ Größe"
+    line = "Hallo\\x1b[2J Welt\tÜber\\u202eRLO\\n\\u2060WJ Größe"
+    arguments = arrange(monkeypatch, tmp_path)
+
+    issue_claim.main(arguments)
+    captured = capsys.readouterr()
+    printed = captured.out + captured.err
+
+    assert _raw_terminal_controls(printed) == set()
+    expected = re.escape(shown_as).replace(r"\{block\}", re.escape(block))
+    expected = expected.replace(r"\{line\}", re.escape(line)).replace(r"\{config\}", r"\S+")
+    assert re.search(expected, printed), printed
+
+
+@pytest.mark.parametrize("command", [["brief"], ["item", "show"]], ids=["brief", "item-show"])
+def test_body_printers_json_keeps_the_stored_body_as_stored(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    command: list[str],
+) -> None:
+    """Issue #544 line 2: `--json` leaves a body's escaping to JSON, so a
+    reader gets the foreign lines back exactly as stored."""
+    item, stored = _foreign_body_item(monkeypatch, tmp_path)
+
+    issue_claim.main([*command, item, "--json"])
+
+    assert json.loads(capsys.readouterr().out)["body"] == stored
+
+
 def test_state_ref_next_claim_in_a_skipped_reason_runs_past_a_higher_ranked_item(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

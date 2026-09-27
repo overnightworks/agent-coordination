@@ -3775,8 +3775,9 @@ def _item_header(number: int, reference: forge.ItemReference, parent: int | None
 
 
 def _cmd_item_show(parsed: argparse.Namespace, context: RunContext) -> int:
-    """`aco item show` (issue #285): the stored body, byte-exact, behind
-    one header line -- read through the ordinary forge port, so it works
+    """`aco item show` (issue #285): the stored body behind one header
+    line, its display controls escaped in text (issue #544), byte-exact
+    under `--json` -- read through the ordinary forge port, so it works
     identically under `storage = "github"` (the forge's own issue body) and
     `storage = "state-ref"` (the item file's own body); closing an item
     never deletes it, so a closed item is shown exactly like an open one.
@@ -3808,7 +3809,7 @@ def _cmd_item_show(parsed: argparse.Namespace, context: RunContext) -> int:
         )
         return 0
     print(_item_header(number, reference, parent))
-    print(body, end="")
+    print(board.terminal_block(body), end="")
     return 0
 
 
@@ -4304,7 +4305,7 @@ class _BriefComposition:
 
 
 def _print_brief(composition: _BriefComposition) -> None:
-    print(composition.body)
+    print(board.terminal_block(composition.body))
     print()
     print("CLAIM")
     if composition.live is None:
