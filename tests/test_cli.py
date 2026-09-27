@@ -2291,6 +2291,18 @@ def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) ->
     monkeypatch.setattr(checkout, "fetched_trunk", fetch_then_the_trunk_moves)
 
 
+def _trunk_moves_while_a_gone_worktree_is_rebuilt(
+    monkeypatch: pytest.MonkeyPatch, repo: Path
+) -> None:
+    """Item #314's claim stays live while its worktree and branch are gone,
+    and the trunk moves after `start` fetched and checked it for the
+    rebuild."""
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    _remove_the_lane_pair(repo)
+    _trunk_moves_after_the_fetch(monkeypatch, repo)
+
+
 _REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start created"
 
 
@@ -2312,6 +2324,12 @@ _REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start cr
         ),
         pytest.param(_trunk_moves_after_the_fetch, "claim base ", _REMOVED_BOTH, id="trunk-moved"),
         pytest.param(
+            _trunk_moves_while_a_gone_worktree_is_rebuilt,
+            "claim base ",
+            _REMOVED_BOTH,
+            id="trunk-moved-under-a-rebuild",
+        ),
+        pytest.param(
             _the_store_cannot_be_reached,
             "remote origin hung up",
             _REMOVED_BOTH,
@@ -2329,9 +2347,10 @@ def test_a_claim_refused_after_the_build_removes_what_start_built(
 ) -> None:
     """Issue #479 (START-18, START-21): a claim refused between the build
     and its write -- by the ledger, or by the new worktree's own checkout
-    preconditions -- removes exactly the worktree and branch this call
-    built, and says so; when git will not delete the branch the safe way,
-    it says which branch stays and why."""
+    preconditions, a live claim's rebuilt worktree included -- removes
+    exactly the worktree and branch this call built, and says so; when git
+    will not delete the branch the safe way, it says which branch stays and
+    why."""
     repo = _start_scenario(monkeypatch, tmp_path)
     arrange(monkeypatch, repo)
     monkeypatch.chdir(repo)

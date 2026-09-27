@@ -5415,13 +5415,19 @@ def _rebuild_and_resume(
     """A live claim of this session's whose worktree is gone: its scope is
     checked against the fetched trunk first, then the worktree is built
     again from that trunk and the claim reprinted, never a second one
-    minted."""
+    minted. A worktree that stands on another commit -- another fetch moved
+    the trunk after the checks -- is removed again, as a fresh build's is."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
     versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
+    checked = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
     checkout.create_linked_worktree(
         target.path, branch=target.branch, remote=context.canonical_remote
     )
     _print_start_target(target)
+    try:
+        checkout._validate_checkout(checked, directory=target.path)
+    except protocol.ClaimError as error:
+        return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     _print_start_resume(resumed, observed, context.config.storage, versioning)
     return 0
 
