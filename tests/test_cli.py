@@ -1867,16 +1867,31 @@ def _start_scenario(
     _real_git(repo, "add", "base.txt")
     _real_git(repo, "commit", "-q", "-m", "initial")
     _push_repository_trunk(repo, "origin")
-    issue = board_issue(314, "Fresh Slug Title", complete_contract("Build it.", scope=["src/x.py"]))
-    client = FakeForge(board_issues=(issue,))
-    client.issue_references[314] = forge.ItemReference(
-        forge.ItemState.OPEN, issue.title, issue.body
-    )
-    monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
+    _serve_start_board(monkeypatch, _start_item())
     _patch_store_write(monkeypatch)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: agent})
     _redirect_toplevel(monkeypatch, repo)
     return repo
+
+
+def _start_item(body_text: str | None = None, *, kind: body.ItemKind | None = None) -> board.Issue:
+    """Item #314 as `start`'s scenarios know it: a scoped, complete body
+    unless the scenario names another."""
+    if body_text is None:
+        body_text = complete_contract("Build it.", scope=["src/x.py"])
+    return board_issue(314, "Fresh Slug Title", body_text, kind=kind)
+
+
+def _serve_start_board(monkeypatch: pytest.MonkeyPatch, *issues: board.Issue) -> FakeForge:
+    """A fake forge listing `issues` as the open board, the first of them the
+    open item `start` targets."""
+    target = issues[0]
+    client = FakeForge(board_issues=issues)
+    client.issue_references[target.number] = forge.ItemReference(
+        forge.ItemState.OPEN, target.title, target.body
+    )
+    monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
+    return client
 
 
 _START_WORKTREE_NAME = "issue-314-fresh-slug-title"
@@ -1938,6 +1953,50 @@ def test_start_resumes_an_existing_worktree_by_only_claiming(
     assert Path.cwd() == repo
 
 
+def test_start_from_a_linked_worktree_builds_beside_the_main_checkout(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 proof 2: the worktree's place comes from the main
+    checkout, never nested under the linked worktree the call runs in."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    other_lane = tmp_path / "other-lane"
+    _real_git(repo, "worktree", "add", "-q", "-b", "codex/issue-9-other", str(other_lane))
+    _redirect_toplevel(monkeypatch, other_lane)
+    monkeypatch.chdir(other_lane)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    assert (status, capsys.readouterr().out.splitlines()[0]) == (0, f"worktree: {worktree}")
+    assert checkout.resolve_path_checkout(worktree) is not None
+
+
+def test_start_inside_its_own_lane_worktree_reprints_the_live_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 proof 2: `start` run inside the item's own lane worktree
+    -- its branch the live claim's, its slug not the title's, work in
+    progress in it -- reprints that claim instead of building another."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314", "--slug", "own-lane"]) == 0
+    claim_id = _claimed_line_id(capsys.readouterr().out, "issue #314")
+    worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-own-lane"
+    (worktree / "work.txt").write_text("in progress\n")
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    assert (status, _worktrees_and_branches(repo)) == (0, before)
+    assert capsys.readouterr().out.splitlines()[:3] == [
+        f"worktree: {worktree}",
+        "branch: codex/issue-314-own-lane",
+        f"CLAIMED issue #314: {claim_id}",
+    ]
+
+
 def test_start_refuses_a_slug_the_derived_rule_would_never_produce(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -1970,61 +2029,178 @@ def test_start_refuses_an_unsafe_identity_prefix_before_any_git_write(
     assert not (repo.parent / f"{repo.name}-worktrees").exists()
 
 
-def test_start_refuses_to_resume_a_live_claim_held_by_another_agent(
+def _worktrees_and_branches(repo: Path) -> tuple[str, str]:
+    return (
+        _real_git(repo, "worktree", "list", "--porcelain").stdout,
+        _real_git(repo, "branch", "--list").stdout,
+    )
+
+
+def _serve_an_item_without_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_start_board(monkeypatch, _start_item(complete_contract("Build it.")))
+
+
+def _serve_a_malformed_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #310 finding 43: the block defect is named, never the less
+    specific "item names no scope"."""
+    _serve_start_board(
+        monkeypatch, _start_item(agent_claim_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n'))
+    )
+
+
+def _serve_a_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_start_board(monkeypatch, _start_item(kind=body.ItemKind.CONTAINER))
+
+
+def _serve_an_incomplete_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_start_board(monkeypatch, _start_item(body.BLOCK_CHILD_SKELETON))
+
+
+def _serve_a_higher_priority_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    security = board_issue(
+        11,
+        "Security first",
+        complete_contract("Claim #11.", scope=["src/y.py"]),
+        labels=("security",),
+    )
+    _serve_start_board(monkeypatch, _start_item(), security)
+
+
+def _serve_a_malformed_state_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PIN-29: another item the whole-board read refuses stops a fresh claim."""
+    client = _serve_start_board(monkeypatch, _start_item())
+
+    def another_item_malformed() -> tuple[board.Issue, ...]:
+        raise protocol.MalformedStateTreeError("item aco-3e26d9 has a malformed agent-claim block")
+
+    monkeypatch.setattr(client, "list_open_board_issues", another_item_malformed)
+
+
+def _hold_a_claim_by_another_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #322 review/gate: `claim_key` never folds in `branch`, so
+    another agent's claim on #314 is never resumed as this session's own."""
+    _hold_a_claim_on_the_item(monkeypatch, "Grok sess-9", branch="grok/issue-314-other")
+
+
+def _hold_a_reviewer_claim_on_the_lane_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #322 review/gate finding 3: this agent's own claim on the lane
+    branch, but as `reviewer`, is never resumed as `start`'s build claim."""
+    _hold_a_claim_on_the_item(monkeypatch, "Codex Sol", branch=_START_BRANCH, role="reviewer")
+
+
+def _hold_a_claim_on_the_item(
+    monkeypatch: pytest.MonkeyPatch, agent: str, *, branch: str, role: str = "builder"
+) -> None:
+    held = request("held-claim", agent, issue=314, role=role, branch=branch, scope=("src/x.py",))
+    _patch_store_write(monkeypatch, _store_claim_from_request(held))
+
+
+@pytest.mark.parametrize(
+    ("arrange", "arguments", "refusal"),
+    [
+        pytest.param(
+            _serve_an_item_without_scope, [], "item names no scope; pass --scope", id="no-scope"
+        ),
+        pytest.param(
+            _serve_a_malformed_body,
+            [],
+            "#314 body malformed: owner: unknown top-level key owner",
+            id="malformed-body",
+        ),
+        pytest.param(
+            _serve_a_container,
+            [],
+            "#314 is a container; claim a child",
+            id="container",
+        ),
+        pytest.param(
+            _serve_an_incomplete_body,
+            ["--scope", "src/x.py"],
+            "#314 body incomplete: Now, Next, Done when",
+            id="incomplete-body",
+        ),
+        pytest.param(
+            _serve_a_higher_priority_item,
+            [],
+            "higher-priority actionable item #11",
+            id="out-of-order",
+        ),
+        pytest.param(
+            _serve_a_malformed_state_item,
+            [],
+            "item aco-3e26d9 has a malformed agent-claim block",
+            id="malformed-state-item",
+        ),
+        pytest.param(
+            lambda _monkeypatch: None,
+            ["--scope", "a.py", "--scope", "b.py", "--scope", "c.py", "--scope", "d.py"],
+            "scope is wide: ",
+            id="wide-scope",
+        ),
+        pytest.param(
+            _hold_a_claim_by_another_agent,
+            [],
+            "issue #314 is claimed by Grok sess-9",
+            id="claimed-by-another-agent",
+        ),
+        pytest.param(
+            _hold_a_reviewer_claim_on_the_lane_branch,
+            [],
+            "issue #314 is claimed by Codex Sol",
+            id="reviewer-claim-on-the-lane-branch",
+        ),
+    ],
+)
+def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch], None],
+    arguments: list[str],
+    refusal: str,
+) -> None:
+    """Issue #479 proof 1: every refusal of the claim `start` makes inside
+    its worktree removes exactly the worktree and branch this call created,
+    and says so."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    arrange(monkeypatch)
+    monkeypatch.chdir(repo)
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314", *arguments])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    err = capsys.readouterr().err
+    assert (status, _worktrees_and_branches(repo)) == (2, before)
+    assert err.startswith(f"ERROR: {refusal}")
+    assert err.endswith(
+        f"removed worktree {worktree} and branch '{_START_BRANCH}' this start created\n"
+    )
+
+
+def test_a_refused_start_names_the_branch_git_would_not_delete(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Issue #322 review/gate: `claim_key` is an issue-only key for an
-    `IssueIdentity` (it never folds in `branch`), so a live claim on #314
-    held by a different agent on a different branch must never be silently
-    resumed as this session's own -- it falls through to the store's own
-    "is claimed by ..." conflict instead."""
+    """Issue #479: the undo deletes the branch only the safe way; when git
+    refuses that, the refusal says which branch stays and why."""
     repo = _start_scenario(monkeypatch, tmp_path)
-    foreign = _store_claim_from_request(
-        request(
-            "other-claim",
-            "Grok sess-9",
-            issue=314,
-            branch="grok/issue-314-other",
-            scope=("src/x.py",),
-        )
+    _serve_an_item_without_scope(monkeypatch)
+    _stub_one_git_call(
+        monkeypatch,
+        ["branch", "-d", _START_BRANCH],
+        exit_status=1,
+        stderr="error: branch not fully merged",
     )
-    _patch_store_write(monkeypatch, foreign)
     monkeypatch.chdir(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
 
-    assert status == 2
-    assert "is claimed by Grok sess-9" in capsys.readouterr().err
-
-
-def test_start_refuses_to_resume_the_same_agents_claim_under_another_role(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #322 review/gate finding 3: `claim_key` folds in neither `role`
-    nor `agent`, so a live claim on #314 held by this same session's own
-    agent and branch, but as `reviewer` rather than the `builder` role
-    `start` always claims with, must never be silently resumed as this
-    session's build claim -- it falls through to the store's own
-    "is claimed by ..." conflict, exactly as a different agent's claim
-    does."""
-    repo = _start_scenario(monkeypatch, tmp_path)
-    reviewer_claim = _store_claim_from_request(
-        request(
-            "reviewer-claim",
-            "Codex Sol",
-            issue=314,
-            role="reviewer",
-            branch=_START_BRANCH,
-            scope=("src/x.py",),
-        )
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    assert (status, worktree.exists()) == (2, False)
+    assert capsys.readouterr().err.endswith(
+        f"removed worktree {worktree} this start created; "
+        f"branch '{_START_BRANCH}' kept: git failure: error: branch not fully merged\n"
     )
-    _patch_store_write(monkeypatch, reviewer_claim)
-    monkeypatch.chdir(repo)
-
-    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
-
-    assert status == 2
-    assert "is claimed by Codex Sol" in capsys.readouterr().err
 
 
 def test_start_resume_refuses_a_scope_that_differs_from_the_live_claim(
@@ -2202,32 +2378,6 @@ def test_start_refuses_a_closed_or_missing_item(
     assert not (repo.parent / f"{repo.name}-worktrees").exists()
 
 
-def test_start_refuses_a_malformed_body_before_no_scope(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #310 finding 43, mirrored for `start` (issue #406): a target
-    whose `agent-claim` block is malformed refuses by naming that defect --
-    the same block-defect reader `claim` shares -- before `start`'s own
-    claim delegation ever gets to name the less specific "item names no
-    scope"."""
-    repo = _start_scenario(monkeypatch, tmp_path)
-    monkeypatch.chdir(repo)
-    body = agent_claim_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n')
-    issue = board_issue(314, "Fresh Slug Title", body)
-    client = FakeForge(board_issues=(issue,))
-    client.issue_references[314] = forge.ItemReference(
-        forge.ItemState.OPEN, issue.title, issue.body
-    )
-    monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
-
-    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
-
-    assert status == 2
-    assert capsys.readouterr().err == (
-        "ERROR: #314 body malformed: owner: unknown top-level key owner\n"
-    )
-
-
 def _state_ref_item_body(title: str, *, scope: list[str] | None = None) -> str:
     data: dict[str, object] = {
         "version": 1,
@@ -2372,8 +2522,8 @@ def test_start_under_state_ref_claims_against_the_item_current_when_the_worktree
     item_id = items.format_item_id(314)
     real_resolve_or_create_worktree = checkout.resolve_or_create_worktree
 
-    def advance_item_then_create_worktree(path: Path, branch: str, *, remote: str) -> None:
-        real_resolve_or_create_worktree(path, branch, remote=remote)
+    def advance_item_then_create_worktree(path: Path, branch: str, *, remote: str) -> bool:
+        created = real_resolve_or_create_worktree(path, branch, remote=remote)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(
@@ -2387,6 +2537,7 @@ def test_start_under_state_ref_claims_against_the_item_current_when_the_worktree
                 operation_id="item-op-314-race",
             ),
         )
+        return created
 
     remote_path = remote
     monkeypatch.setattr(checkout, "resolve_or_create_worktree", advance_item_then_create_worktree)
@@ -2394,9 +2545,8 @@ def test_start_under_state_ref_claims_against_the_item_current_when_the_worktree
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
     assert status == 2
-    assert capsys.readouterr().err == f"ERROR: {issue_claim.CLAIM_SCOPE_MISMATCH}\n"
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    live = store.fetch_state(worktree=worktree, remote="origin").claims
+    assert capsys.readouterr().err.startswith(f"ERROR: {issue_claim.CLAIM_SCOPE_MISMATCH}\n")
+    live = store.fetch_state(worktree=repo, remote="origin").claims
     assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) not in live
 
 

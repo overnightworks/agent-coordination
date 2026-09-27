@@ -1418,12 +1418,12 @@ def test_resolve_or_create_worktree_builds_once_and_resumes_on_a_second_call(
     branch = "codex/issue-9-widget"
     monkeypatch.chdir(repo)
 
-    checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
-    checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+    created = checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+    resumed_created = checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
 
     resolved = checkout.resolve_path_checkout(worktree)
     assert resolved is not None
-    assert resolved.branch == branch
+    assert (created, resumed_created, resolved.branch) == (True, False, branch)
 
 
 def test_resolve_or_create_worktree_builds_a_repository_nested_in_an_outer_working_tree(

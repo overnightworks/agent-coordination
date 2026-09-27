@@ -32,6 +32,10 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | a non-worktree directory already sits at the computed path | START-15 |
 | a live claim on the target is held by a different agent or branch | START-16 |
 | a clean resume's own `--scope` differs from the live claim's stored scope | START-17 |
+| the claim refuses after this call built the worktree | START-18 |
+| git will not delete the branch a refused `start` built | START-21 |
+| run from a linked worktree | START-19 |
+| run inside the item's own lane worktree, clean or dirty | START-20 |
 | every case | START-05 |
 
 ## Creating or resuming the worktree
@@ -49,6 +53,10 @@ computing a second one. A prior claim that ended -- released, abandoned, or the 
 merge -- leaves no live claim behind, so the next `start` on that same clean worktree mints a
 brand-new id, never a stale or deterministic per-item one.
 
+`start` checks, then builds: target, slug, prefix, and the claim store are refused before any git
+write. The claim's own checks read the worktree they run in, so they run once it exists, and
+a refusal there removes what this call built (START-18).
+
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.
 - [ ] [START-03] No identity resolves a prefix: refuses `branch prefix is required: set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID`, exit 2; an unusable one, `claim`'s own sentence, before any worktree.
@@ -57,6 +65,8 @@ brand-new id, never a stale or deterministic per-item one.
 - [ ] [START-06] A worktree already at the computed path, clean, same branch, with a live claim already on it: looks it up by identity/branch and reprints it verbatim, never minting a second id (see E-START-02).
 - [ ] [START-11] The same clean resume with no live claim (released, abandoned, or reopened after merge) mints a fresh id through the ordinary claim path, exactly as a first build would (see E-START-06).
 - [ ] [START-12] An explicit `--slug` not matching the shape a derived slug would always produce refuses `--slug must be <rule>`, exit 2, before any worktree or branch is touched (see E-START-04).
+- [ ] [START-19] `<repo>` is the main checkout, whichever linked worktree `start` runs in: the new worktree sits beside the main checkout, never nested under the caller's (see E-START-12).
+- [ ] [START-20] Run inside a linked worktree on the live claim's branch, `start` reprints that claim as START-06 does, clean or dirty, whatever slug the path carries; exit 0 (see E-START-13).
 
 ## Refusing a target, a collision, or a dirty resume
 
@@ -69,6 +79,8 @@ brand-new id, never a stale or deterministic per-item one.
 - [ ] [START-15] Something other than a git worktree already sitting at the computed path refuses `path exists and is not a worktree of this repository`, exit `2` (see E-START-08).
 - [ ] [START-16] A live claim on the target held by a different agent or branch is never silently resumed: it falls through to the ordinary claim path, refused by CLAIM-11's own sentence (see E-START-09).
 - [ ] [START-17] A resume's own explicit `--scope` disagreeing with the live claim's stored scope refuses `live claim scope differs; release it first`, exit `2` (see E-START-10).
+- [ ] [START-18] A claim refused after this call built the worktree removes it and its branch, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-11).
+- [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 
 ## Never
 
@@ -76,6 +88,7 @@ brand-new id, never a stale or deterministic per-item one.
 - `start` never overwrites, deletes, or reuses a worktree sitting on a different branch than the one it computed (START-09), or one that belongs to a foreign checkout (START-13): it refuses by name and leaves that worktree exactly as found.
 - `start` never derives the claimed scope independently of `aco claim`'s own body-scope resolution: an explicit `--scope` that disagrees with the item's own body still refuses the same way (CLAIM-54).
 - `start` never reads or writes `refs/aco/state` itself: every claim write happens inside the one `aco claim` call it makes from the resolved worktree.
+- `start` never removes a worktree or branch it did not build in the same call: a refused resume leaves the worktree it found exactly as found.
 - `start` never reuses a prior, now-terminal claim id for the same item: a clean resume with no live claim mints a fresh one (START-11), exactly as a first build would.
 - `start` never gains a `--json` mode: its own parser defines no such flag, so every outcome, success or refusal, is `worktree:`/`branch:` text or a stderr sentence (own product decision).
 
@@ -202,5 +215,66 @@ Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` as E-START-01, already
 ```console
 $ aco start 314 --scope src/other.py
 2> ERROR: live claim scope differs; release it first
+exit 2
+```
+
+### E-START-11 -- a claim refused inside the worktree this call built removes it again
+
+Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` open, title `Fresh Slug`, a body naming no
+`scope`
+
+```console
+$ aco start 314
+worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
+branch: ada/issue-314-fresh-slug
+2> ERROR: item names no scope; pass --scope
+2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' this start created
+exit 2
+```
+
+`git worktree list` and `git branch --list` read afterwards exactly as before the call.
+
+### E-START-12 -- a call from a linked worktree builds beside the main checkout
+
+Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` as E-START-01, run from the linked
+worktree `/work/agent-coordination-worktrees/issue-9-other` of the main checkout
+`/work/agent-coordination`
+
+```console
+$ aco start 314
+worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
+branch: ada/issue-314-fresh-slug
+CLAIMED issue #314: <claim-id>
+1 of 6 versioned files (17%); overlaps no other open claims
+exit 0
+```
+
+### E-START-13 -- a call inside the item's own lane worktree reprints its live claim
+
+Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` as E-START-01, already
+`aco start 314 --slug own-lane`, run from `/work/agent-coordination-worktrees/issue-314-own-lane`
+with uncommitted work in it
+
+```console
+$ aco start 314
+worktree: /work/agent-coordination-worktrees/issue-314-own-lane
+branch: ada/issue-314-own-lane
+CLAIMED issue #314: <claim-id>
+1 of 6 versioned files (17%); overlaps no other open claims
+exit 0
+```
+
+`<claim-id>` is the id the first call minted; no second worktree or branch is built.
+
+### E-START-14 -- git keeps the branch a refused call built
+
+Setup: as E-START-11, and `git branch -d ada/issue-314-fresh-slug` refuses `error: branch not fully merged`
+
+```console
+$ aco start 314
+worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
+branch: ada/issue-314-fresh-slug
+2> ERROR: item names no scope; pass --scope
+2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug this start created; branch 'ada/issue-314-fresh-slug' kept: git failure: error: branch not fully merged
 exit 2
 ```

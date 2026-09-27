@@ -1008,6 +1008,20 @@ def create_linked_worktree(
 _CHOOSE_A_DIFFERENT_WORKTREE_REPAIR = "remove it, or pass --slug to choose a different worktree"
 
 
+def _own_common_directory() -> Path:
+    """The calling process's own common git directory: the one fact every
+    worktree of this repository shares, whichever of them the process runs
+    in."""
+    return Path(_git_output(["rev-parse", "--path-format=absolute", "--git-common-dir"])).resolve()
+
+
+def main_checkout_root() -> Path:
+    """The repository's main checkout, read from the common git directory
+    (issue #479): `start` places a lane's worktree beside it, so a call from
+    inside a linked worktree never nests the new one under that worktree."""
+    return _own_common_directory().parent
+
+
 def _refuse_foreign_worktree(path: Path, existing: PathCheckout) -> None:
     """Refuse to resume `existing` -- already resolved at `path` -- unless
     it is a linked worktree of this same repository (issue #322 review
@@ -1027,10 +1041,7 @@ def _refuse_foreign_worktree(path: Path, existing: PathCheckout) -> None:
             f"worktree {path} is a repository's own main checkout, not a linked worktree; "
             f"{_CHOOSE_A_DIFFERENT_WORKTREE_REPAIR}"
         )
-    own_common_directory = Path(
-        _git_output(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-    ).resolve()
-    if existing.common_directory != own_common_directory:
+    if existing.common_directory != _own_common_directory():
         raise ClaimError(
             f"worktree {path} belongs to a different repository; "
             f"{_CHOOSE_A_DIFFERENT_WORKTREE_REPAIR}"
@@ -1040,11 +1051,13 @@ def _refuse_foreign_worktree(path: Path, existing: PathCheckout) -> None:
 NOT_A_WORKTREE_REFUSAL = "path exists and is not a worktree of this repository"
 
 
-def resolve_or_create_worktree(path: Path, branch: str, *, remote: str) -> None:
+def resolve_or_create_worktree(path: Path, branch: str, *, remote: str) -> bool:
     """Create `path`'s linked worktree and `branch` when nothing sits there
-    yet, or validate a prior `start`'s own worktree for resume (issue #322):
-    refuses by name when `branch` is already taken by something that is not
-    this worktree, when `path` resolves to a checkout this repository does
+    yet, or validate a prior `start`'s own worktree for resume (issue #322),
+    answering whether this call created them -- the only pair `start` may
+    remove again once its claim is refused (issue #479). Refuses by name
+    when `branch` is already taken by something that is not this worktree,
+    when `path` resolves to a checkout this repository does
     not own (`_refuse_foreign_worktree`), when a worktree already at `path`
     is dirty, or when something -- empty or not -- already sits at `path`
     without being a worktree of this repository at all (issue #322
@@ -1057,7 +1070,7 @@ def resolve_or_create_worktree(path: Path, branch: str, *, remote: str) -> None:
                 f"{_CHOOSE_A_DIFFERENT_WORKTREE_REPAIR}"
             )
         create_linked_worktree(path, branch=branch, remote=remote)
-        return
+        return True
     existing = resolve_path_checkout(path)
     if existing is None:
         raise ClaimError(NOT_A_WORKTREE_REFUSAL)
@@ -1071,6 +1084,7 @@ def resolve_or_create_worktree(path: Path, branch: str, *, remote: str) -> None:
     if dirty:
         named = named_with_overflow_count(_dirty_paths(dirty))
         raise ClaimError(f"worktree {path} is dirty: {named}; commit or clean it before resuming")
+    return False
 
 
 def worktree_on_branch(paths: tuple[Path, ...], branch: str) -> Path | None:
@@ -1167,11 +1181,13 @@ def cleanup_landed_worktree(matching: Path, branch: str, *, remote: str) -> Work
 
 def remove_linked_worktree(path: Path, *, branch: str) -> WorktreeCleanupOutcome:
     """Remove a landed lane's linked worktree and its own local branch
-    (issue #322): `git worktree remove` first -- git refuses to delete a
+    (issue #322), or the pair a refused `start` had just created (issue
+    #479): `git worktree remove` first -- git refuses to delete a
     branch still checked out anywhere -- then `git branch -d`, both through
     this module's own `_git_run` chokepoint. Never called on the calling
     process's own checkout: `release`'s own cwd-equality guard runs first,
-    since a worktree cannot remove its own cwd. A worktree-removal failure
+    since a worktree cannot remove its own cwd, and `start` removes only a
+    worktree it created, never the one it runs in. A worktree-removal failure
     still raises loud (nothing on disk has changed yet); a branch-deletion
     failure once the worktree is already gone returns a typed outcome
     instead (issue #322 review/gate finding 4), so that success is never

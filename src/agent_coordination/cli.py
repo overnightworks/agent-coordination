@@ -5054,8 +5054,61 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
     return 0
 
 
-def _start_worktree_path(toplevel: Path, *, number: int, slug: str) -> Path:
-    return toplevel.parent / f"{toplevel.name}-worktrees" / f"issue-{number}-{slug}"
+def _start_worktree_path(main_checkout: Path, *, number: int, slug: str) -> Path:
+    return main_checkout.parent / f"{main_checkout.name}-worktrees" / f"issue-{number}-{slug}"
+
+
+@dataclass(frozen=True)
+class _StartTarget:
+    """The worktree `start` claims in, and whether this very call created it
+    and its branch (issue #479): only such a pair is removed again when the
+    claim is refused."""
+
+    path: Path
+    branch: str
+    created: bool
+
+
+def _runs_in_lane_worktree(context: RunContext, lane_branch: str) -> bool:
+    """Whether `start` runs inside a linked worktree checked out on
+    `lane_branch` -- the live claim's own lane (issue #479), whatever slug
+    its path carries."""
+    caller = checkout.resolve_path_checkout(context.toplevel)
+    return (
+        caller is not None
+        and caller.kind is checkout.CheckoutKind.LINKED_WORKTREE
+        and caller.branch == lane_branch
+    )
+
+
+def _start_target(
+    context: RunContext, live: protocol.ActiveClaim | None, *, number: int, slug: str, branch: str
+) -> _StartTarget:
+    """The caller's own lane worktree when it stands in the live claim's
+    one, else the computed worktree beside the main checkout, created or
+    validated for resume (issue #479)."""
+    if live is not None and _runs_in_lane_worktree(context, live.branch):
+        return _StartTarget(context.toplevel, live.branch, created=False)
+    path = _start_worktree_path(checkout.main_checkout_root(), number=number, slug=slug)
+    created = checkout.resolve_or_create_worktree(path, branch, remote=context.canonical_remote)
+    return _StartTarget(path, branch, created)
+
+
+def _remove_refused_start_worktree(target: _StartTarget) -> None:
+    """Undo what a refused `start` created (issue #479), saying so: a
+    refusal must leave no worktree or branch behind."""
+    outcome = checkout.remove_linked_worktree(target.path, branch=target.branch)
+    if outcome.branch.removed:
+        print(
+            f"removed worktree {target.path} and branch '{target.branch}' this start created",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"removed worktree {target.path} this start created; "
+        f"branch '{target.branch}' kept: {outcome.branch.reason}",
+        file=sys.stderr,
+    )
 
 
 RESUME_SCOPE_MISMATCH = "live claim scope differs; release it first"
@@ -5098,10 +5151,12 @@ def _print_start_resume(
     )
 
 
-def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _start_branch_and_slug(parsed: argparse.Namespace, session: _WriteSession) -> tuple[str, str]:
+    """The lane branch and slug `start` builds for an open item, refusing a
+    missing or closed one, an unusable slug, and an unsafe prefix before any
+    git write."""
     number = parsed.item
-    client = session.forge()
-    item = client.item_reference(number)
+    item = session.forge().item_reference(number)
     label = board.item_label(number, session.context.config.storage)
     if item.state is forge.ItemState.MISSING:
         raise protocol.ClaimUnavailableError(f"issue {label} does not exist here")
@@ -5115,16 +5170,39 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     prefix = checkout.branch_prefix_for_identity()
     branch = f"{prefix}/issue-{number}-{slug}"
     checkout.refuse_unsafe_start_branch(branch, prefix=prefix)
-    worktree_path = _start_worktree_path(session.context.toplevel, number=number, slug=slug)
-    checkout.resolve_or_create_worktree(
-        worktree_path, branch, remote=session.context.canonical_remote
-    )
-    print(f"worktree: {worktree_path}")
-    print(f"branch: {branch}")
-    identity = _resolved_identity(number, branch)
-    worktree_context = session.context.for_directory(worktree_path)
-    _worktree, _remote, observed = _store_observation(worktree_context)
+    return branch, slug
+
+
+def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
+    """Refuses what it can before any git write; a refusal after it created
+    the worktree removes exactly that worktree and branch again (issue
+    #479), since the claim's own checks read the worktree they run in."""
+    number = parsed.item
+    branch, slug = _start_branch_and_slug(parsed, session)
+    _worktree, _remote, observed = _store_observation(session.context)
     _require_state_ref(observed)
+    live = observed.claims.get(protocol.claim_key(_resolved_identity(number, branch), branch))
+    target = _start_target(session.context, live, number=number, slug=slug, branch=branch)
+    print(f"worktree: {target.path}")
+    print(f"branch: {target.branch}")
+    claimed = False
+    try:
+        status = _claim_in_start_worktree(parsed, session.context, target, observed, live)
+        claimed = status == 0
+        return status
+    finally:
+        if target.created and not claimed:
+            _remove_refused_start_worktree(target)
+
+
+def _claim_in_start_worktree(
+    parsed: argparse.Namespace,
+    context: RunContext,
+    target: _StartTarget,
+    observed: protocol.ClaimState,
+    live: protocol.ActiveClaim | None,
+) -> int:
+    worktree_context = context.for_directory(target.path)
     storage = worktree_context.config.storage
     # `claim_key` alone is an issue-only key for an `IssueIdentity` (it never
     # folds `branch` into the key at all): a live record found under it may
@@ -5135,18 +5213,17 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     # claim on the same item must never satisfy (review/gate finding). A
     # mismatch falls through to the fresh-claim path below, which raises the
     # store's own "is claimed by ..." conflict.
-    live = observed.claims.get(protocol.claim_key(identity, branch))
     agent = checkout.resolved_agent(None)
     if (
         live is not None
         and live.agent == agent
         and live.role == DEFAULT_CLAIM_ROLE
-        and live.branch == branch
+        and live.branch == target.branch
     ):
         _print_start_resume(live, observed, storage, parsed, context=worktree_context)
         return 0
     claim_parsed = argparse.Namespace(
-        issue=number,
+        issue=parsed.item,
         agent=None,
         role=DEFAULT_CLAIM_ROLE,
         base=None,
