@@ -2959,6 +2959,9 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
     )
     claim_key = protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)
     assert (claim_key in store.fetch_state(worktree=repo, remote="origin").claims) is lands
+    kept = checkout.resolve_path_checkout(worktree)
+    assert kept is not None
+    assert (kept.kind, kept.branch) == (checkout.CheckoutKind.LINKED_WORKTREE, _START_BRANCH)
 
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
     assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
