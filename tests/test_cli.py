@@ -14485,6 +14485,14 @@ def _release_merged_with_cleanup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     return ["--repo", REPOSITORY, "release", "72", "--merged", "12"]
 
 
+def _release_merged_of_an_open_item(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    """`release --merged` of the cleanup scenario with issue #72 still
+    open, so a release that reached its forge writes would close it."""
+    argv = _release_merged_with_cleanup(monkeypatch, tmp_path)
+    github.GitHubForge(github.repository_id(REPOSITORY)).closed_issues.discard(WORK_ITEM_ISSUE)
+    return argv
+
+
 def _land(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
     _land_scenario(monkeypatch, tmp_path)
     return ["--repo", REPOSITORY, "land", "12"]
@@ -14603,7 +14611,7 @@ _UNCONFIGURED_HUB = f"ERROR: {_UNCONFIGURED_HUB_SENTENCE}\n"
     ("arrange", "expected_out"),
     [
         pytest.param(_start_on_github, "", id="start"),
-        pytest.param(_release_merged_with_cleanup, "", id="release-merged"),
+        pytest.param(_release_merged_of_an_open_item, "", id="release-merged"),
         pytest.param(
             _board_on_github,
             json.dumps(
@@ -14633,6 +14641,7 @@ def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
     claims_before = store.fetch_state(worktree=repo, remote="hub").claims
     client = github.GitHubForge(github.repository_id(REPOSITORY))
     assert isinstance(client, FakeForge)
+    closed_before = set(client.closed_issues)
 
     status = issue_claim.main(argv)
 
@@ -14640,7 +14649,7 @@ def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
     assert (status, printed.out, printed.err) == (2, expected_out, _UNCONFIGURED_HUB)
     assert _real_git(repo, "branch", "--list").stdout == branches_before
     assert store.fetch_state(worktree=repo, remote="hub").claims == claims_before
-    assert client.landing_comments == {}
+    assert (client.landing_comments, client.closed_issues) == ({}, closed_before)
 
 
 def _rename_master_to_trunk(repo: Path, remote: Path, *, keep_recorded_head: bool) -> None:
