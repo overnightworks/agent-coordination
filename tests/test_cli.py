@@ -14949,6 +14949,13 @@ def test_land_refuses_a_classification_defect_reusing_checks_own_rules(
             ".agent-claim/board.toml has unknown top-level key " + "x" * 61 + "…",
             id="invalid-bounded",
         ),
+        pytest.param(
+            '"bad\\nkey" = 1\n"esc\\u001b[31m" = 2\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml has unknown top-level key bad\\nkey, esc\\x1b[31m",
+            id="invalid-control-characters-escaped",
+        ),
     ],
 )
 def test_land_refuses_a_head_that_changes_its_governing_board_config_before_any_write(

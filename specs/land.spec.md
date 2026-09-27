@@ -21,7 +21,9 @@ length this tool controls -- so each name is truncated to 40 characters
 with `…` before a name list past three entries prints only the first three,
 then `and N more` (`protocol.named_with_overflow_count`); the assembled
 sentence is then capped again so no refusal line ever prints past 200
-characters, even past that truncation. A refusal before any write
+characters, even past that truncation; a character in it that does not
+print (a newline, a terminal escape) prints escaped (`\n`, `\x1b`), so a
+capped refusal is always one line. A refusal before any write
 prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 `specs/ref-store-cas.spec.md`'s own preamble documents; `aco land` has no
 `--json` mode.

@@ -5843,9 +5843,17 @@ def _land_truncated_check_name(name: str) -> str:
 
 
 def _land_bounded_refusal(sentence: str) -> str:
-    if len(sentence) <= LAND_REFUSAL_SENTENCE_LENGTH_LIMIT:
-        return sentence
-    return sentence[: LAND_REFUSAL_SENTENCE_LENGTH_LIMIT - 1] + "…"
+    """`sentence` as one bounded refusal line: a pull request's own text
+    (a check name, a head's board configuration key) may carry a newline or
+    a terminal escape, so every character that does not print is shown
+    escaped (`\\n`, `\\x1b`) before the length cap applies (issue #505)."""
+    printable = "".join(
+        character if character.isprintable() else character.encode("unicode_escape").decode()
+        for character in sentence
+    )
+    if len(printable) <= LAND_REFUSAL_SENTENCE_LENGTH_LIMIT:
+        return printable
+    return printable[: LAND_REFUSAL_SENTENCE_LENGTH_LIMIT - 1] + "…"
 
 
 def _land_pending_check_names(checks: tuple[forge.CheckRun, ...]) -> tuple[str, ...]:
