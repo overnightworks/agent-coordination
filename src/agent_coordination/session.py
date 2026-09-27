@@ -295,9 +295,37 @@ class RunContext:
     @cached_property
     def observation(self) -> protocol.ClaimState:
         """This directory's one fetch of `refs/aco/state` (issue #477), from
-        its toplevel over the canonical remote: the state-ref board and
-        every CLI check read this same snapshot. A failed fetch raises and
-        is not held. No command asks again after its own write (`land`
-        releases through `fresh`); a transition still fetches for itself
-        until #418 B2 hands it this observation."""
+        its toplevel over the canonical remote: the state-ref board, every
+        CLI check, and the run's first transition read this same snapshot. A
+        failed fetch raises and is not held. After a transition it holds the
+        state that transition wrote (`transition`); no command fetches again
+        to judge its own write (`land` releases through `fresh`)."""
         return store.fetch_state(worktree=self.toplevel, remote=self.canonical_remote)
+
+    def for_lane_worktree(self, worktree: Path) -> RunContext:
+        """A context for a lane worktree of this checkout that writes the
+        claim store from there, so the lane's own fetch anchor and lineage
+        stamp start at its claim (CAS-09): it holds `worktree` as its
+        toplevel and this context's board configuration -- the main
+        checkout's governs the store, never a lane's own -- and observes the
+        state ref from the worktree itself."""
+        child = self.for_directory(worktree, is_toplevel=True)
+        child.config = self.config
+        return child
+
+    def transition(
+        self,
+        subject: store.TransitionSubject | store.ClaimTransitionSubject,
+        intent: protocol.ClaimTransitionIntent,
+    ) -> protocol.ClaimState:
+        """Write one transition onto this run's observation of the state ref
+        (issue #494) and hold the state it wrote as the new observation, so
+        a second write of the same run (`cut`) applies to the first one's
+        result instead of refusing against a snapshot it already moved."""
+        written = store.commit_transition(
+            observed=store.Observation(self.toplevel, self.canonical_remote, self.observation),
+            subject=subject,
+            intent=intent,
+        )
+        self.observation = written
+        return written

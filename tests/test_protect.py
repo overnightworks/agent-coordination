@@ -1894,7 +1894,7 @@ def test_rescope_succeeds_from_every_cwd_when_the_add_path_is_absolute(
     monkeypatch.setattr(
         store,
         "commit_transition",
-        lambda *, worktree, remote, subject, intent: protocol.apply(state, intent),
+        lambda *, observed, subject, intent: protocol.apply(observed.state, intent),
     )
 
     status = issue_claim.main(["rescope", "72", "--add", add])
@@ -1925,8 +1925,8 @@ def test_rescope_admits_a_file_in_a_new_directory_that_protect_then_allows_writi
     states = [_protect_state_with_claim(claimed)]
     monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: states[-1])
 
-    def commit(*, worktree, remote, subject, intent):
-        states.append(protocol.apply(states[-1], intent))
+    def commit(*, observed, subject, intent):
+        states.append(protocol.apply(observed.state, intent))
         return states[-1]
 
     monkeypatch.setattr(store, "commit_transition", commit)

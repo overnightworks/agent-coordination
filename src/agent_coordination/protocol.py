@@ -703,6 +703,29 @@ class PushRejectedError(ClaimError):
     """
 
 
+class SentWriteError(ClaimUnavailableError):
+    """A store write that failed after its push was sent (issues #479,
+    #494). This class itself is a push the store saw rejected, re-read
+    without its own `operation_id`, then refused or retried until exhausted
+    (CAS-57): the store found nothing of it written. A caller that must not
+    undo what the write may name -- `start`'s build (START-25) -- keeps it
+    for every sent write all the same. It says what went wrong in the
+    underlying failure's own words, naming included."""
+
+
+class SentClaimConflictError(ClaimConflictError, SentWriteError):
+    """`apply()`'s claim conflict met only once a sent push was rejected and
+    the ref re-read: still the conflict `claim` reports as
+    `claim_conflict` (CLM-25), and still a sent write."""
+
+
+class UncertainWriteError(SentWriteError):
+    """A sent write whose outcome the store cannot tell (issue #494,
+    CAS-56): the push's answer, or the re-read after its rejection, was
+    lost, or the write's own bookkeeping failed once it landed. The remote
+    may hold the write or not; only a later read knows."""
+
+
 class ObjectId(str):
     """A runtime-validated 40-character lowercase hex git object id.
 

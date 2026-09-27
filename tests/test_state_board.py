@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from cli_fixtures import count_context_reads, fresh_observation
 from test_cli import FakeForge, _redirect_toplevel, projected_board
 from test_store import _blob, _push_raw_state_tree, _raw_tree
 
@@ -42,6 +43,7 @@ from agent_coordination.body import (
     render_block,
 )
 from agent_coordination.protocol import ClaimUnavailableError, MalformedStateTreeError
+from agent_coordination.session import RunContext
 from agent_coordination.state_board import ItemWriter, StateRefBoard
 
 REPOSITORY_PATH = "acme/items"
@@ -532,6 +534,18 @@ def _fetch_state_ref_board(
         item_oids=state.items,
         writer=writer or _UnusedItemWriter(),
     )
+
+
+def _store_item_writer(remote: Path, worktree_path: Path) -> ItemWriter:
+    """The production `cli._StoreItemWriter`, writing from `worktree_path`
+    over `remote` through a run context that stands for that checkout."""
+
+    def no_forge(_context: RunContext) -> forge.ForgeReader:
+        raise AssertionError("an item write never builds a forge")
+
+    context = RunContext(None, build_forge=no_forge).for_directory(worktree_path, is_toplevel=True)
+    context.config = board.BoardConfig(canonical_remote=str(remote), storage=Storage.STATE_REF)
+    return issue_claim._StoreItemWriter(context)
 
 
 @pytest.fixture
@@ -1148,7 +1162,7 @@ class TestStateRefBoardWrites:
     wires in production, never a fake CAS."""
 
     def _writer(self, remote: Path, worktree_path: Path) -> ItemWriter:
-        return issue_claim._StoreItemWriter(worktree_path, str(remote))
+        return _store_item_writer(remote, worktree_path)
 
     def test_update_item_body_refreshes_updated_at_preserves_the_rest_and_is_visible_immediately(
         self, bare_remote: Path, worktree: Path
@@ -2167,6 +2181,33 @@ class TestCliStateRefForge:
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
 
+    def test_cut_writes_its_row_removal_onto_the_state_its_child_write_returned(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #494 proof 3: `cut`'s two writes -- the child, then the row
+        removal -- read the state ref once between them: the second applies
+        to the state the first returned, so its push is never rejected into
+        a fresh read, and both land."""
+        item_files = _item_files_with_container_slices(((1, "Slice C"),))
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        remote_url = f"file://{bare_remote}"
+        before_ids = set(store.fetch_state(worktree=worktree, remote=remote_url).items)
+        reads = count_context_reads(monkeypatch)
+
+        status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "Slice C"])
+
+        observations = dict(reads.observations)
+        after = store.fetch_state(worktree=worktree, remote=remote_url)
+        assert after.tip is not None
+        container = store.read_item_files(worktree, after.tip)[f"{CONTAINER_ID}.md"].decode()
+        assert (status, observations) == (0, {worktree: 1})
+        assert len(set(after.items) - before_ids) == 1
+        assert locate_agent_claim_block(container).data["slice"] == []
+
     def test_cut_adopts_the_child_after_a_partial_failure_from_a_competing_write(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -2228,8 +2269,7 @@ class TestCliStateRefForge:
                     operation_id=uuid.uuid4().hex,
                 )
                 store.commit_transition(
-                    worktree=worktree,
-                    remote=remote_url,
+                    observed=fresh_observation(worktree, remote_url),
                     subject=store.TransitionSubject("competing container write"),
                     intent=competing_intent,
                 )
@@ -3317,7 +3357,7 @@ class TestCliStateRefForge:
         sentence; the remote keeps the first writer's body."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
         second = _fetch_state_ref_board(
-            bare_remote, worktree, writer=issue_claim._StoreItemWriter(worktree, str(bare_remote))
+            bare_remote, worktree, writer=_store_item_writer(bare_remote, worktree)
         )
         second_body = second.item_reference(CHILD_A_NUMBER).body
         assert second_body is not None
@@ -3562,8 +3602,7 @@ class TestCliStateRefForge:
         )
         assert issue_claim.main(["item", "close", str(CLOSE_BLOCKER_NUMBER)]) == 0
         store.commit_transition(
-            worktree=worktree,
-            remote=f"file://{bare_remote}",
+            observed=fresh_observation(worktree, f"file://{bare_remote}"),
             subject=store.ClaimTransitionSubject(
                 f"claim issue {CLOSE_BLOCKER_NUMBER}", item=str(CLOSE_BLOCKER_NUMBER)
             ),
@@ -3663,7 +3702,7 @@ class TestCliStateRefForge:
             monkeypatch, tmp_path, bare_remote, worktree, _close_scenario_item_files()
         )
         second = _fetch_state_ref_board(
-            bare_remote, worktree, writer=issue_claim._StoreItemWriter(worktree, str(bare_remote))
+            bare_remote, worktree, writer=_store_item_writer(bare_remote, worktree)
         )
 
         closed = issue_claim.main(["item", "close", str(CLOSE_BLOCKER_NUMBER)])

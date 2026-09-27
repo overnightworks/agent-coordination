@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from cli_fixtures import stub_board_config_tracked
+from cli_fixtures import fresh_observation, stub_board_config_tracked
 from test_cli import FakeForge, _redirect_toplevel
 
 from agent_coordination import cli as issue_claim
@@ -1678,8 +1678,7 @@ def _committed_claim(bare_remote: Path, worktree: Path, *, issue: int) -> protoc
     -- its `opened_commit` is the real state-ref commit the transition wrote,
     not a placeholder, so a `claim_ages` walk of that history finds it."""
     state = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject(f"claim issue {issue}", item=str(issue)),
         intent=_issue_claim_intent(issue, claim_id=f"c{issue}", operation_id=f"op-{issue}"),
     )
@@ -1710,8 +1709,7 @@ def test_commit_transition_writes_the_exact_trailer_block_for_a_claim_and_a_land
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
 
     claim_state = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=_issue_claim_intent(42, claim_id="claim-42", operation_id="op-claim-42"),
     )
@@ -1724,8 +1722,7 @@ def test_commit_transition_writes_the_exact_trailer_block_for_a_claim_and_a_land
     item_id = "aco-000001"
     open_oid = protocol.ObjectId(_blob(worktree, b"open\n"))
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.TransitionSubject("create item aco-000001"),
         intent=protocol.ItemWriteIntent(
             item_id=item_id, expected=None, new_oid=open_oid, operation_id="op-item-create"
@@ -1734,8 +1731,7 @@ def test_commit_transition_writes_the_exact_trailer_block_for_a_claim_and_a_land
     closed_oid = protocol.ObjectId(_blob(worktree, b"closed\n"))
 
     landing_state = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 42", item="42"),
         intent=protocol.LandingIntent(
             item_id=item_id,
@@ -1915,34 +1911,29 @@ def test_claim_lifecycle_reads_intervals_from_real_ref_history(
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     _committed_claim(bare_remote, worktree, issue=10)
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 10", item="10"),
         intent=_release_intent("c10", "op-10-release"),
     )
     _committed_claim(bare_remote, worktree, issue=11)
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("rescope issue 11", item="11"),
         intent=_rescope_intent("c11", "op-11-rescope-1"),
     )
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("rescope issue 11", item="11"),
         intent=_rescope_intent("c11", "op-11-rescope-2"),
     )
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 11", item="11"),
         intent=_release_intent("c11", "op-11-release"),
     )
     _committed_claim(bare_remote, worktree, issue=12)
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 12", item="12"),
         intent=_release_intent("c12", "op-12-release"),
     )
@@ -1985,8 +1976,7 @@ def test_claim_lifecycle_excludes_history_before_a_reset(bare_remote: Path, work
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     _committed_claim(bare_remote, worktree, issue=1)
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 1", item="1"),
         intent=_release_intent("c1", "op-1-release"),
     )
@@ -2026,8 +2016,7 @@ def test_claim_lifecycle_skips_and_counts_a_malformed_claim_shaped_commit(
         message="claim issue 999\n\noperation_id: op-999\nintent: claim\n",
     )
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 1", item="1"),
         intent=_release_intent("c1", "op-1-release"),
     )
@@ -2111,8 +2100,7 @@ def test_claim_lifecycle_counts_a_second_release_of_the_same_claim_as_unparsed(
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     _committed_claim(bare_remote, worktree, issue=1)
     first_release_state = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 1", item="1"),
         intent=_release_intent("c1", "op-1-release"),
     )
@@ -2152,8 +2140,7 @@ def test_claim_lifecycle_counts_a_rescope_after_release_as_unparsed(
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     _committed_claim(bare_remote, worktree, issue=1)
     release_state = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 1", item="1"),
         intent=_release_intent("c1", "op-1-release"),
     )
@@ -2277,8 +2264,7 @@ def test_commit_transition_and_fetch_state_round_trip_a_claim_with_a_resource(
     intent = _issue_claim_intent(42, resource_name="display")
 
     result = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=intent,
     )
@@ -2296,8 +2282,7 @@ def test_commit_transition_rescope_and_release_round_trip(
 ) -> None:
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=_issue_claim_intent(42),
     )
@@ -2309,8 +2294,7 @@ def test_commit_transition_rescope_and_release_round_trip(
         operation_id="op-2",
     )
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("rescope issue 42", item="42"),
         intent=rescope,
     )
@@ -2326,8 +2310,7 @@ def test_commit_transition_rescope_and_release_round_trip(
         operation_id="op-3",
     )
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 42", item="42"),
         intent=release,
     )
@@ -2369,16 +2352,14 @@ def test_commit_transition_preserves_items_across_claim_rescope_and_release(
     assert_items_unchanged()
 
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=_issue_claim_intent(42),
     )
     assert_items_unchanged()
 
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("rescope issue 42", item="42"),
         intent=protocol.RescopeIntent(
             claim_id=protocol.ClaimId("a1"),
@@ -2391,8 +2372,7 @@ def test_commit_transition_preserves_items_across_claim_rescope_and_release(
     assert_items_unchanged()
 
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 42", item="42"),
         intent=protocol.ReleaseIntent(
             claim_id=protocol.ClaimId("a1"),
@@ -2411,14 +2391,12 @@ def test_commit_transition_a_local_two_racer_claim_on_different_keys_both_land(
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
 
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 1", item="1"),
         intent=_issue_claim_intent(1),
     )
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 2", item="2"),
         intent=_issue_claim_intent(2, claim_id="a2", operation_id="op-2"),
     )
@@ -2430,23 +2408,26 @@ def test_commit_transition_a_local_two_racer_claim_on_different_keys_both_land(
 def test_commit_transition_same_key_second_racer_names_the_holder(
     bare_remote: Path, worktree: Path
 ) -> None:
+    """A refusal met before any push was sent stays a plain conflict, never a
+    sent write: `start` removes what it built on that type alone (START-18)."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=_issue_claim_intent(42),
     )
 
     intent = _issue_claim_intent(42, agent="Grace", claim_id="a2", operation_id="op-2")
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
-    with pytest.raises(protocol.ClaimUnavailableError, match="is claimed by Ada"):
+    observed = fresh_observation(worktree, bare_remote)
+    with pytest.raises(protocol.ClaimUnavailableError, match="is claimed by Ada") as raised:
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
         )
+
+    assert type(raised.value) is protocol.ClaimConflictError
 
 
 def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_stuck_lock(
@@ -2461,10 +2442,10 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
 
     intent = _issue_claim_intent(42)
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="rejected 32 pushes") as raised:
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
             transport=transport,
@@ -2484,10 +2465,10 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_r
 
     intent = _issue_claim_intent(42)
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="moved 32 times") as raised:
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
             transport=transport,
@@ -2508,10 +2489,10 @@ def test_commit_transition_exhaustion_names_the_true_mix_when_the_ref_moves_once
 
     intent = _issue_claim_intent(42)
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="moved 1 time") as raised:
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
             transport=transport,
@@ -2520,32 +2501,157 @@ def test_commit_transition_exhaustion_names_the_true_mix_when_the_ref_moves_once
     assert "without the ref moving after it last moved" in str(raised.value)
 
 
-def test_commit_transition_lost_response_does_not_apply_twice(
-    bare_remote: Path, worktree: Path
+def _another_writer_claims_issue_2(
+    _monkeypatch: pytest.MonkeyPatch, bare_remote: Path, worktree: Path
+) -> store.PushTransport | None:
+    store.commit_transition(
+        observed=fresh_observation(worktree, bare_remote),
+        subject=store.ClaimTransitionSubject("claim issue 2", item="2"),
+        intent=_issue_claim_intent(2, claim_id="a2", operation_id="op-2"),
+    )
+    return None
+
+
+def _the_answer_is_lost(
+    _monkeypatch: pytest.MonkeyPatch, _bare_remote: Path, _worktree: Path
+) -> store.PushTransport:
+    return _AcceptThenRaiseTransport()
+
+
+@pytest.mark.parametrize(
+    ("arrange", "expected_claims"),
+    [
+        pytest.param(_another_writer_claims_issue_2, {"issue-1", "issue-2"}, id="rejected"),
+        pytest.param(_the_answer_is_lost, {"issue-1"}, id="answer-lost"),
+    ],
+)
+def test_commit_transition_reads_the_ref_afresh_once_after_a_rejected_push(
+    bare_remote: Path,
+    worktree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_call_spy: Counter[str],
+    arrange: Callable[..., store.PushTransport | None],
+    expected_claims: set[str],
 ) -> None:
+    """Issue #494 proof 2 (CAS-13, CAS-14): a push rejected against the
+    observation it was handed reads the ref afresh exactly once -- one
+    `ls-remote`, one `fetch` -- then re-applies onto what it read, or, when
+    its answer was lost after the remote took it, finds its own
+    `operation_id` there and never applies it a second time."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
-    transport = _AcceptThenRaiseTransport()
-    intent = _issue_claim_intent(42)
+    observed = fresh_observation(worktree, bare_remote)
+    transport = arrange(monkeypatch, bare_remote, worktree)
+    git_call_spy.clear()
 
     result = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
-        subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
-        intent=intent,
+        observed=observed,
+        subject=store.ClaimTransitionSubject("claim issue 1", item="1"),
+        intent=_issue_claim_intent(1),
         transport=transport,
     )
 
-    assert transport.calls == 1
-    assert result.claims["issue-42"].claim_id == "a1"
-    log = subprocess.run(
-        ["git", "--git-dir", str(bare_remote), "rev-list", "--count", store.STATE_REF],
-        check=True,
-        capture_output=True,
-        text=True,
+    assert (git_call_spy["ls-remote"], git_call_spy["fetch"]) == (1, 1)
+    assert set(result.claims) == expected_claims
+    commits = _git("rev-list", "--count", store.STATE_REF, cwd=bare_remote).stdout
+    assert int(commits) == 1 + len(expected_claims)
+
+
+class _TimedOutTransport:
+    """A `PushTransport` whose push is sent but never answers."""
+
+    def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
+        raise protocol.ClaimError("git timed out while reading the claim state store")
+
+
+def _the_push_times_out(
+    _monkeypatch: pytest.MonkeyPatch, _bare_remote: Path, _worktree: Path
+) -> store.PushTransport:
+    return _TimedOutTransport()
+
+
+def _the_answer_and_its_re_read_are_lost(
+    monkeypatch: pytest.MonkeyPatch, _bare_remote: Path, _worktree: Path
+) -> store.PushTransport:
+    def unreachable(*, worktree: Path, remote: str) -> protocol.ClaimState:
+        raise protocol.ClaimError("fatal: the remote end hung up unexpectedly")
+
+    monkeypatch.setattr(store, "fetch_state", unreachable)
+    return _AcceptThenRaiseTransport()
+
+
+def _the_landed_push_cannot_stamp_its_lineage(
+    monkeypatch: pytest.MonkeyPatch, _bare_remote: Path, _worktree: Path
+) -> None:
+    def disk_full(*_arguments: object, **_keywords: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store.os, "replace", disk_full)
+
+
+def _every_push_is_rejected(
+    _monkeypatch: pytest.MonkeyPatch, _bare_remote: Path, _worktree: Path
+) -> store.PushTransport:
+    return _AlwaysRejectingTransport()
+
+
+def _another_writer_claims_issue_1(
+    _monkeypatch: pytest.MonkeyPatch, bare_remote: Path, worktree: Path
+) -> None:
+    store.commit_transition(
+        observed=fresh_observation(worktree, bare_remote),
+        subject=store.ClaimTransitionSubject("claim issue 1", item="1"),
+        intent=_issue_claim_intent(1, claim_id="b1", operation_id="op-b1", agent="Grace"),
     )
-    # The bootstrap commit, plus this one claim commit -- never a duplicate
-    # second commit for the same operation_id.
-    assert log.stdout.strip() == "2"
+
+
+@pytest.mark.parametrize(
+    ("arrange", "raised_kind"),
+    [
+        pytest.param(_the_push_times_out, protocol.UncertainWriteError, id="push-times-out"),
+        pytest.param(
+            _the_answer_and_its_re_read_are_lost,
+            protocol.UncertainWriteError,
+            id="answer-and-re-read-lost",
+        ),
+        pytest.param(
+            _the_landed_push_cannot_stamp_its_lineage,
+            protocol.UncertainWriteError,
+            id="lineage-stamp-fails",
+        ),
+        pytest.param(_every_push_is_rejected, protocol.SentWriteError, id="every-push-rejected"),
+        pytest.param(
+            _another_writer_claims_issue_1,
+            protocol.SentClaimConflictError,
+            id="rejected-then-refused",
+        ),
+    ],
+)
+def test_commit_transition_says_whether_a_failed_write_may_have_landed(
+    bare_remote: Path,
+    worktree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arrange: Callable[..., store.PushTransport | None],
+    raised_kind: type[protocol.SentWriteError],
+) -> None:
+    """Issues #479, #494 (CAS-56, CAS-57): every write that fails after its
+    push was sent says so by type. One whose outcome the store cannot tell
+    -- no answer, an answer and the re-read after it lost, a landed push
+    whose bookkeeping failed -- is an `UncertainWriteError`; one the store
+    saw rejected and re-read without its own `operation_id`, then refused
+    or retried until exhausted, is a plain `SentWriteError`, a conflict
+    still a claim conflict."""
+    store.bootstrap(worktree=worktree, remote=str(bare_remote))
+    observed = fresh_observation(worktree, bare_remote)
+    transport = arrange(monkeypatch, bare_remote, worktree)
+    subject = store.ClaimTransitionSubject("claim issue 1", item="1")
+    intent = _issue_claim_intent(1)
+
+    with pytest.raises(protocol.ClaimError) as raised:
+        store.commit_transition(
+            observed=observed, subject=subject, intent=intent, transport=transport
+        )
+
+    assert type(raised.value) is raised_kind
 
 
 def test_commit_transition_ten_thread_contention_lands_every_distinct_key(
@@ -2575,8 +2681,7 @@ def test_commit_transition_ten_thread_contention_lands_every_distinct_key(
         barrier.wait()
         try:
             store.commit_transition(
-                worktree=linked_worktree,
-                remote=str(bare_remote),
+                observed=fresh_observation(linked_worktree, bare_remote),
                 subject=store.ClaimTransitionSubject(f"claim issue {issue}", item=str(issue)),
                 intent=_issue_claim_intent(
                     issue, claim_id=f"a{issue}", operation_id=f"op-{issue:03d}"
@@ -2650,8 +2755,7 @@ def test_commit_transition_item_create_adds_a_file_and_preserves_the_claim_ledge
     (issue #241), now proven from the item-write side."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=_issue_claim_intent(42, resource_name="display"),
     )
@@ -2661,8 +2765,7 @@ def test_commit_transition_item_create_adds_a_file_and_preserves_the_claim_ledge
 
     intent = _hashed_item_intent(worktree, content=b"item body\n")
     result = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.TransitionSubject("create item aco-000001"),
         intent=intent,
     )
@@ -2681,8 +2784,7 @@ def test_commit_transition_item_create_refuses_a_duplicate_id(
 ) -> None:
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.TransitionSubject("create item aco-000001"),
         intent=_hashed_item_intent(worktree, content=b"first\n", operation_id="op-1"),
     )
@@ -2690,10 +2792,10 @@ def test_commit_transition_item_create_refuses_a_duplicate_id(
     duplicate_intent = _hashed_item_intent(worktree, content=b"second\n", operation_id="op-2")
     duplicate_subject = store.TransitionSubject("create item aco-000001 again")
 
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="already exists"):
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=duplicate_subject,
             intent=duplicate_intent,
         )
@@ -2704,8 +2806,7 @@ def test_commit_transition_item_edit_refuses_a_stale_expected_oid_without_clobbe
 ) -> None:
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     created = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.TransitionSubject("create item aco-000001"),
         intent=_hashed_item_intent(worktree, content=b"first\n", operation_id="op-1"),
     )
@@ -2716,10 +2817,10 @@ def test_commit_transition_item_edit_refuses_a_stale_expected_oid_without_clobbe
     )
     edit_subject = store.TransitionSubject("edit item aco-000001")
 
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="written since it was read"):
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=edit_subject,
             intent=stale_intent,
         )
@@ -2739,14 +2840,12 @@ def test_commit_transition_two_writers_different_item_ids_both_land(
     parent tree's `items/` oid (issue #279)."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.TransitionSubject("create item aco-000001"),
         intent=_hashed_item_intent(worktree, item_id="aco-000001", operation_id="op-1"),
     )
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.TransitionSubject("create item aco-000002"),
         intent=_hashed_item_intent(worktree, item_id="aco-000002", operation_id="op-2"),
     )
@@ -2763,8 +2862,7 @@ def test_commit_transition_item_write_lost_response_does_not_apply_twice(
     intent = _hashed_item_intent(worktree, content=b"item body\n")
 
     result = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.TransitionSubject("create item aco-000001"),
         intent=intent,
         transport=transport,
@@ -2821,8 +2919,7 @@ def test_commit_transition_two_threads_creating_different_item_ids_both_land(
         barrier.wait()
         try:
             store.commit_transition(
-                worktree=linked_worktree,
-                remote=str(bare_remote),
+                observed=fresh_observation(linked_worktree, bare_remote),
                 subject=store.TransitionSubject(f"create item {item_id}"),
                 intent=_hashed_item_intent(
                     linked_worktree, item_id=item_id, operation_id=f"op-{item_id}"
@@ -2871,8 +2968,7 @@ def test_commit_transition_two_threads_racing_the_same_item_id_lands_exactly_one
         barrier.wait()
         try:
             store.commit_transition(
-                worktree=linked_worktree,
-                remote=str(bare_remote),
+                observed=fresh_observation(linked_worktree, bare_remote),
                 subject=store.TransitionSubject("create item aco-000001"),
                 intent=_hashed_item_intent(
                     linked_worktree, content=content, operation_id=f"op-{racer}"
@@ -3124,19 +3220,21 @@ def test_commit_transition_git_call_count_is_independent_of_claim_count(
     #241): the write seam's own `ls-tree` (inside the retry loop, against
     that attempt's `observed.tip`) plus `hash-object` only for entries that
     actually changed, `mktree` only for subtrees that actually changed plus
-    the top, and one `commit-tree`.
+    the top, and one `commit-tree`. Uncontended, it reads the ref no time of
+    its own: it applies to the observation it is handed (issue #494).
     """
     _push_seeded_state(bare_remote, worktree, claim_count)
+    observed = fresh_observation(worktree, bare_remote)
     git_call_spy.clear()
 
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=observed,
         subject=store.ClaimTransitionSubject("transition under measurement", item="measured"),
         intent=build_intent(claim_count),
     )
 
-    assert git_call_spy["ls-tree"] == 2
+    assert (git_call_spy["ls-remote"], git_call_spy["fetch"]) == (0, 0)
+    assert git_call_spy["ls-tree"] == 1
     assert git_call_spy["hash-object"] == expected_hash_object
     assert git_call_spy["mktree"] == expected_mktree
     assert git_call_spy["commit-tree"] == 1
@@ -3157,8 +3255,7 @@ def test_commit_transition_reuses_an_unchanged_claims_blob_byte_for_byte(
     before = store._list_tree(worktree, tip, tip=tip, context="state")
 
     result = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release c0", item="1"),
         intent=_release_first_claim(3),
     )
@@ -3183,8 +3280,7 @@ def test_commit_transition_reuses_a_whole_unchanged_subtree_by_its_own_oid(
     """
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 1", item="1"),
         intent=_issue_claim_intent(1, resource_name="display"),
     )
@@ -3193,8 +3289,7 @@ def test_commit_transition_reuses_a_whole_unchanged_subtree_by_its_own_oid(
     before = store._list_tree(worktree, before_tip, tip=before_tip, context="state")
 
     result = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 2", item="2"),
         intent=_issue_claim_intent(2, claim_id="a2", operation_id="op-2"),
     )
@@ -3981,13 +4076,9 @@ def test_commit_transition_refuses_a_missing_state_ref(worktree: Path, tmp_path:
 
     intent = _claim_intent()
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, empty_remote)
     with pytest.raises(protocol.ClaimError, match="does not exist yet"):
-        store.commit_transition(
-            worktree=worktree,
-            remote=str(empty_remote),
-            subject=subject,
-            intent=intent,
-        )
+        store.commit_transition(observed=observed, subject=subject, intent=intent)
 
 
 # `reset` (issue #298): `export_state_bundle`, `delete_state_ref`, and

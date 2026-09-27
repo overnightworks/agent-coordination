@@ -57,6 +57,7 @@ from cli_fixtures import (
     count_context_reads,
     dangle_recorded_head,
     fetched_once_then_read,
+    fresh_observation,
     landed_from_another_clone,
     main_exit_code,
     run_context_over,
@@ -2273,18 +2274,11 @@ def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch, _repo: Path)
     commit = fake.commit_transition
 
     def racing_commit(
-        *,
-        worktree: Path,
-        subject: str,
-        intent: protocol.ClaimTransitionIntent,
-        remote: str,
-        transport: object,
+        *, observed: store.Observation, subject: str, intent: protocol.ClaimTransitionIntent
     ) -> protocol.ClaimState:
         claims = {**fake.state.claims, protocol.claim_key(held.identity, held.branch): held}
         fake.state = replace(fake.state, claims=claims)
-        return commit(
-            worktree=worktree, subject=subject, intent=intent, remote=remote, transport=transport
-        )
+        return commit(observed=observed, subject=subject, intent=intent)
 
     monkeypatch.setattr(store, "commit_transition", racing_commit)
 
@@ -2815,8 +2809,7 @@ def _real_state_ref_start_scenario(
     content = _state_ref_item_body("Fresh Slug Title").encode()
     seeded_oid = store.hash_blob(repo, content)
     store.commit_transition(
-        worktree=repo,
-        remote=str(remote),
+        observed=fresh_observation(repo, remote),
         subject=store.TransitionSubject(f"seed item {items.format_item_id(314)}"),
         intent=protocol.ItemWriteIntent(
             item_id=items.format_item_id(314),
@@ -2942,12 +2935,13 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
     failing_seam: str | None,
     reported: str,
 ) -> None:
-    """Issue #479 (head ruling, START-25): once the claim's push was sent,
-    only the store knows whether it was written, so any failure the write
-    still raises -- its lineage stamp, the search for a push whose answer
-    was lost, a push that timed out before or after it landed, a store that
-    rejected every push -- keeps the worktree and branch, says the outcome
-    is uncertain, and the next `start` resumes whichever outcome it finds."""
+    """Issue #479 (head ruling, START-25), issue #494: once the claim's push
+    was sent, only the store knows whether it was written, so every failure
+    the store reports as a sent write -- its lineage stamp, the search for a
+    push whose answer was lost, a push that timed out before or after it
+    landed, a store that rejected every push -- keeps the worktree and
+    branch, says the outcome is uncertain, and the next `start` resumes
+    whichever outcome it finds."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     landed: list[protocol.ObjectId] = []
     real_push = store.GitPushTransport.push
@@ -2996,6 +2990,49 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
 
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
     assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
+
+
+def test_start_keeps_its_worktree_when_a_rival_claim_lands_under_its_sent_push(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issues #479 (START-25), #494: a rival claim on the item lands after
+    `start` checked it, so the claim's push is rejected and the store's
+    re-read refuses it as a claim conflict. That push was still sent, so the
+    worktree and branch stay, and the conflict names the item the way the
+    board's storage does."""
+    repo, bare_remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    real_push = store.GitPushTransport.push
+    rival_pending = [True]
+
+    def rival_lands_first(
+        transport: store.GitPushTransport,
+        *,
+        worktree: Path,
+        remote: str,
+        ref: str,
+        new_oid: protocol.ObjectId,
+    ) -> None:
+        if rival_pending:
+            rival_pending.clear()
+            _land_real_claim(repo, bare_remote, issue=314, claim_id="rival-314")
+        real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+
+    monkeypatch.setattr(store.GitPushTransport, "push", rival_lands_first)
+
+    status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    err = capsys.readouterr().err
+    assert status == 2
+    item = items.format_item_id(314)
+    assert err.startswith(f"ERROR: issue {item} is claimed by Codex Sol (builder) on issue {item} ")
+    assert err.endswith(
+        f"\nthe claim's push was sent, its outcome unknown; worktree {worktree} and "
+        f"branch '{_START_BRANCH}' kept; run start again to resume it\n"
+    )
+    kept = checkout.resolve_path_checkout(worktree)
+    assert kept is not None
+    assert (kept.kind, kept.branch) == (checkout.CheckoutKind.LINKED_WORKTREE, _START_BRANCH)
 
 
 @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
@@ -3066,8 +3103,7 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(
-            worktree=repo,
-            remote=str(remote_path),
+            observed=fresh_observation(repo, remote_path),
             subject=store.TransitionSubject(f"advance item {item_id}"),
             intent=protocol.ItemWriteIntent(
                 item_id=item_id,
@@ -7373,8 +7409,7 @@ def _land_real_claim(
     worktree: Path, remote: Path, *, issue: int, claim_id: str
 ) -> protocol.ActiveClaim:
     claim_state = store.commit_transition(
-        worktree=worktree,
-        remote=str(remote),
+        observed=fresh_observation(worktree, remote),
         subject=store.ClaimTransitionSubject(f"claim issue {issue}", item=str(issue)),
         intent=protocol.ClaimIntent(
             identity=protocol.IssueIdentity(issue),
@@ -7400,8 +7435,7 @@ def _land_real_item(
     item_id = items.format_item_id(issue)
     new_oid = store.hash_blob(worktree, content)
     item_state = store.commit_transition(
-        worktree=worktree,
-        remote=str(remote),
+        observed=fresh_observation(worktree, remote),
         subject=store.TransitionSubject(f"seed item {item_id}"),
         intent=protocol.ItemWriteIntent(
             item_id=item_id, expected=None, new_oid=new_oid, operation_id=f"item-op-{issue}"
@@ -7523,8 +7557,7 @@ def test_landing_intent_survives_an_unrelated_ref_move_with_no_half_state(
     )
 
     new_state = store.commit_transition(
-        worktree=worktree,
-        remote=str(bare_remote),
+        observed=fresh_observation(worktree, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 10", item="10"),
         intent=protocol.LandingIntent(
             item_id=item_id,
@@ -7589,13 +7622,13 @@ def test_item_close_refuses_a_claim_that_lands_between_its_first_attempt_and_the
     )
     subject = store.TransitionSubject(f"write item {item_id}")
 
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(
         protocol.ClaimUnavailableError,
         match=r"^#10 has a live claim \(Codex Sol \(builder\)\); release the claim first$",
     ):
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=subject,
             intent=close,
             transport=racer,
@@ -7636,10 +7669,10 @@ def test_landing_intent_refuses_a_stale_item_oid_without_writing_anything(
     )
 
     subject = store.ClaimTransitionSubject("release issue 10", item="10")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="was written since it was read"):
         store.commit_transition(
-            worktree=worktree,
-            remote=str(bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
         )
@@ -8708,14 +8741,12 @@ class _FakeStore:
     def commit_transition(
         self,
         *,
-        worktree: Path,
+        observed: store.Observation,
         subject: str,
         intent: protocol.ClaimTransitionIntent,
-        item: str | None = None,
-        remote: str = "origin",
         transport: object = None,
     ) -> protocol.ClaimState:
-        if self.state.tip is None:
+        if observed.state.tip is None:
             raise protocol.ClaimError(protocol.MISSING_STATE_REF)
         self.transitions.append(intent)
         self.state = protocol.apply(self.state, intent)
@@ -18334,8 +18365,7 @@ def test_cli_reset_refuses_when_a_claim_is_live_and_touches_nothing(
     repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     store.bootstrap(worktree=repository, remote=str(bare_remote))
     store.commit_transition(
-        worktree=repository,
-        remote=str(bare_remote),
+        observed=fresh_observation(repository, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=_real_claim_intent(42),
     )
@@ -18615,14 +18645,12 @@ def test_cli_reset_restore_from_the_bundle_into_a_fresh_repository_recovers_stat
     repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     store.bootstrap(worktree=repository, remote=str(bare_remote))
     store.commit_transition(
-        worktree=repository,
-        remote=str(bare_remote),
+        observed=fresh_observation(repository, bare_remote),
         subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
         intent=_real_claim_intent(42),
     )
     store.commit_transition(
-        worktree=repository,
-        remote=str(bare_remote),
+        observed=fresh_observation(repository, bare_remote),
         subject=store.ClaimTransitionSubject("release issue 42", item="42"),
         intent=protocol.ReleaseIntent(
             claim_id=protocol.ClaimId("claim-42"),
@@ -18708,8 +18736,8 @@ class _CountedRun:
     """One command's argv, its exit code, and the exact reads it makes:
     toplevel reads keyed by the directory git ran in (`None`: the process's
     own cwd), board configuration reads by the toplevel they read, and
-    observations of `refs/aco/state` outside a transition by the worktree
-    they fetched into (issue #477)."""
+    observations of `refs/aco/state`, a transition's own included, by the
+    worktree they fetched into (issues #477, #494)."""
 
     argv: list[str]
     toplevel_reads: dict[Path | None, int]
@@ -18760,8 +18788,9 @@ def _state_ref_release_merged_command(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> _CountedRun:
     """`release --merged` finds its claim and prepares its landing item
-    from the same observation (issue #477); its landing transition still
-    fetches for itself until #418 B2."""
+    from the same observation (issue #477), and its landing transition
+    writes onto that observation without reading the ref again (issue
+    #494)."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
     landing_trailer = f"Work-Item: {items.format_item_id(314)}"
@@ -18895,25 +18924,36 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
     measures the fetched trunk's own tree and asks no toplevel for a scope
     entry that is no tree in it."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    lane = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
         toplevel_reads={None: 1, repo: 1},
         config_reads={repo: 1},
-        observations={repo: 2},
+        observations={repo: 2, lane: 1},
     )
 
 
-def _start_refused_push_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """A `start` whose store rejects every push of its claim reads exactly
-    what a successful one does: the store alone answers whether its push
-    was written, so keeping the build observes the state ref no third time
-    (issue #480 review finding 3, CAS-53, CAS-55, START-25)."""
+def _start_lost_answer_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    """A `start` whose claim push lands but whose answer is lost reads
+    exactly what a successful one does: the store alone answers that its
+    push's outcome is unknown, so keeping the build observes the state ref
+    no further time (issue #480 review finding 3, issue #494, CAS-53,
+    CAS-55, START-25)."""
     run = _start_command(monkeypatch, tmp_path)
+    real_push = store.GitPushTransport.push
 
-    def rejected(_transport: store.GitPushTransport, **_arguments: object) -> None:
-        raise protocol.PushRejectedError("! [remote rejected] (failed to lock)")
+    def answer_lost(
+        transport: store.GitPushTransport,
+        *,
+        worktree: Path,
+        remote: str,
+        ref: str,
+        new_oid: protocol.ObjectId,
+    ) -> None:
+        real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+        raise protocol.ClaimError(_PUSH_TIMED_OUT)
 
-    monkeypatch.setattr(store.GitPushTransport, "push", rejected)
+    monkeypatch.setattr(store.GitPushTransport, "push", answer_lost)
     return replace(run, exit_code=2)
 
 
@@ -18935,7 +18975,7 @@ def _start_refused_push_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
         pytest.param(_release_command, id="release"),
         pytest.param(_cut_command, id="two-write-cut"),
         pytest.param(_start_command, id="two-directory-state-ref-start"),
-        pytest.param(_start_refused_push_command, id="state-ref-start-refused-push"),
+        pytest.param(_start_lost_answer_command, id="state-ref-start-lost-answer"),
         pytest.param(_land_command, id="land-rereads-after-its-fast-forward"),
         pytest.param(_github_item_close_refusal_command, id="item-close-github-refusal"),
         pytest.param(_claim_comma_scope_refusal_command, id="claim-scope-shape-refusal"),
@@ -18953,9 +18993,10 @@ def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
     configuration read per directory the command works in, however many of
     its steps ask again, unless the command itself wrote that directory's
     checkout in between (proof 6, `land`). No exception (issue #472). The
-    same holds for its observation of `refs/aco/state` outside a transition,
-    which a command refused before it needs the state ref never makes
-    (issue #477, CAS-53)."""
+    same holds for its observation of `refs/aco/state`, which its
+    transitions write onto rather than read again (issue #494) and which a
+    command refused before it needs the state ref never makes (issue #477,
+    CAS-53)."""
     run = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
 

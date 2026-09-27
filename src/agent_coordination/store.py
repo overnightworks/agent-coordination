@@ -27,9 +27,9 @@ import sys
 import tarfile
 import tempfile
 import uuid
-from collections.abc import Callable, Iterable, Mapping
-from contextlib import suppress
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from io import BytesIO
@@ -43,6 +43,7 @@ from .protocol import (
     EMPTY_STATE,
     MISSING_STATE_REF,
     ActiveClaim,
+    ClaimConflictError,
     ClaimError,
     ClaimId,
     ClaimIntent,
@@ -59,7 +60,10 @@ from .protocol import (
     ReleaseIntent,
     RescopeIntent,
     ResourceRecord,
+    SentClaimConflictError,
+    SentWriteError,
     StateLineageError,
+    UncertainWriteError,
     UnreadableState,
     UnsupportedStateSchemaError,
     apply,
@@ -1587,15 +1591,81 @@ def _transition_message(
     )
 
 
+@dataclass(frozen=True)
+class Observation:
+    """One checkout's read of `STATE_REF` over its canonical remote, the
+    state a transition applies its intent to first (issue #494). It stays
+    bound to the worktree and remote it was read in: that worktree's fetch
+    anchor and lineage stamp stand on it, and the write goes to that
+    remote."""
+
+    worktree: Path
+    remote: str
+    state: ClaimState
+
+
+@contextmanager
+def _uncertain_once_sent() -> Iterator[None]:
+    """Once a push is sent, only the remote knows whether it landed: a
+    failure before the store has either re-read the ref after a rejection or
+    finished its own bookkeeping after a landing leaves the write's outcome
+    unknown (issue #494), in the failure's own words -- a git refusal and
+    the lineage stamp's own filesystem failure alike."""
+    try:
+        yield
+    except (ClaimError, OSError) as error:
+        raise UncertainWriteError(str(error)) from error
+
+
+def _sent_write_refusal(refusal: ClaimError) -> SentWriteError:
+    """`refusal`, met once this write's sent push was rejected and the ref
+    re-read without its `operation_id` (CAS-57): still a sent write, in the
+    refusal's own words and naming, so a caller keeps what the write may
+    name (START-25); a claim conflict stays one (CLM-25)."""
+    kind = SentClaimConflictError if isinstance(refusal, ClaimConflictError) else SentWriteError
+    return kind(str(refusal), naming=refusal.naming)
+
+
+@dataclass(frozen=True)
+class _Rejection:
+    """A rejected push's fresh re-read of the ref, and whether that already
+    holds the rejected transition's own `operation_id` (a lost answer)."""
+
+    refreshed: ClaimState
+    already_applied: bool
+
+
+def _pushed(
+    observed: Observation, transport: PushTransport, new_commit: ObjectId, operation_id: str
+) -> _Rejection | None:
+    """Push `new_commit` onto `observed`: `None` once it landed and its
+    lineage stamp is written, otherwise the rejection with the state re-read
+    fresh after it -- never the observation the attempt started from."""
+    worktree, remote = observed.worktree, observed.remote
+    with _uncertain_once_sent():
+        try:
+            transport.push(worktree=worktree, remote=remote, ref=STATE_REF, new_oid=new_commit)
+        except PushRejectedError:
+            refreshed = fetch_state(worktree=worktree, remote=remote)
+            found = refreshed.tip is not None and _find_operation_id(
+                worktree,
+                since=observed.state.tip,
+                until=refreshed.tip,
+                operation_id=operation_id,
+            )
+            return _Rejection(refreshed, already_applied=bool(found))
+        _write_lineage_stamp(worktree, new_commit)
+    return None
+
+
 def commit_transition(
     *,
-    worktree: Path,
+    observed: Observation,
     subject: TransitionSubject | ClaimTransitionSubject,
     intent: ClaimTransitionIntent,
-    remote: str = DEFAULT_CANONICAL_REMOTE,
     transport: PushTransport | None = None,
 ) -> ClaimState:
-    """Fetch, apply, and push one claim/rescope/release/item-write/landing
+    """Apply and push one claim/rescope/release/item-write/landing
     transition (issue #176, slice C2; item writes, issue #279; atomic
     landings, issue #359): the production caller of `protocol.apply`. A
     claim-shaped `subject`'s own `item` --
@@ -1605,60 +1675,57 @@ def commit_transition(
     from the human-facing `subject.text` line -- a landing included; an
     item write's plain `TransitionSubject` carries no such field at all.
 
-    Unlike `push_tree`'s fixed bootstrap tree, a transition's result depends
-    on the state it is applied to, so every retry attempt re-fetches and
-    re-applies `intent` to the fresh observed state instead of reusing a
-    stale tree -- the same seam (criterion 3), generalized.
+    The first attempt applies `intent` to the command's own `observed`
+    state and reads nothing itself (issue #494). Unlike `push_tree`'s fixed
+    bootstrap tree, a transition's result depends on the state it is
+    applied to, so a rejected push re-fetches, looks for its own
+    `operation_id`, and re-applies `intent` to the fresh state instead of
+    reusing a stale tree -- the same seam (criterion 3), generalized. Every
+    failure after a push was sent is a `SentWriteError`: an
+    `UncertainWriteError` when the store cannot tell its outcome, the plain
+    kind for a refusal or an exhausted retry after a re-read.
     """
     transport = transport or GitPushTransport()
-    observed = fetch_state(worktree=worktree, remote=remote)
-    if observed.tip is None:
+    if observed.state.tip is None:
         raise ClaimError(MISSING_STATE_REF)
     moves = 0
     stationary_since_last_move = 0
-    for _attempt in range(_MAX_TRANSITION_ATTEMPTS):
-        new_state = apply(observed, intent)
-        new_tree = _write_incremental_state_tree(worktree, observed=observed, new_state=new_state)
-        new_commit = _commit_tree(
-            worktree,
-            tree_oid=new_tree,
-            parent=observed.tip,
-            message=_transition_message(subject, intent),
-        )
+    for pushes_sent in range(_MAX_TRANSITION_ATTEMPTS):
+        state = observed.state
         try:
-            transport.push(worktree=worktree, remote=remote, ref=STATE_REF, new_oid=new_commit)
-        except PushRejectedError:
-            refreshed = fetch_state(worktree=worktree, remote=remote)
-            if refreshed.tip is not None:
-                found = _find_operation_id(
-                    worktree,
-                    since=observed.tip,
-                    until=refreshed.tip,
-                    operation_id=intent.operation_id,
-                )
-                if found is not None:
-                    return refreshed
-            moves, stationary_since_last_move = _advance_tip_retry(
-                previous_tip=observed.tip,
-                refreshed_tip=refreshed.tip,
-                moves=moves,
-                stationary_since_last_move=stationary_since_last_move,
+            new_state = apply(state, intent)
+            new_tree = _write_incremental_state_tree(
+                observed.worktree, observed=state, new_state=new_state
             )
-            observed = refreshed
-            continue
-        _write_lineage_stamp(worktree, new_commit)
-        return ClaimState(
-            tip=new_commit,
-            claims=new_state.claims,
-            consumed_ids=new_state.consumed_ids,
-            resources=new_state.resources,
-            items=new_state.items,
+            new_commit = _commit_tree(
+                observed.worktree,
+                tree_oid=new_tree,
+                parent=state.tip,
+                message=_transition_message(subject, intent),
+            )
+        except ClaimError as refusal:
+            if not pushes_sent:
+                raise
+            raise _sent_write_refusal(refusal) from refusal
+        rejection = _pushed(observed, transport, new_commit, intent.operation_id)
+        if rejection is None:
+            return replace(new_state, tip=new_commit)
+        if rejection.already_applied:
+            return rejection.refreshed
+        moves, stationary_since_last_move = _advance_tip_retry(
+            previous_tip=state.tip,
+            refreshed_tip=rejection.refreshed.tip,
+            moves=moves,
+            stationary_since_last_move=stationary_since_last_move,
         )
-    raise _retry_exhaustion_error(
-        remote=remote,
-        attempts=_MAX_TRANSITION_ATTEMPTS,
-        moves=moves,
-        stationary_since_last_move=stationary_since_last_move,
+        observed = replace(observed, state=rejection.refreshed)
+    raise _sent_write_refusal(
+        _retry_exhaustion_error(
+            remote=observed.remote,
+            attempts=_MAX_TRANSITION_ATTEMPTS,
+            moves=moves,
+            stationary_since_last_move=stationary_since_last_move,
+        )
     )
 
 
