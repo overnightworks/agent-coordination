@@ -13977,6 +13977,41 @@ def test_release_merged_names_the_parent_hint_only_for_the_last_open_child(
     assert (hint in capsys.readouterr().out) is hint_expected
 
 
+def test_release_merged_beside_an_unreadable_parent_reports_freed_instead_of_a_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #517 line 4 (BOARD-54): a landed child whose container went
+    unreadable -- its kind unknown, its own state read refusing as the
+    state-ref adapter's does -- keeps the release's `freed:`/`next` report;
+    an unreadable parent is never named closable, so its refusal never
+    stands in for the report."""
+    client = _released_last_child_client(monkeypatch, sibling_open=False)
+    unreadable = client.parents[WORK_ITEM_ISSUE]
+    client.parents[WORK_ITEM_ISSUE] = board.ParentIssue(unreadable.reference, unreadable.body)
+    readable_reference = client.item_reference
+
+    def refusing_the_parent(number: int) -> forge.ItemReference:
+        if number == PARENT_OF_WORK_ITEM:
+            raise protocol.MalformedStateTreeError(
+                "item aco-000001 has a malformed agent-claim block"
+            )
+        return readable_reference(number)
+
+    monkeypatch.setattr(client, "item_reference", refusing_the_parent)
+
+    exit_code = issue_claim.main(
+        ["--repo", REPOSITORY, "release", str(WORK_ITEM_ISSUE), "--merged", "12"]
+    )
+
+    out = capsys.readouterr().out
+    assert (exit_code, "freed:" in out, "hint:" in out, "close it" in out) == (
+        0,
+        True,
+        False,
+        False,
+    )
+
+
 def test_release_merged_json_carries_the_parent_closable_number(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

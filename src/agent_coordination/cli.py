@@ -1480,14 +1480,19 @@ def _parent_closable_number(
     is the one owner for that decision, reused rather than re-derived board-wide
     for one relation. `None` covers every non-container parent, one still
     holding another open child, an already-closed parent (a second close
-    would only refuse), or no parent at all."""
+    would only refuse), or no parent at all. The container decision runs
+    before the parent's own state read, so an unreadable parent (issue
+    #517, never a container by kind) is answered `None` rather than
+    refusing a close that already stood."""
     parent = client.parent_issue(closed_child)
     if parent is None:
         return None
-    if client.item_reference(parent.reference.number).state is not forge.ItemState.OPEN:
-        return None
     children = client.list_children(parent.reference.number)
-    return board.closable_container_number(parent, children, storage)
+    closable = board.closable_container_number(parent, children, storage)
+    if closable is None:
+        return None
+    parent_is_open = client.item_reference(closable).state is forge.ItemState.OPEN
+    return closable if parent_is_open else None
 
 
 def _release_landing(
