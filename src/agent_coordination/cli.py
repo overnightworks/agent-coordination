@@ -3585,7 +3585,7 @@ def _item_header(number: int, reference: forge.ItemReference, parent: int | None
     )
 
 
-def _cmd_item_show(parsed: argparse.Namespace, session: _ReadSession) -> int:
+def _cmd_item_show(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item show` (issue #285): the stored body, byte-exact, behind
     one header line -- read through the ordinary forge port, so it works
     identically under `storage = "github"` (the forge's own issue body) and
@@ -3596,11 +3596,11 @@ def _cmd_item_show(parsed: argparse.Namespace, session: _ReadSession) -> int:
     #425)."""
     as_json = parsed.json
     try:
-        client = session.forge()
+        client = context.forge
         number = parsed.item
         reference = client.item_reference(number)
         if reference.state is forge.ItemState.MISSING:
-            storage = session.context.config.storage
+            storage = context.config.storage
             raise protocol.ClaimUnavailableError(_missing_item_refusal(number, client, storage))
         parent = client.parent_number(number)
     except protocol.ClaimError as error:
@@ -3827,17 +3827,6 @@ class _LazyForge:
 
 
 @dataclass(frozen=True)
-class _ReadSession:
-    """What a dispatched read-only subcommand needs beyond its parsed arguments."""
-
-    forge: _LazyForge
-
-    @property
-    def context(self) -> RunContext:
-        return self.forge.context
-
-
-@dataclass(frozen=True)
 class _WriteSession:
     """What a dispatched write subcommand needs beyond its parsed arguments."""
 
@@ -3947,7 +3936,7 @@ def _rescope_command(
     )
 
 
-def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
+def _cmd_check(parsed: argparse.Namespace, context: RunContext) -> int:
     """One number or trunk commit, one dispatch request into one of four
     answers: a pull request to classify, an issue whose body contract to
     read, a trunk commit to classify from its own trailer block (issue
@@ -3957,9 +3946,9 @@ def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
     as_json = parsed.json
     try:
         if isinstance(parsed.number, str):
-            return _check_trunk_commit(parsed, session.context)
+            return _check_trunk_commit(parsed, context)
         number = int(parsed.number)
-        client = session.forge()
+        client = context.forge
         # Read for its refusals only: a repository pinned to a grammar this
         # tool no longer reads, or a forge that cannot answer `blocked_by`,
         # must fail here rather than hand back a half-read answer. Every
@@ -3967,15 +3956,15 @@ def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
         # dispatches to) stays inside this handler too, so a forge failure
         # anywhere on the check path reports `unavailable` through the
         # shared envelope rather than the plain sentence alone.
-        config = _load_board_config(client, session.context)
+        config = _load_board_config(client, context)
         repository = client.repository.path
         reference = client.item_reference(number)
         if reference.state is forge.ItemState.MISSING:
             outcome = _missing_number(repository, number, config.storage)
         elif reference.is_landing:
             outcome = _pull_request_check(
-                session.context,
-                tuple(session.context.observation.claims.values()),
+                context,
+                tuple(context.observation.claims.values()),
                 repository,
                 number,
                 config.storage,
@@ -4312,7 +4301,7 @@ def _brief_step_rules_or_refusal(
     return config.for_step(board.BriefStep(step))
 
 
-def _cmd_brief(parsed: argparse.Namespace, session: _ReadSession) -> int:
+def _cmd_brief(parsed: argparse.Namespace, context: RunContext) -> int:
     """Compose one item's own reads into the one dispatch brief a lane step's
     body otherwise gets assembled from by hand (AGENTS.md "the next brief
     names the body, the lane tip ... and the commands"): the item's body from
@@ -4325,21 +4314,20 @@ def _cmd_brief(parsed: argparse.Namespace, session: _ReadSession) -> int:
     this command's own vocabulary."""
     as_json = parsed.json
     try:
-        return _brief_report(parsed, session)
+        return _brief_report(parsed, context)
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(BriefReason.INVALID_USAGE, error, as_json=as_json)
     except protocol.ClaimError as error:
         return _refuse(BriefReason.UNAVAILABLE, error, as_json=as_json)
 
 
-def _brief_report(parsed: argparse.Namespace, session: _ReadSession) -> int:
+def _brief_report(parsed: argparse.Namespace, context: RunContext) -> int:
     """`brief`'s own composition and printing, every refusal raised by name
     for `_cmd_brief` to report."""
-    step_rules = _brief_step_rules_or_refusal(parsed.step, session.context)
+    step_rules = _brief_step_rules_or_refusal(parsed.step, context)
     item = int(parsed.item)
-    client = session.forge()
+    client = context.forge
     item_body = client.item_reference(item).body or ""
-    context = session.context
     live = _brief_live_claim(context.toplevel, context.observation, item)
     if live is None:
         tip: str | None = None
@@ -4437,14 +4425,13 @@ def _store_observation_and_issues(context: RunContext) -> _StoreAndIssues:
 
 
 def _observed_board(
-    session: _ReadSession,
+    context: RunContext,
     *,
     issues: tuple[board.Issue, ...] | None = None,
 ) -> _ObservedBoard:
     """`board`/`rulings`/`next` share this: the store's live claims, projected
     onto forge board data (issue #176 -- claims no longer come from the
     ledger; the forge is still the board's own data source)."""
-    context = session.context
     if issues is None:
         fetched = _store_observation_and_issues(context)
         observed, issues = fetched.observed, fetched.issues
@@ -4473,7 +4460,7 @@ def _lane_claimants(observed: protocol.ClaimState) -> dict[int, board_html.LaneC
     }
 
 
-def _board_page(session: _ReadSession) -> board_html.BoardPage:
+def _board_page(context: RunContext) -> board_html.BoardPage:
     """The one board build both `board --html` (issue #276) and `board
     --serve` (issue #280) render -- every `gh`/local-git read `board`
     already performs, including `_board`'s own `checkout.trunk_landings`
@@ -4481,7 +4468,6 @@ def _board_page(session: _ReadSession) -> board_html.BoardPage:
     through `projected.landings` (issue #371). `--html` calls this fresh
     every time; `--serve` (issue #440) holds its own result between `GET`s
     instead, rebuilding only on a ruling or an explicit reload."""
-    context = session.context
     fetched = _store_observation_and_issues(context)
     projected = _board(
         context,
@@ -4503,17 +4489,17 @@ def _board_page(session: _ReadSession) -> board_html.BoardPage:
 
 
 def _board_html_page(
-    session: _ReadSession, *, served: board_html.ServedRuleForm | None = None
+    context: RunContext, *, served: board_html.ServedRuleForm | None = None
 ) -> str:
     """`board --html`'s own static rendering (issue #276): `_board_page`,
     rendered fresh every call so a written page never shows stale state."""
-    return board_html.render(_board_page(session), served=served)
+    return board_html.render(_board_page(context), served=served)
 
 
-def _cmd_board_html(parsed: argparse.Namespace, session: _ReadSession) -> None:
+def _cmd_board_html(parsed: argparse.Namespace, context: RunContext) -> None:
     """`board --html` (issue #276): writes `_board_html_page`'s static
     rendering to `PATH`, or to stdout when `PATH` is omitted."""
-    rendered = _board_html_page(session)
+    rendered = _board_html_page(context)
     if parsed.html:
         Path(parsed.html).write_text(rendered, encoding="utf-8")
     else:
@@ -4552,7 +4538,7 @@ class _BoardNoModeUsageError(protocol.ClaimError):
 BOARD_NO_MODE_MESSAGE = "aco board requires --json, --html, or --serve"
 
 
-def _cmd_board(parsed: argparse.Namespace, session: _ReadSession) -> int:
+def _cmd_board(parsed: argparse.Namespace, context: RunContext) -> int:
     as_json = parsed.json
     try:
         if parsed.new_token:
@@ -4562,11 +4548,11 @@ def _cmd_board(parsed: argparse.Namespace, session: _ReadSession) -> int:
             # cannot observe rather than a refusal by name.
             raise _BoardNewTokenUsageError("--new-token requires --serve")
         if parsed.html is not None:
-            _cmd_board_html(parsed, session)
+            _cmd_board_html(parsed, context)
             return 0
         if not as_json:
             raise _BoardNoModeUsageError(BOARD_NO_MODE_MESSAGE)
-        projected = _observed_board(session).board
+        projected = _observed_board(context).board
     except (_BoardNewTokenUsageError, _BoardNoModeUsageError) as error:
         return _refuse(BoardReason.INVALID_USAGE, error, as_json=as_json)
     except RepoMeaninglessUnderStateRefError as error:
@@ -4590,13 +4576,13 @@ class RulingsReason(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-def _cmd_rulings(parsed: argparse.Namespace, session: _ReadSession) -> int:
+def _cmd_rulings(parsed: argparse.Namespace, context: RunContext) -> int:
     as_json = parsed.json
     try:
-        issues = session.forge().list_open_board_issues()
-        projected = _observed_board(session, issues=issues).board
+        issues = context.forge.list_open_board_issues()
+        projected = _observed_board(context, issues=issues).board
         bodies = {issue.number: issue.body for issue in issues}
-        storage = session.context.config.storage
+        storage = context.config.storage
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(RulingsReason.INVALID_USAGE, error, as_json=as_json)
     except protocol.ClaimError as error:
@@ -4613,11 +4599,11 @@ def _next_action_container_number(action: board.NextAction | None) -> int | None
     return None
 
 
-def _cmd_next(parsed: argparse.Namespace, session: _ReadSession) -> int:
+def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
     as_json = parsed.json
     try:
-        observed = _observed_board(session)
-        storage = session.context.config.storage
+        observed = _observed_board(context)
+        storage = context.config.storage
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(NextReason.INVALID_USAGE, error, as_json=as_json)
     except protocol.ClaimError as error:
@@ -7190,7 +7176,7 @@ class _ServedBoardCache:
 
     def _rebuild(self, context: RunContext) -> tuple[board_html.BoardPage, datetime]:
         try:
-            self.built = (_board_page(_ReadSession(forge=_LazyForge(context))), datetime.now(UTC))
+            self.built = (_board_page(context), datetime.now(UTC))
         except protocol.ClaimError as refusal:
             if self.built is None:
                 raise
@@ -7740,7 +7726,7 @@ def _dispatch_item(parsed: argparse.Namespace, context: RunContext) -> int:
         return _cmd_item_edit(parsed, context)
     if parsed.item_command == "close":
         return _cmd_item_close(parsed, context)
-    return _cmd_item_show(parsed, _ReadSession(forge=_LazyForge(context)))
+    return _cmd_item_show(parsed, context)
 
 
 def _resolved_before_the_command_starts(parsed: argparse.Namespace) -> str | None:
@@ -7779,7 +7765,7 @@ def _dispatch(parsed: argparse.Namespace, context: RunContext) -> int:
         # other `board` output mode.
         result = _cmd_board_serve(parsed, _WriteSession(forge=forge_accessor, release_branch=None))
     elif entry.session is _CommandSession.READ:
-        result = entry.handler(parsed, _ReadSession(forge=forge_accessor))
+        result = entry.handler(parsed, context)
     else:
         result = entry.handler(
             parsed, _WriteSession(forge=forge_accessor, release_branch=release_branch)
