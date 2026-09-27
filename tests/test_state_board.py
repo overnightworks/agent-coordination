@@ -694,7 +694,8 @@ class TestMalformedItem:
 
         container = adapter.open_issue(CONTAINER_NUMBER)
 
-        assert container is not None and container.has_open_child
+        assert container is not None
+        assert container.has_open_child
         assert adapter.list_children(CONTAINER_NUMBER) == (
             board.ChildItem(MALFORMED_NUMBER, board.ChildState.OPEN),
         )
