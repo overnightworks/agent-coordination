@@ -15,6 +15,11 @@ the empty configuration holds no entry for it. A nonexistent host name would not
 sends an enterprise host its request unauthenticated, so the name would
 still leave the machine as a DNS query.
 
+The default host binds only a call that names none, so every proxy
+variable points at the same closed port and none exempts a host: a call
+naming any non-loopback host ends there without even resolving its name,
+while gh and Go still dial loopback directly.
+
 The project's pytest configuration loads this module as a plugin, so the
 guard holds for a test module outside `tests/` run with `-c pyproject.toml`
 too, not only where `tests/conftest.py` is found.
@@ -32,6 +37,10 @@ LOCAL_PROTOCOLS_ONLY = "file"
 UNREACHABLE_GH_HOST = "127.0.0.1:9"
 # gh's keyring is the Secret Service on the session bus; a `disabled:` address opens no bus.
 _UNUSABLE_SESSION_BUS_ADDRESS = "disabled:"
+_LOOPBACK_ONLY_PROXY = f"http://{UNREACHABLE_GH_HOST}"
+# Go reads each variable in both cases and skips an empty one, so both are set.
+_PROXY_ENVS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+_PROXY_EXEMPTION_ENVS = ("NO_PROXY", "no_proxy")
 # gh reads the enterprise pair for every host but github.com, and GH_HOST names one.
 _GH_TOKEN_ENVS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
 
@@ -51,6 +60,10 @@ def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
     _guard.setenv("DBUS_SESSION_BUS_ADDRESS", _UNUSABLE_SESSION_BUS_ADDRESS)
     for token_env in _GH_TOKEN_ENVS:
         _guard.setenv(token_env, "")
+    for proxy_env in _PROXY_ENVS:
+        _guard.setenv(proxy_env, _LOOPBACK_ONLY_PROXY)
+    for exemption_env in _PROXY_EXEMPTION_ENVS:
+        _guard.delenv(exemption_env, raising=False)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:

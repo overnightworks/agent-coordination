@@ -194,14 +194,20 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
             id="no-keyring-login",
         ),
         pytest.param(("api", "user"), f"https://{UNREACHABLE_GH_HOST}/api/", id="no-network"),
+        pytest.param(
+            ("api", "--hostname", "example.invalid", "user"),
+            f"proxyconnect tcp: dial tcp {UNREACHABLE_GH_HOST}",
+            id="no-network-for-a-named-host",
+        ),
     ],
 )
 def test_gh_under_the_plugin_has_no_login_and_stays_on_the_machine(
     tmp_path: Path, gh_arguments: tuple[str, ...], refusal: str
 ) -> None:
     """The real gh binary finds no login for its default host nor, in the
-    operator's keyring, for github.com, and the one request it still sends
-    ends at the closed loopback port (#534 line 1)."""
+    operator's keyring, for github.com, and a request for its default host
+    or a host it is told to name ends at the closed loopback port (#534
+    line 1)."""
     gh = subprocess.run(
         ["gh", *gh_arguments], cwd=tmp_path, capture_output=True, text=True, check=False
     )
