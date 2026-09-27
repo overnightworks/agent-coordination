@@ -33,6 +33,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | a live issue claim, lane branch resolves, no `<trunk>`, `<remote>` has branches | BRIEF-21 | BRIEF-21 |
 | no live issue claim | BRIEF-03 | BRIEF-06 |
 | `<item>` names no item at all | BRIEF-08 | BRIEF-08 |
+| the body holds a display control | BRIEF-23 | BRIEF-06 |
 | a non-GitHub canonical remote | BRIEF-07 | BRIEF-07 |
 | `storage = "state-ref"` | BRIEF-09 | BRIEF-09 |
 | the item read itself fails | BRIEF-19 | BRIEF-19 |
@@ -50,6 +51,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-21] A `<remote>` with branches refuses instead `cannot determine the trunk: no <remote>/HEAD, <remote>/main or <remote>/master resolves; run git remote set-head <remote> -a`, exit `2` (see E-BRIEF-15).
 - [ ] [BRIEF-22] A `<remote>` with no URL configured refuses instead `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-BRIEF-17).
 - [ ] [BRIEF-08] `<item>` naming no item at all prints one empty line for the missing body, then every section exactly as BRIEF-01..06 describe with no live claim -- never a refusal (see E-BRIEF-06).
+- [ ] [BRIEF-23] Text shows the body with each display control but the line feed escaped (NEXT-37): `a\x1b[2J` prints as typed; line breaks, TAB and `Größe` as is; `--json`'s `"body"` keeps it as stored.
 
 ## `--json`
 
@@ -62,17 +64,19 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 |---|---|---|
 | a tracked `.agent-claim/brief.toml` | BRIEF-12, BRIEF-13 | BRIEF-14 |
 | no tracked `.agent-claim/brief.toml` | BRIEF-15 | BRIEF-15 |
+| a tracked `.agent-claim/brief.toml` naming an unknown key | BRIEF-24 | BRIEF-24 |
 
 - [ ] [BRIEF-12] `--step <step>` prints the four sections, then a blank line, `RULES`, one line per `[<step>].rules` entry, empty when it names none (see E-BRIEF-07).
 - [ ] [BRIEF-13] `RULES`' own lines are followed by a blank line, `CHECKS`, one line per `[<step>].checks` entry, empty when it names none (see E-BRIEF-07).
 - [ ] [BRIEF-14] `aco brief <item> --step <step> --json` adds `"rules"` and `"checks"` string-list keys to BRIEF-06/BRIEF-10's own object (see E-BRIEF-08).
 - [ ] [BRIEF-15] `--step <step>` refuses `no .agent-claim/brief.toml in the repository`, exit `2`, before reading the body or claim, when the repository tracks no such file (see E-BRIEF-09).
+- [ ] [BRIEF-24] An unknown key refuses `brief configuration <path> has unknown top-level key <keys>` or `... [<step>] has unknown key <keys>`, each display control escaped (NEXT-37), exit `2` (see E-BRIEF-18).
 
 ## Forge resolution
 
 - [ ] [BRIEF-07] `aco brief <item>` on a canonical remote whose host has no forge adapter refuses `no forge adapter for host <host>`, exit `2`, before any forge resolution (see E-BRIEF-05).
 - [ ] [BRIEF-09] Under `storage = "state-ref"`, `aco brief <item>` resolves the state-ref forge like `item show`/`edit`/`close`; `--repo` there refuses the same as those (PIN-04, PIN-05).
-- [ ] [BRIEF-17] `--json` on a dispatched refusal (see BRIEF-07/09/15/18/19/20) prints `specs/output.spec.md`'s envelope, the sentence as `message`, `reason` from the table below (see E-BRIEF-11).
+- [ ] [BRIEF-17] `--json` on a dispatched refusal (see BRIEF-07/09/15/18/19/20/24) prints `specs/output.spec.md`'s envelope, the sentence as `message`, `reason` from the table below (see E-BRIEF-11).
 - [ ] [BRIEF-19] A forge failure reading the item refuses `ERROR: <sentence>`, exit `2`, `--json` `reason: "unavailable"` (see E-BRIEF-13).
 
 `reason`, by which refusal fired:
@@ -80,7 +84,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | refusal | `reason` |
 |---|---|
 | PIN-04 (`--repo` under `storage = state-ref`) | `invalid_usage` |
-| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 and BRIEF-21 (no `<trunk>`) | `unavailable` |
+| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-24 (an unknown `.agent-claim/brief.toml` key), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 and BRIEF-21 (no `<trunk>`) | `unavailable` |
 
 ## Never
 
@@ -256,6 +260,17 @@ at all
 ```console
 $ aco brief 42 --step build
 2> ERROR: no .agent-claim/brief.toml in the repository
+exit 2
+```
+
+### E-BRIEF-18 -- an unknown `.agent-claim/brief.toml` key carrying a bidi override
+
+Setup: bare-remote checkout at `/repo`, fake `gh`, `.agent-claim/brief.toml`
+tracked with the one line `"a‮b" = 1`
+
+```console
+$ aco brief 42 --step build
+2> ERROR: brief configuration /repo/.agent-claim/brief.toml has unknown top-level key a‮b
 exit 2
 ```
 

@@ -19,7 +19,8 @@ item number, `<label>` an item as `specs/landing-grammar.spec.md` prints
 it, `<s>` an integer score. A *display control* -- the one set this file
 owns, which `next` escapes (NEXT-37), `aco land`'s refusal escapes
 (`specs/land.spec.md`), `release`'s `next:` line, `rulings` text, `claim`'s
-out-of-order warning and the board configuration's unknown-key refusal
+out-of-order warning, the board and brief configurations' unknown-key
+refusals and, keeping their line feeds, the `brief` and `item show` bodies
 escape as NEXT-37 does, a slice title refuses (`specs/body-block.spec.md`,
 BODY-63) and a scope path refuses (`specs/claim-record.spec.md`, CLAIM-20)
 -- is every control character but TAB (C0, DEL and C1), the line and paragraph
