@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from board_fixtures import BASE
 
-from agent_coordination import board, checkout, forge, github, process, store
+from agent_coordination import board, checkout, cli, forge, github, process, store
 from agent_coordination.protocol import ClaimError, ClaimState
 from agent_coordination.session import RunContext
 
@@ -248,6 +248,14 @@ def run_context_over(client: forge.ForgeReader) -> RunContext:
     helper that takes a context reads the same toplevel and tracked
     `board.toml` a command would, with its own fake forge behind them."""
     return RunContext(None, build_forge=lambda _context: client)
+
+
+def main_exit_code(argv: list[str]) -> int | str | None:
+    """`main`'s exit code, whether it returns it or argparse exits with it."""
+    try:
+        return cli.main(argv)
+    except SystemExit as exit_request:
+        return exit_request.code
 
 
 CountedReads = tuple[dict[Path | None, int], dict[Path | None, int], dict[Path, int]]

@@ -53,6 +53,7 @@ from cli_fixtures import (
     _stub_one_git_call,
     arrange_scope_width,
     count_context_reads,
+    main_exit_code,
     run_context_over,
     stub_board_config_tracked,
 )
@@ -17720,6 +17721,14 @@ def _body_check_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Cou
     return _read_once(["body", "--check"], toplevel=tmp_path, observes=False)
 
 
+def _retired_body_template_command(
+    _monkeypatch: pytest.MonkeyPatch, _tmp_path: Path
+) -> _CountedRun:
+    """`body --template`, the mode #477 names for this proof, was retired by
+    #420: argparse refuses it before anything of the repository is read."""
+    return _CountedRun(["body", "--template"], {}, {}, observations={}, exit_code=2)
+
+
 def _rule_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
     _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
@@ -17840,6 +17849,7 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
         pytest.param(_github_item_close_refusal_command, id="item-close-github-refusal"),
         pytest.param(_claim_comma_scope_refusal_command, id="claim-scope-shape-refusal"),
         pytest.param(_body_check_command, id="body-check"),
+        pytest.param(_retired_body_template_command, id="retired-body-template"),
     ],
 )
 def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
@@ -17858,7 +17868,7 @@ def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
     run = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
 
-    exit_code = issue_claim.main(run.argv)
+    exit_code = main_exit_code(run.argv)
 
     assert (exit_code, *reads.drain()) == (
         run.exit_code,

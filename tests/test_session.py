@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from cli_fixtures import stub_board_config_tracked
+from cli_fixtures import main_exit_code, stub_board_config_tracked
 
 from agent_coordination import checkout, cli, forge, github, session, store
 from agent_coordination.protocol import ClaimState, ClaimUnavailableError
@@ -221,14 +221,6 @@ def test_a_failed_observation_is_fetched_again_and_a_successful_one_is_held(
     assert (later_asks, fetched_from) == ((observed, observed), [(worktree, "origin")] * 2)
 
 
-def _exit_code(command: list[str]) -> int | str | None:
-    """`main`'s exit code, whether it returns it or argparse exits with it."""
-    try:
-        return cli.main(command)
-    except SystemExit as exit_request:
-        return exit_request.code
-
-
 def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every fact a context holds starts from its toplevel, so forbidding it
     forbids every read a context could make."""
@@ -262,7 +254,7 @@ def test_a_command_that_needs_no_repository_reads_no_context(
     monkeypatch.setattr(cli, "_workspace_config_path", lambda: tmp_path / "workspace.toml")
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
 
-    assert _exit_code(command) == exit_code
+    assert main_exit_code(command) == exit_code
 
 
 @pytest.mark.parametrize(
@@ -299,7 +291,7 @@ def test_a_repo_that_is_not_owner_slash_repo_refuses_before_any_git_or_gh_call(
 
     monkeypatch.setattr(subprocess, "Popen", no_process)
 
-    assert _exit_code(["--repo", repo, *command]) == 2
+    assert main_exit_code(["--repo", repo, *command]) == 2
     refusal = f"ERROR: repository must be OWNER/REPO, not '{repo}'\n"
     assert capsys.readouterr() == (envelope, refusal)
 
@@ -319,4 +311,4 @@ def test_protect_judges_its_payload_without_ever_building_a_run_context(
     payload = {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "notes.txt")}}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
 
-    assert _exit_code(["protect"]) == 0
+    assert main_exit_code(["protect"]) == 0
