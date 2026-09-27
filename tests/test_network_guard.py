@@ -90,7 +90,7 @@ def test_a_request_naming_its_own_host_ends_at_the_loopback_proxy():
         "GH_REPO": None,
     }}
     routing = {{name: os.environ.get(name) for name in safe_routing}}
-    assert routing == safe_routing, "{_UNSAFE_ROUTING}"
+    assert routing == safe_routing, "{_UNSAFE_ROUTING}: " + repr(routing)
 
     request = run_gh("api", "--hostname", "example.invalid", "user")
 
@@ -275,15 +275,26 @@ def test_a_run_started_with_a_hostile_gh_setup_keeps_a_named_host_request_on_the
     """A pytest run started with the hostile gh setup sends a request for a
     host it names only to the closed loopback port, and only while the
     plugin displaces the setup's proxy, exemption and repository before the
-    run begins (#534 line 1); the blocked run proves its module would see
-    that routing, and never sends the request, because the module checks
-    the routing first."""
+    run begins (#534 line 1); the blocked run reports that its module sees
+    the seeded routing, and never sends the request, because the module
+    checks the routing first."""
     run = _run_scratch_pytest(
         tmp_path, _SCRATCH_GH_ROUTING_MODULE, plugin_arguments, hostile_gh_environment
     )
+    # Anchored on the raised message, so pytest's echo of the module's source never matches.
+    routing_reports = [
+        line for line in run.stdout.splitlines() if f"AssertionError: {_UNSAFE_ROUTING}: " in line
+    ]
+    hostile_routing = [
+        f"{name!r}: {hostile_gh_environment[name]!r}"
+        for name in ("HTTPS_PROXY", "NO_PROXY", "no_proxy", "GH_REPO")
+    ]
+    reports_of_the_hostile_routing = [
+        report for report in routing_reports if all(seed in report for seed in hostile_routing)
+    ]
 
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
-    assert (_UNSAFE_ROUTING in run.stdout) is not guarded, run.stdout + run.stderr
+    assert len(reports_of_the_hostile_routing) == (0 if guarded else 1), run.stdout + run.stderr
 
 
 def _run_scratch_pytest(
