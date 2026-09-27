@@ -375,14 +375,21 @@ def _resolved_path_checkout(
     guarded one); an operation on the link itself -- `rm` or `mv` of it --
     never touches the target, so it stays where the link lies. A guarded
     link's own directory wins, so no link can move a write out of the gate
-    that directory already imposes."""
+    that directory already imposes; without `ACO_PROTECT_UNGUARDED` every
+    repository is guarded, so the target is never even resolved (issue #483
+    review finding: its failure must not outrank the link's own gate)."""
     path = Path(os.path.normpath(absolute_path))
     own_checkout = checkout.resolve_named_path_checkout(path)
     if own_checkout is None:
         return _landing_checkout_outside_every_repository(
             path, writes_through_file_symlink=writes_through_file_symlink
         )
-    if not writes_through_file_symlink or path.is_dir() or not path.is_symlink():
+    if (
+        not _unguarded_setting()
+        or not writes_through_file_symlink
+        or path.is_dir()
+        or not path.is_symlink()
+    ):
         return own_checkout
     target_checkout = checkout.resolve_named_path_checkout(Path(os.path.realpath(path)))
     if _leaves_unguarded_for_guarded(own_checkout, target_checkout):
@@ -453,6 +460,12 @@ def _is_ignored_session_setting(relative: str, path_checkout: checkout.PathCheck
 PROTECT_UNGUARDED_ENV = "ACO_PROTECT_UNGUARDED"
 
 
+def _unguarded_setting() -> str:
+    """`ACO_PROTECT_UNGUARDED` as the session set it, unparsed; empty when
+    unset, which names no unguarded directory at all."""
+    return os.environ.get(PROTECT_UNGUARDED_ENV, "")
+
+
 def _unguarded_directories() -> tuple[Path, ...]:
     """The directories `ACO_PROTECT_UNGUARDED` names (`os.pathsep`-separated,
     issue #483), symlink-resolved; unset or empty names none. Any other
@@ -460,7 +473,7 @@ def _unguarded_directories() -> tuple[Path, ...]:
     between separators included -- fails closed (PROT-41), raised for
     `cli`'s deny frame like a missing identity: a typo must never silently
     guard nothing, nor exempt whatever a relative entry happens to meet."""
-    value = os.environ.get(PROTECT_UNGUARDED_ENV, "")
+    value = _unguarded_setting()
     if not value:
         return ()
     entries = value.split(os.pathsep)
