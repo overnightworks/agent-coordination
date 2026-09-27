@@ -647,10 +647,11 @@ def _refuse_shared_checkout(
     recorded `HEAD` yet, must never slip through unnoticed as "not the
     default branch".
     """
-    if default_branch is None:
-        raise ClaimError(
-            default_branch_unknown_reason(canonical_remote, directory=path_checkout.toplevel)
-        )
+    unknown = default_branch_unknown_reason(
+        canonical_remote, default_branch, directory=path_checkout.toplevel
+    )
+    if unknown is not None:
+        raise ClaimError(unknown)
     if path_checkout.branch == default_branch:
         raise ClaimError(
             f"{ISOLATED_NON_MAIN_BRANCH_REFUSAL}{_worktree_repair_instruction(repair, branch=None)}"
@@ -712,15 +713,21 @@ DEFAULT_BRANCH_FALLBACK = frozenset({"main", "master"})
 DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 
 
-def default_branch_unknown_reason(remote: str, *, directory: Path) -> str:
-    """`protect`'s and `rescope`'s denial once `remote`, the canonical
-    remote of the checkout at `directory`, records no default branch: it
-    names `remote` when this checkout configures no such remote at all
-    (issue #492), so a board configuration naming a remote the clone never
-    added reads as that, not as a missing `HEAD` record."""
-    if remote_is_configured(remote, directory=directory):
+def default_branch_unknown_reason(
+    remote: str, default_branch: str | None, *, directory: Path
+) -> str | None:
+    """`protect`'s and `rescope`'s denial when the checkout at `directory`
+    has no default branch of its canonical `remote` to judge by, or `None`
+    once `default_branch`, `remote`'s recorded one, stands. A remote this
+    checkout never configured is named first (issue #492): its
+    remote-tracking refs, a recorded `HEAD` among them, can outlive the
+    remote itself, so no such record answers for a remote that is not
+    there."""
+    if not remote_is_configured(remote, directory=directory):
+        return f"{DEFAULT_BRANCH_UNKNOWN_REASON}: canonical remote {remote!r} is not configured"
+    if default_branch is None:
         return DEFAULT_BRANCH_UNKNOWN_REASON
-    return f"{DEFAULT_BRANCH_UNKNOWN_REASON}: canonical remote {remote!r} is not configured"
+    return None
 
 
 # One owner for `protect`'s "not main" denial (issue #314 repeat gate,

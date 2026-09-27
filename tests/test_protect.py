@@ -3164,12 +3164,14 @@ def test_protect_and_rescope_refuse_a_path_no_claim_can_cover_with_one_sentence(
 
 
 def _hub_canonical_worktree_file(
-    tmp_path: Path, *, canonical: str, hub_head: str | None, branch: str
+    tmp_path: Path, *, canonical: str, canonical_head: str | None, branch: str
 ) -> Path:
     """A file in a linked worktree on `branch` of a repository with the
     remotes `origin` and `hub` whose tracked `board.toml` makes `canonical`
-    canonical, with `origin/HEAD` naming `main` and `hub/HEAD` naming
-    `hub_head` -- or never recorded (issue #490)."""
+    canonical, with `origin/HEAD` naming `main` and `<canonical>/HEAD`
+    naming `canonical_head` -- or never recorded (issue #490). A recorded
+    `HEAD` of a canonical remote the repository never configured is one a
+    removed remote left behind (issue #492)."""
     main = tmp_path / "repo"
     main.mkdir()
     _real_git(main, "init", "-q", "-b", "main")
@@ -3185,8 +3187,10 @@ def _hub_canonical_worktree_file(
         _real_git(main, "update-ref", f"refs/remotes/{remote}/main", "HEAD")
         _real_git(main, "update-ref", f"refs/remotes/{remote}/trunk", "HEAD")
     _real_git(main, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-    if hub_head is not None:
-        _real_git(main, "symbolic-ref", "refs/remotes/hub/HEAD", f"refs/remotes/hub/{hub_head}")
+    if canonical_head is not None:
+        recorded = f"refs/remotes/{canonical}/{canonical_head}"
+        _real_git(main, "update-ref", recorded, "HEAD")
+        _real_git(main, "symbolic-ref", f"refs/remotes/{canonical}/HEAD", recorded)
     worktree = tmp_path / "repo-worktrees" / "lane"
     worktree.parent.mkdir()
     _real_git(main, "worktree", "add", "-q", str(worktree), "-B", branch)
@@ -3219,7 +3223,7 @@ _UNCONFIGURED_UPSTREAM = "default branch unknown: canonical remote 'upstream' is
 
 
 @pytest.mark.parametrize(
-    ("refusal_of", "canonical", "hub_head", "branch", "sentence"),
+    ("refusal_of", "canonical", "canonical_head", "branch", "sentence"),
     [
         pytest.param(
             _claim_refusal,
@@ -3268,7 +3272,7 @@ _UNCONFIGURED_UPSTREAM = "default branch unknown: canonical remote 'upstream' is
         pytest.param(
             _protect_refusal,
             "upstream",
-            "trunk",
+            None,
             "codex/issue-72-widget",
             _UNCONFIGURED_UPSTREAM,
             id="protect-canonical-remote-not-configured",
@@ -3276,10 +3280,26 @@ _UNCONFIGURED_UPSTREAM = "default branch unknown: canonical remote 'upstream' is
         pytest.param(
             _rescope_refusal,
             "upstream",
-            "trunk",
+            None,
             "codex/issue-72-widget",
             _UNCONFIGURED_UPSTREAM,
             id="rescope-canonical-remote-not-configured",
+        ),
+        pytest.param(
+            _protect_refusal,
+            "upstream",
+            "trunk",
+            "codex/issue-72-widget",
+            _UNCONFIGURED_UPSTREAM,
+            id="protect-unconfigured-remote-left-a-recorded-head",
+        ),
+        pytest.param(
+            _rescope_refusal,
+            "upstream",
+            "trunk",
+            "codex/issue-72-widget",
+            _UNCONFIGURED_UPSTREAM,
+            id="rescope-unconfigured-remote-left-a-recorded-head",
         ),
     ],
 )
@@ -3289,7 +3309,7 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     capsys: pytest.CaptureFixture[str],
     refusal_of: Callable[[pytest.MonkeyPatch, pytest.CaptureFixture[str], Path], tuple[int, str]],
     canonical: str,
-    hub_head: str | None,
+    canonical_head: str | None,
     branch: str,
     sentence: str,
 ) -> None:
@@ -3298,14 +3318,15 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     default branch is refused; without a recorded `hub/HEAD`, `protect` and
     `rescope` refuse `default branch unknown` while `claim` guesses
     `main`/`master` -- `origin/HEAD` never answers for `hub`. A canonical
-    remote the clone never added is named in that refusal (issue #492)."""
+    remote the clone never added is named in that refusal, even where a
+    `HEAD` it left behind still resolves (issue #492)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     _use_real_path_is_tracked(monkeypatch)
     path = _hub_canonical_worktree_file(
-        tmp_path, canonical=canonical, hub_head=hub_head, branch=branch
+        tmp_path, canonical=canonical, canonical_head=canonical_head, branch=branch
     )
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
 
