@@ -357,8 +357,27 @@ def _protect_not_main_denial(path_checkout: checkout.PathCheckout) -> str | None
     return None
 
 
+class _LinkOperation(StrEnum):
+    """What a write does to a symlink it names as its own path."""
+
+    WRITE = "write"
+    """Every file tool and every other recognized pattern: lands wherever
+    the link points."""
+    MOVE = "move"
+    """`mv`: renames a file link itself -- as a source or as the file
+    destination it replaces -- but moves into a directory link's target; a
+    directory link it names is read as that destination, erring closed."""
+    REMOVE = "remove"
+    """`rm`: removes the link itself, never its target."""
+
+    def writes_through(self, link: Path) -> bool:
+        if self is _LinkOperation.MOVE:
+            return link.is_dir()
+        return self is _LinkOperation.WRITE
+
+
 def _resolved_path_checkout(
-    absolute_path: str, *, writes_through_file_symlink: bool
+    absolute_path: str, *, operation: _LinkOperation
 ) -> checkout.PathCheckout | None:
     """The checkout `absolute_path` belongs to, or `None` when it sits
     outside every repository (PROT-32: not aco's to judge, issue #448) --
@@ -368,12 +387,13 @@ def _resolved_path_checkout(
     outside every repository by its own directory is judged where a write
     to it lands (`_landing_checkout_outside_every_repository`).
 
-    A file symlink in an unguarded repository (PROT-40) is judged by its
-    target's checkout when the operation `writes_through_file_symlink`: a
-    write through such a link still lands in whichever checkout its target
-    lies in (issue #483 review finding: a throwaway repository's link into a
-    guarded one); an operation on the link itself -- `rm` or `mv` of it --
-    never touches the target, so it stays where the link lies. A guarded
+    A symlink in an unguarded repository (PROT-40) -- to a file or a
+    directory -- is judged by its target's checkout when the `operation`
+    writes through it: such a write still lands in whichever checkout its
+    target lies in (issue #483 review findings: a throwaway repository's
+    file link, or a directory link `cp` or `mv` writes into, reaching a
+    guarded one); an operation on the link itself never touches the target,
+    so it stays where the link lies. A guarded
     link's own directory wins, so no link can move a write out of the gate
     that directory already imposes; without `ACO_PROTECT_UNGUARDED` every
     repository is guarded, so the target is never even resolved (issue #483
@@ -381,15 +401,8 @@ def _resolved_path_checkout(
     path = Path(os.path.normpath(absolute_path))
     own_checkout = checkout.resolve_named_path_checkout(path)
     if own_checkout is None:
-        return _landing_checkout_outside_every_repository(
-            path, writes_through_file_symlink=writes_through_file_symlink
-        )
-    if (
-        not _unguarded_setting()
-        or not writes_through_file_symlink
-        or path.is_dir()
-        or not path.is_symlink()
-    ):
+        return _landing_checkout_outside_every_repository(path, operation=operation)
+    if not _unguarded_setting() or not path.is_symlink() or not operation.writes_through(path):
         return own_checkout
     target_checkout = checkout.resolve_named_path_checkout(Path(os.path.realpath(path)))
     if _leaves_unguarded_for_guarded(own_checkout, target_checkout):
@@ -398,7 +411,7 @@ def _resolved_path_checkout(
 
 
 def _landing_checkout_outside_every_repository(
-    path: Path, *, writes_through_file_symlink: bool
+    path: Path, *, operation: _LinkOperation
 ) -> checkout.PathCheckout | None:
     """The checkout a write to `path`, whose own directory sits outside
     every repository, still lands in, or `None` when it lands outside every
@@ -408,8 +421,10 @@ def _landing_checkout_outside_every_repository(
     `~/.claude/CLAUDE.md` link into a main checkout; issue #483 review
     finding: `mkdir -p` makes a dangling ancestor's target real before the
     write), so that checkout judges it. An operation on the link itself --
-    `rm` or `mv` of it -- never touches the target, so it stays outside."""
-    if path.is_dir() or not writes_through_file_symlink:
+    `rm` or `mv` of it -- never touches the target, so it stays outside. A
+    directory here lies outside every repository wherever it resolves:
+    its own checkout was already resolved through its links."""
+    if path.is_dir() or not operation.writes_through(path):
         return None
     target = Path(os.path.realpath(path))
     if target == path:
@@ -524,7 +539,7 @@ def _hook_session_agent() -> str:
 def _protect_checkout_scope_denial(
     raw_path: str,
     *,
-    writes_through_file_symlink: bool,
+    operation: _LinkOperation,
     context: _ProtectContext,
     miss_denial: _ProtectMissDenialBuilder,
 ) -> str | None:
@@ -548,9 +563,7 @@ def _protect_checkout_scope_denial(
     where a claim could answer for it.
     `miss_denial` builds each caller's own scope-miss sentence from the
     state, checkout, agent, and relative scope entry now in hand."""
-    path_checkout = _resolved_path_checkout(
-        raw_path, writes_through_file_symlink=writes_through_file_symlink
-    )
+    path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
@@ -604,7 +617,7 @@ def _protect_path_denial(
         )
 
     return _protect_checkout_scope_denial(
-        raw_path, writes_through_file_symlink=True, context=context, miss_denial=miss_denial
+        raw_path, operation=_LinkOperation.WRITE, context=context, miss_denial=miss_denial
     )
 
 
@@ -663,10 +676,10 @@ def _protect_bash_cwd(payload: dict[str, object]) -> str | None:
     return cwd if isinstance(cwd, str) and cwd else None
 
 
-# `rm` removes a symlink and `mv` renames one -- as a source or as the file
-# destination it replaces -- without ever opening its target; every other
-# recognized pattern may write through it.
-_LINK_ITSELF_PATTERNS = frozenset({hook_input.PATTERN_REMOVE, hook_input.PATTERN_MOVE})
+_LINK_OPERATION_BY_PATTERN = {
+    hook_input.PATTERN_REMOVE: _LinkOperation.REMOVE,
+    hook_input.PATTERN_MOVE: _LinkOperation.MOVE,
+}
 
 
 def _protect_bash_path_denial(
@@ -687,7 +700,7 @@ def _protect_bash_path_denial(
         return None
     return _protect_checkout_scope_denial(
         raw_path,
-        writes_through_file_symlink=pattern not in _LINK_ITSELF_PATTERNS,
+        operation=_LINK_OPERATION_BY_PATTERN.get(pattern, _LinkOperation.WRITE),
         context=context,
         miss_denial=lambda _state, _path_checkout, _agent, relative: (
             f"{pattern} {relative} outside claim scope"

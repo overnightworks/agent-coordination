@@ -2613,7 +2613,9 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
     checkout (`repo/into-guarded.md`, `lane/into-guarded.md`), one from
     the throwaway checkout into the guarded worktree
     (`repo/into-guarded-worktree.md`), one from the throwaway checkout into
-    its own git directory (`repo/into-own-git`), and a dangling directory
+    its own git directory (`repo/into-own-git`), a directory symlink from
+    the throwaway checkout into a directory of the guarded main checkout
+    (`repo/into-guarded-directory`), and a dangling directory
     symlink outside every repository into a directory of that main checkout
     not created yet (`dangling`)."""
     guarded, _worktree = _protect_real_repo_with_worktree(tmp_path)
@@ -2635,8 +2637,19 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
         link.symlink_to(guarded / "README.md")
     (throwaway / "into-guarded-worktree.md").symlink_to(scratch / "guarded-worktree" / "README.md")
     (throwaway / "into-own-git").symlink_to(throwaway / ".git" / "description")
+    (throwaway / "into-guarded-directory").symlink_to(
+        guarded / ".agent-claim", target_is_directory=True
+    )
     (scratch / "dangling").symlink_to(guarded / "newdir", target_is_directory=True)
     return scratch
+
+
+def _bash_copy_into_payload(destination: Path) -> dict[str, object]:
+    return _bash_payload(f"cp {destination.parent / 'note.txt'} {destination}")
+
+
+def _bash_move_into_payload(destination: Path) -> dict[str, object]:
+    return _bash_payload(f"mv {destination.parent / 'note.txt'} {destination}")
 
 
 _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute directory"
@@ -2656,6 +2669,9 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         ("{scratch}", _write_target_payload, "repo/into-guarded.md", 2, "not main", 0),
         ("{scratch}", _write_target_payload, "lane/into-guarded.md", 2, "not main", 0),
         ("{scratch}", _write_target_payload, "repo/into-guarded-worktree.md", 2, "claim first", 1),
+        ("{scratch}", _bash_copy_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
+        ("{scratch}", _bash_move_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
+        ("{scratch}", _bash_rm_target_payload, "repo/into-guarded-directory", 0, None, 0),
         (
             "scratch",
             _write_target_payload,
@@ -2703,6 +2719,9 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         "file-symlink-into-a-guarded-checkout",
         "file-symlink-from-a-throwaway-worktree-into-a-guarded-checkout",
         "file-symlink-into-a-guarded-worktree",
+        "bash-cp-into-a-directory-symlink-into-a-guarded-checkout",
+        "bash-mv-into-a-directory-symlink-into-a-guarded-checkout",
+        "bash-rm-of-a-directory-symlink-into-a-guarded-checkout-allows",
         "relative-entry-fails-closed",
         "missing-entry-fails-closed",
         "empty-trailing-entry-fails-closed",
