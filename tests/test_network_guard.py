@@ -61,11 +61,12 @@ def _repository_selecting_git_variables() -> frozenset[str]:
     return frozenset(local_variables.stdout.split())
 
 
-def _machine_local_git_environment() -> dict[str, str]:
+def _machine_local_git_environment(discovery_ceiling: Path) -> dict[str, str]:
     """The inherited environment without any route the operator configured:
     no proxy, no operator repository or git configuration beyond the probed
-    repository's own, and an ssh that reads no config file, so a probe the
-    guard failed to stop still dials the loopback address it names."""
+    repository's own, no repository discovered at or above
+    `discovery_ceiling`, and an ssh that reads no config file, so a probe
+    the guard failed to stop still dials the loopback address it names."""
     operator_git_variables = _repository_selecting_git_variables() | set(_OPERATOR_GIT_ROUTES)
     inherited = {
         name: value
@@ -75,6 +76,7 @@ def _machine_local_git_environment() -> dict[str, str]:
         and name not in operator_git_variables
     }
     return inherited | {
+        "GIT_CEILING_DIRECTORIES": str(discovery_ceiling),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_SSH_COMMAND": f"ssh -F {os.devnull} -o BatchMode=yes",
@@ -89,7 +91,7 @@ def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.Co
     return subprocess.run(
         ["git", "push", "-q", "origin", "main"],
         cwd=repository,
-        env=_machine_local_git_environment(),
+        env=_machine_local_git_environment(discovery_ceiling=tmp_path),
         capture_output=True,
         text=True,
         check=False,
@@ -158,11 +160,11 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     """A scratch directory whose initial conftest, module import and test
     each ask git for an https remote passes only when the plugin the project
     configuration loads guards before the initial conftests (#530 lines 1
-    and 2). The operator's runtime git configuration refuses https here
-    too, both at runtime and in the repository it selects; the blocked run
-    proves the scratch pytest never inherits either."""
-    operator_repository = tmp_path / "operator"
-    operator_repository.mkdir()
+    and 2). The operator's git configuration refuses https here too: at
+    runtime, in the repository `GIT_DIR` selects, and in that same
+    repository enclosing the scratch directory; the blocked run proves the
+    scratch pytest never inherits any of them."""
+    operator_repository = tmp_path
     _real_git(operator_repository, "init", "-q")
     _real_git(operator_repository, "config", "protocol.https.allow", "never")
     monkeypatch.setenv("GIT_DIR", str(operator_repository / ".git"))
@@ -176,7 +178,7 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     probe.write_text(_SCRATCH_TEST_MODULE)
     unguarded_environment = {
         name: value
-        for name, value in _machine_local_git_environment().items()
+        for name, value in _machine_local_git_environment(discovery_ceiling=tmp_path).items()
         if name != GIT_ALLOW_PROTOCOL_ENV
     }
     command = [
