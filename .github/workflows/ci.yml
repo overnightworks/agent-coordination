@@ -8,6 +8,11 @@ on:
     branches:
       - main
 
+# The token can never push, whatever the repository's default says (#530):
+# a test that escapes its store fakes must not reach the live claim store.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
