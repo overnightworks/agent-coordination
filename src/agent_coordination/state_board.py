@@ -69,6 +69,7 @@ STATE_REF_CAPABILITIES: Mapping[forge.ForgeOperation, forge.Capability] = Mappin
         forge.ForgeOperation.CREATE_ISSUE: forge.Capability.UNSUPPORTED,
         forge.ForgeOperation.CREATE_CHILD: forge.Capability.READ_WRITE,
         forge.ForgeOperation.UPDATE_ITEM_BODY: forge.Capability.READ_WRITE,
+        forge.ForgeOperation.SET_ITEM_KIND: forge.Capability.READ_WRITE,
     }
 )
 
@@ -437,6 +438,16 @@ class StateRefBoard:
             if decoded.record.state is items.RecordState.OPEN
         )
 
+    def open_issue(self, number: int) -> board.Issue | None:
+        """`number`'s item as the board reads it while it is open, else
+        `None` -- `item new --parent`'s one look at its parent's kind (issue
+        #503), which unlike `list_open_board_issues` never refuses on
+        another malformed item (ITEM-37)."""
+        decoded = self._decoded(number)
+        if decoded is None or decoded.record.state is not items.RecordState.OPEN:
+            return None
+        return self._issue(self._by_number[number])
+
     def open_item_titles(self) -> tuple[tuple[int, str], ...]:
         """Every open item's number and title, the open half of `item new`'s
         twin search: unlike `list_open_board_issues` it never refuses on a
@@ -576,6 +587,23 @@ class StateRefBoard:
         """Unsupported (`STATE_REF_CAPABILITIES`): `create_item` mints a
         state-ref item's id and records its parent and origin in one write."""
         raise forge.ForgeUnsupportedError(NO_BARE_ISSUE)
+
+    def set_item_kind(self, number: int, kind: ItemKind) -> None:
+        """`number`'s `record.kind` moved to `kind` (issue #503) -- `item new
+        --parent` retyping a Task it gives a first child, `item edit --kind`
+        -- in one CAS write over this instance's own already-read oid, as
+        `update_item_body` writes; `updated_at` moves to now, every other
+        byte stays."""
+        item_id = self._by_number[number]
+        current = self._related(item_id, missing="does not exist")
+        updated_record = replace(
+            current.record,
+            kind=kind.value,
+            updated_at=items.format_record_timestamp(datetime.now(UTC)),
+        )
+        new_body = _with_record(current.body, updated_record)
+        new_oid = self._write_item(item_id, expected=current.oid, content=new_body.encode("utf-8"))
+        self._items[item_id] = _DecodedItem(record=updated_record, body=new_body, oid=new_oid)
 
     def create_child(self, *, parent: int, title: str, body: str, kind: ItemKind) -> int:
         item_id = self.create_item(title=title, body=body, kind=kind, parent=parent)

@@ -62,6 +62,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 - [ ] [CUT-33] An empty or whitespace-only `--title` refuses `--title must be a non-empty string`, exit `2`, before anything is read or written; `--json` prints OUT-06's envelope (issue #447).
 - [ ] [CUT-02] The same against an open issue that is not a container refuses `#<n> is not a container`, exit `2`.
 - [ ] [CUT-03] The same against a container that is itself a child of another item refuses `#<n> is itself a child of <ref>; nested containers are not supported`, exit `2`.
+- [ ] [CUT-34] `aco next` never proposes a cut CUT-03 refuses: it names a nested container's repair under `SKIPPED` instead (`specs/next.spec.md` NEXT-25, E-NEXT-09).
 
 ## The forge precondition
 

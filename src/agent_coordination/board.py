@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import TypeGuard, cast
 
 from . import items, metrics, protocol
 
@@ -117,6 +117,11 @@ class Issue:
     children_closed: int | None = None
     children_total: int | None = None
     blocked_by_count: int = 0
+
+    @property
+    def has_open_child(self) -> bool:
+        """Whether the forge's own child summary counts an open child."""
+        return self.children_total is not None and self.children_closed != self.children_total
 
 
 class BlockerState(StrEnum):
@@ -463,6 +468,10 @@ class BoardItem:
     actionable: bool
     actionable_reason: str | None
     read_state: BodyReadState
+    # What this container is up for once it holds no open child (issue #503),
+    # decided once here by `_childless_container_verdict` so `next`'s action
+    # and its `SKIPPED` reason read one answer; `None` for every other item.
+    childless_verdict: ChildlessContainerVerdict | None
     # This item's own top-level `size` (issue #357), exactly `ParsedBody.size`
     # -- carried here too so a renderer can tell "no size at all" apart from
     # "sized, but its class has no measured lane yet", which `estimate`
@@ -1022,14 +1031,14 @@ def _single_concrete_next(value: str | None) -> bool:
 
 # A container's `Next` line has its own small set of "nothing left"
 # spellings -- German and English, ASCII only. `check`'s last-child rule and
-# `next`'s cut_slice/close_container split both read a `Next` line the same
-# way. `""` belongs to it because a fresh skeleton writes `next = ""` and
+# `next`'s cut_slice/check_container/close_container split both read a
+# `Next` line the same way. `""` belongs to it because a fresh skeleton writes `next = ""` and
 # that value stays the empty string (never mapped to `None`, so CONTRACT
 # still shows the key, #150 §5).
 _NO_FURTHER_WORK_VALUES = frozenset({"keiner", "keine", "nichts", "none", "-", ""})
 
 
-def has_further_work(next_line: str | None) -> bool:
+def has_further_work(next_line: str | None) -> TypeGuard[str]:
     """Whether a container's own `Next` line still names work to dispatch."""
     return next_line is not None and next_line.casefold() not in _NO_FURTHER_WORK_VALUES
 
@@ -1308,6 +1317,7 @@ class _BoardBuildContext:
     trunk_landings: tuple[datetime, ...]
     container_progress: dict[int, ContainerProgress]
     child_container: dict[int, int]
+    nesting_parents: Mapping[int, IssueReference]
     repository: str
     estimate_by_number: Mapping[int, metrics.Estimate]
 
@@ -1383,7 +1393,7 @@ def _container_progress(
         for child in children.get(issue.number, ())
         if child.state is ChildState.OPEN
     )
-    if bool(open_children) == (issue.children_closed == issue.children_total):
+    if bool(open_children) != issue.has_open_child:
         raise protocol.ClaimError(f"GitHub returned a malformed board container #{issue.number}")
     return ContainerProgress(issue.children_closed, issue.children_total, open_children)
 
@@ -1432,6 +1442,13 @@ def _board_item(
     )
     open_blockers = context.blockers[issue.number]
     container_progress = context.container_progress.get(issue.number)
+    childless_verdict = (
+        None
+        if container_progress is None or container_progress.open_children
+        else _childless_container_verdict(
+            parsed.slices, contract.next, context.nesting_parents.get(issue.number)
+        )
+    )
     actionable_reason = _actionable_reason(
         _ActionabilityFacts(
             kind=issue.kind,
@@ -1446,6 +1463,9 @@ def _board_item(
             read_state=parsed.read_state,
             malformed_defect=(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
+            ),
+            childless_container_reason=_childless_container_reason(
+                issue.number, childless_verdict, parsed.slices, config.storage
             ),
         )
     )
@@ -1483,6 +1503,7 @@ def _board_item(
         actionable=actionable_reason is None,
         actionable_reason=actionable_reason,
         read_state=parsed.read_state,
+        childless_verdict=childless_verdict,
         size=parsed.size,
         has_slices=bool(parsed.slices),
         estimate=context.estimate_by_number.get(issue.number),
@@ -1513,6 +1534,12 @@ class BoardBuildInputs:
     # field rather than folded into those two, since neither carries `sha`.
     trunk_landing_items: tuple[TrunkLandingItem, ...] = ()
     children: Mapping[int, tuple[ChildItem, ...]] = field(default_factory=dict)
+    # The forge parent of each `childless_containers_with_uncut_rows`
+    # container that has one (issue #503), read by the caller through the
+    # same `parent_issue` relation `cut` refuses a nested container on
+    # (CUT-03) -- whatever that parent's type, state, or repository, which
+    # the board's own open-container view cannot see.
+    nesting_parents: Mapping[int, IssueReference] = field(default_factory=dict)
     dependencies: Mapping[int, tuple[IssueDependency, ...]] = field(default_factory=dict)
     requests: int = 0
     # Each live claim's age (issue #176, §1): a committer date the caller
@@ -1726,6 +1753,7 @@ def build_board(inputs: BoardBuildInputs) -> Board:
         trunk_landings=inputs.trunk_landings,
         container_progress=container_progress,
         child_container=child_container,
+        nesting_parents=inputs.nesting_parents,
         repository=repository,
         estimate_by_number=estimate_by_number,
     )
@@ -1823,19 +1851,27 @@ class CutSliceAction:
 
 @dataclass(frozen=True)
 class CloseContainerAction:
-    """`container` has no open child and no uncut slice row: there is
-    nothing to cut, so this action never proposes a `cut` command (issue
-    #208). `next_step` carries the container's own `Next` sentence when that
-    line still names real work -- not a cut, since no slice row offers one --
-    or `None` when it names none, the original "every child closed, nothing
-    left" case that gives the class its name."""
+    """`container` has no open child, no uncut slice row, and a `Next` line
+    naming no further work: nothing speaks against closing it, and no
+    command is ever proposed for it (issue #208)."""
 
     container: BoardItem
     container_progress: ContainerProgress
-    next_step: str | None
 
 
-NextAction = WorkItemAction | CutSliceAction | CloseContainerAction
+@dataclass(frozen=True)
+class CheckContainerAction:
+    """`container` has no open child and no uncut slice row, but its own
+    `Next` line (`next_step`) still names work: closing it could close open
+    work (issue #503), and that sentence is not a slice title to cut either
+    (#208), so `next` names it for a `done_when` check and nothing more."""
+
+    container: BoardItem
+    container_progress: ContainerProgress
+    next_step: str
+
+
+NextAction = WorkItemAction | CutSliceAction | CloseContainerAction | CheckContainerAction
 
 
 def _uncut_by_container(board: Board) -> dict[int, UncutSlices]:
@@ -1852,9 +1888,10 @@ def _qualifying_actions(board: Board) -> Iterator[NextAction]:
     (`WorkItemAction`; a container is never actionable, so this branch never
     fires for one) or a container with no open child (`CutSliceAction` when
     its block still carries an undispatched `[[slice]]` row, else
-    `CloseContainerAction` -- whether or not its own `Next` line still names
-    work; an empty slice table is the typed statement that there is nothing
-    to cut, and #208 is what happened when a fallback ignored it).
+    `CheckContainerAction` when its own `Next` line still names work and
+    `CloseContainerAction` when it names none; an empty slice table is the
+    typed statement that there is nothing to cut, and #208 is what happened
+    when a fallback ignored it).
     `_container_progress` already fails loud on a container whose summary
     disagrees with its open-children list, so "no open child" here reliably
     means every created child has closed. Every other row -- blocked,
@@ -1863,9 +1900,9 @@ def _qualifying_actions(board: Board) -> Iterator[NextAction]:
 
     Whichever branch carries a command, it never carries `--row` (#151):
     `cut` without `--row` accepts every container a `CutSliceAction` names
-    here, linking its first undispatched slice. `CloseContainerAction` never
-    carries a command at all, whether or not its `Next` line still names
-    work -- inventing one from prose that is not a slice title is #208.
+    here, linking its first undispatched slice. `CloseContainerAction` and
+    `CheckContainerAction` never carry a command at all -- inventing one from
+    prose that is not a slice title is #208.
 
     A `MALFORMED` container (#150) is skipped here exactly like one still
     holding an open child: its own finding already surfaces through
@@ -1902,8 +1939,9 @@ def _action_scope(
     """The scope one `NextAction` occupies for `parallel_set`'s disjointness
     accounting (issue #348): a work item's own top-level `scope`, or a cut
     proposal's row scope -- the same first uncut row `uncut_by_container`
-    already named its `cut_title` from. `CloseContainerAction` always
-    returns `()`: closing is a zero-cost action against no paths, never one
+    already named its `cut_title` from. `CloseContainerAction` and
+    `CheckContainerAction` always return `()`: closing or checking a
+    container is a zero-cost action against no paths, never one
     `parallel_set` has to guard against. `None` means unknown -- the action
     names no scope of its own to check disjointness against."""
     if isinstance(action, WorkItemAction):
@@ -1950,9 +1988,9 @@ def parallel_set(
 ) -> ParallelSet:
     """The maximal set of further free items `next`'s first `action` can run
     alongside right now (issue #348) -- see `ParallelSet` for the packing
-    rule. `CloseContainerAction` never competes for scope at all
-    (`zero_cost_closes` names it instead) and is skipped outright, whether it
-    is `action` itself (occupying nothing) or a later candidate. A
+    rule. `CloseContainerAction` and `CheckContainerAction` never compete
+    for scope at all and are skipped outright, whether one is `action`
+    itself (occupying nothing) or a later candidate. A
     `board.recovery` item -- landed but still open -- is `zero_cost_closes`'
     own domain too, never this walk's: it is skipped outright as a later
     candidate, so it neither claims a place in `candidates` nor occupies a
@@ -1970,7 +2008,7 @@ def parallel_set(
     candidates: list[ParallelCandidate] = []
     scope_unknown: list[int] = []
     for candidate in _qualifying_actions(board):
-        if isinstance(candidate, CloseContainerAction):
+        if isinstance(candidate, CloseContainerAction | CheckContainerAction):
             continue
         number = _action_number(candidate)
         if number == first_number or number in recovery_numbers:
@@ -1990,8 +2028,9 @@ def zero_cost_closes(board: Board) -> tuple[int, ...]:
     """Every item `next` can close for free right now, regardless of which
     row ranks first (issue #348; #310 finding 29: "warum wurde #122 nicht
     geclosed? sollte aco das nicht feststellen?"): every childless container
-    with no undispatched `[[slice]]` row -- `_qualifying_actions`'s own
-    `CloseContainerAction` rows, not only the board's top-ranked one --
+    with no undispatched `[[slice]]` row and no further `Next` work --
+    `_qualifying_actions`'s own `CloseContainerAction` rows, never a
+    `CheckContainerAction` (issue #503), not only the board's top-ranked one --
     union every landed-but-open item (`board.recovery`), in first-seen
     order. Neither needs a claim first."""
     closable_containers = (
@@ -2014,10 +2053,12 @@ def closable_container_number(
 ) -> int | None:
     """The container `release --merged`/`item close` should name as freshly
     closable once one of its children just landed (issue #348): `parent`'s
-    own kind, `children`'s open count, and its own undispatched `[[slice]]`
-    rows decide it exactly like `_qualifying_actions`'s own
-    `CloseContainerAction` branch -- a non-container parent, one still
-    holding another open child, or one with an uncut row is never named.
+    own kind, `children`'s open count, its own undispatched `[[slice]]`
+    rows, and its own `Next` line decide it exactly like
+    `_qualifying_actions`'s own `CloseContainerAction` branch -- a
+    non-container parent, one still holding another open child, one with an
+    uncut row, or one whose `Next` line still names work (issue #503, a
+    container between two slices) is never named.
     Whether a parent relation exists at all is the caller's own read
     (`ParentIssue | None`, forge-specific); this function only ever decides
     once one is given, never re-checking a state its one caller already
@@ -2028,36 +2069,36 @@ def closable_container_number(
     if any(child.state is ChildState.OPEN for child in children):
         return None
     parsed = parse_body(parent.body, storage=storage)
-    if parsed.read_state is not BodyReadState.VALID or parsed.slices:
+    if parsed.read_state is not BodyReadState.VALID:
         return None
-    return parent.reference.number
+    # Nesting only ever splits a cut from a nested repair and never reaches
+    # a close, so this close test needs no read of `parent`'s own parent.
+    verdict = _childless_container_verdict(parsed.slices, parsed.contract.next, nesting_parent=None)
+    return parent.reference.number if isinstance(verdict, CloseVerdict) else None
 
 
 def _container_next_action(
     item: BoardItem, container: ContainerProgress, uncut_by_container: dict[int, UncutSlices]
 ) -> NextAction | None:
-    """The action a childless container qualifies for, or `None` to skip it:
-    a non-`VALID` body names its own finding elsewhere and is never guessed
-    through.
-
-    An uncut `[[slice]]` row is the only thing that makes this a
-    `CutSliceAction` (#208): a container's `Next` line naming further work is
-    not, by itself, a slice to cut, so an empty slice table -- the typed
-    statement that there is nothing here to cut -- always lands in
-    `CloseContainerAction`, carrying that `Next` sentence as `next_step`
-    instead of a fabricated `cut` title."""
+    """The action a childless container qualifies for, read off its one
+    `childless_verdict`, or `None` to skip it: a non-`VALID` body names its
+    own finding elsewhere and is never guessed through, and a
+    `NestedRepairVerdict` names its repair under `SKIPPED` instead of a `cut`
+    that `cut` refuses (issue #503)."""
     if item.read_state is not BodyReadState.VALID:
         return None
-    next_line = item.contract.next
-    uncut = uncut_by_container.get(item.number)
-    if uncut is not None:
-        cut_title = uncut.rows[0].title
-        next_step = (
-            next_line if next_line is not None and has_further_work(next_line) else cut_title
-        )
-        return CutSliceAction(item, container, next_step, cut_title)
-    further_work = next_line if next_line is not None and has_further_work(next_line) else None
-    return CloseContainerAction(item, container, further_work)
+    match item.childless_verdict:
+        case CutVerdict():
+            next_line = item.contract.next
+            cut_title = uncut_by_container[item.number].rows[0].title
+            next_step = next_line if has_further_work(next_line) else cut_title
+            return CutSliceAction(item, container, next_step, cut_title)
+        case CheckVerdict(next_step=next_step):
+            return CheckContainerAction(item, container, next_step)
+        case CloseVerdict():
+            return CloseContainerAction(item, container)
+        case _:
+            return None
 
 
 # The shape one decoded JSON object takes -- one alias so `cast` names a
@@ -2146,6 +2187,7 @@ def board_payload(board: Board) -> dict[str, object]:
                 None if freed_on is None else freed_on.astimezone(UTC).date().isoformat()
             )
             item.pop("read_state")
+            item.pop("childless_verdict")
             _project_blocker_references(item, "open_blockers", repository)
             container = item["container"]
             if container is not None:
@@ -2304,6 +2346,119 @@ class _ActionabilityFacts:
     projectionless_idea: bool
     read_state: BodyReadState = BodyReadState.VALID
     malformed_defect: ContractDefect | None = None
+    childless_container_reason: str | None = None
+
+
+# `next`'s own words for a childless container whose `Next` line still names
+# work (issue #503): its `check_container` line and its `SKIPPED` reason,
+# never a close.
+CHECK_DONE_WHEN = "no open children; check done_when"
+
+
+@dataclass(frozen=True)
+class CutVerdict:
+    """A container with no open child whose uncut row `cut` accepts."""
+
+
+@dataclass(frozen=True)
+class NestedRepairVerdict:
+    """An uncut row `cut` refuses (CUT-03): the container is a child of
+    `nesting_parent`, so only a repair naming that parent helps."""
+
+    nesting_parent: IssueReference
+
+
+@dataclass(frozen=True)
+class CheckVerdict:
+    """No uncut row, but the container's own `Next` line, `next_step`, still
+    names work: a `done_when` check, never a close."""
+
+    next_step: str
+
+
+@dataclass(frozen=True)
+class CloseVerdict:
+    """No uncut row and no further `Next` work: nothing speaks against
+    closing the container."""
+
+
+# What a container with no open child is up for (issue #503), each verdict
+# carrying the data its own answer needs.
+ChildlessContainerVerdict = CutVerdict | NestedRepairVerdict | CheckVerdict | CloseVerdict
+
+
+def _childless_container_verdict(
+    slices: tuple[SliceRow, ...], next_line: str | None, nesting_parent: IssueReference | None
+) -> ChildlessContainerVerdict:
+    """The one decider for a container with no open child (issue #503):
+    `next`'s action, its `SKIPPED` reason, and `release --merged`'s
+    closable parent all read this answer rather than re-deriving it. An
+    uncut `[[slice]]` row is the only thing to cut (#208) -- unless the
+    container is itself a child, which `cut` refuses (CUT-03), so only a
+    repair helps; with no row left, a `Next` line still naming work asks
+    for a `done_when` check, and only one naming none is closable."""
+    if slices:
+        return CutVerdict() if nesting_parent is None else NestedRepairVerdict(nesting_parent)
+    if has_further_work(next_line):
+        return CheckVerdict(next_line)
+    return CloseVerdict()
+
+
+def childless_containers_with_uncut_rows(
+    issues: Iterable[Issue], storage: Storage
+) -> tuple[int, ...]:
+    """The containers whose forge parent can change their verdict (issue
+    #503): no open child and an uncut `[[slice]]` row, the only shape
+    `_childless_container_verdict` reads `nesting_parent` for. The caller
+    reads just these parents and hands them back as
+    `BoardBuildInputs.nesting_parents`."""
+    return tuple(
+        issue.number
+        for issue in issues
+        if issue.kind is ItemKind.CONTAINER
+        and issue.children_total is not None
+        and not issue.has_open_child
+        and parse_body(issue.body, storage=storage).slices
+    )
+
+
+def _childless_container_reason(
+    number: int,
+    verdict: ChildlessContainerVerdict | None,
+    slices: tuple[SliceRow, ...],
+    storage: Storage,
+) -> str | None:
+    """Why container `number`, with no open child, is neither cut nor closed
+    (issue #503), or `None` for every verdict `next` already names otherwise."""
+    match verdict:
+        case CheckVerdict():
+            return CHECK_DONE_WHEN
+        case NestedRepairVerdict(nesting_parent=nesting_parent):
+            return _nested_container_repair(number, nesting_parent, slices, storage)
+        case _:
+            return None
+
+
+def _nested_container_repair(
+    number: int, nesting_parent: IssueReference, slices: tuple[SliceRow, ...], storage: Storage
+) -> str:
+    """The repair container `number` needs when it is itself a child of
+    `nesting_parent` and still carries uncut `[[slice]]` rows (issue #503):
+    `cut` refuses it, so `next` never proposes one and names this instead --
+    for its one row, the `item edit --kind task` both storages run (ITEM-47)
+    and a claim on that row's scope, the shape `claim`/`start` accept; for
+    more rows, their move up to that parent, named the way `cut`'s own
+    refusal names it."""
+    if len(slices) == 1:
+        return (
+            "nested container, which cut refuses; run aco item edit "
+            f"{item_argument(number, storage)} --kind task and claim it with "
+            f'slice "{slices[0].title}"\'s scope'
+        )
+    return (
+        "nested container, which cut refuses; move its slice rows to "
+        f"{relation_label(nesting_parent, storage)}"
+    )
 
 
 def _read_state_actionable_reason(facts: _ActionabilityFacts) -> str | None:
@@ -2336,5 +2491,5 @@ def _actionable_reason(facts: _ActionabilityFacts) -> str | None:
     if read_state_reason is not None:
         return read_state_reason
     if facts.kind is ItemKind.CONTAINER:
-        return "container; claim a child"
+        return facts.childless_container_reason or "container; claim a child"
     return _claim_or_completeness_reason(facts)

@@ -47,6 +47,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
+| `--parent` an open Task, or `--kind` given, either storage | ITEM-45, ITEM-46 | — | ITEM-47..ITEM-51 | — |
 | an item, open or closed | — | ITEM-07, ITEM-08 | — | — |
 | an unknown id | PIN-18 | ITEM-10 | PIN-23 | PIN-28 |
 | `storage = "github"` | ITEM-26..ITEM-31 | ITEM-11 | PIN-10 | PIN-11 |
@@ -66,7 +67,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 - [ ] [ITEM-01] `aco item new --title TITLE` with no `--kind` mints the id, then writes the skeleton body once with `kind = "task"` in its `[record]`; PIN-06/PIN-07 own the id and `--json` shape (see E-ITEM-01).
 - [ ] [ITEM-02] `--kind container` writes `Blocked by: nichts` ahead of the block and `kind = "container"` in the stored `[record]` (see E-ITEM-01).
-- [ ] [ITEM-03] `--parent PARENT` sets `record.parent` to `PARENT`'s id; unlike `cut`'s own child body, it never writes a `Parent: #<n>` prose line.
+- [ ] [ITEM-03] `--parent PARENT` sets `record.parent` to `PARENT`'s id, an open Task retyped first (ITEM-45); unlike `cut`'s child body, it never writes a `Parent: #<n>` line.
 - [ ] [ITEM-04] Repeated `--scope` values write a sorted, deduplicated top-level `scope = [...]` ahead of the `[record]` table, CLAIM-19..CLAIM-23's own canonical form (see E-ITEM-01).
 - [ ] [ITEM-05] A `--scope` value that is absolute, `..`, or `~`-prefixed refuses with CLAIM-19's own sentence; a duplicate refuses with CLAIM-21's `claim scope contains duplicate paths`, before any write.
 - [ ] [ITEM-06] `--origin FORGE#N` failing its grammar refuses `'<value>' is not an origin; use forge#n or host/owner/repo#n, e.g. gitlab#514`, exit `2`, before `item new`'s own body ever runs.
@@ -85,7 +86,9 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 - [ ] [ITEM-26] Under `storage = "github"`, `aco item new --title T < BODY` opens one GitHub issue titled `T` whose body is the piped one, with `--scope`/`--size`/`--whole` written into its block.
 - [ ] [ITEM-27] The piped body passes `aco check <n>`'s own body check first; a failing body refuses exactly like ITEM-25, and nothing is created (see E-ITEM-08).
 - [ ] [ITEM-28] `--kind task|feature|container` sets the organization's own issue type `Task`, `Feature`, or `Container`, by name.
-- [ ] [ITEM-29] `--parent N` records the issue as `#N`'s sub-issue; `#N` not open refuses `#N is not an open container`, of another type `#N is not a container`, exit `2` (see E-ITEM-08).
+- [ ] [ITEM-29] `--parent N` records the issue as `#N`'s sub-issue; `#N` not open refuses `#N is not an open container`, neither Container nor Task `#N is not a container`, exit `2` (see E-ITEM-08).
+- [ ] [ITEM-45] Under either storage, `--parent N` on an open Task retypes it Container after the twin search, before the create; stderr: `retyped #N to Container for its first child` (see E-ITEM-12).
+- [ ] [ITEM-46] A retype GitHub drops refuses `GitHub did not set #N's type Container; set that type on the forge by hand`, exit `2`, before anything is created (see E-ITEM-12).
 - [ ] [ITEM-30] Success prints `#<n>`, exit `0`; `--json` prints the envelope, `reason: "created"`, then `item` (`#<n>`) and `number`, the state-ref shape (see E-ITEM-07).
 - [ ] [ITEM-31] `--origin` under `storage = "github"` refuses `--origin needs storage = "state-ref"`, exit `2`, before stdin is read.
 - [ ] [ITEM-32] A failed `--parent` relation write refuses CUT-17's `created` sentence ending `; record that sub-issue relation on the forge by hand`, `--json` shaped as CUT-28.
@@ -107,7 +110,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 ## `item edit`
 
 - [ ] [ITEM-12] `aco item edit ITEM < BODY` takes `title`, `labels`, `blocked_by` from a delivered `[record]` when the piped body carries one valid (see E-ITEM-03).
-- [ ] [ITEM-13] `item edit ITEM`'s every other field — `parent`, `state`, `origin`, `kind`, `created_at`, `closed_at` — stays stored, except on a malformed item (ITEM-39); `updated_at` moves to now.
+- [ ] [ITEM-13] `item edit`'s every other field — `parent`, `state`, `origin`, `kind`, `created_at`, `closed_at` — stays stored, except a malformed item (ITEM-39) or `--kind` (ITEM-47); `updated_at` moves to now.
 - [ ] [ITEM-14] A delivered body carrying no `[record]` table at all leaves `title`, `labels`, `blocked_by` unchanged too, exactly `item edit`'s own pre-#287 behaviour, except a malformed item (ITEM-39).
 - [ ] [ITEM-43] A delivered `blocked_by` refuses before any write when it names one blocker twice, `item <item-id> lists blocker <blocker-id> more than once`, or a new one naming no item, PIN-17's (see E-ITEM-11).
 - [ ] [ITEM-44] So does a new blocker naming a malformed item, PIN-14/PIN-15's then ITEM-38's, or the item itself, `item <item-id> is listed as its own blocker`; a stored list delivered unchanged is never re-judged.
@@ -120,6 +123,11 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
   ```
 - [ ] [ITEM-22] `item edit --size` prints `EDITED #<n> size=<S|M|L>` (`--json`: the envelope, `reason: "edited"`, then `item`, `size`); an invalid value is refused by argparse before any write.
 - [ ] [ITEM-24] `item edit --whole REASON` patches only the top-level `whole`, reads no stdin, works under both storages, prints `EDITED #<n> whole=<reason>` (`--json`: `reason: "edited"`, `item`, `whole`).
+- [ ] [ITEM-47] `item edit --kind task|container` sets only an open item's type (else `#<n> is not an open item`), both storages; prints `EDITED #<n> kind=<kind>` (`--json`: `item`, `number`, `kind`) (see E-ITEM-13).
+- [ ] [ITEM-48] `--kind task` on an item with an open child refuses `#<n> has an open child; a container with open children stays a container`, exit `2`, before any write (see E-ITEM-13).
+- [ ] [ITEM-49] Only a regular file on `--kind`'s stdin refuses `item edit --kind reads no stdin; drop the redirect`, exit `2`, before any write.
+- [ ] [ITEM-50] `--size`, `--whole` and `--kind` exclude one another: a second one refuses at argparse, `argument <second>: not allowed with argument <first>`, exit `2`, before any write.
+- [ ] [ITEM-51] A pipe, socket, terminal, `/dev/null` or closed stdin on `--kind` passes, as agent harnesses hand a pipe or socket; a piped body goes unread, unrefused.
 
 ## `item close`
 
@@ -289,11 +297,11 @@ exit 0
 
 ### E-ITEM-08 — refused before anything is created
 
-Setup: as E-ITEM-07, `#85` closed
+Setup: as E-ITEM-07, `#85` closed, `#94` an open feature
 
 ```console
-$ aco item new --title "Another slice" --parent 91 < body.md
-2> ERROR: #91 is not a container
+$ aco item new --title "Another slice" --parent 94 < body.md
+2> ERROR: #94 is not a container
 exit 2
 $ aco item new --title "Another slice" --parent 85 < body.md
 2> ERROR: #85 is not an open container
@@ -354,3 +362,32 @@ $ aco item edit <item-id> < twice.md
 2> ERROR: item <item-id> lists blocker <blocker-id> more than once
 exit 2
 ```
+
+### E-ITEM-12 — a Task parent becomes a Container with its first child
+
+Setup: as E-ITEM-07, `#91` still the open task `Ship the importer`; in the second session GitHub drops the type, since the caller lacks push access
+
+```console
+$ aco item new --title "Document the importer" --parent 91 < body.md
+2> retyped #91 to Container for its first child
+#92
+exit 0
+$ aco item new --title "Document the importer" --parent 91 < body.md
+2> ERROR: GitHub did not set #91's type Container; set that type on the forge by hand
+exit 2
+```
+
+### E-ITEM-13 — a childless container turns Task, one with an open child stays
+
+Setup: `storage = "state-ref"`, `<item-id>` a nested container with one uncut row and no open child, `<container-id>` a container with an open child
+
+```console
+$ aco item edit <item-id> --kind task
+EDITED <item-id> kind=task
+exit 0
+$ aco item edit <container-id> --kind task
+2> ERROR: <container-id> has an open child; a container with open children stays a container
+exit 2
+```
+
+Under `storage = "state-ref"` `record.kind` and `updated_at` move and every other byte stays; under `storage = "github"` the issue's organization type moves, and a type GitHub drops refuses ITEM-46's sentence naming that type.

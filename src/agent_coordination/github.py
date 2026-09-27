@@ -440,6 +440,7 @@ _READ_WRITE_OPERATIONS = (
     forge.ForgeOperation.CREATE_ISSUE,
     forge.ForgeOperation.CREATE_CHILD,
     forge.ForgeOperation.UPDATE_ITEM_BODY,
+    forge.ForgeOperation.SET_ITEM_KIND,
 )
 # The GitHub adapter never refuses an operation: every member answers
 # READ_ONLY or READ_WRITE, never UNSUPPORTED (decision record 0001 §2).
@@ -1493,6 +1494,31 @@ class GitHubForge:
             ],
             input_data=json.dumps({"body": body}).encode("utf-8"),
         )
+
+    def set_item_kind(self, number: int, kind: ItemKind) -> None:
+        """Set `number`'s organization issue type to `kind`'s by name, the
+        same REST field `create_issue` writes. GitHub drops that field
+        silently when the caller lacks push access, so the response's own
+        type is read back and a mismatch raises instead of passing."""
+        type_name = ITEM_KIND_TYPE_NAMES[kind]
+        raw = self._run(
+            [
+                "api",
+                "--method",
+                "PATCH",
+                f"repos/{self.repository}/issues/{number}",
+                "--input",
+                "-",
+                "--jq",
+                ".type.name",
+            ],
+            input_data=json.dumps({"type": type_name}).encode("utf-8"),
+        )
+        if self._issue_kind(strip_ansi(raw).strip()) is not kind:
+            raise forge.ForgeError(
+                f"GitHub did not set #{number}'s type {type_name}; "
+                "set that type on the forge by hand"
+            )
 
     def _has_landing_comment(self, number: int, comment: str) -> bool:
         """Whether `number` already carries `close_landed_item`'s own
