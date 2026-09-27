@@ -3351,6 +3351,9 @@ def test_protect_and_rescope_name_a_canonical_remote_that_has_config_lines_but_n
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    empty_global_config = tmp_path / "global.gitconfig"
+    empty_global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_global_config))
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     _use_real_path_is_tracked(monkeypatch)
     path = _hub_canonical_worktree_file(
