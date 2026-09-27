@@ -3190,6 +3190,34 @@ class TestCliStateRefForge:
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
 
+    def test_closing_an_item_whose_parent_is_missing_refuses_before_any_write(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #536 (ITEM-53, PIN-16): `item close` of an item whose
+        `parent` names an id no `items/` entry carries refuses PIN-16's
+        sentence before the close writes, so the item stays open on the
+        state ref rather than closing and then refusing."""
+        dangling_parent = "aco-ffffff"
+        orphan = _state_ref_body(
+            _CHILD_A_PROJECTION,
+            _record(title="Slice A", state="open", kind="task", parent=dangling_parent),
+        )
+        item_files = {**_item_files(), f"{CHILD_A_ID}.md": orphan.encode()}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        remote_url = f"file://{bare_remote}"
+        before = store.fetch_state(worktree=worktree, remote=remote_url)
+
+        status = issue_claim.main(["item", "close", CHILD_A_ID])
+
+        refusal = f"item {dangling_parent} is referenced as a parent but does not exist"
+        assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+        assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
+
     @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
         self,

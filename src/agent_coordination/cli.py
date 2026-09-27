@@ -3636,8 +3636,10 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     --merged`'s own `freed:` line -- open items whose only open local
     blocker was this one (`_freed_item_numbers`, issue #256; nothing new) --
     and, when this close was its parent's last open child, `release
-    --merged`'s own parent hint (issue #348). Every refusal reports through
-    the shared envelope as `precondition_failed` (issue #425)."""
+    --merged`'s own parent hint (issue #348). A malformed relative or a
+    parent `items/` lacks (PIN-16) refuses before the close writes. Every
+    refusal reports through the shared envelope as `precondition_failed`
+    (issue #425)."""
     as_json = parsed.json
     try:
         if context.config.storage is not body.Storage.STATE_REF:
