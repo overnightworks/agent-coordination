@@ -1,8 +1,8 @@
 """Behavioral tests for `tests/network_guard.py` (issue #530).
 
 Git is the boundary the guard constrains, so each proof pushes with real git
-from a repository under `tmp_path`. The refused remotes name a reserved
-`.invalid` host; git refuses their transport before it connects anywhere.
+from a repository under `tmp_path`. The refused remotes point at a closed
+loopback port, so a push the guard failed to stop still ends on this machine.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ def test_push_to_a_local_remote_still_works(
 @pytest.mark.parametrize(
     ("transport", "url"),
     [
-        pytest.param("https", "https://example.invalid/owner/repo.git", id="https"),
-        pytest.param("ssh", "ssh://git@example.invalid/owner/repo.git", id="ssh"),
+        pytest.param("https", "https://127.0.0.1:9/x.git", id="https"),
+        pytest.param("ssh", "ssh://git@127.0.0.1:9/x.git", id="ssh"),
     ],
 )
 def test_push_to_a_non_local_remote_is_refused(tmp_path: Path, transport: str, url: str) -> None:
