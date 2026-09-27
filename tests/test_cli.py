@@ -10,6 +10,7 @@ import re
 import runpy
 import shlex
 import socket
+import subprocess
 import sys
 import threading
 import tomllib
@@ -5879,27 +5880,57 @@ def test_ask_refuses_a_missing_picture_file_before_any_write(
     assert client.item_bodies == {}
 
 
-def test_next_prints_a_cut_command_block_mode_accepts_for_a_valid_container(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+def _arguments_bash_hands_aco(advice: str, tmp_path: Path) -> tuple[int, list[str]]:
+    """Bash's exit code and the argv it hands `aco` when the printed
+    `advice` command runs verbatim in a throwaway git repository, `aco`
+    standing in as a recorder of its own arguments -- so the caller runs
+    exactly those arguments through the real entry point (issue #510)."""
+    shim_directory = tmp_path / "shell-bin"
+    shim_directory.mkdir()
+    recorder = shim_directory / "aco"
+    recorder.write_text("#!/bin/sh\nprintf '%s\\0' \"$@\"\n")
+    recorder.chmod(0o755)
+    repository = tmp_path / "throwaway"
+    repository.mkdir()
+    _real_git(repository, "init", "--quiet")
+    environment = {**os.environ, "PATH": f"{shim_directory}{os.pathsep}{os.environ['PATH']}"}
+    ran = subprocess.run(
+        ["bash", "-c", advice], cwd=repository, env=environment, capture_output=True, check=False
+    )
+    return ran.returncode, ran.stdout.decode().split("\0")[:-1]
+
+
+@pytest.mark.parametrize(
+    "slice_title",
+    [
+        pytest.param("Scheibe 1", id="plain_title"),
+        pytest.param('Say "hi" to $HOME', id="double_quotes_and_a_shell_variable"),
+        pytest.param("it's `here`", id="single_quote_and_backticks"),
+    ],
+)
+def test_next_prints_a_cut_command_bash_runs_as_printed_and_cut_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    slice_title: str,
 ) -> None:
+    """Issue #510 line 1: the `cut` line `next` prints runs unchanged in a
+    real shell, whatever the slice title holds, and `cut` accepts it."""
     toml_text = (
         'version = 1\nnow = "N"\nnext = "nichts"\ndone_when = "D"\n'
-        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
+        f"[[slice]]\nindex = 1\ntitle = {json.dumps(slice_title)}\n"
     )
     container = _cut_container_issue(toml_text)
-    _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
+    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
 
-    exit_code = issue_claim.main(["--repo", REPOSITORY, "next"])
+    next_exit_code = issue_claim.main(["--repo", REPOSITORY, "next"])
+    advice = capsys.readouterr().out.splitlines()[1].removeprefix("Next: ")
+    bash_exit_code, cut_arguments = _arguments_bash_hands_aco(advice, tmp_path)
+    cut_exit_code = issue_claim.main(["--repo", REPOSITORY, *cut_arguments])
 
-    assert exit_code == 0
-    out = capsys.readouterr().out
-    assert f'aco cut {CUT_CONTAINER} --title "Scheibe 1"' in out
-
-    cut_exit_code = issue_claim.main(
-        ["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), "--title", "Scheibe 1"]
-    )
-    assert cut_exit_code == 0
+    assert (next_exit_code, bash_exit_code, cut_exit_code) == (0, 0, 0)
+    assert client.created_children[0][:2] == (CUT_CONTAINER, slice_title)
 
 
 def test_next_prints_a_cut_command_block_mode_accepts_a_differing_next_line(
@@ -6227,7 +6258,7 @@ def test_next_names_a_cuttable_container_slice(
     assert exit_code == 0
     assert capsys.readouterr().out == (
         "cut_slice #180: Scheibe B — Kartenraster\n"
-        'Next: aco cut 180 --title "Scheibe B — Kartenraster"\n' + _PARALLEL_UNKNOWN_TAIL
+        "Next: aco cut 180 --title 'Scheibe B — Kartenraster'\n" + _PARALLEL_UNKNOWN_TAIL
     )
 
 
@@ -6415,8 +6446,8 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
             REPOSITORY,
             ("Scheibe Z",),
             "nested container, which cut refuses; run aco item edit 299 --kind task and "
-            'claim it with slice "Scheibe Z"\'s scope',
-            id="open_container_parent_one_row_names_the_task_repair",
+            "claim it with aco claim 299 --scope <paths>",
+            id="open_container_parent_one_scopeless_row_names_the_task_repair",
         ),
         pytest.param(
             body.ItemKind.CONTAINER,
@@ -6515,6 +6546,52 @@ def test_next_names_a_nested_containers_repair_where_cut_refuses_its_row(
     assert next_exit_code == (0 if parent_kind is body.ItemKind.FEATURE else 3)
 
 
+def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #510 line 3: a nested container's one row carrying a scope gets
+    a claim on exactly those paths, and once retyped that claim line runs
+    unchanged in a real shell and claims the row's paths."""
+    row_scope = ("docs/nested.md",)
+    nested_contract = complete_contract(
+        "keiner", slice=[{"index": 1, "title": "Scheibe Z", "scope": list(row_scope)}]
+    )
+    nested = board.Issue(
+        299,
+        "Nested epic",
+        (),
+        nested_contract,
+        "2026-08-20T00:00:00Z",
+        "2026-08-20T00:00:00Z",
+        kind=body.ItemKind.CONTAINER,
+        children_closed=1,
+        children_total=1,
+    )
+    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(nested,))
+    client.children = {299: (board.ChildItem(300, board.ChildState.CLOSED),)}
+    client.parents[299] = board.ParentIssue(
+        board.IssueReference(REPOSITORY, 298), "", body.ItemKind.CONTAINER
+    )
+
+    next_exit_code = issue_claim.main(["--repo", REPOSITORY, "next"])
+    repair = capsys.readouterr().out.split("\n#299: ", 1)[1].splitlines()[0]
+    claim_advice = repair.split(" and claim it with ", 1)[1]
+    retyped = replace(nested, kind=body.ItemKind.TASK, children_closed=None, children_total=None)
+    _configured_board_client(monkeypatch, tmp_path, open_issues=(retyped,))
+    monkeypatch.setattr(
+        issue_claim,
+        "_request",
+        lambda arguments, **_kwargs: request(issue=299, scope=tuple(arguments.scope)),
+    )
+    bash_exit_code, claim_arguments = _arguments_bash_hands_aco(claim_advice, tmp_path)
+    claim_exit_code = issue_claim.main(["--repo", REPOSITORY, *claim_arguments])
+
+    assert claim_advice == "aco claim 299 --scope docs/nested.md"
+    assert (next_exit_code, bash_exit_code, claim_exit_code) == (3, 0, 0), capsys.readouterr().err
+    claimed = store.fetch_state(worktree=Path("."), remote="origin").claims
+    assert tuple(claim.scope for claim in claimed.values()) == (row_scope,)
+
+
 def test_next_json_names_a_cuttable_container_slice(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -6540,7 +6617,7 @@ def test_next_json_names_a_cuttable_container_slice(
     assert payload["title"] == "Epic"
     assert payload["slice"] == "Scheibe C"
     assert payload["cut_title"] == "Scheibe C"
-    assert payload["command"] == 'aco cut 181 --title "Scheibe C"'
+    assert payload["command"] == "aco cut 181 --title 'Scheibe C'"
 
 
 def test_next_names_a_closeable_container(
@@ -6751,7 +6828,7 @@ def test_next_parallel_set_uses_a_cut_proposals_own_row_scope(
 
     assert exit_code == 0
     assert capsys.readouterr().out == (
-        'cut_slice #80: Cut it.\nNext: aco cut 80 --title "Slice A"\n'
+        "cut_slice #80: Cut it.\nNext: aco cut 80 --title 'Slice A'\n"
         "parallel: #81 (1 path)\nscope unknown: none\nclose: none\n"
         "\nSKIPPED\n#81: container; claim a child\n#82: container; claim a child\n"
     )

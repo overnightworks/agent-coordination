@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import tomllib
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
@@ -2322,6 +2323,30 @@ def item_argument(number: int, storage: Storage) -> str:
     return _storage_item_name(number, storage, str(number))
 
 
+# What an advice line names where it knows no paths to claim: an agent reads
+# it as "fill these in", which is why it stays outside `advice_command`'s
+# quoting rather than becoming one quoted `'<paths>'` argument.
+SCOPE_PLACEHOLDER = "--scope <paths>"
+
+
+def advice_command(*arguments: str) -> str:
+    """The one rendering of an `aco` command a piece of advice names (issue
+    #510): every argument quoted for a POSIX shell, so the line runs
+    unchanged in the agent's real shell -- a title such as `Say "hi" to $HOME`
+    reaches the command as written, never split or expanded."""
+    return shlex.join(("aco", *arguments))
+
+
+def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
+    """The `claim` advice for item `number` (issue #510): one `--scope` per
+    path of `scope`, none at all for `()` -- the item's own body scope, which
+    `claim` derives itself -- and `SCOPE_PLACEHOLDER` when no paths are
+    known (`None`)."""
+    scope_arguments = (argument for path in scope or () for argument in ("--scope", path))
+    command = advice_command("claim", item_argument(number, storage), *scope_arguments)
+    return command if scope is not None else f"{command} {SCOPE_PLACEHOLDER}"
+
+
 # git's own default abbreviation length -- a Landungen row's sha is evidence
 # to look up, not a full identity, so the short form is enough (issue #371).
 # The one owner: `board_html` renders the same evidence and imports this
@@ -2446,15 +2471,13 @@ def _nested_container_repair(
     `nesting_parent` and still carries uncut `[[slice]]` rows (issue #503):
     `cut` refuses it, so `next` never proposes one and names this instead --
     for its one row, the `item edit --kind task` both storages run (ITEM-47)
-    and a claim on that row's scope, the shape `claim`/`start` accept; for
-    more rows, their move up to that parent, named the way `cut`'s own
-    refusal names it."""
+    and a claim on that row's exact paths, or `SCOPE_PLACEHOLDER` when the
+    row names none (issue #510); for more rows, their move up to that
+    parent, named the way `cut`'s own refusal names it."""
     if len(slices) == 1:
-        return (
-            "nested container, which cut refuses; run aco item edit "
-            f"{item_argument(number, storage)} --kind task and claim it with "
-            f'slice "{slices[0].title}"\'s scope'
-        )
+        retype = advice_command("item", "edit", item_argument(number, storage), "--kind", "task")
+        claim = claim_command(number, storage, slices[0].scope)
+        return f"nested container, which cut refuses; run {retype} and claim it with {claim}"
     return (
         "nested container, which cut refuses; move its slice rows to "
         f"{relation_label(nesting_parent, storage)}"

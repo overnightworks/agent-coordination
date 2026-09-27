@@ -1950,18 +1950,17 @@ def _next_action_command(
     command to run, and neither grammar invents one.
 
     A `WorkItemAction` whose item carries its own top-level `scope` (issue
-    #348, #337's own derivation) drops `--scope <paths>` entirely -- `claim`
+    #348, #337's own derivation) drops `--scope` entirely -- `claim`
     derives it from the same body this command already names -- and only an
     item with no scope of its own still prints the placeholder, alongside
-    `SCOPE_UNKNOWN_NOTE`.
+    `SCOPE_UNKNOWN_NOTE`. Both render through `board.advice_command`, so
+    the line runs as printed (issue #510).
     """
     if isinstance(action, board.WorkItemAction):
-        item_argument = board.item_argument(action.item.number, storage)
-        if action.item.scope is not None:
-            return f"aco claim {item_argument}"
-        return f"aco claim {item_argument} --scope <paths>"
+        body_scope = () if action.item.scope is not None else None
+        return board.claim_command(action.item.number, storage, body_scope)
     container_argument = board.item_argument(action.container.number, storage)
-    return f'aco cut {container_argument} --title "{action.cut_title}"'
+    return board.advice_command("cut", container_argument, "--title", action.cut_title)
 
 
 class NextReason(StrEnum):
