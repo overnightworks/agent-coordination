@@ -1,0 +1,8 @@
+claim_id = "238a4008acae4ca383d1a26cceaf43cb"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "60a2157d64da241684c29369218ea8588c81b55d"
+branch = "claude/issue-528-detached-path"
+scope = ["specs/claim.spec.md", "specs/start.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "tests/test_cli.py"]
+opened_commit = "fd3d14561c4dd07442b1d21dfe88f3bb4ad6967b"
+whole_reason = "start's detached-HEAD sentence and claim's refusal order, with proofs"
