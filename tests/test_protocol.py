@@ -115,6 +115,10 @@ def test_claim_branch_must_be_a_safe_git_ref(branch: object, match: str) -> None
         ),
         pytest.param(["src\\widget.py"], "canonical bounded paths", id="backslash"),
         pytest.param(["src/\x1fwidget.py"], "canonical bounded paths", id="control-character"),
+        pytest.param(["docs/\x9b2J.md"], "canonical bounded paths", id="c1-csi"),
+        pytest.param(["docs/a\N{RIGHT-TO-LEFT OVERRIDE}b.md"], "canonical bounded paths", id="rlo"),
+        pytest.param(["docs/a\N{LEFT-TO-RIGHT ISOLATE}b.md"], "canonical bounded paths", id="lri"),
+        pytest.param(["docs/a\N{ZERO WIDTH SPACE}b.md"], "canonical bounded paths", id="zwsp"),
         pytest.param(["x" * (protocol.MAX_SCOPE_PATH_LENGTH + 1)], "canonical", id="overlong"),
         pytest.param(["/etc/passwd"], "must be repository-relative", id="absolute"),
         pytest.param(["../outside.py"], "must be repository-relative", id="escapes-upwards"),
@@ -130,6 +134,14 @@ def test_claim_scope_must_be_canonical_repository_relative_paths(scope: object, 
     all hand it operator-supplied text."""
     with pytest.raises(InvalidClaimMarkerError, match=match):
         protocol.valid_scope(scope)
+
+
+def test_claim_scope_keeps_a_path_with_a_printable_space() -> None:
+    """Issue #538 line 3 (head ruling of 28.09.2026): NBSP is text, not a
+    display control, so a scope path carrying it stays a valid entry."""
+    path = "docs/a\N{NO-BREAK SPACE}b.md"
+
+    assert protocol.valid_scope([path]) == (path,)
 
 
 def test_claim_scope_is_recorded_and_serialized_in_canonical_order() -> None:

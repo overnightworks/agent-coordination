@@ -30,7 +30,6 @@ from .body import (
     ParsedBody,
     SliceRow,
     Storage,
-    _breaks_a_line,
     body_defect_text,
     closing_fence_delimiter,
     malformed_parsed_body,
@@ -2425,13 +2424,15 @@ def advice_command(*arguments: str | AdviceOption) -> str:
 
 def terminal_text(text: str) -> str:
     """Foreign `text` -- a title, a `Next` line -- as it may reach a terminal
-    (issue #532): every control character but TAB, and every line or
-    paragraph separator, shown as its printable escape (ESC as `\\x1b`,
-    U+2028 as `\\u2028`), so a title can neither retitle the window nor clear
-    the screen; printable text, `Größe` included, stays as it is. Commands
-    are `shell_command`'s to render, never this owner's."""
+    (issues #532, #538): every `protocol.is_display_control` character shown
+    as its printable escape (ESC as `\\x1b`, U+202E as `\\u202e`), so a
+    title can neither retitle the window, clear the screen, nor reorder the
+    text around it; printable text, `Größe`, TAB and NBSP included, stays as
+    it is. Commands are `shell_command`'s to render, never this owner's."""
     return "".join(
-        character.encode("unicode_escape").decode() if _breaks_a_line(character) else character
+        character.encode("unicode_escape").decode()
+        if protocol.is_display_control(character)
+        else character
         for character in text
     )
 

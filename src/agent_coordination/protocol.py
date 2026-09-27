@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -211,6 +212,35 @@ class RescopeRequest:
     whole_reason: str | None = None
 
 
+# Characters that `unicodedata` files as separators (Zl/Zp) or formats (Cf)
+# rather than controls, yet end a line, reorder the text around them (the
+# Trojan Source bidi controls), or hide inside it (the zero-width ones).
+_INVISIBLE_DISPLAY_CONTROLS = frozenset(
+    {
+        "\N{LINE SEPARATOR}",
+        "\N{PARAGRAPH SEPARATOR}",
+        "\N{ZERO WIDTH SPACE}",
+        "\N{ZERO WIDTH NON-JOINER}",
+        "\N{ZERO WIDTH JOINER}",
+        "\N{LEFT-TO-RIGHT MARK}",
+        "\N{RIGHT-TO-LEFT MARK}",
+        "\N{ZERO WIDTH NO-BREAK SPACE}",
+        *map(chr, range(0x202A, 0x202F)),
+        *map(chr, range(0x2066, 0x206A)),
+    }
+)
+
+
+def is_display_control(character: str) -> bool:
+    """Whether `character` must never reach a terminal or a one-line field
+    as itself (issue #538): every control character but TAB -- C0, DEL and
+    C1 -- plus the line and paragraph separators, the bidi controls and the
+    zero-width characters. NBSP and every other printable space are text."""
+    return character != "\t" and (
+        unicodedata.category(character) == "Cc" or character in _INVISIBLE_DISPLAY_CONTROLS
+    )
+
+
 def _has_control_character(text: str) -> bool:
     return any(
         ord(character) < ASCII_PRINTABLE_MIN or ord(character) == ASCII_DEL for character in text
@@ -333,7 +363,12 @@ def valid_scope(scope: object) -> tuple[str, ...]:
     either was typed in."""
     result: list[str] = []
     for path in _scope_list_entries(scope):
-        if len(path) > MAX_SCOPE_PATH_LENGTH or "\\" in path or _has_control_character(path):
+        if (
+            len(path) > MAX_SCOPE_PATH_LENGTH
+            or "\\" in path
+            or _has_control_character(path)
+            or any(map(is_display_control, path))
+        ):
             raise InvalidClaimMarkerError(SCOPE_ENTRIES_MUST_BE_CANONICAL)
         parsed = PurePosixPath(path)
         windows_path = PureWindowsPath(path)
