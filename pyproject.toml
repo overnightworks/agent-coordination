@@ -29,6 +29,10 @@ cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The network guard loads from this configuration, not from tests/conftest.py,
+# so a test module run from outside tests/ with this file is guarded too.
+pythonpath = ["tests"]
+addopts = ["-p", "network_guard"]
 
 [tool.ruff]
 target-version = "py311"
