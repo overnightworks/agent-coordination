@@ -329,11 +329,11 @@ def _item_files_with_a_malformed_item(
     return {**_item_files(), f"{item_id}.md": content}
 
 
-def _blank_title_item() -> bytes:
+def _blank_title_item(parent: str | None = None) -> bytes:
     """The item `item new --title ""` wrote before issue #447: a complete
-    `[record]` whose only defect is its empty title."""
+    `[record]` whose only defect is its empty title, under `parent`."""
     return _state_ref_body(
-        _CHILD_A_PROJECTION, _record(title="", state="open", kind="task")
+        _CHILD_A_PROJECTION, _record(title="", state="open", kind="task", parent=parent)
     ).encode()
 
 
@@ -626,6 +626,11 @@ _MALFORMED_CONTENTS = (
         ),
         pytest.param(
             _blank_title_item(), "has a malformed agent-claim block", id="blank-record-title"
+        ),
+        pytest.param(
+            _blank_title_item(parent=CONTAINER_ID),
+            "has a malformed agent-claim block",
+            id="blank-record-title-under-a-readable-parent",
         ),
         pytest.param(b"\xff\xfe not utf-8", "is not valid UTF-8", id="not-utf8"),
         pytest.param(
