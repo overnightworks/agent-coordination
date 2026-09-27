@@ -18,7 +18,7 @@ that page writes is `specs/rule.spec.md`'s (RULE-01..09);
 `specs/output.spec.md` owns the `--json` envelope itself (OUT-nn: key
 order, `ok`, `message`) that wraps BOARD-11's own top-level keys.
 `--serve`'s own request/response wire contract is not specified here beyond
-the held page, its age, and its rebuilds (BOARD-46..51). `board`'s own ranking, scoring, and per-item
+the held page, its age, and its rebuilds (BOARD-46..52). `board`'s own ranking, scoring, and per-item
 field semantics (`score`, `priority_bucket`, `age_days`, ...) are
 pre-existing, untouched behaviour this lane does not re-derive into
 criteria; each item's own `actionable`/`actionable_reason` fields are the
@@ -130,7 +130,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-49] A client that hangs up mid-response leaves stderr empty; any other request error still prints its traceback.
 - [ ] [BOARD-50] The reload link's request rebuilds, then redirects (`303`) to the plain URL, no `reload` field, so a later plain refresh serves the held page without rebuilding (see E-BOARD-18).
 - [ ] [BOARD-51] A rebuild PIN-29 refuses (`specs/storage-pin.spec.md`) keeps the page last built and shows PIN-29's sentence beside its age.
-- [ ] [BOARD-52] A reload whose rebuild is refused, an unreachable remote included, still redirects (`303`), no traceback, to the held page showing the refusal beside its age (see E-BOARD-19).
+- [ ] [BOARD-52] A refused rebuild, an unreachable remote included, keeps its refusal: a reload still redirects (`303`), and each request shows the held page with it until a rebuild succeeds (see E-BOARD-19).
 
 ## Never
 
@@ -369,8 +369,8 @@ $ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:<port>/?t=<token>&r
 303
 ```
 
-`Location` is `/?t=<token>&refused=<sentence>`, the sentence
-`cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128): <git's detail>`
-URL-quoted. The redirected `GET` answers `200` with the held page, `vor 0h 2m`,
-and that sentence beside it; stderr stays empty. A reload once `origin`
-answers again rebuilds.
+`Location` is `/?t=<token>`. The redirected `GET`, and every plain one
+until a rebuild succeeds, answers `200` with the held page, `vor 0h 2m`,
+and beside it the sentence
+`cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128): <git's detail>`;
+stderr stays empty. A reload once `origin` answers again rebuilds.

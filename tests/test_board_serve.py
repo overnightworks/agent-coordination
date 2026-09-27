@@ -435,32 +435,40 @@ def test_the_reload_link_redirects_so_a_later_plain_refresh_does_not_rebuild(
     assert "Renamed item" not in plain_body
 
 
-def test_a_reload_the_unreachable_remote_refuses_keeps_the_held_page_and_names_the_refusal(
+def test_a_rebuild_the_unreachable_remote_refuses_keeps_the_held_page_naming_it_until_one_succeeds(
     served_board: ServedBoard,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Issue #481, BOARD-52: a reload whose rebuild cannot reach the remote
-    still answers `303` -- no traceback, no dropped connection -- and the
-    redirected page is the held one naming the refusal; a reload after the
-    remote answers again rebuilds."""
+    """Issue #481, BOARD-52: while the remote is unreachable, a ruling
+    click, a reload, the page each redirects to, and a plain refresh all
+    answer -- no traceback, no dropped connection -- with the held page
+    naming the refusal; a reload once the remote answers again rebuilds."""
     token = served_board.server.token
     refusal = "cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128)"
-    unreachable = _ConsistentForge()
 
-    def unreachable_store() -> tuple[board.Issue, ...]:
+    def unreachable_remote(_repository: forge.RepositoryId) -> FakeForge:
         raise protocol.ClaimError(refusal)
 
-    monkeypatch.setattr(unreachable, "list_open_board_issues", unreachable_store)
-    monkeypatch.setattr(github, "GitHubForge", lambda _repository: unreachable)
+    monkeypatch.setattr(github, "GitHubForge", unreachable_remote)
 
+    click = served_board.post_rule(
+        {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes"}
+    )
     offline_reload = served_board.get(token=token, reload=True)
-    assert offline_reload.status == 303
-    assert offline_reload.location is not None
-    assert parse_qs(urlsplit(offline_reload.location).query)["refused"] == [refusal]
-    held = served_board.get(token=token, refused=refusal).body.decode("utf-8")
-    assert html.escape(refusal) in held
-    assert "Plain item" in held
+    assert (click.status, offline_reload.status) == (303, 303)
+    assert click.location is not None
+    plain_location = f"/?t={token}"
+    assert offline_reload.location == plain_location
+    for answer in (
+        _request(served_board.server, "GET", click.location),
+        _request(served_board.server, "GET", plain_location),
+        served_board.get(token=token),
+    ):
+        page = answer.body.decode("utf-8")
+        assert answer.status == 200
+        assert html.escape(refusal) in page
+        assert "Plain item" in page
     assert capsys.readouterr().err == ""
 
     served_board.client.board_issues = (
@@ -469,7 +477,9 @@ def test_a_reload_the_unreachable_remote_refuses_keeps_the_held_page_and_names_t
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: served_board.client)
     back_online_reload = served_board.get(token=token, reload=True)
     assert back_online_reload.location == f"/?t={token}"
-    assert "Renamed item" in served_board.get(token=token).body.decode("utf-8")
+    back_online = served_board.get(token=token).body.decode("utf-8")
+    assert "Renamed item" in back_online
+    assert html.escape(refusal) not in back_online
 
 
 @dataclass(frozen=True)
