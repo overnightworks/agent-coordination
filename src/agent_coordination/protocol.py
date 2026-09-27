@@ -703,6 +703,17 @@ class PushRejectedError(ClaimError):
     """
 
 
+class UncertainWriteError(ClaimUnavailableError):
+    """A store write whose push was sent, but whose outcome the store cannot
+    tell (issue #494): the push's answer, or the re-read after its rejection,
+    was lost, or the write's own bookkeeping failed once it landed. The
+    remote may hold the write or not; only a later read knows. A write the
+    store saw refused -- a rejected push re-read without its `operation_id`,
+    then `apply` refusing or every retry exhausted -- wrote nothing and never
+    raises this. It says what went wrong in the underlying failure's own
+    words."""
+
+
 class ObjectId(str):
     """A runtime-validated 40-character lowercase hex git object id.
 

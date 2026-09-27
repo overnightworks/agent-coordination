@@ -3049,8 +3049,7 @@ class _StoreItemWriter:
     hashes the blob, `_commit` publishes it through the CAS transition.
     """
 
-    worktree: Path
-    canonical_remote: str
+    context: RunContext
 
     def write_item(
         self,
@@ -3084,7 +3083,7 @@ class _StoreItemWriter:
         return protocol.ItemWriteIntent(
             item_id=item_id,
             expected=expected,
-            new_oid=store.hash_blob(self.worktree, content),
+            new_oid=store.hash_blob(self.context.toplevel, content),
             operation_id=uuid.uuid4().hex,
             store_expected=store_expected,
         )
@@ -3092,11 +3091,8 @@ class _StoreItemWriter:
     def _commit(
         self, intent: protocol.ItemWriteIntent | protocol.ItemCloseIntent
     ) -> protocol.ObjectId:
-        new_state = store.commit_transition(
-            worktree=self.worktree,
-            remote=self.canonical_remote,
-            subject=store.TransitionSubject(f"write item {intent.item_id}"),
-            intent=intent,
+        new_state = self.context.transition(
+            store.TransitionSubject(f"write item {intent.item_id}"), intent
         )
         return new_state.items[intent.item_id]
 
@@ -3117,16 +3113,14 @@ def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
     caller-checkout snapshot observed before that worktree existed."""
     repository = context.repository_id
     default_branch = context.default_branch
-    worktree = context.toplevel
-    canonical_remote = context.canonical_remote
     state = context.observation
-    item_files = {} if state.tip is None else store.read_item_files(worktree, state.tip)
+    item_files = {} if state.tip is None else store.read_item_files(context.toplevel, state.tip)
     return state_board.StateRefBoard(
         repository=repository,
         default_branch=default_branch,
         item_files=item_files,
         item_oids=state.items,
-        writer=_StoreItemWriter(worktree, canonical_remote),
+        writer=_StoreItemWriter(context),
     )
 
 
@@ -4650,7 +4644,6 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     checkout_context = run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
     requested = _rescope_command(parsed, path_checkout, checkout_context)
     worktree = checkout_context.toplevel
-    canonical_remote = checkout_context.canonical_remote
     observed = checkout_context.observation
     _require_state_ref(observed)
     try:
@@ -4696,11 +4689,8 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
         operation_id=uuid.uuid4().hex,
         whole_reason=requested.whole_reason,
     )
-    new_state = store.commit_transition(
-        worktree=worktree,
-        remote=canonical_remote,
-        subject=_transition_subject("rescope", selected.identity, selected.branch),
-        intent=intent,
+    new_state = checkout_context.transition(
+        _transition_subject("rescope", selected.identity, selected.branch), intent
     )
     rescoped = new_state.claims[protocol.claim_key(selected.identity, selected.branch)]
     if parsed.json:
@@ -5056,15 +5046,16 @@ def _claim_write(
             parsed, default_branch=default_branch, directory=session.context.directory
         )
         plan = _checked_claim(requested, session)
-        worktree = session.context.toplevel
+        writer = session.context
     else:
         requested = _request(parsed, default_branch=default_branch, directory=worktree)
         plan = _checked_claim(requested, session, revision=requested.base)
+        writer = session.context.for_lane_worktree(worktree)
     if plan.refused:
         _refuse_claim(parsed.json, plan.target_issue, plan.checks)
         return 2
     _print_claim_checks(plan, as_json=parsed.json)
-    claimed, live = _committed_claim(plan, worktree=worktree)
+    claimed, live = _committed_claim(plan, writer)
     return _report_claim(plan, claimed, live, as_json=parsed.json)
 
 
@@ -5076,7 +5067,6 @@ class _ClaimPlan:
 
     requested: protocol.ClaimRequest
     observed: protocol.ClaimState
-    canonical_remote: str
     storage: body.Storage
     versioning: ScopeVersioning
     checks: tuple[SliceCheck, ...]
@@ -5144,14 +5134,12 @@ def _checked_claim(
         )
         requested = replace(requested, whole_reason=effective_whole)
     worktree = context.toplevel
-    canonical_remote = context.canonical_remote
     checks, target_issue, replayed = _claim_target_checks(
         session, requested, observed, _ClaimTargetContext(storage, worktree, open_by_number)
     )
     plan = _ClaimPlan(
         requested=requested,
         observed=observed,
-        canonical_remote=canonical_remote,
         storage=storage,
         versioning=versioning,
         checks=checks,
@@ -5172,37 +5160,18 @@ def _print_claim_checks(plan: _ClaimPlan, *, as_json: bool) -> None:
         print(check.render(), file=sys.stderr if as_json else sys.stdout)
 
 
-@dataclass
-class _WitnessedPush:
-    """The store's own `git push`, remembering that one was sent (issue
-    #479): the remote may accept a push even when its answer never comes
-    back, and a timed-out push may land after any read, so only the store
-    ever judges whether its claim was written. Once a push was sent,
-    `start` never undoes the worktree that claim may name (START-25)."""
-
-    sent: bool = False
-
-    def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
-        self.sent = True
-        store.GitPushTransport().push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
-
-
 def _committed_claim(
-    plan: _ClaimPlan, *, worktree: Path, transport: store.PushTransport | None = None
+    plan: _ClaimPlan, writer: RunContext
 ) -> tuple[protocol.ActiveClaim, tuple[protocol.ActiveClaim, ...]]:
-    """`claim`'s commit phase: the plan's one ledger write, made from
-    `worktree` through `transport` (the store's own push when omitted), or
-    the replayed claim it already names, with every live claim after it."""
+    """`claim`'s commit phase: the plan's one ledger write, made from the
+    checkout `writer` stands for, or the replayed claim it already names,
+    with every live claim after it."""
     if plan.replayed is not None:
         return plan.replayed, tuple(plan.observed.claims.values())
     requested = plan.requested
     try:
-        new_state = store.commit_transition(
-            worktree=worktree,
-            remote=plan.canonical_remote,
-            subject=_transition_subject("claim", requested.identity, requested.branch),
-            intent=plan.intent,
-            transport=transport,
+        new_state = writer.transition(
+            _transition_subject("claim", requested.identity, requested.branch), plan.intent
         )
     except protocol.ClaimConflictError as error:
         raise _named_claim_conflict(error, plan.storage) from error
@@ -5515,11 +5484,11 @@ def _check_build_and_claim(
     #479). Only a refusal between the build and the claim's push removes
     the build again: the trunk moved under another fetch meanwhile, the new
     worktree failing `claim`'s own checkout preconditions, or the ledger
-    refusing the write before it pushed -- a claim that landed after the
-    checks, a store it cannot reach. Once the push was sent the store alone
-    knows whether the claim was written, so a failure after it keeps the
-    worktree and says the outcome is uncertain (START-25). An interrupt or
-    an unexpected error is no refusal."""
+    refusing the write -- a claim that landed after the checks, a store it
+    cannot reach or that rejected every push. Once a push was sent the store
+    alone knows whether the claim was written: when it cannot tell, the
+    worktree stays and the outcome is named uncertain (START-25). An
+    interrupt or an unexpected error is no refusal."""
     trunk_ref = context.fetched_trunk_ref()
     trunk = checkout.trunk_commit(trunk_ref, directory=context.toplevel)
     # The main checkout observed afresh, never the observation the
@@ -5538,15 +5507,14 @@ def _check_build_and_claim(
     )
     _print_start_target(target)
     _print_claim_checks(plan, as_json=False)
-    push = _WitnessedPush()
     try:
         _validate_built_worktree(requested, target, check_context)
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
-        claimed, claims = _committed_claim(plan, worktree=target.path, transport=push)
+        claimed, claims = _committed_claim(plan, check_context.for_lane_worktree(target.path))
+    except protocol.UncertainWriteError as error:
+        return _report_uncertain_start_claim(error, target)
     except protocol.ClaimError as error:
-        if push.sent:
-            return _report_uncertain_start_claim(error, target)
         reason = (
             ClaimReason.CLAIM_CONFLICT
             if isinstance(error, _ClaimConflictError)
@@ -5576,10 +5544,10 @@ def _validate_built_worktree(
         ) from error
 
 
-def _report_uncertain_start_claim(error: protocol.ClaimError, target: _StartTarget) -> int:
-    """A claim write that failed after its push was sent: the store alone
-    knows whether the claim landed, so the worktree it may name stays, and
-    the next `start` resumes whichever it finds (START-25)."""
+def _report_uncertain_start_claim(error: protocol.UncertainWriteError, target: _StartTarget) -> int:
+    """A claim write whose sent push the store could not judge: the claim
+    may have landed, so the worktree it may name stays, and the next
+    `start` resumes whichever it finds (START-25)."""
     status = _refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
     print(
         f"the claim's push was sent, its outcome unknown; worktree {target.path} and "
@@ -5665,8 +5633,6 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         return _cmd_release_landed(parsed, session, identity, storage)
     merged = None if parsed.merged is None else _github_pull_request_number(parsed.merged)
     outcome = _release_outcome(merged, parsed.abandoned)
-    worktree = context.toplevel
-    canonical_remote = context.canonical_remote
     observed = context.observation
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(
@@ -5686,7 +5652,7 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         if pending_close is not None:
             # Runs before the release transition below (issue #359 R1): a
             # close failure here -- a transient forge error, most often --
-            # leaves this function raising before `store.commit_transition`
+            # leaves this function raising before the release transition
             # ever runs, so the claim it would have released stays exactly
             # as live as it was, and `main`'s own `ClaimError` handler
             # prints the failure as the one sentence the operator sees.
@@ -5699,13 +5665,9 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         operation_id=uuid.uuid4().hex,
         coordinator_override=parsed.coordinator_override,
     )
-    new_state = store.commit_transition(
-        worktree=worktree,
-        remote=canonical_remote,
-        subject=_transition_subject(
-            "release", resolved.selected.identity, resolved.selected.branch
-        ),
-        intent=intent,
+    new_state = context.transition(
+        _transition_subject("release", resolved.selected.identity, resolved.selected.branch),
+        intent,
     )
     # The run already fetched the canonical remote and asked the forge's
     # default branch to verify the merge, so this ref costs no read.
@@ -6331,13 +6293,9 @@ def _cmd_release_landed(
         operation_id=uuid.uuid4().hex,
         coordinator_override=parsed.coordinator_override,
     )
-    new_state = store.commit_transition(
-        worktree=worktree,
-        remote=context.canonical_remote,
-        subject=_transition_subject(
-            "release", resolved.selected.identity, resolved.selected.branch
-        ),
-        intent=intent,
+    new_state = context.transition(
+        _transition_subject("release", resolved.selected.identity, resolved.selected.branch),
+        intent,
     )
     client.mark_landed(write, new_oid)
     landing, hint = _landing_report(context, identity, new_state, storage, trunk_ref)

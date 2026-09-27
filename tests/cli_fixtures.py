@@ -12,7 +12,6 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
 from board_fixtures import BASE
@@ -310,8 +309,8 @@ CountedReads = tuple[dict[Path | None, int], dict[Path | None, int], dict[Path, 
 class ContextReads:
     """Every toplevel and board-configuration read one command made, keyed
     by the directory it was read from (issue #457), and every observation of
-    `refs/aco/state` outside a transition, keyed by the worktree it was
-    fetched into (issue #477)."""
+    `refs/aco/state`, a transition's own included, keyed by the worktree it
+    was fetched into (issues #477, #494)."""
 
     toplevels: Counter[Path | None] = field(default_factory=Counter)
     configs: Counter[Path | None] = field(default_factory=Counter)
@@ -330,29 +329,18 @@ class ContextReads:
 def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
     """Counts every `rev-parse` that asks `--show-toplevel` -- alone, or
     combined with other queries as `resolve_path_checkout` asks it -- the
-    `board.toml` tracked check, and every `store.fetch_state` a transition
-    does not make itself (its CAS reads stay outside the observation budget
-    until #418 B2), through whatever git and store fakes the test already
-    installed, so it is called after the arrangement and before the command."""
+    `board.toml` tracked check, and every `store.fetch_state`, a
+    transition's own included (issue #494), through whatever git and store
+    fakes the test already installed, so it is called after the arrangement
+    and before the command."""
     reads = ContextReads()
     git_output = checkout._git_output
     path_is_tracked = checkout.path_is_tracked
     fetch_state = store.fetch_state
-    commit_transition = store.commit_transition
-    in_transition = False
 
     def counting_fetch_state(*, worktree: Path, remote: str) -> ClaimState:
-        if not in_transition:
-            reads.observations[worktree] += 1
+        reads.observations[worktree] += 1
         return fetch_state(worktree=worktree, remote=remote)
-
-    def uncounted_transition(**arguments: Any) -> ClaimState:
-        nonlocal in_transition
-        in_transition = True
-        try:
-            return commit_transition(**arguments)
-        finally:
-            in_transition = False
 
     def counting_git_output(arguments: list[str], *, directory: Path | None = None) -> str:
         if arguments[0] == "rev-parse" and "--show-toplevel" in arguments:
@@ -367,5 +355,12 @@ def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
     monkeypatch.setattr(checkout, "_git_output", counting_git_output)
     monkeypatch.setattr(checkout, "path_is_tracked", counting_path_is_tracked)
     monkeypatch.setattr(store, "fetch_state", counting_fetch_state)
-    monkeypatch.setattr(store, "commit_transition", uncounted_transition)
     return reads
+
+
+def fresh_observation(worktree: Path, remote: Path | str) -> store.Observation:
+    """`worktree`'s own fresh read of the state ref over `remote`, the
+    observation a command hands its transition (issue #494)."""
+    return store.Observation(
+        worktree, str(remote), store.fetch_state(worktree=worktree, remote=str(remote))
+    )

@@ -26,6 +26,8 @@ exit `2`, exactly as `specs/claim-record.spec.md` already documents.
 | every push rejected, ref never moves | CAS-15* | CAS-15 | — |
 | every push rejected, ref keeps moving | CAS-15* | CAS-16 | — |
 | push rejected once then sticks | CAS-15* | CAS-17 | — |
+| a sent push whose outcome the store cannot tell | — | CAS-56 | — |
+| a rejected push re-read without its `operation_id`, then refused | — | CAS-57 | — |
 | worktree stamp not an ancestor of the fetched tip | — | — | CAS-11 |
 | ref previously observed, now absent | CAS-12 | CAS-12 | CAS-12 |
 | `schema.toml` malformed or unsupported | — | — | CAS-22..26 |
@@ -87,11 +89,14 @@ transition), and which of the three causes applies.
 - [ ] [CAS-15] 32 stuck pushes refuse `refs/aco/state rejected 32 pushes to <remote> without the ref ever moving: a stale lock or missing push rights`, fix `check <remote>'s refs/aco/state.lock` (see E-CAS-03).
 - [ ] [CAS-16] A transition rejected 32 times while the ref keeps moving refuses `refs/aco/state moved 32 times while retrying: another writer on <remote> keeps landing first; retry the command`.
 - [ ] [CAS-17] A moved-then-stuck ref refuses `refs/aco/state moved 1 time while retrying, then rejected 31 pushes to <remote> without the ref moving after it last moved`, fix `refs/aco/state.lock` (see E-CAS-04).
+- [ ] [CAS-56] A sent push the store cannot judge -- no answer, a failed re-read after a rejection, a failed lineage stamp after a landing -- refuses as an uncertain write, in that failure's own sentence.
+- [ ] [CAS-57] A rejected push re-read without its own `operation_id`, then refused or exhausted (CAS-15..17), wrote nothing and is no uncertain write.
 
 ### Work budget
 
 - [ ] [CAS-18] `status`'s two store reads (a fetch, then every claim's age) make one `ls-remote`, `fetch`, `ls-tree`, `archive`, `log` call and four `rev-parse` calls, ten live claims or three hundred alike.
-- [ ] [CAS-53] Outside a write's own compare-and-swap, a command observes the ref at most once per checkout (except CAS-54, CAS-55), never to judge its own write; its board and checks read that snapshot.
+- [ ] [CAS-53] A command observes the ref at most once per checkout (except CAS-54, CAS-55), never to judge its own write; its board, checks, and first write read that snapshot.
+- [ ] [CAS-58] A later write of the same command applies to the state the write before it wrote; a write reads the ref afresh only after a rejected push, one `ls-remote` and one `fetch` each.
 - [ ] [CAS-54] `board --serve` observes it once at startup, per page-rebuilding request, and per `state-ref` ruling click; `land` peeks it in its preflight and observes it afresh to release after its merge.
 - [ ] [CAS-55] `start` observes it afresh in the main checkout after fetching the trunk, so its claim's checks read the item as it stands then (START-22); never again to judge its push (START-25).
 
