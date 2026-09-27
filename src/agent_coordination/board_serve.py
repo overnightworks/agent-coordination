@@ -236,8 +236,13 @@ class _BoardRequestHandler(BaseHTTPRequestHandler):
             # then redirect to the plain URL so the address bar drops
             # `reload=1` -- otherwise a later plain browser refresh (F5) of
             # the same address keeps rebuilding, the 19-second page this
-            # item exists to remove.
-            server.render_page(refused, True)
+            # item exists to remove. A rebuild the store refuses -- an
+            # unreachable remote included (BOARD-52) -- keeps the held page
+            # and redirects with the refusal in place of the request's own.
+            try:
+                server.render_page(refused, True)
+            except protocol.ClaimError as refusal:
+                refused = str(refusal)
             location = _plain_location(server.token, refused)
             self._respond(HTTPStatus.SEE_OTHER, b"", location=location)
             return

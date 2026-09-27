@@ -435,6 +435,43 @@ def test_the_reload_link_redirects_so_a_later_plain_refresh_does_not_rebuild(
     assert "Renamed item" not in plain_body
 
 
+def test_a_reload_the_unreachable_remote_refuses_keeps_the_held_page_and_names_the_refusal(
+    served_board: ServedBoard,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #481, BOARD-52: a reload whose rebuild cannot reach the remote
+    still answers `303` -- no traceback, no dropped connection -- and the
+    redirected page is the held one naming the refusal; a reload after the
+    remote answers again rebuilds."""
+    token = served_board.server.token
+    refusal = "cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128)"
+    unreachable = _ConsistentForge()
+
+    def unreachable_store() -> tuple[board.Issue, ...]:
+        raise protocol.ClaimError(refusal)
+
+    monkeypatch.setattr(unreachable, "list_open_board_issues", unreachable_store)
+    monkeypatch.setattr(github, "GitHubForge", lambda _repository: unreachable)
+
+    offline_reload = served_board.get(token=token, reload=True)
+    assert offline_reload.status == 303
+    assert offline_reload.location is not None
+    assert parse_qs(urlsplit(offline_reload.location).query)["refused"] == [refusal]
+    held = served_board.get(token=token, refused=refusal).body.decode("utf-8")
+    assert html.escape(refusal) in held
+    assert "Plain item" in held
+    assert capsys.readouterr().err == ""
+
+    served_board.client.board_issues = (
+        replace(served_board.client.board_issues[0], title="Renamed item"),
+    )
+    monkeypatch.setattr(github, "GitHubForge", lambda _repository: served_board.client)
+    back_online_reload = served_board.get(token=token, reload=True)
+    assert back_online_reload.location == f"/?t={token}"
+    assert "Renamed item" in served_board.get(token=token).body.decode("utf-8")
+
+
 @dataclass(frozen=True)
 class _CountedServe:
     """One storage's served board for the per-request count: the repository

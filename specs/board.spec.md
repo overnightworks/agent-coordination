@@ -56,7 +56,7 @@ included.
 | an already-ruled `[[expectation]]` line | — | BOARD-36, BOARD-37, BOARD-38 | BOARD-36, BOARD-37, BOARD-38 |
 | `--new-token` given without `--serve` | BOARD-39, BOARD-43 | BOARD-39 | — |
 | the token file's own content, or its directory's mode | — | — | BOARD-40, BOARD-41 |
-| a repeated page request, a ruling click, or the reload link | — | — | BOARD-46, BOARD-47, BOARD-48, BOARD-50, BOARD-51 |
+| a repeated page request, a ruling click, or the reload link | — | — | BOARD-46, BOARD-47, BOARD-48, BOARD-50, BOARD-51, BOARD-52 |
 | a client hanging up mid-response | — | — | BOARD-49 |
 
 ## No output mode
@@ -130,6 +130,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-49] A client that hangs up mid-response leaves stderr empty; any other request error still prints its traceback.
 - [ ] [BOARD-50] The reload link's request rebuilds, then redirects (`303`) to the plain URL, no `reload` field, so a later plain refresh serves the held page without rebuilding (see E-BOARD-18).
 - [ ] [BOARD-51] A rebuild PIN-29 refuses (`specs/storage-pin.spec.md`) keeps the page last built and shows PIN-29's sentence beside its age.
+- [ ] [BOARD-52] A reload whose rebuild is refused, an unreachable remote included, still redirects (`303`), no traceback, to the held page showing the refusal beside its age (see E-BOARD-19).
 
 ## Never
 
@@ -357,3 +358,19 @@ $ curl -s 'http://127.0.0.1:<port>/?t=<token>'
 A request to the link's URL rebuilds the page, then answers `303` with
 `Location: /?t=<token>` -- no `reload` field, so a later plain refresh of
 that address does not rebuild -- and the redirected `GET` shows `vor 0h 0m`.
+
+### E-BOARD-19 — a reload with the remote unreachable keeps the held page
+
+Setup: bare-remote, a running `aco board --serve` whose page was built two
+minutes ago, then `origin` made unreachable
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:<port>/?t=<token>&reload=1'
+303
+```
+
+`Location` is `/?t=<token>&refused=<sentence>`, the sentence
+`cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128): <git's detail>`
+URL-quoted. The redirected `GET` answers `200` with the held page, `vor 0h 2m`,
+and that sentence beside it; stderr stays empty. A reload once `origin`
+answers again rebuilds.
