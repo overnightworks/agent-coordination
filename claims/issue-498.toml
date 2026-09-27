@@ -1,0 +1,8 @@
+claim_id = "363e5f5ae8f14df89fc307e4c6a7fd1e"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "0005e0b3956be561709428356adc3cfdd91fb52c"
+branch = "claude/issue-498-start-certain-refusal"
+scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/ref-store-cas.spec.md", "specs/start.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "src/agent_coordination/store.py", "tests/cli_fixtures.py", "tests/test_cli.py", "tests/test_store.py"]
+opened_commit = "7cbe590ed0150c65a4f8646567dcbe107f65614d"
+whole_reason = "start räumt auf, wenn der Store sicher sagt, dass nichts geschrieben wurde, und behält den Build nur bei ungewissem Ausgang"
