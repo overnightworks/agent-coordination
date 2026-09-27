@@ -1,0 +1,8 @@
+claim_id = "16f9f23ba00f424f97f431248e8e7384"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "6cc9af4e1007dd462a6c4b95ce233f0247ca08bb"
+branch = "claude/issue-546-post-write-hint"
+scope = ["scripts/test_budget_ratchet.txt", "specs/item.spec.md", "specs/land.spec.md", "specs/landing-grammar.spec.md", "specs/release.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/state_board.py", "tests/test_cli.py", "tests/test_state_board.py"]
+opened_commit = "1063b2f4eb5c9203934c466096a8e0d64a3d87d5"
+whole_reason = "the one post-write hint, its runnable advice and neutral wording, the state-ref repeated-blocker refusal it names, and the result types that carry it"
