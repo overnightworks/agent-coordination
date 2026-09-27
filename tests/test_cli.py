@@ -16510,16 +16510,29 @@ _UNTRACKED_BOARD_CONFIG_ERROR = (
     [
         pytest.param(["bootstrap"], id="bootstrap"),
         pytest.param(["board", "--json"], id="board"),
+        pytest.param(["claim", "1", "--scope", "README.md"], id="claim-ahead-of-clm-01"),
     ],
 )
 def test_untracked_board_config_refuses_every_store_command_by_name(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], arguments: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arguments: list[str],
 ) -> None:
     """Issue #315: an absent, untracked, or ignored `.agent-claim/board.toml`
     no longer reads as `storage = "github"`'s silent default -- `bootstrap`
     (which never resolves a forge) and `board` (which does, through
     `_LazyForge`) both refuse by the same sentence, naming the repair,
-    before either does any other work."""
+    before either does any other work. `claim` in the main checkout on
+    `main` refuses it ahead of CLM-01, since only the configuration names
+    the canonical remote whose recorded default branch CLM-01 judges
+    (CLM-30, issue #490)."""
+    repository, _remote = _real_repository_with_bare_remote(tmp_path)
+    (repository / "README.md").write_text("hello\n")
+    _real_git(repository, "add", "README.md")
+    _real_git(repository, "commit", "-q", "-m", "initial")
+    _push_repository_trunk(repository, "origin")
+    monkeypatch.chdir(repository)
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(arguments)
