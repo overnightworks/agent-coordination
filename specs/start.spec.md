@@ -65,7 +65,7 @@ fetched commit, then builds the worktree from the trunk: such a refusal builds n
 Only a refusal between the build and the claim's one write -- another claim landed after the checks,
 the store could not be reached, or another fetch moved the trunk so the worktree stands on a commit
 the checks never saw -- removes what this call built (START-18); an interrupt, or a failure once the
-claim is written, removes nothing.
+claim's push went out, whether or not its answer came back, removes nothing.
 
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.

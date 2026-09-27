@@ -5125,16 +5125,18 @@ def _print_claim_checks(plan: _ClaimPlan, *, as_json: bool) -> None:
 
 @dataclass
 class _WitnessedPush:
-    """The store's own `git push`, remembering that one landed (issue #479):
-    a failure `store.commit_transition` raises after that -- writing its
-    lineage stamp -- leaves the claim written, so `start` never undoes the
-    worktree that claim names."""
+    """The store's own `git push`, remembering that one was sent (issue
+    #479): the remote may have accepted it even when its answer never came
+    back -- a lost response the store's own search then fails to settle, a
+    timeout -- or `store.commit_transition` may fail after it landed, writing
+    its lineage stamp. Either way the claim may be written, so `start` never
+    undoes the worktree that claim names."""
 
-    landed: bool = False
+    sent: bool = False
 
     def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
+        self.sent = True
         store.GitPushTransport().push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
-        self.landed = True
 
 
 def _committed_claim(
@@ -5464,9 +5466,9 @@ def _check_build_and_claim(
     again: the new worktree failing `claim`'s own checkout preconditions
     (the trunk moved under another fetch meanwhile), or the ledger refusing
     the write -- a claim that landed after the checks, a store it cannot
-    reach. An interrupt or an unexpected error is no refusal, and a failure
-    once the claim is written leaves the worktree standing with the claim
-    that names it."""
+    reach before its push. An interrupt or an unexpected error is no
+    refusal, and a failure once the claim's push was sent leaves the
+    worktree standing with the claim that may name it."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
     # A second context of the main checkout, never the one whose observation
     # the item-existence read already holds: the fetch above may take a
@@ -5492,9 +5494,11 @@ def _check_build_and_claim(
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(plan, worktree=target.path, transport=push)
     except _ClaimConflictError as error:
+        # The store raises a conflict only from a state its own search just
+        # showed every push of this call absent from: nothing was written.
         return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     except protocol.ClaimError as error:
-        if push.landed:
+        if push.sent:
             raise
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)

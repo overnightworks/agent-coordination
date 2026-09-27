@@ -2853,17 +2853,28 @@ def test_start_under_state_ref_claims_the_worktree_it_builds(
     assert claim.scope == ("src/x.py",)
 
 
+@pytest.mark.parametrize(
+    ("answer_lost", "failing_seam"),
+    [
+        pytest.param(False, "_write_lineage_stamp", id="lineage-stamp-fails-after-the-push"),
+        pytest.param(True, "fetch_state", id="answer-lost-and-its-search-fails"),
+    ],
+)
 def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_claims_push(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    answer_lost: bool,
+    failing_seam: str,
 ) -> None:
     """Issue #479 (head ruling 1c): once the claim's push landed, a failure
-    the write still raises -- its lineage stamp -- is reported, never
-    treated as a refusal: the worktree and branch the live claim names
-    stay."""
+    the write still raises -- its lineage stamp, or the search for a push
+    whose answer was lost -- is reported, never treated as a refusal: the
+    worktree and branch the live claim names stay."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     landed: list[protocol.ObjectId] = []
     real_push = store.GitPushTransport.push
-    real_stamp = store._write_lineage_stamp
+    real_seam = getattr(store, failing_seam)
 
     def push_and_note(
         transport: store.GitPushTransport,
@@ -2875,20 +2886,22 @@ def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_cla
     ) -> None:
         real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
         landed.append(new_oid)
+        if answer_lost:
+            raise protocol.PushRejectedError("fatal: the remote end hung up unexpectedly")
 
-    def stamp_fails_once_landed(worktree: Path, tip: protocol.ObjectId) -> None:
+    def seam_fails_once_landed(*arguments: object, **keywords: object) -> object:
         if landed:
             raise protocol.ClaimError("fatal: not a git repository")
-        real_stamp(worktree, tip)
+        return real_seam(*arguments, **keywords)
 
     monkeypatch.setattr(store.GitPushTransport, "push", push_and_note)
-    monkeypatch.setattr(store, "_write_lineage_stamp", stamp_fails_once_landed)
+    monkeypatch.setattr(store, failing_seam, seam_fails_once_landed)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
     assert (status, capsys.readouterr().err) == (2, "ERROR: fatal: not a git repository\n")
-    monkeypatch.setattr(store, "_write_lineage_stamp", real_stamp)
+    monkeypatch.setattr(store, failing_seam, real_seam)
     live = store.fetch_state(worktree=repo, remote="origin").claims
     assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) in live
     assert checkout.resolve_path_checkout(worktree) is not None
