@@ -1,8 +1,0 @@
-claim_id = "28878968f3de4f1aa11ab2b8f78a42bb"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "c529cb160c736cf9b11c916fb6300a1cedd0f9cf"
-branch = "claude/issue-479-start-checks-first"
-scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/ref-store-cas.spec.md", "specs/start.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_state_board.py"]
-opened_commit = "f03f49f82f067d3bfc4074877f6a1af3148859c5"
-whole_reason = "start prüft vor dem Anlegen, legt am richtigen Ort an und erkennt seinen eigenen Worktree"
