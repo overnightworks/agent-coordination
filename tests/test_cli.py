@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import tomllib
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -6786,19 +6787,23 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
             for line_break in ("\n", "\r", "\f", "\u0085", "\u2028", "\u2029")
         ),
         "Line one\n",
+        "Retitle\x1b]0;pwned\x07",
+        "Clear\x1b[2J",
+        "Rubout\x7f",
     ],
-    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF"],
+    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF", "OSC-BEL", "CSI", "DEL"],
 )
-def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
+def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_a_cut(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     title: str,
 ) -> None:
-    """Issues #513 line 2 and #517 line 3: a first uncut row whose title,
-    stored before `item edit` refused it, holds any character that splits a
-    line would split the printed `cut` over two lines, so `next` prints no
-    `cut` for it and names the row to shorten instead."""
+    """Issues #513 line 2, #517 line 3 and #532 line 2: a first uncut row
+    whose title, stored before `item edit` refused it, holds a line break or
+    another control character would split the printed `cut` over two lines
+    or hand it to the terminal raw, so `next` prints no `cut` for it and
+    names the row to fix instead."""
     _real_state_ref_repository(
         monkeypatch,
         tmp_path,
@@ -6810,10 +6815,182 @@ def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
 
     assert exit_code == 3
     assert (
-        f"\n{items.format_item_id(50)}: slice row 1 title carries a line break; "
-        "shorten it to one line\n"
+        f"\n{items.format_item_id(50)}: slice row 1 title holds a line break or control "
+        "character; make it one printable line\n"
     ) in out
     assert "cut" not in out
+
+
+def _raw_terminal_controls(text: str) -> set[str]:
+    """Every character in printed `text` a terminal would act on rather than
+    show, apart from the newlines that end its own lines and the TAB
+    `terminal_text` keeps."""
+    return {
+        character
+        for character in text
+        if character not in "\n\t"
+        and (unicodedata.category(character) == "Cc" or character in "\u2028\u2029")
+    }
+
+
+def _hostile_work_item_board() -> dict[int, str]:
+    """A top work item carrying a window-retitling OSC, a TAB, U+2028 and an
+    Umlaut in its title and a screen-clearing CSI and DEL in its `Next`
+    line, beside a cuttable container whose slice title tries to close its
+    prose quote and fake a `; run` segment."""
+    return {
+        10: _state_ref_item_body(
+            "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe",
+            next="wipe \x1b[2J then \x7f Größe",
+            scope=["docs/a.md"],
+        ),
+        41: _state_ref_container_body("Epic", 'Größe"; run aco claim 9 \\'),
+    }
+
+
+def _hostile_cut_slice_board() -> dict[int, str]:
+    """A cuttable container, the top action, whose `Next` clears the screen."""
+    return {
+        41: _state_ref_item_body(
+            "Epic",
+            kind=body.ItemKind.CONTAINER,
+            next="cut \x1b[2J now",
+            slice=[{"index": 1, "title": "Größe"}],
+        )
+    }
+
+
+def _hostile_check_container_board() -> dict[int, str]:
+    """A slice-less container, the top action, whose `Next` retitles the
+    window."""
+    return {
+        41: _state_ref_item_body(
+            "Epic", kind=body.ItemKind.CONTAINER, next="check \x1b]0;pwned\x07 done_when"
+        )
+    }
+
+
+def _hostile_frozen_board() -> dict[int, str]:
+    """An item frozen on a window-retitling trigger beside a workable one."""
+    return {
+        10: _state_ref_item_body("Workable", scope=["docs/a.md"]),
+        42: _state_ref_item_body(
+            "Frozen",
+            frozen_until={"trigger": "thaw\x1b]0;pwned\x07", "ruled_on": date(2026, 9, 27)},
+        ),
+    }
+
+
+@pytest.fixture
+def hostile_next_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A state-ref board of `_hostile_work_item_board`'s items."""
+    _real_state_ref_repository(monkeypatch, tmp_path, _hostile_work_item_board())
+
+
+@pytest.mark.parametrize(
+    ("item_bodies", "escaped_line"),
+    [
+        pytest.param(
+            _hostile_work_item_board,
+            f'{items.format_item_id(41)}: cut slice "Größe\\"; run aco claim 9 \\\\"; run ',
+            id="work-item-top-and-quoted-skipped-slice",
+        ),
+        pytest.param(
+            _hostile_cut_slice_board,
+            f"cut_slice {items.format_item_id(41)}: cut \\x1b[2J now\n",
+            id="cut-slice-top",
+        ),
+        pytest.param(
+            _hostile_check_container_board,
+            "Next: check \\x1b]0;pwned\\x07 done_when\n",
+            id="check-container-top",
+        ),
+        pytest.param(
+            _hostile_frozen_board,
+            f"{items.format_item_id(42)}: frozen: thaw\\x1b]0;pwned\\x07\n",
+            id="frozen-skipped",
+        ),
+    ],
+)
+def test_state_ref_next_text_hands_the_terminal_no_raw_control_character(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    item_bodies: Callable[[], dict[int, str]],
+    escaped_line: str,
+) -> None:
+    """Issue #532 lines 1 and 2: whatever `next` prints -- a work item, a
+    `cut_slice` or `check_container` action, a `SKIPPED` reason -- carries
+    no control character a terminal would act on, each shown as its escape,
+    and a slice title in `SKIPPED` prose sits inside a quote its own `"`
+    cannot close."""
+    _real_state_ref_repository(monkeypatch, tmp_path, item_bodies())
+
+    exit_code = issue_claim.main(["next"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert _raw_terminal_controls(out) == set()
+    assert f"\n{escaped_line}" in f"\n{out}"
+
+
+@pytest.mark.usefixtures("hostile_next_board")
+def test_state_ref_next_json_shares_the_quoted_skipped_prose(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #532 line 3 (head ruling of 27.09.2026): the `SKIPPED` reason is
+    prose text and `--json` share, so its quoted slice title carries `"` and
+    `\\` escaped."""
+    issue_claim.main(["next", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    reasons = {skipped["number"]: skipped["reason"] for skipped in payload["skipped"]}
+    assert reasons[items.format_item_id(41)].startswith(
+        'cut slice "Größe\\"; run aco claim 9 \\\\"; run '
+    )
+
+
+def _printed_title_and_next(out: str) -> tuple[str, str]:
+    action_line, next_line = out.splitlines()[:2]
+    return action_line.split(": ", 1)[1], next_line.removeprefix("Next: ")
+
+
+def _json_title_and_next(out: str) -> tuple[str, str]:
+    payload = json.loads(out)
+    return payload["title"], payload["next"]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "read_title_and_next", "shown"),
+    [
+        pytest.param(
+            ["next"],
+            _printed_title_and_next,
+            ("evil\\x1b]0;pwned\\x07\tÜber\\u2028Größe", "wipe \\x1b[2J then \\x7f Größe"),
+            id="text-escapes-controls",
+        ),
+        pytest.param(
+            ["next", "--json"],
+            _json_title_and_next,
+            ("evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe", "wipe \x1b[2J then \x7f Größe"),
+            id="json-as-stored",
+        ),
+    ],
+)
+@pytest.mark.usefixtures("hostile_next_board")
+def test_state_ref_next_shows_foreign_title_and_next_line_as_its_format_carries_them(
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+    read_title_and_next: Callable[[str], tuple[str, str]],
+    shown: tuple[str, str],
+) -> None:
+    """Issue #532 lines 1 and 3: text shows each control character and
+    U+2028 as its printable escape, TAB and the Umlaut as they are;
+    `--json` leaves escaping to JSON, so a reader gets both back exactly as
+    stored."""
+    issue_claim.main(arguments)
+
+    assert read_title_and_next(capsys.readouterr().out) == shown
 
 
 def test_state_ref_next_claim_in_a_skipped_reason_runs_past_a_higher_ranked_item(
