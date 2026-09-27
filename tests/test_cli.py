@@ -6844,9 +6844,10 @@ def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_
 
 
 def _raw_terminal_controls(text: str) -> set[str]:
-    """Every character of issue #538's ruled display-control set in printed
-    `text`, apart from the newlines that end its own lines: C0 but TAB, DEL,
-    C1, U+2028/2029, the bidi controls and the zero-width characters, by
+    """Every character of issues #538 and #540's ruled display-control set in
+    printed `text`, apart from the newlines that end its own lines: C0 but
+    TAB, DEL, C1, U+2028/2029, the bidi controls, the Arabic letter mark,
+    the zero-width characters, the word joiner and the tag characters, by
     code point -- stated here rather than asked of
     `protocol.is_display_control`, so a narrowed predicate cannot narrow
     this check with it."""
@@ -6857,10 +6858,13 @@ def _raw_terminal_controls(text: str) -> set[str]:
         0x2029,
         0x200E,
         0x200F,
+        0x061C,
         *range(0x202A, 0x202F),
         *range(0x2066, 0x206A),
         *range(0x200B, 0x200E),
+        0x2060,
         0xFEFF,
+        *range(0xE0000, 0xE0080),
     }
     return {character for character in text if ord(character) in ruled_code_points}
 
@@ -6868,13 +6872,15 @@ def _raw_terminal_controls(text: str) -> set[str]:
 def _hostile_work_item_board() -> dict[int, str]:
     """A top work item carrying a window-retitling OSC, a TAB, U+2028, an
     Umlaut, a bidi override (RLO), a bidi isolate (LRI), a zero-width space,
-    a C1 CSI and an NBSP in its title and a screen-clearing CSI and DEL in
-    its `Next` line, beside a cuttable container whose slice title tries to
-    close its prose quote and fake a `; run` segment."""
+    a C1 CSI, an NBSP, an Arabic letter mark, a word joiner and a tag
+    character in its title and a screen-clearing CSI and DEL in its `Next`
+    line, beside a cuttable container whose slice title tries to close its
+    prose quote and fake a `; run` segment."""
     return {
         10: _state_ref_item_body(
             "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe\N{RIGHT-TO-LEFT OVERRIDE}RLO"
-            "\N{LEFT-TO-RIGHT ISOLATE}LRI\N{ZERO WIDTH SPACE}ZWSP\x9bCSI\N{NO-BREAK SPACE}NBSP",
+            "\N{LEFT-TO-RIGHT ISOLATE}LRI\N{ZERO WIDTH SPACE}ZWSP\x9bCSI\N{NO-BREAK SPACE}NBSP"
+            "\N{ARABIC LETTER MARK}ALM\N{WORD JOINER}WJ\N{TAG LATIN CAPITAL LETTER A}TAG",
             next="wipe \x1b[2J then \x7f Größe",
             scope=["docs/a.md"],
         ),
@@ -7003,7 +7009,9 @@ def _json_title_and_next(out: str) -> tuple[str, str]:
             (
                 "evil\\x1b]0;pwned\\x07\tÜber\N{REVERSE SOLIDUS}u2028Größe"
                 "\N{REVERSE SOLIDUS}u202eRLO\N{REVERSE SOLIDUS}u2066LRI"
-                "\N{REVERSE SOLIDUS}u200bZWSP\\x9bCSI\N{NO-BREAK SPACE}NBSP",
+                "\N{REVERSE SOLIDUS}u200bZWSP\\x9bCSI\N{NO-BREAK SPACE}NBSP"
+                "\N{REVERSE SOLIDUS}u061cALM\N{REVERSE SOLIDUS}u2060WJ"
+                "\N{REVERSE SOLIDUS}U000e0041TAG",
                 "wipe \\x1b[2J then \\x7f Größe",
             ),
             id="text-escapes-controls",
@@ -7013,7 +7021,8 @@ def _json_title_and_next(out: str) -> tuple[str, str]:
             _json_title_and_next,
             (
                 "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe\N{RIGHT-TO-LEFT OVERRIDE}RLO"
-                "\N{LEFT-TO-RIGHT ISOLATE}LRI\N{ZERO WIDTH SPACE}ZWSP\x9bCSI\N{NO-BREAK SPACE}NBSP",
+                "\N{LEFT-TO-RIGHT ISOLATE}LRI\N{ZERO WIDTH SPACE}ZWSP\x9bCSI\N{NO-BREAK SPACE}NBSP"
+                "\N{ARABIC LETTER MARK}ALM\N{WORD JOINER}WJ\N{TAG LATIN CAPITAL LETTER A}TAG",
                 "wipe \x1b[2J then \x7f Größe",
             ),
             id="json-as-stored",
@@ -7027,9 +7036,9 @@ def test_state_ref_next_shows_foreign_title_and_next_line_as_its_format_carries_
     read_title_and_next: Callable[[str], tuple[str, str]],
     shown: tuple[str, str],
 ) -> None:
-    """Issues #532 lines 1 and 3, #538 line 2: text shows each control
-    character, U+2028, RLO, LRI and ZWSP as its printable escape, TAB, NBSP
-    and the Umlaut as they are;
+    """Issues #532 lines 1 and 3, #538 line 2, #540 line 2: text shows each
+    control character, U+2028, RLO, LRI, ZWSP, U+061C, U+2060 and a tag
+    character as its printable escape, TAB, NBSP and the Umlaut as they are;
     `--json` leaves escaping to JSON, so a reader gets both back exactly as
     stored."""
     issue_claim.main(arguments)

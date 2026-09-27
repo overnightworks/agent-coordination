@@ -214,7 +214,8 @@ class RescopeRequest:
 
 # Characters that `unicodedata` files as separators (Zl/Zp) or formats (Cf)
 # rather than controls, yet end a line, reorder the text around them (the
-# Trojan Source bidi controls), or hide inside it (the zero-width ones).
+# Trojan Source bidi controls and the Arabic letter mark), or hide inside it
+# (the zero-width ones, the word joiner and the tag characters, issue #540).
 _INVISIBLE_DISPLAY_CONTROLS = frozenset(
     {
         "\N{LINE SEPARATOR}",
@@ -224,18 +225,22 @@ _INVISIBLE_DISPLAY_CONTROLS = frozenset(
         "\N{ZERO WIDTH JOINER}",
         "\N{LEFT-TO-RIGHT MARK}",
         "\N{RIGHT-TO-LEFT MARK}",
+        "\N{ARABIC LETTER MARK}",
+        "\N{WORD JOINER}",
         "\N{ZERO WIDTH NO-BREAK SPACE}",
         *map(chr, range(0x202A, 0x202F)),
         *map(chr, range(0x2066, 0x206A)),
+        *map(chr, range(0xE0000, 0xE0080)),
     }
 )
 
 
 def is_display_control(character: str) -> bool:
     """Whether `character` must never reach a terminal or a one-line field
-    as itself (issue #538): every control character but TAB -- C0, DEL and
-    C1 -- plus the line and paragraph separators, the bidi controls and the
-    zero-width characters. NBSP and every other printable space are text."""
+    as itself (issues #538, #540): every control character but TAB -- C0,
+    DEL and C1 -- plus the line and paragraph separators, the bidi controls,
+    the Arabic letter mark, the zero-width characters, the word joiner and
+    the tag characters. NBSP and every other printable space are text."""
     return character != "\t" and (
         unicodedata.category(character) == "Cc" or character in _INVISIBLE_DISPLAY_CONTROLS
     )
