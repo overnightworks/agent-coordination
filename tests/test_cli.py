@@ -2289,23 +2289,76 @@ def test_start_keeps_its_worktree_when_the_report_fails_after_the_claim(
     assert checkout.resolve_path_checkout(worktree) is not None
 
 
-def test_start_resume_refuses_a_scope_that_differs_from_the_live_claim(
+def _remove_the_lane_pair(repo: Path) -> None:
+    """Item #314's worktree and branch are gone while its claim stays live."""
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _real_git(repo, "worktree", "remove", str(worktree))
+    _real_git(repo, "branch", "-D", _START_BRANCH)
+
+
+def _keep_the_lane_pair(_repo: Path) -> None:
+    """Item #314's worktree and branch stand as its first `start` built them."""
+
+
+def test_start_rebuilds_the_gone_worktree_of_its_live_claim_and_reprints_that_claim(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479: a live claim of this session whose worktree and branch
+    are both gone gets its worktree built again at the computed path and the
+    same claim reprinted, never a second id minted."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    claim_id = _claimed_line_id(capsys.readouterr().out, "issue #314")
+    _remove_the_lane_pair(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    assert status == 0
+    assert capsys.readouterr().out == (
+        f"worktree: {worktree}\n"
+        f"branch: {_START_BRANCH}\n"
+        f"CLAIMED issue #314: {claim_id}\n"
+        "0 of 4 versioned files (0%); overlaps no other open claims\n"
+    )
+    assert len(store.fetch_state(worktree=Path("."), remote="origin").claims) == 1
+    resolved = checkout.resolve_path_checkout(worktree)
+    assert resolved is not None
+    assert resolved.branch == _START_BRANCH
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_keep_the_lane_pair, id="worktree-standing"),
+        pytest.param(_remove_the_lane_pair, id="worktree-gone"),
+    ],
+)
+def test_start_resume_refuses_a_scope_that_differs_from_the_live_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[Path], None],
 ) -> None:
     """Issue #322 review/gate: an explicit `--scope` on resume that disagrees
     with the live claim's own stored scope is refused rather than silently
-    ignored; the identical scope is accepted (covered by
+    ignored, and with the worktree gone nothing is built again (issue #479);
+    the identical scope is accepted (covered by
     `test_start_resumes_an_existing_worktree_by_only_claiming`'s bare
     resume, which passes no `--scope` at all)."""
     repo = _start_scenario(monkeypatch, tmp_path)
     monkeypatch.chdir(repo)
     assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
     capsys.readouterr()
+    arrange(repo)
+    before = _worktrees_and_branches(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314", "--scope", "src/other.py"])
 
     assert status == 2
     assert capsys.readouterr().err == f"ERROR: {issue_claim.RESUME_SCOPE_MISMATCH}\n"
+    assert _worktrees_and_branches(repo) == before
 
 
 def test_start_resumes_a_wide_claim_without_repeating_whole(

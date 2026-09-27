@@ -1593,19 +1593,48 @@ def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
     assert checkout.main_checkout_root(toplevel=caller) == main.resolve()
 
 
-def test_main_checkout_root_refuses_a_linked_worktree_whose_git_directory_names_no_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _git_directory_kept_elsewhere(tmp_path: Path, _monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A `--separate-git-dir` repository: it records no way back from a
+    linked worktree to its main checkout."""
+    return _scratch_git_repository(tmp_path, f"--separate-git-dir={tmp_path / 'store'}")
+
+
+def _core_worktree_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A conventional repository whose `core.worktree` read fails outright."""
+    _stub_one_git_call(
+        monkeypatch,
+        ["config", "--get", "core.worktree"],
+        exit_status=128,
+        stderr="fatal: bad config line 1",
+    )
+    return _conventional_checkout(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("build_checkout", "refusal"),
+    [
+        pytest.param(
+            _git_directory_kept_elsewhere,
+            r"main checkout unknown: git directory .* names no checkout",
+            id="names-no-checkout",
+        ),
+        pytest.param(_core_worktree_unreadable, "fatal: bad config line 1", id="config-fails"),
+    ],
+)
+def test_main_checkout_root_refuses_a_linked_worktree_it_cannot_trace_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_checkout: Callable[[Path, pytest.MonkeyPatch], Path],
+    refusal: str,
 ) -> None:
-    """Issue #479 (START-19): a `--separate-git-dir` repository records no
-    way back from a linked worktree, so `start` refuses rather than build
-    beside the git directory."""
-    main = _scratch_git_repository(tmp_path, f"--separate-git-dir={tmp_path / 'store'}")
+    """Issue #479 (START-19, START-22): from a linked worktree whose git
+    directory records no way back, or whose `core.worktree` git cannot read,
+    `start` refuses rather than guess where to build."""
+    main = build_checkout(tmp_path, monkeypatch)
     lane = _linked_lane_of(main, tmp_path)
     monkeypatch.chdir(lane)
 
-    with pytest.raises(
-        ClaimError, match=r"main checkout unknown: git directory .* names no checkout"
-    ):
+    with pytest.raises(ClaimError, match=refusal):
         checkout.main_checkout_root(toplevel=lane)
 
 
