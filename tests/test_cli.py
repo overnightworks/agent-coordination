@@ -2186,16 +2186,6 @@ def _serve_a_higher_priority_item(monkeypatch: pytest.MonkeyPatch) -> None:
     _serve_start_board(monkeypatch, _start_item(), security)
 
 
-def _serve_a_malformed_state_item(monkeypatch: pytest.MonkeyPatch) -> None:
-    """PIN-29: another item the whole-board read refuses stops a fresh claim."""
-    client = _serve_start_board(monkeypatch, _start_item())
-
-    def another_item_malformed() -> tuple[board.Issue, ...]:
-        raise protocol.MalformedStateTreeError("item aco-3e26d9 has a malformed agent-claim block")
-
-    monkeypatch.setattr(client, "list_open_board_issues", another_item_malformed)
-
-
 def _hold_a_claim_by_another_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     """Issue #322 review/gate: `claim_key` never folds in `branch`, so
     another agent's claim on #314 is never resumed as this session's own."""
@@ -2244,12 +2234,6 @@ def _hold_a_claim_on_the_item(
             [],
             "higher-priority actionable item #11",
             id="out-of-order",
-        ),
-        pytest.param(
-            _serve_a_malformed_state_item,
-            [],
-            "item aco-3e26d9 has a malformed agent-claim block",
-            id="malformed-state-item",
         ),
         pytest.param(
             lambda _monkeypatch: None,

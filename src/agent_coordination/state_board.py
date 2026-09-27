@@ -525,8 +525,8 @@ class StateRefBoard:
     def open_issue(self, number: int) -> board.Issue | None:
         """`number`'s item as the board reads it while it is open, else
         `None` -- `item new --parent`'s one look at its parent's kind (issue
-        #503), which unlike `list_open_board_issues` never refuses on
-        another malformed item (ITEM-37)."""
+        #503), which reads that one item alone, so another malformed item
+        never refuses it (ITEM-37)."""
         decoded = self._decoded(number)
         if decoded is None or decoded.record.state is not items.RecordState.OPEN:
             return None
@@ -534,10 +534,9 @@ class StateRefBoard:
 
     def open_item_titles(self) -> tuple[tuple[int, str], ...]:
         """Every open item's number and title, the open half of `item new`'s
-        twin search: unlike `list_open_board_issues` it never refuses on a
-        malformed item (issue #447), so `item new` still runs beside one --
-        and a malformed item whose title still reads counts as open, since
-        its state may not."""
+        twin search: `item new` still runs beside a malformed item (issue
+        #447), and one whose title still reads counts as open, since its
+        state may not."""
         return (
             *(
                 (decoded.record.number, decoded.record.title)

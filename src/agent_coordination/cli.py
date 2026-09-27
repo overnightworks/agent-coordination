@@ -4925,8 +4925,8 @@ def _whole_from_item_body(
     an explicit `--whole`, never costs this read. Reuses `open_by_number`
     when the caller already fetched it (a derived scope); otherwise reads
     the one target item alone, never the whole board, so a replay (CLM-15)
-    or a live-claim resume (START-06) never meets PIN-29's refusal of some
-    other item (issue #447). Resolves the repository's own storage pin
+    or a live-claim resume (START-06) never reads past its own item (issue
+    #447). Resolves the repository's own storage pin
     itself, since a trip's resolver runs before `_cmd_claim`'s own branch
     has necessarily done so."""
     if not isinstance(identity, protocol.IssueIdentity):
@@ -6486,7 +6486,7 @@ def _landing_report(
 ) -> tuple[ReleaseLanding | None, str | None]:
     """The `(landing, hint)` pair `_cmd_release` prints once its release
     transition already committed (issue #256): a forge hiccup here, or a
-    malformed state-ref item the board read refuses on (issue #447), can only
+    state-ref store the board read refuses (issue #447), can only
     ever downgrade the report to `hint`, never undo or fail that release."""
     landed = (
         board.IssueReference(context.forge.repository.path, identity.issue)
@@ -7324,7 +7324,7 @@ class _ServedBoardCache:
         met, if any (issues #447, #481): rebuilt through `context` first when
         nothing is held yet, it is stale, or `reload` asks -- a request the
         held page answers never reads `context` at all. A refused rebuild --
-        PIN-29's malformed item or an unreachable remote alike -- keeps the
+        an item PIN-16 names missing or an unreachable remote alike -- keeps the
         last page built and its refusal until a later rebuild succeeds, so
         every request in between, the reload's own redirect target
         included, shows that page with the sentence beside its age instead
@@ -7414,8 +7414,8 @@ def _board_server(parsed: argparse.Namespace, context: RunContext) -> board_serv
             cache.discard()
         return board_serve.RuleOutcome(refusal=None)
 
-    # Building the first page before `start` makes a store PIN-29 refuses
-    # (issue #447) stop the server before any token write or ruling click;
+    # Building the first page before `start` makes a store the board read
+    # refuses (issue #447) stop the server before any token write or ruling click;
     # the first `GET` then serves this very page instead of building again.
     # No request exists yet, so it reads through the run's own context.
     cache.held(context, reload=False)
