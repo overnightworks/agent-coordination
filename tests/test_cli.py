@@ -5331,7 +5331,7 @@ def test_rule_refuses_when_the_forge_cannot_update_item_body(
 def test_rule_refuses_a_non_github_canonical_remote_by_host(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`rule` resolves its forge (`session.forge.writer()`) before its own
+    """`rule` resolves its forge (`context.forge_writer`) before its own
     typed-refusal handlers (issue #396 review finding): a resolution
     failure -- here a canonical remote on a host no adapter serves -- must
     still reach `rule`'s own `_refuse`, not `main`'s legacy `error` object."""
@@ -5605,7 +5605,7 @@ def test_ask_refuses_when_the_forge_cannot_update_item_body(
 def test_ask_refuses_a_non_github_canonical_remote_by_host(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`ask` resolves its forge (`session.forge.writer()`) before its own
+    """`ask` resolves its forge (`context.forge_writer`) before its own
     typed-refusal handlers (issue #396 review finding): a resolution
     failure -- here a canonical remote on a host no adapter serves -- must
     still reach `ask`'s own `_refuse`, not `main`'s legacy `error` object."""
