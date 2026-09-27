@@ -474,6 +474,12 @@ class BoardItem:
     score: int
     actionable: bool
     actionable_reason: str | None
+    # The same decided reason as `next`'s text prints it under `SKIPPED`
+    # (issue #532): every foreign span through `terminal_text`, a cut slice's
+    # title quoted by `quoted_terminal_text` so it cannot fake a `; run`
+    # segment (#310 finding 190). `actionable_reason` stays as the body holds
+    # it, for `--json` and the HTML board, which escape on their own.
+    terminal_actionable_reason: str | None
     read_state: BodyReadState
     # What this container is up for once it holds no open child (issue #503),
     # decided once here by `_childless_container_verdict` so `next`'s action
@@ -1456,26 +1462,34 @@ def _board_item(
             parsed.slices, contract.next, context.nesting_parents.get(issue.number)
         )
     )
-    actionable_reason = _actionable_reason(
-        _ActionabilityFacts(
-            kind=issue.kind,
-            frozen_trigger=frozen,
-            active_claim=active_claim,
-            open_blockers=open_blockers,
-            repository=context.repository,
-            storage=config.storage,
-            contract=contract,
-            contract_complete=parsed.contract_complete,
-            projectionless_idea=projectionless_idea,
-            read_state=parsed.read_state,
-            malformed_defect=(
-                contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
-            ),
-            childless_container_reason=_childless_container_reason(
-                issue.number, childless_verdict, parsed.scope, parsed.slices, config.storage
-            ),
-        )
+    actionability_facts = _ActionabilityFacts(
+        kind=issue.kind,
+        frozen_trigger=frozen,
+        active_claim=active_claim,
+        open_blockers=open_blockers,
+        repository=context.repository,
+        storage=config.storage,
+        contract=contract,
+        contract_complete=parsed.contract_complete,
+        projectionless_idea=projectionless_idea,
+        read_state=parsed.read_state,
+        malformed_defect=(
+            contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
+        ),
     )
+
+    def reason_quoting_titles_with(quote: Callable[[str], str]) -> str | None:
+        return _actionable_reason(
+            replace(
+                actionability_facts,
+                childless_container_reason=_childless_container_reason(
+                    issue.number, childless_verdict, parsed, config.storage, quote
+                ),
+            )
+        )
+
+    actionable_reason = reason_quoting_titles_with(_prose_quoted)
+    terminal_reason = reason_quoting_titles_with(quoted_terminal_text)
     return BoardItem(
         number=issue.number,
         title=issue.title,
@@ -1509,6 +1523,9 @@ def _board_item(
         score=_board_score(stage, unblocks_count, single_next),
         actionable=actionable_reason is None,
         actionable_reason=actionable_reason,
+        terminal_actionable_reason=(
+            None if terminal_reason is None else terminal_text(terminal_reason)
+        ),
         read_state=parsed.read_state,
         childless_verdict=childless_verdict,
         size=parsed.size,
@@ -2229,6 +2246,7 @@ def board_payload(board: Board) -> dict[str, object]:
             item["freed_on"] = (
                 None if freed_on is None else freed_on.astimezone(UTC).date().isoformat()
             )
+            item.pop("terminal_actionable_reason")
             item.pop("read_state")
             item.pop("childless_verdict")
             _project_blocker_references(item, "open_blockers", repository)
@@ -2581,17 +2599,17 @@ def childless_containers_with_uncut_rows(
 def _childless_container_reason(
     number: int,
     verdict: ChildlessContainerVerdict | None,
-    own_scope: tuple[str, ...] | None,
-    slices: tuple[SliceRow, ...],
+    parsed: ParsedBody,
     storage: Storage,
+    quote: Callable[[str], str],
 ) -> str | None:
     """What container `number`, with no open child, is up for when `SKIPPED`
     names it (issue #503) -- for a cuttable one not `next`'s first action,
-    its `cut` (issue #513) -- or `None` for a closable one, which `close:`
-    names."""
+    its `cut` (issue #513), the row title shown through `quote` -- or `None`
+    for a closable one, which `close:` names."""
     match verdict:
         case CutVerdict(title=title):
-            return _cut_slice_reason(number, storage, title, _prose_quoted)
+            return _cut_slice_reason(number, storage, title, quote)
         case UnprintableTitleVerdict(row=row):
             return (
                 f"slice row {row} title holds a line break or control character; "
@@ -2600,7 +2618,9 @@ def _childless_container_reason(
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):
-            return _nested_container_repair(number, nesting_parent, own_scope, slices, storage)
+            return _nested_container_repair(
+                number, nesting_parent, parsed.scope, parsed.slices, storage
+            )
         case _:
             return None
 
@@ -2616,22 +2636,6 @@ def _cut_slice_reason(
     `next`'s first action (issue #513): its first uncut row `title`, shown
     through `quote`, and the `cut` that row takes."""
     return f"cut slice {quote(title)}; run {cut_command(number, storage, title)}"
-
-
-def terminal_reason(item: BoardItem, storage: Storage) -> str:
-    """`item`'s `actionable_reason` as `next`'s text prints it under
-    `SKIPPED` (issue #532): every foreign span -- a frozen trigger, a body
-    key a defect names -- through `terminal_text`, and a cut slice's title
-    quoted by `quoted_terminal_text`, so it cannot fake a `; run` segment
-    (#310 finding 190). `actionable_reason` itself stays as the body holds it,
-    for `--json` and the HTML board, which escape on their own. A
-    container's `CutVerdict` is always its reason: a malformed body, the
-    one reason ranked above it, carries no slice row to cut."""
-    match item.childless_verdict:
-        case CutVerdict(title=title) if item.kind is ItemKind.CONTAINER:
-            return _cut_slice_reason(item.number, storage, title, quoted_terminal_text)
-        case _:
-            return terminal_text(str(item.actionable_reason))
 
 
 def _nested_container_repair(

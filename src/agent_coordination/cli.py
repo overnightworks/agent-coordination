@@ -2204,7 +2204,7 @@ def _next(report: _NextReport, storage: body.Storage) -> None:
     if report.skipped:
         skipped_lines = (
             f"{board.item_label(skipped_item.number, storage)}: "
-            f"{board.terminal_reason(skipped_item, storage)}"
+            f"{skipped_item.terminal_actionable_reason}"
             for skipped_item in report.skipped
         )
         lines.extend(("", "SKIPPED", *skipped_lines))
