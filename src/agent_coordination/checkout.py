@@ -1300,11 +1300,13 @@ def existing_start_worktree(path: Path, branch: str) -> bool:
     reads). Refuses by name when `branch` is already taken by something
     that is not this worktree, when `path` resolves to a checkout this
     repository does not own (`_refuse_foreign_worktree`), when a worktree
-    already at `path` is dirty, or when something -- empty or not --
-    already sits at `path` without being a worktree of this repository at
-    all (issue #322 review/gate finding: `git worktree add` must never be
-    left to adopt, and potentially remove, an existing directory nobody
-    offered up for this)."""
+    already at `path` has a detached HEAD (naming the git command that
+    attaches it to `branch`), when a worktree already at `path` is dirty,
+    or when something -- empty or not -- already sits at `path` without
+    being a worktree of this repository at all (issue #322 review/gate
+    finding: `git worktree add` must never be left to adopt, and
+    potentially remove, an existing directory nobody offered up for
+    this)."""
     if not path.exists():
         if branch_exists(branch):
             raise ClaimError(
@@ -1317,7 +1319,9 @@ def existing_start_worktree(path: Path, branch: str) -> bool:
         raise ClaimError(NOT_A_WORKTREE_REFUSAL)
     _refuse_foreign_worktree(path, existing)
     if not existing.branch:
-        raise ClaimError(f"worktree {path} has a detached HEAD; check out {branch} there first")
+        raise ClaimError(
+            f"worktree {path} has a detached HEAD; run {_attach_command(path, branch)} first"
+        )
     if existing.branch != branch:
         raise ClaimError(
             f"worktree {path} exists on branch {existing.branch!r}, not {branch!r}; "
@@ -1328,6 +1332,15 @@ def existing_start_worktree(path: Path, branch: str) -> bool:
         named = named_with_overflow_count(_dirty_paths(dirty))
         raise ClaimError(f"worktree {path} is dirty: {named}; commit or clean it before resuming")
     return True
+
+
+def _attach_command(path: Path, branch: str) -> str:
+    """The git command that puts the detached worktree at `path` on
+    `branch` (head ruling 27.09.2026: printed advice runs as printed):
+    `switch -c` creates a branch that does not exist yet, plain `switch`
+    checks out one that does."""
+    create = () if branch_exists(branch) else ("-c",)
+    return board.shell_command("git", "-C", str(path), "switch", *create, branch)
 
 
 def worktree_on_branch(paths: tuple[Path, ...], branch: str) -> Path | None:

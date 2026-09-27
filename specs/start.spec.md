@@ -90,7 +90,7 @@ outcome the store cannot tell keeps it and says so (START-25); an interrupt remo
 - [ ] [START-07] A closed target refuses `issue #<n> is closed`; a missing one refuses `issue #<n> does not exist here`; exit 2, before any worktree or branch (see E-START-03).
 - [ ] [START-08] The branch name already taken elsewhere refuses `branch '<branch>' already exists and is not this item's worktree; remove it, or pass --slug to choose a different worktree`, exit 2.
 - [ ] [START-09] A worktree at the computed path on a different branch refuses `worktree <path> exists on branch '<other>', not '<branch>'; remove it, or pass --slug to choose a different worktree`, exit 2.
-- [ ] [START-29] A worktree at the computed path on a detached HEAD refuses `worktree <path> has a detached HEAD; check out <branch> there first`, exit 2, nothing built or claimed (see E-START-18).
+- [ ] [START-29] A detached worktree at the computed path refuses `worktree <path> has a detached HEAD; run git -C <path> switch [-c] <branch> first` (`-c` for an absent branch), exit 2, nothing written (E-START-18).
 - [ ] [START-10] A worktree at the computed path with uncommitted changes refuses `worktree <path> is dirty: <paths>; commit or clean it before resuming`, exit 2 (paths named as CLM-05 names them).
 - [ ] [START-13] A worktree at the computed path that is not this repository's own -- a foreign root, this repository's own main checkout, or a different repository's worktree -- refuses by name (see E-START-05).
 - [ ] [START-14] An unsafe branch prefix refuses `agent identity '<prefix>' is not usable in a branch name: '<branch>' is not a safe Git ref`, exit `2`, before any git write (see E-START-07).
@@ -349,7 +349,7 @@ Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` open, title `Fresh Slu
 
 ```console
 $ aco start 314
-2> ERROR: worktree /work/agent-coordination-worktrees/issue-314-fresh-slug has a detached HEAD; check out ada/issue-314-fresh-slug there first
+2> ERROR: worktree /work/agent-coordination-worktrees/issue-314-fresh-slug has a detached HEAD; run git -C /work/agent-coordination-worktrees/issue-314-fresh-slug switch -c ada/issue-314-fresh-slug first
 exit 2
 ```
 
