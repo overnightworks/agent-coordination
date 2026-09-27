@@ -1,4 +1,4 @@
-"""Behavioral tests for `tests/network_guard.py` (issue #530).
+"""Behavioral tests for `tests/network_guard.py` (issues #530 and #534).
 
 Git is the boundary the guard constrains, so each proof runs real git under
 `tmp_path`. The refused remotes point at a closed
@@ -16,7 +16,7 @@ from functools import cache
 from pathlib import Path
 
 import pytest
-from network_guard import GIT_ALLOW_PROTOCOL_ENV
+from network_guard import GIT_ALLOW_PROTOCOL_ENV, UNREACHABLE_GH_HOST
 
 _PROJECT_CONFIGURATION = Path(__file__).parent.parent / "pyproject.toml"
 
@@ -241,3 +241,25 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     )
 
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
+
+
+@pytest.mark.parametrize(
+    ("gh_arguments", "refusal"),
+    [
+        pytest.param(
+            ("auth", "token"), f"no oauth token found for {UNREACHABLE_GH_HOST}", id="no-login"
+        ),
+        pytest.param(("api", "user"), f"https://{UNREACHABLE_GH_HOST}/api/", id="no-network"),
+    ],
+)
+def test_gh_under_the_plugin_has_no_login_and_stays_on_the_machine(
+    tmp_path: Path, gh_arguments: tuple[str, ...], refusal: str
+) -> None:
+    """The real gh binary finds no login for its default host, and the one
+    request it still sends ends at the closed loopback port (#534 line 1)."""
+    gh = subprocess.run(
+        ["gh", *gh_arguments], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+
+    assert gh.returncode != 0
+    assert refusal in gh.stderr, gh.stderr
