@@ -5023,10 +5023,18 @@ class _ClaimConflictError(protocol.ClaimError):
     `unavailable` catch-all (CLM-27)."""
 
 
+class _SentClaimConflictError(_ClaimConflictError, protocol.SentWriteError):
+    """A named claim conflict met only after the claim's push was sent: still
+    `claim_conflict` for `claim`, still a sent write for `start` (START-25)."""
+
+
 def _named_claim_conflict(
     error: protocol.ClaimConflictError, storage: body.Storage
 ) -> _ClaimConflictError:
-    return _ClaimConflictError(error.named(board.item_labeller(storage)))
+    named = error.named(board.item_labeller(storage))
+    if isinstance(error, protocol.SentWriteError):
+        return _SentClaimConflictError(named)
+    return _ClaimConflictError(named)
 
 
 def _claim_write(
@@ -5484,11 +5492,11 @@ def _check_build_and_claim(
     #479). Only a refusal between the build and the claim's push removes
     the build again: the trunk moved under another fetch meanwhile, the new
     worktree failing `claim`'s own checkout preconditions, or the ledger
-    refusing the write -- a claim that landed after the checks, a store it
-    cannot reach or that rejected every push. Once a push was sent the store
-    alone knows whether the claim was written: when it cannot tell, the
-    worktree stays and the outcome is named uncertain (START-25). An
-    interrupt or an unexpected error is no refusal."""
+    refusing the write before it pushed -- a claim that landed after the
+    checks, a store it cannot reach. Once the push was sent the store alone
+    knows whether the claim was written, so a failure it reports as a sent
+    write keeps the worktree and says the outcome is uncertain (START-25).
+    An interrupt or an unexpected error is no refusal."""
     trunk_ref = context.fetched_trunk_ref()
     trunk = checkout.trunk_commit(trunk_ref, directory=context.toplevel)
     # The main checkout observed afresh, never the observation the
@@ -5512,7 +5520,7 @@ def _check_build_and_claim(
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(plan, check_context.for_lane_worktree(target.path))
-    except protocol.UncertainWriteError as error:
+    except protocol.SentWriteError as error:
         return _report_uncertain_start_claim(error, target)
     except protocol.ClaimError as error:
         reason = (
@@ -5544,10 +5552,10 @@ def _validate_built_worktree(
         ) from error
 
 
-def _report_uncertain_start_claim(error: protocol.UncertainWriteError, target: _StartTarget) -> int:
-    """A claim write whose sent push the store could not judge: the claim
-    may have landed, so the worktree it may name stays, and the next
-    `start` resumes whichever it finds (START-25)."""
+def _report_uncertain_start_claim(error: protocol.SentWriteError, target: _StartTarget) -> int:
+    """A claim write that failed after its push was sent: the store alone
+    knows whether the claim landed, so the worktree it may name stays, and
+    the next `start` resumes whichever it finds (START-25)."""
     status = _refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
     print(
         f"the claim's push was sent, its outcome unknown; worktree {target.path} and "

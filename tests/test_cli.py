@@ -2917,6 +2917,13 @@ _PUSH_TIMED_OUT = "git timed out while reading the claim state store"
             _PUSH_TIMED_OUT,
             id="push-times-out-before-the-remote-records-it",
         ),
+        pytest.param(
+            protocol.PushRejectedError("! [remote rejected] (failed to lock)"),
+            False,
+            None,
+            f"{store.STATE_REF} rejected ",
+            id="store-rejects-every-push",
+        ),
     ],
 )
 def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resumes_it(
@@ -2929,11 +2936,12 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
     reported: str,
 ) -> None:
     """Issue #479 (head ruling, START-25), issue #494: once the claim's push
-    was sent, only the store knows whether it was written, so every write
-    the store reports uncertain -- its lineage stamp failing, the search for
-    a push whose answer was lost failing, a push that timed out before or
-    after it landed -- keeps the worktree and branch, says the outcome is
-    uncertain, and the next `start` resumes whichever outcome it finds."""
+    was sent, only the store knows whether it was written, so every failure
+    the store reports as a sent write -- its lineage stamp, the search for a
+    push whose answer was lost, a push that timed out before or after it
+    landed, a store that rejected every push -- keeps the worktree and
+    branch, says the outcome is uncertain, and the next `start` resumes
+    whichever outcome it finds."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     landed: list[protocol.ObjectId] = []
     real_push = store.GitPushTransport.push
@@ -2982,6 +2990,49 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
 
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
     assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
+
+
+def test_start_keeps_its_worktree_when_a_rival_claim_lands_under_its_sent_push(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issues #479 (START-25), #494: a rival claim on the item lands after
+    `start` checked it, so the claim's push is rejected and the store's
+    re-read refuses it as a claim conflict. That push was still sent, so the
+    worktree and branch stay, and the conflict names the item the way the
+    board's storage does."""
+    repo, bare_remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    real_push = store.GitPushTransport.push
+    rival_pending = [True]
+
+    def rival_lands_first(
+        transport: store.GitPushTransport,
+        *,
+        worktree: Path,
+        remote: str,
+        ref: str,
+        new_oid: protocol.ObjectId,
+    ) -> None:
+        if rival_pending:
+            rival_pending.clear()
+            _land_real_claim(repo, bare_remote, issue=314, claim_id="rival-314")
+        real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+
+    monkeypatch.setattr(store.GitPushTransport, "push", rival_lands_first)
+
+    status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    err = capsys.readouterr().err
+    assert status == 2
+    item = items.format_item_id(314)
+    assert err.startswith(f"ERROR: issue {item} is claimed by Codex Sol (builder) on issue {item} ")
+    assert err.endswith(
+        f"\nthe claim's push was sent, its outcome unknown; worktree {worktree} and "
+        f"branch '{_START_BRANCH}' kept; run start again to resume it\n"
+    )
+    kept = checkout.resolve_path_checkout(worktree)
+    assert kept is not None
+    assert (kept.kind, kept.branch) == (checkout.CheckoutKind.LINKED_WORKTREE, _START_BRANCH)
 
 
 @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])

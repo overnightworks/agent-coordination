@@ -2601,13 +2601,25 @@ def _another_writer_claims_issue_1(
 
 
 @pytest.mark.parametrize(
-    ("arrange", "uncertain"),
+    ("arrange", "raised_kind"),
     [
-        pytest.param(_the_push_times_out, True, id="push-times-out"),
-        pytest.param(_the_answer_and_its_re_read_are_lost, True, id="answer-and-re-read-lost"),
-        pytest.param(_the_landed_push_cannot_stamp_its_lineage, True, id="lineage-stamp-fails"),
-        pytest.param(_every_push_is_rejected, False, id="every-push-rejected"),
-        pytest.param(_another_writer_claims_issue_1, False, id="rejected-then-refused"),
+        pytest.param(_the_push_times_out, protocol.UncertainWriteError, id="push-times-out"),
+        pytest.param(
+            _the_answer_and_its_re_read_are_lost,
+            protocol.UncertainWriteError,
+            id="answer-and-re-read-lost",
+        ),
+        pytest.param(
+            _the_landed_push_cannot_stamp_its_lineage,
+            protocol.UncertainWriteError,
+            id="lineage-stamp-fails",
+        ),
+        pytest.param(_every_push_is_rejected, protocol.SentWriteError, id="every-push-rejected"),
+        pytest.param(
+            _another_writer_claims_issue_1,
+            protocol.SentClaimConflictError,
+            id="rejected-then-refused",
+        ),
     ],
 )
 def test_commit_transition_says_whether_a_failed_write_may_have_landed(
@@ -2615,13 +2627,15 @@ def test_commit_transition_says_whether_a_failed_write_may_have_landed(
     worktree: Path,
     monkeypatch: pytest.MonkeyPatch,
     arrange: Callable[..., store.PushTransport | None],
-    uncertain: bool,
+    raised_kind: type[protocol.SentWriteError],
 ) -> None:
-    """Issue #494: a push that was sent but whose outcome the store cannot
-    tell -- no answer, an answer and the re-read after it lost, a landed push
-    whose bookkeeping failed -- raises `UncertainWriteError`; a push the
-    store saw rejected and re-read without its own `operation_id`, then
-    refused or retried until exhausted, wrote nothing and says so plainly."""
+    """Issues #479, #494 (CAS-56, CAS-57): every write that fails after its
+    push was sent says so by type. One whose outcome the store cannot tell
+    -- no answer, an answer and the re-read after it lost, a landed push
+    whose bookkeeping failed -- is an `UncertainWriteError`; one the store
+    saw rejected and re-read without its own `operation_id`, then refused
+    or retried until exhausted, is a plain `SentWriteError`, a conflict
+    still a claim conflict."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     observed = fresh_observation(worktree, bare_remote)
     transport = arrange(monkeypatch, bare_remote, worktree)
@@ -2633,7 +2647,7 @@ def test_commit_transition_says_whether_a_failed_write_may_have_landed(
             observed=observed, subject=subject, intent=intent, transport=transport
         )
 
-    assert isinstance(raised.value, protocol.UncertainWriteError) is uncertain
+    assert type(raised.value) is raised_kind
 
 
 def test_commit_transition_ten_thread_contention_lands_every_distinct_key(
