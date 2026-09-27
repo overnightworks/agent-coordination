@@ -16590,6 +16590,7 @@ def test_untracked_board_config_refuses_every_store_command_by_name(
     _real_git(repository, "commit", "-q", "-m", "initial")
     _push_repository_trunk(repository, "origin")
     monkeypatch.chdir(repository)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(arguments)
