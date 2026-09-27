@@ -87,8 +87,9 @@ def refuse_canonical_remote_mismatch(
 _OBSERVATION_BOUND_FACTS = frozenset({"observation", "forge"})
 
 # The facts a `RunContext` resolves from the canonical remote's recorded
-# `HEAD`: a fetch may record or move it, so `fetched_trunk_ref` drops these
-# once it fetched and never keeps one read before (issue #484 ruling).
+# `HEAD`: a fetch may record or move it, so `_fetch_canonical_remote_once`
+# drops these once it fetched and never keeps one read before (issue #484
+# ruling).
 _RECORDED_HEAD_FACTS = frozenset({"trunk_ref", "recorded_default_branch"})
 
 
@@ -253,7 +254,7 @@ class RunContext:
     def fetched_trunk_ref(self) -> str:
         """The canonical remote's trunk ref once this checkout fetched that
         remote -- at most once per run and remote (issue #488): the ref `start` builds
-        from and `release --merged` verifies a fresh merge against. The
+        from and a `state-ref` landing's worktree cleanup judges. The
         recorded `HEAD` is read again after the fetch, never one held from
         before it, since a fetch may record or move it: the held trunk and
         recorded default branch are dropped before the resolution, so one
