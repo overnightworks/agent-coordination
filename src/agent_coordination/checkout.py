@@ -388,7 +388,7 @@ def _validate_worktree_branch(
         raise ClaimError(
             f"{ISOLATED_NON_MAIN_BRANCH_REFUSAL}{_worktree_repair_instruction(repair, branch=None)}"
         )
-    current = current_branch(directory=directory)
+    current = attached_branch(current_branch(directory=directory))
     git_directory = Path(_git_output(["rev-parse", "--git-dir"], directory=directory)).resolve()
     common_directory = Path(
         _git_output(["rev-parse", "--git-common-dir"], directory=directory)
