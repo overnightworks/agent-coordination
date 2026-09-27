@@ -65,7 +65,7 @@ a refusal there removes what this call built (START-18).
 - [ ] [START-06] A worktree already at the computed path, clean, same branch, with a live claim already on it: looks it up by identity/branch and reprints it verbatim, never minting a second id (see E-START-02).
 - [ ] [START-11] The same clean resume with no live claim (released, abandoned, or reopened after merge) mints a fresh id through the ordinary claim path, exactly as a first build would (see E-START-06).
 - [ ] [START-12] An explicit `--slug` not matching the shape a derived slug would always produce refuses `--slug must be <rule>`, exit 2, before any worktree or branch is touched (see E-START-04).
-- [ ] [START-19] `<repo>` is the main checkout, whichever linked worktree `start` runs in: the new worktree sits beside the main checkout, never nested under the caller's (see E-START-12).
+- [ ] [START-19] `<repo>` is the main checkout, whichever linked worktree `start` runs in: the new worktree sits beside the main checkout, never nested under the caller's and never beside a git directory kept elsewhere (see E-START-12). A linked worktree whose git directory names no checkout (`--separate-git-dir`, no `core.worktree`) refuses `cannot tell this repository's main checkout from a linked worktree: its git directory <dir> names none; run start from the main checkout`, exit 2, before any worktree or branch.
 - [ ] [START-20] Run inside a linked worktree on the live claim's branch, `start` reprints that claim as START-06 does, clean or dirty, whatever slug the path carries; exit 0 (see E-START-13).
 
 ## Refusing a target, a collision, or a dirty resume

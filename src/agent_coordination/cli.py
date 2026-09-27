@@ -5089,7 +5089,9 @@ def _start_target(
     validated for resume (issue #479)."""
     if live is not None and _runs_in_lane_worktree(context, live.branch):
         return _StartTarget(context.toplevel, live.branch, created=False)
-    path = _start_worktree_path(checkout.main_checkout_root(), number=number, slug=slug)
+    path = _start_worktree_path(
+        checkout.main_checkout_root(toplevel=context.toplevel), number=number, slug=slug
+    )
     created = checkout.resolve_or_create_worktree(path, branch, remote=context.canonical_remote)
     return _StartTarget(path, branch, created)
 

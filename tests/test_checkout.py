@@ -342,13 +342,14 @@ def test_checkout_validation_names_every_dirty_path_when_three_or_fewer(
     assert str(error.value) == "claim must be acquired before the first worktree edit: src/a.py"
 
 
-def _scratch_git_repository(tmp_path: Path) -> Path:
+def _scratch_git_repository(tmp_path: Path, *init_options: str) -> Path:
     """An initialized repository with one committed, tracked file -- for
     tests that drive `_dirty_paths` against real `git status --porcelain`
-    output instead of a fake standing in for `_git_output` itself."""
+    output instead of a fake standing in for `_git_output` itself.
+    `init_options` shape its git directory's layout."""
     repository = tmp_path / "repo"
     repository.mkdir()
-    _real_git(repository, "init", "-q", "-b", "main")
+    _real_git(repository, "init", "-q", "-b", "main", *init_options)
     _real_git(repository, "config", "user.name", "Test")
     _real_git(repository, "config", "user.email", "test@example.com")
     (repository / "README.md").write_text("hello\n")
@@ -1547,6 +1548,60 @@ def test_resolve_or_create_worktree_refuses_the_repositorys_own_main_checkout(
         ClaimError, match="is a repository's own main checkout, not a linked worktree"
     ):
         checkout.resolve_or_create_worktree(caller, "codex/issue-1-widget", remote="origin")
+
+
+def _conventional_checkout(tmp_path: Path) -> Path:
+    return _scratch_git_repository(tmp_path)
+
+
+def _checkout_whose_git_directory_names_it(tmp_path: Path) -> Path:
+    """A submodule's layout: the git directory lives elsewhere and records
+    its checkout as `core.worktree`."""
+    (tmp_path / "modules").mkdir()
+    repository = _scratch_git_repository(
+        tmp_path, f"--separate-git-dir={tmp_path / 'modules' / 'repo'}"
+    )
+    _real_git(repository, "config", "core.worktree", "../../repo")
+    return repository
+
+
+def _linked_lane_of(main: Path, tmp_path: Path) -> Path:
+    lane = tmp_path / "lane"
+    _real_git(main, "worktree", "add", "-q", str(lane), "-b", "codex/issue-1-widget")
+    return lane
+
+
+@pytest.mark.parametrize(
+    "build_checkout", [_conventional_checkout, _checkout_whose_git_directory_names_it]
+)
+@pytest.mark.parametrize("runs_in_linked_lane", [False, True], ids=["main", "linked"])
+def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_checkout: Callable[[Path], Path],
+    runs_in_linked_lane: bool,
+) -> None:
+    """Issue #479 (START-19): `start` builds beside the main checkout, never
+    beside the git directory's parent, whatever layout that directory has."""
+    main = build_checkout(tmp_path)
+    caller = _linked_lane_of(main, tmp_path) if runs_in_linked_lane else main
+    monkeypatch.chdir(caller)
+
+    assert checkout.main_checkout_root(toplevel=caller) == main.resolve()
+
+
+def test_main_checkout_root_refuses_a_linked_worktree_whose_git_directory_names_no_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #479 (START-19): a `--separate-git-dir` repository records no
+    way back from a linked worktree, so `start` refuses rather than build
+    beside the git directory."""
+    main = _scratch_git_repository(tmp_path, f"--separate-git-dir={tmp_path / 'store'}")
+    lane = _linked_lane_of(main, tmp_path)
+    monkeypatch.chdir(lane)
+
+    with pytest.raises(ClaimError, match="cannot tell this repository's main checkout"):
+        checkout.main_checkout_root(toplevel=lane)
 
 
 def test_worktree_on_branch_finds_the_one_matching_path(tmp_path: Path) -> None:

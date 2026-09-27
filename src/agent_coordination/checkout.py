@@ -1015,11 +1015,41 @@ def _own_common_directory() -> Path:
     return Path(_git_output(["rev-parse", "--path-format=absolute", "--git-common-dir"])).resolve()
 
 
-def main_checkout_root() -> Path:
-    """The repository's main checkout, read from the common git directory
-    (issue #479): `start` places a lane's worktree beside it, so a call from
-    inside a linked worktree never nests the new one under that worktree."""
-    return _own_common_directory().parent
+def main_checkout_root(*, toplevel: Path) -> Path:
+    """The repository's main checkout, whichever of its worktrees the
+    calling process runs in (issue #479): `start` places a lane's worktree
+    beside it, so a call from inside a linked worktree never nests the new
+    one under that worktree. `toplevel` is the caller's own, held by its run
+    context. The main checkout is its own toplevel; a linked
+    worktree finds it through `core.worktree` when the common directory
+    names one (a submodule), else as the parent of a common directory
+    called `.git`. Any other layout (`--separate-git-dir`) records no way
+    back from a linked worktree, and git's own `worktree list` guesses the
+    common directory itself there, so this refuses instead of guessing."""
+    common_directory = _own_common_directory()
+    own_directory = Path(_git_output(["rev-parse", "--path-format=absolute", "--git-dir"]))
+    if own_directory.resolve() == common_directory:
+        return toplevel.resolve()
+    configured = _configured_worktree()
+    if configured is not None:
+        return (common_directory / configured).resolve()
+    if common_directory.name == ".git":
+        return common_directory.parent
+    raise ClaimError(
+        f"cannot tell this repository's main checkout from a linked worktree: its git "
+        f"directory {common_directory} names none; run start from the main checkout"
+    )
+
+
+def _configured_worktree() -> str | None:
+    """The common directory's own `core.worktree`, or `None` when unset:
+    git exits `1` for an unset key and nothing else."""
+    result = _git_run(["config", "--get", "core.worktree"])
+    if result.exit_status == 1:
+        return None
+    if result.exit_status != 0:
+        raise ClaimError(process.git_failure_detail(result))
+    return result.stdout.decode().strip()
 
 
 def _refuse_foreign_worktree(path: Path, existing: PathCheckout) -> None:
