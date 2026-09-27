@@ -17956,36 +17956,20 @@ def test_an_untrusted_board_config_refuses_every_store_command_by_name(
     assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
 
 
-def _adopt_on_trunk(repository: Path) -> None:
-    """The one-time adoption commit lands on `main` and is pushed."""
-    _write_untracked_board_config(repository)
-    _real_git(repository, "add", ".agent-claim/board.toml")
-    _real_git(repository, "commit", "-q", "-m", "adopt aco")
-    _push_repository_trunk(repository, "origin")
-
-
-def _never_adopt(_repository: Path) -> None:
-    """No ref anywhere tracks the board configuration."""
-
-
-def _adopt_then_drop_origin(repository: Path) -> None:
-    """The trunk adopted aco, but this clone no longer configures `origin`."""
-    _adopt_on_trunk(repository)
-    _real_git(repository, "remote", "remove", "origin")
-
-
 @pytest.mark.parametrize(
-    ("arrange_trunk", "refusal"),
+    ("adopted", "origin_kept", "refusal"),
     [
         pytest.param(
-            _adopt_on_trunk,
+            True,
+            True,
             "ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main "
             "tracks it; merge origin/main into this branch\n",
             id="trunk-adopted-after-the-cut",
         ),
-        pytest.param(_never_adopt, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"),
+        pytest.param(False, True, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"),
         pytest.param(
-            _adopt_then_drop_origin,
+            True,
+            False,
             "ERROR: cannot determine the trunk: canonical remote 'origin' is not configured\n",
             id="origin-unconfigured",
         ),
@@ -17996,7 +17980,8 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     isolated_global_git_config: Path,
-    arrange_trunk: Callable[[Path], None],
+    adopted: bool,
+    origin_kept: bool,
     refusal: str,
 ) -> None:
     """Issue #520: a lane worktree whose branch was cut before the adoption
@@ -18009,8 +17994,13 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
     _real_git(repository, "add", "README.md")
     _real_git(repository, "commit", "-q", "-m", "initial")
     _real_git(repository, "branch", "lane")
+    if adopted:
+        _write_untracked_board_config(repository)
+        _real_git(repository, "add", ".agent-claim/board.toml")
+        _real_git(repository, "commit", "-q", "-m", "adopt aco")
     _push_repository_trunk(repository, "origin")
-    arrange_trunk(repository)
+    if not origin_kept:
+        _real_git(repository, "remote", "remove", "origin")
     lane = tmp_path / "lane"
     _real_git(repository, "worktree", "add", "-q", str(lane), "lane")
     _redirect_toplevel(monkeypatch, lane)
