@@ -507,7 +507,7 @@ def test_every_request_reads_the_repository_through_its_own_fresh_context(
     needs the repository -- a rebuild or a ruling click -- reads it through
     that child exactly once, and one the held page answers reads nothing.
     The startup build and every rebuild also observe `refs/aco/state`
-    exactly once (issue #477, CAS-53); so does a ruling click under
+    exactly once (issue #477, CAS-54); so does a ruling click under
     `state-ref`, while under `github` a click writes the forge alone and
     never observes it.
     A context memoised across requests would leave the second of two

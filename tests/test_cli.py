@@ -17793,7 +17793,7 @@ def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRu
     once more, afterwards -- as it did before #457. Its worktree cleanup
     judges the main checkout from that held toplevel, never resolving it
     again (issue #472 proof 2). It observes the state ref only through that
-    release's fresh context, after its own write (issue #477)."""
+    release's fresh context, after its own write (issue #477, CAS-54)."""
     repo, _client = _land_scenario(monkeypatch, tmp_path)
     return _CountedRun(
         ["--repo", REPOSITORY, "land", "12"],
