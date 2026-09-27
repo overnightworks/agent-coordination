@@ -1461,25 +1461,21 @@ def _board_item(
             parsed.slices, contract.next, context.nesting_parents.get(issue.number)
         )
     )
-    actionability_facts = _ActionabilityFacts(
-        kind=issue.kind,
-        frozen_trigger=frozen,
-        active_claim=active_claim,
-        open_blockers=open_blockers,
-        repository=context.repository,
-        storage=config.storage,
-        contract=contract,
-        contract_complete=parsed.contract_complete,
-        projectionless_idea=projectionless_idea,
-        read_state=parsed.read_state,
-        malformed_defect=(
-            contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
-        ),
-    )
-
     actionable_reason = _actionable_reason(
-        replace(
-            actionability_facts,
+        _ActionabilityFacts(
+            kind=issue.kind,
+            frozen_trigger=frozen,
+            active_claim=active_claim,
+            open_blockers=open_blockers,
+            repository=context.repository,
+            storage=config.storage,
+            contract=contract,
+            contract_complete=parsed.contract_complete,
+            projectionless_idea=projectionless_idea,
+            read_state=parsed.read_state,
+            malformed_defect=(
+                contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
+            ),
             childless_container_reason=_childless_container_reason(
                 issue.number, childless_verdict, parsed, config.storage
             ),
