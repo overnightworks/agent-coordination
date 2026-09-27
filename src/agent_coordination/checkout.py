@@ -101,12 +101,13 @@ def current_branch(*, directory: Path | None = None) -> str:
 _REV_PARSE_VERIFY_EXIT_UNRESOLVED = 1
 
 
-def resolved_commit(ref: str) -> str | None:
-    """`ref`'s current commit, or `None` when it does not resolve to a
+def resolved_commit(ref: str, *, directory: Path | None = None) -> str | None:
+    """`ref`'s current commit in `directory` (or the calling process's own
+    cwd), or `None` when it does not resolve to a
     single object. A git failure that keeps the read from answering either
     way -- a missing executable, a timeout, or any exit but the documented
     "unresolved" one -- raises `ClaimError` with git's own detail instead."""
-    result = _git_run(["rev-parse", "--verify", "--quiet", ref])
+    result = _git_run(["rev-parse", "--verify", "--quiet", ref], directory=directory)
     if result.exit_status == _REV_PARSE_VERIFY_EXIT_UNRESOLVED:
         return None
     if result.exit_status != 0:
@@ -128,6 +129,13 @@ def remote_url(remote: str, *, directory: Path | None = None) -> str:
     (issue #457: a `RunContext` for another checkout) or the calling
     process's own cwd otherwise."""
     return _git_output(["config", "--get", f"remote.{remote}.url"], directory=directory)
+
+
+def remote_is_configured(remote: str, *, directory: Path) -> bool:
+    """Whether the checkout at `directory` configures a remote named
+    `remote` at all (issue #492): a board configuration may name a
+    canonical remote this clone never added."""
+    return remote in _git_output(["remote"], directory=directory).splitlines()
 
 
 @dataclass(frozen=True)
@@ -620,13 +628,17 @@ def _resolve_checkout(directory: Path) -> PathCheckout:
 
 
 def _refuse_shared_checkout(
-    path_checkout: PathCheckout, *, default_branch: str | None, repair: WorktreeRepair
+    path_checkout: PathCheckout,
+    *,
+    default_branch: str | None,
+    canonical_remote: str,
+    repair: WorktreeRepair,
 ) -> None:
     """`rescope`'s own worktree-isolation refusal (issue #314): the same
     invariant `_validate_worktree_branch` enforces for `claim`, judged from
-    an already path-resolved checkout and `default_branch`, the canonical
-    remote's recorded default branch in that checkout (issue #490), instead
-    of a fresh git read in the calling process's own cwd (gate G4).
+    an already path-resolved checkout and `default_branch`, the recorded
+    default branch of that checkout's `canonical_remote` (issue #490),
+    instead of a fresh git read in the calling process's own cwd (gate G4).
 
     Unlike `claim`'s own `is_default_branch`, which falls back to guessing
     `{main, master}` when no default branch is recorded, this denies
@@ -635,8 +647,11 @@ def _refuse_shared_checkout(
     recorded `HEAD` yet, must never slip through unnoticed as "not the
     default branch".
     """
-    if default_branch is None:
-        raise ClaimError(DEFAULT_BRANCH_UNKNOWN_REASON)
+    unknown = default_branch_unknown_reason(
+        canonical_remote, default_branch, directory=path_checkout.toplevel
+    )
+    if unknown is not None:
+        raise ClaimError(unknown)
     if path_checkout.branch == default_branch:
         raise ClaimError(
             f"{ISOLATED_NON_MAIN_BRANCH_REFUSAL}{_worktree_repair_instruction(repair, branch=None)}"
@@ -697,6 +712,24 @@ DEFAULT_BRANCH_FALLBACK = frozenset({"main", "master"})
 # reader accept different risk here.
 DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 
+
+def default_branch_unknown_reason(
+    remote: str, default_branch: str | None, *, directory: Path
+) -> str | None:
+    """`protect`'s and `rescope`'s denial when the checkout at `directory`
+    has no default branch of its canonical `remote` to judge by, or `None`
+    once `default_branch`, `remote`'s recorded one, stands. A remote this
+    checkout never configured is named first (issue #492): its
+    remote-tracking refs, a recorded `HEAD` among them, can outlive the
+    remote itself, so no such record answers for a remote that is not
+    there."""
+    if not remote_is_configured(remote, directory=directory):
+        return f"{DEFAULT_BRANCH_UNKNOWN_REASON}: canonical remote {remote!r} is not configured"
+    if default_branch is None:
+        return DEFAULT_BRANCH_UNKNOWN_REASON
+    return None
+
+
 # One owner for `protect`'s "not main" denial (issue #314 repeat gate,
 # finding 4, Sonar S1192): `_protect_not_main_denial` in `cli.py` returns
 # this for both a shared main checkout and a linked worktree that sits on
@@ -756,44 +789,73 @@ def is_default_branch(branch: str, default_branch: str | None) -> bool:
     return branch in DEFAULT_BRANCH_FALLBACK
 
 
-def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> None:
+def refuse_unclean_default_branch_checkout(default_branch: str, *, directory: Path) -> None:
     """`land`'s own precondition (issue #405): the checkout at `directory`
-    (or the calling process's own cwd) must already sit on the default
-    branch `origin`'s recorded `HEAD` names, with nothing uncommitted, since
-    `land` fast-forwards that exact branch in place once its merge succeeds
-    -- raises the ruled refusal otherwise."""
-    branch = recorded_default_branch("origin", directory=directory)
-    if branch is None:
-        raise ClaimError(DEFAULT_BRANCH_UNKNOWN_REASON)
+    must already sit on `default_branch` -- the run's own answer, never read
+    here (issue #492) -- with nothing uncommitted, since `land`
+    fast-forwards that exact branch in place once its merge succeeds --
+    raises the ruled refusal otherwise."""
     current = current_branch(directory=directory)
     dirty = _git_output(["status", "--porcelain"], directory=directory)
-    if current != branch or dirty:
-        raise ClaimError(f"land must run from a clean checkout of the default branch {branch!r}")
+    if current != default_branch or dirty:
+        raise ClaimError(
+            f"land must run from a clean checkout of the default branch {default_branch!r}"
+        )
 
 
 def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) -> str:
     """`remote`'s trunk ref in `directory`: `recorded_head` -- `remote`'s
     recorded `HEAD` as `recorded_head_ref` read it -- or, when `remote`
-    never recorded one or it dangles, the historical `{main, master}` guess, `remote`'s
-    own before the local branch (issues #238, #304). A `RunContext` asks
+    never recorded one or it dangles, the historical `{main, master}` guess,
+    `remote`'s own before the local branch (issues #238, #304). A `RunContext` asks
     this once per directory, and again only after its run's fetch (issue
-    #488), so a trunk is never resolved from a `HEAD` read before it."""
+    #488), so a trunk is never resolved from a `HEAD` read before it.
+
+    The local guess applies only while `remote` has no remote-tracking
+    branch at all -- a fresh or offline repository (issue #492 ruling): a
+    remote that renamed its trunk to anything else refuses with the repair
+    instead, since a local branch standing in for it would report an
+    unpushed local commit as landed."""
     if recorded_head is not None:
         return recorded_head
-    for candidate in (
-        f"refs/remotes/{remote}/main",
-        f"refs/remotes/{remote}/master",
-        "main",
-        "master",
-    ):
-        try:
-            _git_output(["rev-parse", "--verify", candidate], directory=directory)
-            return candidate
-        except ClaimError:
-            continue
+    remote_trunk = _first_resolving_ref(
+        (f"refs/remotes/{remote}/main", f"refs/remotes/{remote}/master"), directory=directory
+    )
+    if remote_trunk is not None:
+        return remote_trunk
+    if _has_remote_tracking_branch(remote, directory=directory):
+        raise ClaimError(
+            f"cannot determine the trunk: no {remote}/HEAD, {remote}/main or "
+            f"{remote}/master resolves; run git remote set-head {remote} -a"
+        )
+    local_trunk = _first_resolving_ref(("main", "master"), directory=directory)
+    if local_trunk is not None:
+        return local_trunk
     raise ClaimError(
         f"cannot determine the trunk: none of {remote}/HEAD, {remote}/main, "
         f"{remote}/master, main or master resolves"
+    )
+
+
+def _first_resolving_ref(candidates: tuple[str, ...], *, directory: Path) -> str | None:
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if resolved_commit(candidate, directory=directory) is not None
+        ),
+        None,
+    )
+
+
+def _has_remote_tracking_branch(remote: str, *, directory: Path) -> bool:
+    """Whether `directory` holds any remote-tracking ref of `remote`; git
+    skips a dangling `<remote>/HEAD` here, so it never counts as one."""
+    return bool(
+        _git_output(
+            ["for-each-ref", "--count=1", "--format=%(refname)", f"refs/remotes/{remote}/"],
+            directory=directory,
+        )
     )
 
 
@@ -918,10 +980,11 @@ def trunk_landings(trunk: str, depth: int, *, directory: Path) -> tuple[TrunkLan
     )
 
 
-def fast_forward_default_branch(trunk: str, *, directory: Path | None = None) -> None:
+def fast_forward_default_branch(trunk: str, *, directory: Path) -> None:
     """`land`'s own step once its merge succeeds (issue #405): fast-forward
-    the checkout's local default branch to `trunk`, the ref its run fetched
-    (`RunContext.fetched_trunk_ref`, issue #488). `--ff-only` refuses loud
+    the checkout's local default branch to `trunk`, that branch's tracking
+    ref once its run fetched (`RunContext.fetched_default_branch_ref`,
+    issue #492). `--ff-only` refuses loud
     rather than rewriting history if the local branch somehow diverged --
     never true in the ordinary case, since
     `refuse_unclean_default_branch_checkout` already proved this exact

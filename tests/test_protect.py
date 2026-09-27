@@ -96,6 +96,7 @@ def _protect_git_values(
         # The canonical-remote comparison (issue #176, Erwartung 6) reads this
         # to confirm the fake forge target (REPOSITORY) matches it.
         ("config", "--get", "remote.origin.url"): f"git@github.com:{REPOSITORY}.git",
+        ("remote",): "origin",
     }
     if origin_head is not None:
         values[RECORDED_ORIGIN_HEAD_READ] = origin_head
@@ -3162,18 +3163,22 @@ def test_protect_and_rescope_refuse_a_path_no_claim_can_cover_with_one_sentence(
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)
 
 
-def _hub_canonical_worktree_file(tmp_path: Path, *, hub_head: str | None, branch: str) -> Path:
-    """A file in a linked worktree on `branch` of a repository whose
-    tracked `board.toml` makes `hub` canonical, with `origin/HEAD` naming
-    `main` and `hub/HEAD` naming `hub_head` -- or never recorded (issue
-    #490)."""
+def _hub_canonical_worktree_file(
+    tmp_path: Path, *, canonical: str, canonical_head: str | None, branch: str
+) -> Path:
+    """A file in a linked worktree on `branch` of a repository with the
+    remotes `origin` and `hub` whose tracked `board.toml` makes `canonical`
+    canonical, with `origin/HEAD` naming `main` and `<canonical>/HEAD`
+    naming `canonical_head` -- or never recorded (issue #490). A recorded
+    `HEAD` of a canonical remote the repository never configured is one a
+    removed remote left behind (issue #492)."""
     main = tmp_path / "repo"
     main.mkdir()
     _real_git(main, "init", "-q", "-b", "main")
     _real_git(main, "config", "user.name", "Test")
     _real_git(main, "config", "user.email", "test@example.com")
     (main / ".agent-claim").mkdir()
-    (main / ".agent-claim" / "board.toml").write_text('canonical_remote = "hub"\n')
+    (main / ".agent-claim" / "board.toml").write_text(f'canonical_remote = "{canonical}"\n')
     _real_git(main, "add", "-f", ".agent-claim/board.toml")
     _real_git(main, "commit", "-q", "-m", "initial")
     _real_git(main, "branch", "trunk")
@@ -3182,8 +3187,10 @@ def _hub_canonical_worktree_file(tmp_path: Path, *, hub_head: str | None, branch
         _real_git(main, "update-ref", f"refs/remotes/{remote}/main", "HEAD")
         _real_git(main, "update-ref", f"refs/remotes/{remote}/trunk", "HEAD")
     _real_git(main, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-    if hub_head is not None:
-        _real_git(main, "symbolic-ref", "refs/remotes/hub/HEAD", f"refs/remotes/hub/{hub_head}")
+    if canonical_head is not None:
+        recorded = f"refs/remotes/{canonical}/{canonical_head}"
+        _real_git(main, "update-ref", recorded, "HEAD")
+        _real_git(main, "symbolic-ref", f"refs/remotes/{canonical}/HEAD", recorded)
     worktree = tmp_path / "repo-worktrees" / "lane"
     worktree.parent.mkdir()
     _real_git(main, "worktree", "add", "-q", str(worktree), "-B", branch)
@@ -3212,22 +3219,34 @@ _CLAIM_ON_THE_DEFAULT_BRANCH = (
 )
 
 
+_UNCONFIGURED_UPSTREAM = "default branch unknown: canonical remote 'upstream' is not configured"
+
+
 @pytest.mark.parametrize(
-    ("refusal_of", "hub_head", "branch", "sentence"),
+    ("refusal_of", "canonical", "canonical_head", "branch", "sentence"),
     [
         pytest.param(
-            _claim_refusal, "trunk", "trunk", _CLAIM_ON_THE_DEFAULT_BRANCH, id="claim-hub-default"
+            _claim_refusal,
+            "hub",
+            "trunk",
+            "trunk",
+            _CLAIM_ON_THE_DEFAULT_BRANCH,
+            id="claim-hub-default",
         ),
         pytest.param(
             _claim_refusal,
+            "hub",
             None,
             "master",
             _CLAIM_ON_THE_DEFAULT_BRANCH,
             id="claim-hub-unrecorded-guesses",
         ),
-        pytest.param(_protect_refusal, "trunk", "trunk", "not main", id="protect-hub-default"),
+        pytest.param(
+            _protect_refusal, "hub", "trunk", "trunk", "not main", id="protect-hub-default"
+        ),
         pytest.param(
             _rescope_refusal,
+            "hub",
             "trunk",
             "trunk",
             "build claims require an isolated non-main worktree branch; "
@@ -3236,6 +3255,7 @@ _CLAIM_ON_THE_DEFAULT_BRANCH = (
         ),
         pytest.param(
             _protect_refusal,
+            "hub",
             None,
             "codex/issue-72-widget",
             checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
@@ -3243,10 +3263,43 @@ _CLAIM_ON_THE_DEFAULT_BRANCH = (
         ),
         pytest.param(
             _rescope_refusal,
+            "hub",
             None,
             "codex/issue-72-widget",
             checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
             id="rescope-hub-unrecorded",
+        ),
+        pytest.param(
+            _protect_refusal,
+            "upstream",
+            None,
+            "codex/issue-72-widget",
+            _UNCONFIGURED_UPSTREAM,
+            id="protect-canonical-remote-not-configured",
+        ),
+        pytest.param(
+            _rescope_refusal,
+            "upstream",
+            None,
+            "codex/issue-72-widget",
+            _UNCONFIGURED_UPSTREAM,
+            id="rescope-canonical-remote-not-configured",
+        ),
+        pytest.param(
+            _protect_refusal,
+            "upstream",
+            "trunk",
+            "codex/issue-72-widget",
+            _UNCONFIGURED_UPSTREAM,
+            id="protect-unconfigured-remote-left-a-recorded-head",
+        ),
+        pytest.param(
+            _rescope_refusal,
+            "upstream",
+            "trunk",
+            "codex/issue-72-widget",
+            _UNCONFIGURED_UPSTREAM,
+            id="rescope-unconfigured-remote-left-a-recorded-head",
         ),
     ],
 )
@@ -3255,7 +3308,8 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     refusal_of: Callable[[pytest.MonkeyPatch, pytest.CaptureFixture[str], Path], tuple[int, str]],
-    hub_head: str | None,
+    canonical: str,
+    canonical_head: str | None,
     branch: str,
     sentence: str,
 ) -> None:
@@ -3263,13 +3317,17 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     canonical and `origin/HEAD` naming `main`, a worktree on `hub`'s
     default branch is refused; without a recorded `hub/HEAD`, `protect` and
     `rescope` refuse `default branch unknown` while `claim` guesses
-    `main`/`master` -- `origin/HEAD` never answers for `hub`."""
+    `main`/`master` -- `origin/HEAD` never answers for `hub`. A canonical
+    remote the clone never added is named in that refusal, even where a
+    `HEAD` it left behind still resolves (issue #492)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     _use_real_path_is_tracked(monkeypatch)
-    path = _hub_canonical_worktree_file(tmp_path, hub_head=hub_head, branch=branch)
+    path = _hub_canonical_worktree_file(
+        tmp_path, canonical=canonical, canonical_head=canonical_head, branch=branch
+    )
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
 
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)

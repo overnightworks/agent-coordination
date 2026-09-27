@@ -356,11 +356,13 @@ def _protect_not_main_denial(
     if path_checkout.kind is checkout.CheckoutKind.MAIN:
         return checkout.PROTECT_NOT_MAIN_REASON
     toplevel = path_checkout.toplevel
-    default_branch = checkout.recorded_default_branch(
-        context.canonical_remote_for(toplevel), directory=toplevel
+    canonical_remote = context.canonical_remote_for(toplevel)
+    default_branch = checkout.recorded_default_branch(canonical_remote, directory=toplevel)
+    unknown = checkout.default_branch_unknown_reason(
+        canonical_remote, default_branch, directory=toplevel
     )
-    if default_branch is None:
-        return checkout.DEFAULT_BRANCH_UNKNOWN_REASON
+    if unknown is not None:
+        return unknown
     if path_checkout.branch == default_branch:
         return checkout.PROTECT_NOT_MAIN_REASON
     return None
