@@ -227,7 +227,7 @@ def test_checkout_validation_names_the_isolated_worktree_recipe_for_the_default_
     whether that default is the guessed `main` or a recorded one (issue
     #238: a repository whose default is `trunk` refuses a claim from
     `trunk` the same way)."""
-    values = {("rev-parse", "HEAD"): BASE}
+    values = {("rev-parse", "HEAD"): BASE, ("branch", "--show-current"): branch}
     monkeypatch.setattr(
         checkout, "_git_output", lambda arguments, **_kwargs: values[tuple(arguments)]
     )

@@ -28,6 +28,7 @@ sentence.
 | shared main checkout, or trunk branch | CLM-01, CLM-02 | CLM-01, CLM-02 | CLM-01, CLM-02 |
 | canonical remote with no URL configured | CLM-32 | CLM-32 | CLM-32 |
 | claim branch/base mismatch the checkout | CLM-03, CLM-04, CLM-20 | CLM-03, CLM-04, CLM-20 | CLM-03, CLM-04, CLM-20 |
+| detached HEAD | CLM-33 | CLM-33 | CLM-33 |
 | dirty working tree | CLM-05 | CLM-05 | CLM-05 |
 | no `--scope` given | — | CLAIM-53, CLAIM-55 | CLM-06 |
 | branch not `docs/`/`fix/` prefixed | — | — | CLM-07 |
@@ -63,9 +64,10 @@ to the clause each names below.
 - [ ] [CLM-01] Off an isolated worktree, claim refuses `build claims require an isolated non-main worktree branch` plus the fix pointer above, exit `2`.
 - [ ] [CLM-29] CLM-01's default branch is the one the canonical remote's `HEAD` records; with none recorded, or one naming no branch that resolves, `main` and `master` count as default; see CLM-32 first.
 - [ ] [CLM-32] A canonical `<remote>` with no URL configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, before CLM-01 (see E-CLM-09).
-- [ ] [CLM-30] CLM-01, CLM-02, CLM-03 and CLM-05 are judged after the board configuration is read, so its PIN-01/PIN-32 refusal comes first; CLM-04 and CLM-20 come before it.
+- [ ] [CLM-30] CLM-01, CLM-02, CLM-03, CLM-05 and CLM-33 with `--branch` are judged after the board configuration is read, so its PIN-01/PIN-32 refusal comes first; CLM-04, CLM-20 and CLM-33 without it precede it.
 - [ ] [CLM-02] Sharing main's git dir, claim refuses `build claims require a linked isolated worktree checkout` plus the fix pointer above, exit `2`.
 - [ ] [CLM-03] A `--branch` differing from the checkout's own current branch refuses `claim branch '<branch>' does not match checkout branch '<current>'`, exit `2`.
+- [ ] [CLM-33] On a detached HEAD claim refuses `HEAD is detached; check out the lane branch first`, exit `2`, and writes nothing (see E-CLM-10).
 - [ ] [CLM-04] A `--base` differing from checkout `HEAD` refuses `claim base <base> does not match checkout HEAD <head>; omit --base to use checkout HEAD`, exit `2`.
 - [ ] [CLM-20] A `--base` that is not a full lowercase 40-character commit SHA refuses `base must be a full lowercase commit SHA`, exit `2`.
 - [ ] [CLM-05] A dirty working tree refuses `claim must be acquired before the first worktree edit: <path>`, naming the changed paths, exit `2`, before any write.
@@ -236,3 +238,15 @@ $ aco claim 42 --scope src/x.py --json
 {"ok": false, "reason": "unavailable", "message": "cannot determine the trunk: canonical remote 'hub' is not configured"}
 exit 2
 ```
+
+### E-CLM-10 — a detached HEAD is named, never a claim field
+
+Setup: bare-remote, bootstrapped, a linked worktree checked out with `git worktree add --detach`
+
+```console
+$ aco claim 42 --scope README.md
+2> ERROR: HEAD is detached; check out the lane branch first
+exit 2
+```
+
+`git for-each-ref refs/aco` on `origin` reads afterwards exactly as before the call.
