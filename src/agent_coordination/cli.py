@@ -5004,33 +5004,41 @@ def _claim_target_checks(
     return checks, target_issue, replayed
 
 
-def _cmd_claim(
-    parsed: argparse.Namespace, session: _WriteSession, *, worktree: Path | None = None
-) -> int:
+def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
+    try:
+        return _claim_write(parsed, session)
+    except protocol.ClaimError as error:
+        return _refuse_claim_error(error, session.context, as_json=parsed.json)
+
+
+def _refuse_claim_error(error: protocol.ClaimError, context: RunContext, *, as_json: bool) -> int:
     """`claim`'s own `--json` refusals (issue #406, `ClaimReason`):
     `_claim_write`'s typed exceptions choose `target_invalid`/
     `body_invalid`/`claim_conflict`; `RepoMeaninglessUnderStateRefError`
     chooses `invalid_usage`; every other `protocol.ClaimError` -- a checkout
     precondition, scope grammar, an unsafe branch or claim id -- falls to
-    `unavailable`, matching `ask`/`rule`/`brief`'s own catch-all."""
-    as_json = parsed.json
-    try:
-        return _claim_write(parsed, session, worktree=worktree)
-    except RepoMeaninglessUnderStateRefError as error:
-        return _refuse(ClaimReason.INVALID_USAGE, error, as_json=as_json)
-    except _ClaimTargetInvalidError as error:
-        return _refuse(ClaimReason.TARGET_INVALID, error, as_json=as_json)
-    except _ClaimBodyInvalidError as error:
-        return _refuse(ClaimReason.BODY_INVALID, error, as_json=as_json)
-    except protocol.ClaimConflictError as error:
-        # `apply()`'s own conflict, met on the observed state or by the
-        # claim's write (CLM-25), whether or not its push was sent; a
-        # transport, git, lineage, or retry-exhaustion failure is another
-        # `ClaimError` and falls to `unavailable` below (CLM-27).
-        named = _named_refusal(error, session.context.config.storage)
-        return _refuse(ClaimReason.CLAIM_CONFLICT, named, as_json=as_json)
-    except protocol.ClaimError as error:
-        return _refuse(ClaimReason.UNAVAILABLE, error, as_json=as_json)
+    `unavailable`, matching `ask`/`rule`/`brief`'s own catch-all. Only a
+    conflict reads `context`'s board configuration, to name its item."""
+    match error:
+        case RepoMeaninglessUnderStateRefError():
+            reason = ClaimReason.INVALID_USAGE
+        case _ClaimTargetInvalidError():
+            reason = ClaimReason.TARGET_INVALID
+        case _ClaimBodyInvalidError():
+            reason = ClaimReason.BODY_INVALID
+        case protocol.ClaimConflictError():
+            # `apply()`'s own conflict, met on the observed state or by the
+            # claim's write (CLM-25), whether or not its push was sent; a
+            # transport, git, lineage, or retry-exhaustion failure is another
+            # `ClaimError` and falls to `unavailable` below (CLM-27).
+            return _refuse(
+                ClaimReason.CLAIM_CONFLICT,
+                _named_refusal(error, context.config.storage),
+                as_json=as_json,
+            )
+        case _:
+            reason = ClaimReason.UNAVAILABLE
+    return _refuse(reason, error, as_json=as_json)
 
 
 def _named_refusal(error: protocol.ClaimError, storage: body.Storage) -> protocol.ClaimError:
@@ -5436,8 +5444,10 @@ def _claim_in_start_worktree(
     live: protocol.ActiveClaim | None,
 ) -> int:
     """Claim, or resume, in a worktree that already stands: nothing is
-    built, so a refusal has nothing to undo. `context` is the main
-    checkout's; only the scope is measured in the worktree itself."""
+    built, so a refusal has nothing to undo, and a claim whose outcome the
+    store cannot tell says the worktree stays as a fresh build's would
+    (START-25). `context` is the main checkout's; only the scope is
+    measured in the worktree itself."""
     resumed = _resumable_start_claim(live, target.branch)
     if resumed is not None:
         versioning = _checked_start_resume(
@@ -5450,7 +5460,13 @@ def _claim_in_start_worktree(
     # The main checkout's one observation, the same snapshot the lookup above
     # read (CAS-53): nothing fetched since.
     claim_session = _WriteSession(forge=_LazyForge(context), release_branch=None)
-    return _cmd_claim(_start_claim_arguments(parsed), claim_session, worktree=target.path)
+    try:
+        return _claim_write(_start_claim_arguments(parsed), claim_session, worktree=target.path)
+    except protocol.UncertainWriteError as error:
+        named = _named_refusal(error, context.config.storage)
+        return _report_uncertain_start_claim(named, target)
+    except protocol.ClaimError as error:
+        return _refuse_claim_error(error, context, as_json=False)
 
 
 def _rebuild_and_resume(
@@ -5489,14 +5505,14 @@ def _check_build_and_claim(
 ) -> int:
     """Fetch the trunk, run `claim`'s check phase against that one commit,
     then build the worktree from the trunk and run the commit phase (issue
-    #479). Only a refusal between the build and the claim's push removes
-    the build again: the trunk moved under another fetch meanwhile, the new
-    worktree failing `claim`'s own checkout preconditions, or the ledger
-    refusing the write before it pushed -- a claim that landed after the
-    checks, a store it cannot reach. Once the push was sent the store alone
-    knows whether the claim was written, so a failure it reports as a sent
-    write keeps the worktree and says the outcome is uncertain (START-25).
-    An interrupt or an unexpected error is no refusal."""
+    #479). A refusal after the build removes it again (START-18): the trunk
+    moved under another fetch meanwhile, the new worktree failing `claim`'s
+    own checkout preconditions, or the ledger refusing the write -- a claim
+    or close that landed after the checks, a store it cannot reach -- also
+    once a sent push was rejected and the store re-read nothing of it
+    written (issue #498). Only a sent write whose outcome the store cannot
+    tell keeps the worktree and says so (START-25). An interrupt or an
+    unexpected error is no refusal."""
     trunk_ref = context.fetched_trunk_ref()
     trunk = checkout.trunk_commit(trunk_ref, directory=context.toplevel)
     # The main checkout observed afresh, never the observation the
@@ -5524,7 +5540,7 @@ def _check_build_and_claim(
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(plan, check_context.for_lane_worktree(target.path))
-    except protocol.SentWriteError as error:
+    except protocol.UncertainWriteError as error:
         return _report_uncertain_start_claim(_named_refusal(error, storage), target)
     except protocol.ClaimError as error:
         return _refuse_built_start(_named_refusal(error, storage), target)
@@ -5552,8 +5568,8 @@ def _validate_built_worktree(
 
 
 def _report_uncertain_start_claim(error: protocol.ClaimError, target: _StartTarget) -> int:
-    """A claim write that failed after its push was sent: the store alone
-    knows whether the claim landed, so the worktree it may name stays, and
+    """A claim write whose outcome the store cannot tell after its push was
+    sent: the claim may have landed, so the worktree it may name stays, and
     the next `start` resumes whichever it finds (START-25)."""
     status = _refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
     print(

@@ -35,7 +35,7 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | the claim's own checks refuse | START-22 |
 | the claim is refused after this call built the worktree | START-18 |
 | the trunk moved after the checks, under a build or a gone-worktree rebuild | START-26 |
-| the claim write fails after its push was sent | START-25 |
+| the claim write's outcome is unknown after its push was sent | START-25 |
 | a `state-ref` item closed or edited after the checks read it, before or under the claim's push | START-27 |
 | git will not delete the branch a refused `start` built | START-21 |
 | git will not remove the worktree a refused `start` built | START-23 |
@@ -65,12 +65,12 @@ configuration, never that of a lane worktree `start` runs or claims in. Where no
 yet, `start` fetches the trunk and runs every check the claim itself makes -- scope, container,
 body, a broken item, priority or `--out-of-order`, width, a claim already held -- against that one
 fetched commit, then builds the worktree from the trunk: such a refusal builds nothing (START-22).
-Only a refusal between the build and the claim's push -- another fetch moved the trunk so the
-worktree stands on a commit the checks never saw, another claim landed after the checks, the store
-could not be reached -- or between a live claim's gone-worktree rebuild and its reprint, when
-another fetch moved the trunk under that rebuild (START-26), removes what this call built
-(START-18). Once the claim's push was sent, only the store knows whether it was written: a failure
-then removes nothing and says the outcome is uncertain (START-25); neither does an interrupt.
+A refusal after the build -- another fetch moved the trunk so the worktree stands on a commit the
+checks never saw, another claim or a close landed after the checks, the store could not be reached,
+the claim's push was rejected and the store re-read nothing of it written -- or between a live
+claim's gone-worktree rebuild and its reprint, when another fetch moved the trunk under that rebuild
+(START-26), removes what this call built (START-18). Only a claim whose push was sent and whose
+outcome the store cannot tell keeps it and says so (START-25); an interrupt removes nothing either.
 
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.
@@ -96,10 +96,10 @@ then removes nothing and says the outcome is uncertain (START-25); neither does 
 - [ ] [START-16] A live claim on the target held by a different agent or branch is never silently resumed: it falls through to the ordinary claim path, refused by CLAIM-11's own sentence (see E-START-09).
 - [ ] [START-17] A resume's own explicit `--scope` disagreeing with the live claim's stored scope refuses `live claim scope differs; release it first`, exit `2` (see E-START-10).
 - [ ] [START-22] A refusal of the claim's own checks comes before the build: no `worktree:`/`branch:` line, no worktree, no branch; exit 2 (see E-START-11).
-- [ ] [START-18] A claim refused between build and push, or a moved trunk (START-26), removes both, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
+- [ ] [START-18] A claim refused after the build, even under its push (CAS-57), or a moved trunk (START-26) drops both: `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
 - [ ] [START-26] A build or gone-worktree rebuild standing on a trunk moved after the checks refuses `the trunk moved after start checked it; run start again`, exit 2, then removes it as START-18 says.
-- [ ] [START-25] A write failing after its push keeps both, adding `the claim's push was sent, its outcome unknown; worktree <path> and branch '<branch>' kept; run start again to resume it`; exit 2.
-- [ ] [START-27] A `state-ref` item closed or edited after the checks read it refuses CAS-20's sentence (CAS-59), no claim; before the claim's push the build goes (START-18), under it stays (START-25); see E-START-16.
+- [ ] [START-25] A push of unknown outcome (CAS-56) keeps both, even one that stood: `the claim's push was sent, its outcome unknown; worktree <path> and branch '<branch>' kept; run start again to resume it`; exit 2.
+- [ ] [START-27] A `state-ref` item closed or edited after the checks read it refuses CAS-20's sentence (CAS-59), no claim, and the build goes (START-18), before or under the claim's push; see E-START-16.
 - [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 - [ ] [START-23] When git will not remove that worktree, the refusal and exit 2 stay and the line reads `worktree <path> and branch '<branch>' this start created kept: git failure: <reason>`.
 
@@ -311,7 +311,7 @@ branch: ada/issue-314-fresh-slug
 exit 2
 ```
 
-### E-START-16 -- a `state-ref` item closed under the claim's rejected push keeps the build, no claim written
+### E-START-16 -- a `state-ref` item closed under the claim's rejected push removes the build, no claim written
 
 Setup: bare-remote, bootstrapped, `storage = "state-ref"`, item `aco-00013a` open as E-START-01's `#314`; another writer
 closes it after this call's claim write read the ref, so that write's push is rejected
@@ -321,6 +321,6 @@ $ aco start 314
 worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
 branch: ada/issue-314-fresh-slug
 2> ERROR: item 'aco-00013a' was written since it was read (expected <oid>, found '<oid>'); re-read and retry
-2> the claim's push was sent, its outcome unknown; worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' kept; run start again to resume it
+2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' this start created
 exit 2
 ```

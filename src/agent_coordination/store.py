@@ -43,7 +43,6 @@ from .protocol import (
     EMPTY_STATE,
     MISSING_STATE_REF,
     ActiveClaim,
-    ClaimConflictError,
     ClaimError,
     ClaimId,
     ClaimIntent,
@@ -60,8 +59,6 @@ from .protocol import (
     ReleaseIntent,
     RescopeIntent,
     ResourceRecord,
-    SentClaimConflictError,
-    SentWriteError,
     StateLineageError,
     UncertainWriteError,
     UnreadableState,
@@ -1617,15 +1614,6 @@ def _uncertain_once_sent() -> Iterator[None]:
         raise UncertainWriteError(str(error)) from error
 
 
-def _sent_write_refusal(refusal: ClaimError) -> SentWriteError:
-    """`refusal`, met once this write's sent push was rejected and the ref
-    re-read without its `operation_id` (CAS-57): still a sent write, in the
-    refusal's own words and naming, so a caller keeps what the write may
-    name (START-25); a claim conflict stays one (CLM-25)."""
-    kind = SentClaimConflictError if isinstance(refusal, ClaimConflictError) else SentWriteError
-    return kind(str(refusal), naming=refusal.naming)
-
-
 @dataclass(frozen=True)
 class _Rejection:
     """A rejected push's fresh re-read of the ref, and whether that already
@@ -1680,33 +1668,29 @@ def commit_transition(
     bootstrap tree, a transition's result depends on the state it is
     applied to, so a rejected push re-fetches, looks for its own
     `operation_id`, and re-applies `intent` to the fresh state instead of
-    reusing a stale tree -- the same seam (criterion 3), generalized. Every
-    failure after a push was sent is a `SentWriteError`: an
-    `UncertainWriteError` when the store cannot tell its outcome, the plain
-    kind for a refusal or an exhausted retry after a re-read.
+    reusing a stale tree -- the same seam (criterion 3), generalized. A
+    failure after a push was sent whose outcome the store cannot tell is an
+    `UncertainWriteError` (CAS-56); a refusal or an exhausted retry after a
+    re-read found nothing of this write, so it stays the plain refusal
+    (CAS-57).
     """
     transport = transport or GitPushTransport()
     if observed.state.tip is None:
         raise ClaimError(MISSING_STATE_REF)
     moves = 0
     stationary_since_last_move = 0
-    for pushes_sent in range(_MAX_TRANSITION_ATTEMPTS):
+    for _ in range(_MAX_TRANSITION_ATTEMPTS):
         state = observed.state
-        try:
-            new_state = apply(state, intent)
-            new_tree = _write_incremental_state_tree(
-                observed.worktree, observed=state, new_state=new_state
-            )
-            new_commit = _commit_tree(
-                observed.worktree,
-                tree_oid=new_tree,
-                parent=state.tip,
-                message=_transition_message(subject, intent),
-            )
-        except ClaimError as refusal:
-            if not pushes_sent:
-                raise
-            raise _sent_write_refusal(refusal) from refusal
+        new_state = apply(state, intent)
+        new_tree = _write_incremental_state_tree(
+            observed.worktree, observed=state, new_state=new_state
+        )
+        new_commit = _commit_tree(
+            observed.worktree,
+            tree_oid=new_tree,
+            parent=state.tip,
+            message=_transition_message(subject, intent),
+        )
         rejection = _pushed(observed, transport, new_commit, intent.operation_id)
         if rejection is None:
             return replace(new_state, tip=new_commit)
@@ -1719,13 +1703,11 @@ def commit_transition(
             stationary_since_last_move=stationary_since_last_move,
         )
         observed = replace(observed, state=rejection.refreshed)
-    raise _sent_write_refusal(
-        _retry_exhaustion_error(
-            remote=observed.remote,
-            attempts=_MAX_TRANSITION_ATTEMPTS,
-            moves=moves,
-            stationary_since_last_move=stationary_since_last_move,
-        )
+    raise _retry_exhaustion_error(
+        remote=observed.remote,
+        attempts=_MAX_TRANSITION_ATTEMPTS,
+        moves=moves,
+        stationary_since_last_move=stationary_since_last_move,
     )
 
 

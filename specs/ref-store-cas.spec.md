@@ -91,7 +91,7 @@ transition), and which of the three causes applies.
 - [ ] [CAS-16] A transition rejected 32 times while the ref keeps moving refuses `refs/aco/state moved 32 times while retrying: another writer on <remote> keeps landing first; retry the command`.
 - [ ] [CAS-17] A moved-then-stuck ref refuses `refs/aco/state moved 1 time while retrying, then rejected 31 pushes to <remote> without the ref moving after it last moved`, fix `refs/aco/state.lock` (see E-CAS-04).
 - [ ] [CAS-56] A sent push the store cannot judge -- no answer, a failed re-read after a rejection, a failed lineage stamp after a landing -- refuses as an uncertain write, in that failure's own sentence.
-- [ ] [CAS-57] A rejected push re-read without its own `operation_id`, then refused or exhausted (CAS-15..17), is a sent write (START-25) the store found nothing of, never an uncertain one.
+- [ ] [CAS-57] A rejected push re-read without its own `operation_id`, then refused or exhausted (CAS-15..17), refuses in that refusal's own sentence: nothing written, never an uncertain write (START-18).
 
 ### Work budget
 
