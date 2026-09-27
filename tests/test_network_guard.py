@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -49,17 +50,29 @@ def test_git_refuses_https_while_the_test_runs():
 _OPERATOR_GIT_ROUTES = ("GIT_PROXY_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT")
 
 
+@cache
+def _repository_selecting_git_variables() -> frozenset[str]:
+    """Git's own list of the variables that select a repository (`GIT_DIR`,
+    `GIT_WORK_TREE`, ...), whose local configuration could rewrite a URL or
+    set a proxy."""
+    local_variables = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
+    )
+    return frozenset(local_variables.stdout.split())
+
+
 def _machine_local_git_environment() -> dict[str, str]:
     """The inherited environment without any route the operator configured:
-    no proxy, no git configuration beyond the repository's own, and an ssh
-    that reads no config file, so a probe the guard failed to stop still
-    dials the loopback address it names."""
+    no proxy, no operator repository or git configuration beyond the probed
+    repository's own, and an ssh that reads no config file, so a probe the
+    guard failed to stop still dials the loopback address it names."""
+    operator_git_variables = _repository_selecting_git_variables() | set(_OPERATOR_GIT_ROUTES)
     inherited = {
         name: value
         for name, value in os.environ.items()
         if not name.lower().endswith("_proxy")
         and not name.startswith("GIT_CONFIG")
-        and name not in _OPERATOR_GIT_ROUTES
+        and name not in operator_git_variables
     }
     return inherited | {
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -146,7 +159,13 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     each ask git for an https remote passes only when the plugin the project
     configuration loads guards before the initial conftests (#530 lines 1
     and 2). The operator's runtime git configuration refuses https here
-    too; the blocked run proves the scratch pytest never inherits it."""
+    too, both at runtime and in the repository it selects; the blocked run
+    proves the scratch pytest never inherits either."""
+    operator_repository = tmp_path / "operator"
+    operator_repository.mkdir()
+    _real_git(operator_repository, "init", "-q")
+    _real_git(operator_repository, "config", "protocol.https.allow", "never")
+    monkeypatch.setenv("GIT_DIR", str(operator_repository / ".git"))
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.https.allow")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "never")
