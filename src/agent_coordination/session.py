@@ -266,9 +266,13 @@ class RunContext:
     @cached_property
     def recorded_default_branch(self) -> str | None:
         """The canonical remote's recorded default branch in this checkout,
-        or `None` when none is recorded or it dangles (issue #490): the
-        offline checks' default branch, each check keeping its own rule for
-        `None`."""
+        or `None` when none is recorded, it dangles (issue #490), or the
+        checkout does not configure that remote, whose leftover `HEAD`
+        records nothing (issue #508): the offline checks' default branch,
+        each check keeping its own rule for `None` -- `rescope`'s names the
+        unconfigured remote itself (PROT-45)."""
+        if not self.canonical_remote_is_configured:
+            return None
         return checkout.recorded_default_branch(self.canonical_remote, directory=self.toplevel)
 
     @cached_property

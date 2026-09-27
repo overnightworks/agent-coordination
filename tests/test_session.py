@@ -525,6 +525,25 @@ def test_every_read_of_a_canonical_remote_the_checkout_does_not_configure_refuse
     )
 
 
+@pytest.mark.parametrize(
+    "unconfigure_hub",
+    [
+        pytest.param(_hub_never_added, id="never-added"),
+        pytest.param(_hub_removed_leaving_its_refs, id="removed-leaving-its-refs"),
+    ],
+)
+def test_a_canonical_remote_the_checkout_does_not_configure_records_no_default_branch(
+    tmp_path: Path, unconfigure_hub: Callable[[Path], None]
+) -> None:
+    """Issue #508: the offline checks' recorded default branch asks the
+    same owner, so the `HEAD` a removed `hub` left behind records nothing
+    -- each check then keeps its own rule for no default branch."""
+    repository = _pushed_repository(tmp_path, 'storage = "state-ref"\ncanonical_remote = "hub"\n')
+    unconfigure_hub(repository)
+
+    assert _context().for_directory(repository).recorded_default_branch is None
+
+
 def test_a_canonical_remote_found_unconfigured_stays_refused_for_the_whole_context(
     tmp_path: Path,
 ) -> None:
