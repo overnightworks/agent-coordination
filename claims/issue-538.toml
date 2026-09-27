@@ -1,0 +1,8 @@
+claim_id = "64705cc1f4154767bded42eb751dce01"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "fd0c112ff96c6fb2d844e07aa1df6bca1712dd43"
+branch = "claude/issue-538-display-control-predicate"
+scope = ["scripts/test_budget_ratchet.txt", "scripts/vulture_whitelist.py", "specs/body-block.spec.md", "specs/claim.spec.md", "specs/land.spec.md", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_protocol.py"]
+opened_commit = "88ea731d7470e017de9753f531f36404f6b8a5e0"
+whole_reason = "one public display-control predicate and its three callers, with the specs that name the set"
