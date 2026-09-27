@@ -2964,6 +2964,32 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
     assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
 
 
+def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_default_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #479 (CAS-55): the claim's checks observe the state ref again
+    once the trunk fetch is done, while the canonical remote and default
+    branch the run already read stay held -- one read of each per
+    directory `start` works in."""
+    _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    remote_url, default_branch_name = checkout.remote_url, checkout.default_branch_name
+    reads: list[tuple[str, Path | None]] = []
+
+    def counting_remote_url(remote: str, *, directory: Path | None = None) -> str:
+        reads.append(("remote url", directory))
+        return remote_url(remote, directory=directory)
+
+    def counting_default_branch_name(*, directory: Path | None = None) -> str | None:
+        reads.append(("default branch", directory))
+        return default_branch_name(directory=directory)
+
+    monkeypatch.setattr(checkout, "remote_url", counting_remote_url)
+    monkeypatch.setattr(checkout, "default_branch_name", counting_default_branch_name)
+
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    assert [read for read in set(reads) if reads.count(read) > 1] == []
+
+
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
