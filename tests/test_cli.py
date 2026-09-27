@@ -2203,6 +2203,29 @@ def test_a_refused_start_names_the_branch_git_would_not_delete(
     )
 
 
+def test_start_keeps_its_worktree_when_the_report_fails_after_the_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #479 review finding 2: only a refused claim undoes the build; a
+    failure printing the report of a claim already written leaves the
+    worktree and branch that claim names."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+
+    def closed_pipe(*_arguments: object) -> str:
+        raise BrokenPipeError
+
+    monkeypatch.setattr(issue_claim, "_claim_cost_line", closed_pipe)
+
+    with pytest.raises(BrokenPipeError):
+        issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    live = store.fetch_state(worktree=Path("."), remote="origin").claims
+    assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) in live
+    assert checkout.resolve_path_checkout(worktree) is not None
+
+
 def test_start_resume_refuses_a_scope_that_differs_from_the_live_claim(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

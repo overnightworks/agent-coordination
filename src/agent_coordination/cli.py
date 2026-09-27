@@ -5187,14 +5187,15 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     target = _start_target(session.context, live, number=number, slug=slug, branch=branch)
     print(f"worktree: {target.path}")
     print(f"branch: {target.branch}")
-    claimed = False
     try:
         status = _claim_in_start_worktree(parsed, session.context, target, observed, live)
-        claimed = status == 0
-        return status
-    finally:
-        if target.created and not claimed:
+    except protocol.ClaimError:
+        if target.created:
             _remove_refused_start_worktree(target)
+        raise
+    if status != 0 and target.created:
+        _remove_refused_start_worktree(target)
+    return status
 
 
 def _claim_in_start_worktree(
