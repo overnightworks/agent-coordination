@@ -57,13 +57,10 @@ def test_gh_finds_no_login(host_arguments):
     assert token.returncode != 0, "gh found a login"
 """
 
-_WITH_AND_WITHOUT_THE_PLUGIN = pytest.mark.parametrize(
-    ("plugin_arguments", "guarded"),
-    [
-        pytest.param([], True, id="plugin-loaded"),
-        pytest.param(["-p", "no:network_guard"], False, id="plugin-blocked"),
-    ],
-)
+_PLUGIN_CASES = [
+    pytest.param([], True, id="plugin-loaded"),
+    pytest.param(["-p", "no:network_guard"], False, id="plugin-blocked"),
+]
 
 
 @pytest.fixture
@@ -140,7 +137,7 @@ def test_a_refused_remote_probe_ignores_operator_proxies_when_the_guard_is_gone(
     assert "127.0.0.1 port 9" in push.stderr
 
 
-@_WITH_AND_WITHOUT_THE_PLUGIN
+@pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
 @pytest.mark.usefixtures("hostile_operator_git_template")
 def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     tmp_path: Path,
@@ -181,7 +178,7 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
 
 
-@_WITH_AND_WITHOUT_THE_PLUGIN
+@pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
 def test_a_run_started_with_a_hostile_gh_login_finds_no_login(
     tmp_path: Path, plugin_arguments: list[str], guarded: bool
 ) -> None:
