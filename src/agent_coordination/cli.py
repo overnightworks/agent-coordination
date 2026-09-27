@@ -1747,7 +1747,9 @@ def _board(
                 client, tuple(issue.number for issue in issues if issue.blocked_by_count > 0)
             ),
         )
-    trunk_landings = checkout.trunk_landings(config.canonical_remote, TRUNK_LANDING_DEPTH)
+    trunk_landings = checkout.trunk_landings(
+        context.trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel
+    )
     # One walk of `trunk_landings` feeds three views `board.py` keeps
     # separate (issue #371): `trunk_landing_items` (sha and all) drives the
     # Landungen view itself; `landed_at_by_item`/`trunk_landed_work_items`
@@ -2983,7 +2985,9 @@ def _verify_merged_release(
             f"not the default branch {default_branch!r}"
         )
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
-    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH, fetch=True)
+    landings = checkout.trunk_landings(
+        context.fetched_trunk_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
+    )
     if isinstance(identity, protocol.LaneIdentity):
         defect = _trunk_no_item_landing_defect(landings, detail.merge_commit, detail.number)
         if defect is not None:
@@ -4026,7 +4030,9 @@ def _check_trunk_commit(parsed: argparse.Namespace, context: RunContext) -> int:
     `storage = "state-ref"` (LAND-47/LAND-52), reused rather than re-derived
     here. Needs no forge at all: a trunk commit's trailer is local history."""
     sha = cast(str, parsed.number)
-    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
+    landings = checkout.trunk_landings(
+        context.trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel
+    )
     landing = next((entry for entry in landings if entry.sha == sha), None)
     return _trunk_commit_outcome(sha, landing, context.config.storage).report(as_json=parsed.json)
 
@@ -4293,14 +4299,17 @@ def _brief_report(parsed: argparse.Namespace, session: _ReadSession) -> int:
     client = session.forge()
     item_body = client.item_reference(item).body or ""
     context = session.context
-    remote = context.canonical_remote
     live = _brief_live_claim(context.toplevel, context.observation, item)
     if live is None:
         tip: str | None = None
         touched: tuple[str, ...] = ()
     else:
         tip = _lane_tip(live.claim.branch)
-        touched = checkout.lane_changed_paths(tip, remote=remote) if tip is not None else ()
+        touched = (
+            checkout.lane_changed_paths(tip, trunk=context.trunk_ref, directory=context.toplevel)
+            if tip is not None
+            else ()
+        )
     observed_at = datetime.now(UTC)
     composition = _BriefComposition(item_body, live, observed_at, tip, touched, step_rules)
     if parsed.json:
@@ -5444,13 +5453,14 @@ def _rebuild_and_resume(
     minted. A worktree that stands on another commit -- another fetch moved
     the trunk after the checks -- is removed again, as a fresh build's is
     (START-18)."""
-    trunk = checkout.fetched_trunk(context.canonical_remote)
+    trunk_ref = context.fetched_trunk_ref()
+    trunk = checkout.trunk_commit(trunk_ref, directory=context.toplevel)
     versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
     checked = _claim_request(
         _start_claim_arguments(parsed, base=trunk, branch=target.branch, claim_id=resumed.claim_id)
     )
     checkout.create_linked_worktree(
-        target.path, branch=target.branch, remote=context.canonical_remote
+        target.path, branch=target.branch, trunk=trunk_ref, directory=context.toplevel
     )
     _print_start_target(target)
     try:
@@ -5474,7 +5484,8 @@ def _check_build_and_claim(
     knows whether the claim was written, so a failure after it keeps the
     worktree and says the outcome is uncertain (START-25). An interrupt or
     an unexpected error is no refusal."""
-    trunk = checkout.fetched_trunk(context.canonical_remote)
+    trunk_ref = context.fetched_trunk_ref()
+    trunk = checkout.trunk_commit(trunk_ref, directory=context.toplevel)
     # The main checkout observed afresh, never the observation the
     # item-existence read already holds: the fetch above may take a while,
     # and the claim must read the item as it stands once the fetch is done,
@@ -5487,7 +5498,7 @@ def _check_build_and_claim(
         _refuse_claim(False, plan.target_issue, plan.checks)
         return 2
     checkout.create_linked_worktree(
-        target.path, branch=target.branch, remote=context.canonical_remote
+        target.path, branch=target.branch, trunk=trunk_ref, directory=context.toplevel
     )
     _print_start_target(target)
     _print_claim_checks(plan, as_json=False)
@@ -5724,7 +5735,9 @@ def _cleanup_landed_worktree(
         matching = checkout.worktree_on_branch(others, branch)
         if matching is None:
             return checkout.worktree_cleanup_kept(WORKTREE_KEPT_NO_WORKTREE_REASON)
-        return checkout.cleanup_landed_worktree(matching, branch, remote=context.canonical_remote)
+        return checkout.cleanup_landed_worktree(
+            matching, branch, trunk=context.fetched_trunk_ref(), directory=toplevel
+        )
     except protocol.ClaimError as error:
         return checkout.worktree_cleanup_kept(f"git failure: {error}")
 
@@ -6034,7 +6047,7 @@ def _land_step(number: int, sha: str, step: str, action: Callable[[], None]) -> 
 
 
 def _land_release_routing(
-    classification: board.Classification | None, merge_sha: str, canonical_remote: str
+    classification: board.Classification | None, merge_sha: str, context: RunContext
 ) -> int | None:
     """The issue `aco land`'s own delegated `release --merged` call routes
     to (issue #405 point 4): a fresh merge reuses the classification this
@@ -6053,7 +6066,9 @@ def _land_release_routing(
         if isinstance(classification, board.WorkItemClassification):
             return classification.item.number
         return None
-    landings = checkout.trunk_landings(canonical_remote, TRUNK_LANDING_DEPTH, fetch=True)
+    landings = checkout.trunk_landings(
+        context.fetched_trunk_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
+    )
     landing = next((entry for entry in landings if entry.sha == merge_sha), None)
     trunk_classification = None if landing is None else landing.classification
     if isinstance(trunk_classification, board.TrunkWorkItemClassification):
@@ -6145,7 +6160,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
     if detail.merged:
         assert detail.merge_commit is not None  # `merged` is true; github.py guarantees this.
         merge_sha = detail.merge_commit
-        default_branch = checkout.refuse_unclean_default_branch_checkout()
+        checkout.refuse_unclean_default_branch_checkout()
         # A rerun: this run's own preflight never ran, so it never verified a
         # classification -- `_land_release_routing` reads the merge commit's
         # own trailer instead (issue #405 point 4).
@@ -6166,7 +6181,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         detail, classification, readiness = _land_preflight(
             client, claims_provider, check_context, number, parsed
         )
-        default_branch = checkout.refuse_unclean_default_branch_checkout()
+        checkout.refuse_unclean_default_branch_checkout()
         merge_sha = _land_merge(client, detail, readiness, classification)
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)
@@ -6176,7 +6191,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         merge_sha,
         "fast-forward",
         lambda: checkout.fast_forward_default_branch(
-            config.canonical_remote, default_branch, directory=toplevel
+            context.fetched_trunk_ref(), directory=toplevel
         ),
     )
     _land_step(
@@ -6186,7 +6201,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         lambda: _land_release(
             parsed,
             context,
-            _land_release_routing(classification, merge_sha, config.canonical_remote),
+            _land_release_routing(classification, merge_sha, context),
             detail.source_branch,
         ),
     )
@@ -6229,7 +6244,9 @@ def _cmd_release_landed(
             "an issue-less lane has no item to close"
         )
     context = session.context
-    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
+    landings = checkout.trunk_landings(
+        context.trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel
+    )
     commit = _landed_commit(
         landings, identity.issue, cast(str, parsed.merged), context.config.storage
     )

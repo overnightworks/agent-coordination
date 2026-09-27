@@ -3,8 +3,8 @@
 A `RunContext` answers the questions every store and forge command asks
 about the checkout it runs in -- its toplevel, its tracked board
 configuration, the canonical remote and where that remote points, the forge
-repository it names, the default branch, the forge itself, and its one
-observation of `refs/aco/state` (issue #477). Each fact is
+repository it names, the default branch, the trunk, the forge itself, and
+its one observation of `refs/aco/state` (issue #477). Each fact is
 read the first time a command asks for it and held for the rest of that run,
 never before: a command that refuses early, or never needs a fact, never
 pays the git, filesystem, or `gh` read behind it.
@@ -15,9 +15,9 @@ from its own paths); `fresh` re-reads the same
 directory from scratch (`board --serve` takes one per request, so nothing is
 held across requests); `observed_afresh` drops exactly its state-ref
 observation and the forge built from it, and keeps every other fact it read
--- toplevel, board configuration, remote, forge repository, default branch
--- so the next ask re-reads only the state ref. `protect` never builds one:
-it judges from its own payload's path.
+-- toplevel, board configuration, remote, forge repository, default
+branch, trunk -- so the next ask re-reads only the state ref. `protect`
+never builds one: it judges from its own payload's path.
 """
 
 from __future__ import annotations
@@ -106,6 +106,7 @@ class RunContext:
         self.repo = repo
         self.directory = directory
         self._build_forge = build_forge
+        self._fetched_trunk_remote: str | None = None
 
     def for_directory(self, directory: Path, *, is_toplevel: bool = False) -> RunContext:
         """A context for another checkout of the same run (`start`'s
@@ -120,8 +121,14 @@ class RunContext:
 
     def fresh(self) -> RunContext:
         """The same directory with nothing read yet (`board --serve`'s
-        per-request context)."""
-        return RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
+        per-request context, `land`'s delegated release). The run's trunk
+        fetch is no read and carries over with the remote it fetched, so
+        the fresh context resolves the trunk anew without fetching that
+        remote a second time, yet fetches the canonical remote its reread
+        configuration names when that is another (issue #488)."""
+        child = RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
+        child._fetched_trunk_remote = self._fetched_trunk_remote
+        return child
 
     def observed_afresh(self) -> RunContext:
         """The same directory still holding every static fact this context
@@ -213,6 +220,34 @@ class RunContext:
                 "cannot resolve the default branch; run aco from a checkout with origin/HEAD set"
             )
         return branch
+
+    @cached_property
+    def trunk_ref(self) -> str:
+        """The canonical remote's trunk ref in this checkout, as the last
+        fetch left it, without fetching (issue #488): the ref a command
+        walks for landings or diffs a lane against."""
+        return self._resolved_trunk_ref()
+
+    def fetched_trunk_ref(self) -> str:
+        """The canonical remote's trunk ref once this checkout fetched that
+        remote -- at most once per run and remote (issue #488): the ref `start` builds
+        from and `release --merged` verifies a fresh merge against. The
+        recorded `HEAD` is read again after the fetch, never one held from
+        before it, since a fetch may record or move it: the held trunk is
+        dropped before the resolution, so one that fails is asked again."""
+        if self._fetched_trunk_remote != self.canonical_remote:
+            checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
+            self._fetched_trunk_remote = self.canonical_remote
+            self.__dict__.pop("trunk_ref", None)
+        return self.trunk_ref
+
+    def _resolved_trunk_ref(self) -> str:
+        remote = self.canonical_remote
+        return checkout.trunk_ref_after(
+            remote,
+            checkout.recorded_head_ref(remote, directory=self.toplevel),
+            directory=self.toplevel,
+        )
 
     @cached_property
     def forge(self) -> forge.ForgeReader:

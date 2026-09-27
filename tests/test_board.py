@@ -3382,25 +3382,17 @@ def test_trunk_commit_classification_reports_a_malformed_work_item_as_a_defect(
 
 @pytest.mark.parametrize("malformed_first", [True, False])
 def test_trunk_log_classifies_valid_neighbors_of_a_malformed_work_item(
-    monkeypatch: pytest.MonkeyPatch, malformed_first: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, malformed_first: bool
 ) -> None:
     malformed_record = "bad-sha\x002026-09-20T10:00:00+00:00\x00fix/x\x00\x00"
     valid_record = "good-sha\x002026-09-20T11:00:00+00:00\x00#10\naco-00000b\x00\x00"
     records = (
         (malformed_record, valid_record) if malformed_first else (valid_record, malformed_record)
     )
+    monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: "".join(records))
 
-    def git_output(arguments: list[str], **_kwargs: object) -> str:
-        if arguments[0] == "symbolic-ref":
-            return "refs/remotes/origin/main"
-        assert arguments[0] == "log"
-        return "".join(records)
-
-    monkeypatch.setattr(checkout, "_git_output", git_output)
-
-    landings = {
-        landing.sha: landing.classification for landing in checkout.trunk_landings("origin", 2)
-    }
+    walked = checkout.trunk_landings("refs/remotes/origin/main", 2, directory=tmp_path)
+    landings = {landing.sha: landing.classification for landing in walked}
 
     assert isinstance(landings["bad-sha"], board.ClassificationDefect)
     assert landings["good-sha"] == board.TrunkWorkItemClassification((10, 11))
