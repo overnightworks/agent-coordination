@@ -343,22 +343,17 @@ class StateRefBoard:
         repair path for a malformed item every other read refuses."""
         return number in self._by_number
 
-    def require_well_formed(self) -> None:
+    def hold_well_formed(self) -> None:
         """Refuses with the lowest malformed item's own sentence and repair
-        while `items/` holds any (issue #447): a malformed item's parent,
-        state, and blockers are unknown, so what `item close` freed and a
-        `board --serve` ruling click's write would guess past it. Reads that
-        only project the board list it instead (issue #517)."""
+        while `items/` holds any, then `hold_items` through every later write
+        of this instance (issue #447): a malformed item's parent, state, and
+        blockers are unknown, so `board --serve`'s ruling click would guess
+        past it -- the one whole-board write that keeps PIN-29 "before any
+        write". Reads that only project the board list it instead (issue
+        #517)."""
         if self._malformed:
             item_id = min(self._malformed)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
-
-    def hold_well_formed(self) -> None:
-        """`require_well_formed` now and `hold_items` through every later
-        write of this instance (issue #447) -- the one guard a whole-board
-        command's write (`board --serve`'s ruling click) needs to keep
-        PIN-29 "before any write"."""
-        self.require_well_formed()
         self.hold_items()
 
     def hold_items(self) -> None:

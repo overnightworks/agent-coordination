@@ -257,7 +257,7 @@ exit 2
 
 ### E-PIN-07 — a hand-corrupted item file
 
-Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block, `<child-id>` an open item whose `record.parent` is `aco-000001`, `<item-id>` another open item with no parent and no child
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block, `<child-id>` an open item whose `record.parent` is `aco-000001`, `<item-id>` another open item with no parent and no child and blocking no item
 
 ```console
 $ aco item show aco-000001
