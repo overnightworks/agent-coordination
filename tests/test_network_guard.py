@@ -43,18 +43,40 @@ def test_git_refuses_https_while_the_test_runs():
     assert_git_refuses_https()
 """
 )
-_SCRATCH_GH_LOGIN_MODULE = """
+_SCRATCH_GH_MODULE = f"""
+import os
 import subprocess
 
 import pytest
 
+_LOOPBACK_ONLY_PROXY = "http://{UNREACHABLE_GH_HOST}"
+
+
+def run_gh(*arguments):
+    return subprocess.run(["gh", *arguments], capture_output=True, text=True, check=False)
+
 
 @pytest.mark.parametrize("host_arguments", [(), ("--hostname", "github.com")])
 def test_gh_finds_no_login(host_arguments):
-    token = subprocess.run(
-        ["gh", "auth", "token", *host_arguments], capture_output=True, text=True, check=False
-    )
-    assert token.returncode != 0, "gh found a login"
+    assert run_gh("auth", "token", *host_arguments).returncode != 0, "gh found a login"
+
+
+def test_a_request_naming_its_own_host_ends_at_the_loopback_proxy():
+    # Checked before gh runs, so a run the guard failed to reroute never leaves the machine.
+    safe_routing = {{
+        "HTTPS_PROXY": _LOOPBACK_ONLY_PROXY,
+        "https_proxy": _LOOPBACK_ONLY_PROXY,
+        "HTTP_PROXY": _LOOPBACK_ONLY_PROXY,
+        "http_proxy": _LOOPBACK_ONLY_PROXY,
+        "NO_PROXY": None,
+        "no_proxy": None,
+    }}
+    routing = {{name: os.environ.get(name) for name in safe_routing}}
+    assert routing == safe_routing, routing
+
+    request = run_gh("api", "--hostname", "example.invalid", "user")
+
+    assert "proxyconnect tcp: dial tcp {UNREACHABLE_GH_HOST}" in request.stderr, request.stderr
 """
 
 _PLUGIN_CASES = [
@@ -179,13 +201,16 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
 
 
 @pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
-def test_a_run_started_with_a_hostile_gh_login_finds_no_login(
+def test_a_run_started_with_a_hostile_gh_setup_finds_no_login_and_stays_on_the_machine(
     tmp_path: Path, plugin_arguments: list[str], guarded: bool
 ) -> None:
-    """A pytest run started with the operator's gh configuration and every
-    gh token variable set asks gh for a login from its module: it finds none
-    only while the plugin displaces them before the run begins (#534 line
-    1). The blocked run proves the seeded login is one gh would use."""
+    """A pytest run started with the operator's gh configuration, every gh
+    token variable, a proxy of its own and a proxy exemption for every host
+    asks gh for a login, and for a host it names, from its module: it finds
+    none and its request ends at the closed loopback port only while the
+    plugin displaces them before the run begins (#534 line 1). The blocked
+    run proves the seeded login is one gh would use; its request is never
+    sent, because the module checks the proxy routing first."""
     hostile_config = tmp_path / "operator-gh-config"
     hostile_config.mkdir()
     (hostile_config / "hosts.yml").write_text(
@@ -203,11 +228,12 @@ def test_a_run_started_with_a_hostile_gh_login_finds_no_login(
         "GITHUB_TOKEN": "operator-token",
         "GH_ENTERPRISE_TOKEN": "operator-token",
         "GITHUB_ENTERPRISE_TOKEN": "operator-token",
+        "HTTPS_PROXY": "http://127.0.0.1:1",
+        "NO_PROXY": "*",
+        "no_proxy": "*",
     }
 
-    run = _run_scratch_pytest(
-        scratch, _SCRATCH_GH_LOGIN_MODULE, plugin_arguments, hostile_environment
-    )
+    run = _run_scratch_pytest(scratch, _SCRATCH_GH_MODULE, plugin_arguments, hostile_environment)
 
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
 
@@ -250,11 +276,6 @@ def _run_scratch_pytest(
             id="no-keyring-login",
         ),
         pytest.param(("api", "user"), f"https://{UNREACHABLE_GH_HOST}/api/", id="no-network"),
-        pytest.param(
-            ("api", "--hostname", "example.invalid", "user"),
-            f"proxyconnect tcp: dial tcp {UNREACHABLE_GH_HOST}",
-            id="no-network-for-a-named-host",
-        ),
     ],
 )
 def test_gh_under_the_plugin_has_no_login_and_stays_on_the_machine(
@@ -262,8 +283,7 @@ def test_gh_under_the_plugin_has_no_login_and_stays_on_the_machine(
 ) -> None:
     """The real gh binary finds no login for its default host nor, in the
     operator's keyring, for github.com, and a request for its default host
-    or a host it is told to name ends at the closed loopback port (#534
-    line 1)."""
+    ends at the closed loopback port (#534 line 1)."""
     gh = subprocess.run(
         ["gh", *gh_arguments], cwd=tmp_path, capture_output=True, text=True, check=False
     )
