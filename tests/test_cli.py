@@ -14439,15 +14439,23 @@ def _name_hub_as_the_canonical_remote(repo: Path) -> None:
     (configuration / "board.toml").write_text('canonical_remote = "hub"\n')
 
 
-_UNCONFIGURED_HUB = "ERROR: cannot determine the trunk: canonical remote 'hub' is not configured\n"
+_UNCONFIGURED_HUB_SENTENCE = "cannot determine the trunk: canonical remote 'hub' is not configured"
+_UNCONFIGURED_HUB = f"ERROR: {_UNCONFIGURED_HUB_SENTENCE}\n"
 
 
 @pytest.mark.parametrize(
-    "arrange",
+    ("arrange", "expected_out"),
     [
-        pytest.param(_start_on_github, id="start"),
-        pytest.param(_release_merged_with_cleanup, id="release-merged"),
-        pytest.param(_board_on_github, id="board"),
+        pytest.param(_start_on_github, "", id="start"),
+        pytest.param(_release_merged_with_cleanup, "", id="release-merged"),
+        pytest.param(
+            _board_on_github,
+            json.dumps(
+                {"ok": False, "reason": "unavailable", "message": _UNCONFIGURED_HUB_SENTENCE}
+            )
+            + "\n",
+            id="board-json",
+        ),
     ],
 )
 def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
@@ -14455,17 +14463,22 @@ def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+    expected_out: str,
 ) -> None:
     """Issue #508 proof 1, against real git: the board names `hub`, which
     this clone never added, so `start`, `release --merged` and `board`
     refuse by naming it rather than fetching nothing or reading the local
-    `main` as its trunk."""
+    `main` as its trunk, before `start` builds anything."""
     argv = arrange(monkeypatch, tmp_path)
-    _name_hub_as_the_canonical_remote(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    _name_hub_as_the_canonical_remote(repo)
+    branches_before = _real_git(repo, "branch", "--list").stdout
 
     status = issue_claim.main(argv)
 
-    assert (status, capsys.readouterr().err) == (2, _UNCONFIGURED_HUB)
+    printed = capsys.readouterr()
+    assert (status, printed.out, printed.err) == (2, expected_out, _UNCONFIGURED_HUB)
+    assert _real_git(repo, "branch", "--list").stdout == branches_before
 
 
 def _rename_master_to_trunk(repo: Path, remote: Path, *, keep_recorded_head: bool) -> None:
@@ -17665,14 +17678,19 @@ def test_cli_brief_touched_lists_only_the_lane_own_change_after_a_trunk_pull(
     assert read_touched(capsys.readouterr().out) == ["README.md"]
 
 
+def _rename_the_local_main(repository: Path) -> None:
+    _real_git(repository, "branch", "-m", "main", "trunk")
+
+
+@pytest.mark.parametrize("output_flags", [(), ("--json",)], ids=["text", "json"])
 @pytest.mark.parametrize(
-    ("output_flags", "expected_stdout"),
+    ("remove_the_trunk", "sentence"),
     [
-        ((), ""),
-        (
-            ("--json",),
-            json.dumps({"ok": False, "reason": "unavailable", "message": _NO_TRUNK_SENTENCE})
-            + "\n",
+        pytest.param(_rename_the_local_main, _NO_TRUNK_SENTENCE, id="no-candidate"),
+        pytest.param(
+            _name_hub_as_the_canonical_remote,
+            _UNCONFIGURED_HUB_SENTENCE,
+            id="unconfigured-remote",
         ),
     ],
 )
@@ -17681,13 +17699,16 @@ def test_cli_brief_refuses_naming_the_trunk_when_no_trunk_resolves(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     output_flags: tuple[str, ...],
-    expected_stdout: str,
+    remove_the_trunk: Callable[[Path], None],
+    sentence: str,
 ) -> None:
-    """Issue #468 BRIEF-20: with no remote and no local `main` or `master`,
-    TOUCHED has no trunk to diff from, so `brief` refuses by naming every
-    trunk candidate it tried."""
+    """Issue #468 BRIEF-20: with a branchless remote and no local `main` or
+    `master`, TOUCHED has no trunk to diff from, so `brief` refuses by
+    naming every trunk candidate it tried; a canonical remote the checkout
+    never configured is named instead, local `main` or not (issue #508,
+    BRIEF-22)."""
     repository, base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
-    _real_git(repository, "branch", "-m", "main", "trunk")
+    remove_the_trunk(repository)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "No trunk.")
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
@@ -17698,9 +17719,9 @@ def test_cli_brief_refuses_naming_the_trunk_when_no_trunk_resolves(
     status = issue_claim.main(["--repo", REPOSITORY, "brief", "258", *output_flags])
 
     captured = capsys.readouterr()
-    assert status == 2
-    assert captured.err == f"ERROR: {_NO_TRUNK_SENTENCE}\n"
-    assert captured.out == expected_stdout
+    refusal = {"ok": False, "reason": "unavailable", "message": sentence}
+    assert (status, captured.err) == (2, f"ERROR: {sentence}\n")
+    assert captured.out == (f"{json.dumps(refusal)}\n" if output_flags else "")
 
 
 _DEFAULT_BRIEF_TOML = '[build]\nrules = ["Stay in scope."]\nchecks = ["ruff check ."]\n'

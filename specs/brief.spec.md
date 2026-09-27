@@ -48,6 +48,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-18] A live claim's branch read failing instead of answering not-found, or its `<trunk>...<tip>` diff failing, refuses with git's own detail, exit `2`, `reason: unavailable` (see E-BRIEF-12).
 - [ ] [BRIEF-20] A found tip with no `<trunk>` refuses `cannot determine the trunk: none of <remote>/HEAD, <remote>/main, <remote>/master, main or master resolves`, exit `2` (see E-BRIEF-16).
 - [ ] [BRIEF-21] A `<remote>` with branches refuses instead `cannot determine the trunk: no <remote>/HEAD, <remote>/main or <remote>/master resolves; run git remote set-head <remote> -a`, exit `2` (see E-BRIEF-15).
+- [ ] [BRIEF-22] A `<remote>` the checkout never configured refuses instead `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-BRIEF-17).
 - [ ] [BRIEF-08] `<item>` naming no item at all prints one empty line for the missing body, then every section exactly as BRIEF-01..06 describe with no live claim -- never a refusal (see E-BRIEF-06).
 
 ## `--json`
@@ -356,5 +357,20 @@ exit 2
 $ aco brief 42 --json
 2> ERROR: cannot determine the trunk: none of origin/HEAD, origin/main, origin/master, main or master resolves
 {"ok": false, "reason": "unavailable", "message": "cannot determine the trunk: none of origin/HEAD, origin/main, origin/master, main or master resolves"}
+exit 2
+```
+
+### E-BRIEF-17 -- no `<trunk>` for a remote the checkout never configured
+
+Setup: as E-BRIEF-04, but `.agent-claim/board.toml` names `canonical_remote = "hub"`,
+which the work repository never added, and it keeps its local `main`
+
+```console
+$ aco brief 42
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
+exit 2
+$ aco brief 42 --json
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
+{"ok": false, "reason": "unavailable", "message": "cannot determine the trunk: canonical remote 'hub' is not configured"}
 exit 2
 ```
