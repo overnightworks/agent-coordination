@@ -198,10 +198,9 @@ class RunContext:
         question. `configured_canonical_remote` refuses on it before the
         remote's URL, state ref, trunk, fetch and `default_branch`;
         `recorded_default_branch`, the offline checks' read, answers `None`
-        on it instead and leaves the refusal to each check's own rule
-        (`rescope`'s PROT-45). Neither a remote-tracking ref a removed
-        remote left behind nor a local branch ever answers for a remote
-        that is not there."""
+        on it instead and leaves `None` to each check's own rule. Neither
+        a remote-tracking ref a removed remote left behind nor a local
+        branch ever answers for a remote that is not there."""
         return checkout.remote_is_configured(self.canonical_remote, directory=self.directory)
 
     @property
