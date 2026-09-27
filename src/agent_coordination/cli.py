@@ -5433,7 +5433,9 @@ def _check_build_and_claim(
     except protocol.ClaimError as error:
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     try:
-        claimed, claims = _committed_claim(plan)
+        # Written from the built worktree, so the lane's own lineage stamp
+        # and fetch anchor start at its claim (CAS-09).
+        claimed, claims = _committed_claim(replace(plan, worktree=target.path))
     except _ClaimConflictError as error:
         return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)

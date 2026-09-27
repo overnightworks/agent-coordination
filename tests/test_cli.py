@@ -2645,7 +2645,9 @@ def test_start_under_state_ref_claims_the_worktree_it_builds(
     prints is the one the worktree it built reads back. That the claim's
     checks read the item as it stands after the fetch, never the snapshot
     `start`'s first read took, is
-    `test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch`."""
+    `test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch`.
+    The claim is written from the built worktree, so its lineage stamp names
+    the claim's own commit (issue #479, CAS-09)."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
 
@@ -2653,6 +2655,8 @@ def test_start_under_state_ref_claims_the_worktree_it_builds(
 
     assert status == 0
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    state_tip = _real_git(repo, "ls-remote", "origin", store.STATE_REF).stdout.split()[0]
+    assert _lineage_observation(worktree)[0] == state_tip
     claim_id = _claimed_line_id(capsys.readouterr().out, f"issue {item_id}")
     live = store.fetch_state(worktree=worktree, remote="origin").claims
     claim = live[protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)]
