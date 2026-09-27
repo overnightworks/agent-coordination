@@ -13,8 +13,11 @@ One context stands for one directory. `for_directory` answers for another
 checkout (`start`'s freshly created worktree, `rescope`'s checkout resolved
 from its own paths); `fresh` re-reads the same
 directory from scratch (`board --serve` takes one per request, so nothing is
-held across requests). `protect` never builds one: it judges from its own
-payload's path.
+held across requests); `observed_afresh` drops exactly its state-ref
+observation and the forge built from it, and keeps every other fact it read
+-- toplevel, board configuration, remote, forge repository, default branch
+-- so the next ask re-reads only the state ref. `protect` never builds one:
+it judges from its own payload's path.
 """
 
 from __future__ import annotations
@@ -78,6 +81,12 @@ def refuse_canonical_remote_mismatch(
         )
 
 
+# The facts a `RunContext` holds that stand on its one state-ref
+# observation rather than on the checkout: `observed_afresh` drops exactly
+# these and keeps every other fact it read.
+_OBSERVATION_BOUND_FACTS = frozenset({"observation", "forge"})
+
+
 class RunContext:
     """The static facts of one command run in one directory, each read
     lazily and held once read (see the module docstring).
@@ -113,6 +122,20 @@ class RunContext:
         """The same directory with nothing read yet (`board --serve`'s
         per-request context)."""
         return RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
+
+    def observed_afresh(self) -> RunContext:
+        """The same directory still holding every static fact this context
+        read, with its observation of `refs/aco/state` -- and the forge
+        built from it -- dropped, so the next ask fetches the state ref
+        again (`start` once its trunk fetch is done, CAS-55) without
+        reading any static fact twice."""
+        child = self.fresh()
+        vars(child).update(
+            (fact, value)
+            for fact, value in vars(self).items()
+            if fact not in _OBSERVATION_BOUND_FACTS
+        )
+        return child
 
     @cached_property
     def toplevel(self) -> Path:

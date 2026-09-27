@@ -342,13 +342,14 @@ def test_checkout_validation_names_every_dirty_path_when_three_or_fewer(
     assert str(error.value) == "claim must be acquired before the first worktree edit: src/a.py"
 
 
-def _scratch_git_repository(tmp_path: Path) -> Path:
+def _scratch_git_repository(tmp_path: Path, *init_options: str) -> Path:
     """An initialized repository with one committed, tracked file -- for
     tests that drive `_dirty_paths` against real `git status --porcelain`
-    output instead of a fake standing in for `_git_output` itself."""
+    output instead of a fake standing in for `_git_output` itself.
+    `init_options` shape its git directory's layout."""
     repository = tmp_path / "repo"
     repository.mkdir()
-    _real_git(repository, "init", "-q", "-b", "main")
+    _real_git(repository, "init", "-q", "-b", "main", *init_options)
     _real_git(repository, "config", "user.name", "Test")
     _real_git(repository, "config", "user.email", "test@example.com")
     (repository / "README.md").write_text("hello\n")
@@ -1397,20 +1398,25 @@ def _bare_remote_repository_with_one_commit(tmp_path: Path) -> Path:
     return repo
 
 
-def test_create_linked_worktree_fetches_and_builds_from_the_remote_trunk(
+def _build_start_worktree(worktree: Path, branch: str) -> None:
+    checkout.fetched_trunk("origin")
+    checkout.create_linked_worktree(worktree, branch=branch, remote="origin")
+
+
+def test_create_linked_worktree_builds_from_the_fetched_trunk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _bare_remote_repository_with_one_commit(tmp_path)
     worktree = tmp_path / "repo-worktrees" / "issue-9-widget"
     monkeypatch.chdir(repo)
 
-    checkout.create_linked_worktree(worktree, branch="codex/issue-9-widget", remote="origin")
+    _build_start_worktree(worktree, "codex/issue-9-widget")
 
     assert (worktree / "base.txt").read_text() == "base\n"
     assert _real_git(worktree, "branch", "--show-current").stdout.strip() == "codex/issue-9-widget"
 
 
-def test_resolve_or_create_worktree_builds_once_and_resumes_on_a_second_call(
+def test_existing_start_worktree_is_absent_before_the_build_and_standing_after(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _bare_remote_repository_with_one_commit(tmp_path)
@@ -1418,15 +1424,14 @@ def test_resolve_or_create_worktree_builds_once_and_resumes_on_a_second_call(
     branch = "codex/issue-9-widget"
     monkeypatch.chdir(repo)
 
-    checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
-    checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+    before = checkout.existing_start_worktree(worktree, branch)
+    _build_start_worktree(worktree, branch)
+    after = checkout.existing_start_worktree(worktree, branch)
 
-    resolved = checkout.resolve_path_checkout(worktree)
-    assert resolved is not None
-    assert resolved.branch == branch
+    assert (before, after, worktree.exists()) == (False, True, True)
 
 
-def test_resolve_or_create_worktree_builds_a_repository_nested_in_an_outer_working_tree(
+def test_create_linked_worktree_builds_a_repository_nested_in_an_outer_working_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Issue #448 review finding (START-01): an outer checkout's `.git` above
@@ -1438,26 +1443,27 @@ def test_resolve_or_create_worktree_builds_a_repository_nested_in_an_outer_worki
     branch = "codex/issue-9-widget"
     monkeypatch.chdir(repo)
 
-    checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+    assert checkout.existing_start_worktree(worktree, branch) is False
+    _build_start_worktree(worktree, branch)
 
     assert _real_git(worktree, "branch", "--show-current").stdout.strip() == branch
 
 
-def test_resolve_or_create_worktree_refuses_a_dirty_resume(
+def test_existing_start_worktree_refuses_a_dirty_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _bare_remote_repository_with_one_commit(tmp_path)
     worktree = tmp_path / "repo-worktrees" / "issue-9-widget"
     branch = "codex/issue-9-widget"
     monkeypatch.chdir(repo)
-    checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+    _build_start_worktree(worktree, branch)
     (worktree / "scratch.txt").write_text("uncommitted\n")
 
     with pytest.raises(ClaimError, match="is dirty"):
-        checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+        checkout.existing_start_worktree(worktree, branch)
 
 
-def test_resolve_or_create_worktree_refuses_a_branch_taken_by_no_worktree_of_this_item(
+def test_existing_start_worktree_refuses_a_branch_taken_by_no_worktree_of_this_item(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _bare_remote_repository_with_one_commit(tmp_path)
@@ -1467,10 +1473,10 @@ def test_resolve_or_create_worktree_refuses_a_branch_taken_by_no_worktree_of_thi
     monkeypatch.chdir(repo)
 
     with pytest.raises(ClaimError, match="already exists and is not this item's worktree"):
-        checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+        checkout.existing_start_worktree(worktree, branch)
 
 
-def test_resolve_or_create_worktree_refuses_an_existing_non_worktree_directory(
+def test_existing_start_worktree_refuses_an_existing_non_worktree_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Issue #322 review/gate finding: an ordinary directory already sitting
@@ -1483,10 +1489,10 @@ def test_resolve_or_create_worktree_refuses_an_existing_non_worktree_directory(
     monkeypatch.chdir(repo)
 
     with pytest.raises(ClaimError, match=re.escape(checkout.NOT_A_WORKTREE_REFUSAL)):
-        checkout.resolve_or_create_worktree(worktree, branch, remote="origin")
+        checkout.existing_start_worktree(worktree, branch)
 
 
-def test_resolve_or_create_worktree_refuses_a_worktree_on_a_different_branch(
+def test_existing_start_worktree_refuses_a_worktree_on_a_different_branch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = _bare_remote_repository_with_one_commit(tmp_path)
@@ -1496,10 +1502,10 @@ def test_resolve_or_create_worktree_refuses_a_worktree_on_a_different_branch(
     monkeypatch.chdir(repo)
 
     with pytest.raises(ClaimError, match="exists on branch 'codex/issue-9-old-slug'"):
-        checkout.resolve_or_create_worktree(worktree, "codex/issue-9-widget", remote="origin")
+        checkout.existing_start_worktree(worktree, "codex/issue-9-widget")
 
 
-def test_resolve_or_create_worktree_refuses_a_worktree_from_a_different_repository(
+def test_existing_start_worktree_refuses_a_worktree_from_a_different_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Issue #322 review finding 2: a clean linked worktree on the exact
@@ -1513,12 +1519,10 @@ def test_resolve_or_create_worktree_refuses_a_worktree_from_a_different_reposito
     monkeypatch.chdir(caller)
 
     with pytest.raises(ClaimError, match="belongs to a different repository"):
-        checkout.resolve_or_create_worktree(
-            foreign_worktree, "codex/issue-1-widget", remote="origin"
-        )
+        checkout.existing_start_worktree(foreign_worktree, "codex/issue-1-widget")
 
 
-def test_resolve_or_create_worktree_refuses_a_path_that_is_not_a_checkout_root_itself(
+def test_existing_start_worktree_refuses_a_path_that_is_not_a_checkout_root_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Issue #322 review finding 2: a path resolving into the middle of some
@@ -1531,10 +1535,10 @@ def test_resolve_or_create_worktree_refuses_a_path_that_is_not_a_checkout_root_i
     monkeypatch.chdir(caller)
 
     with pytest.raises(ClaimError, match="is not a checkout root by itself"):
-        checkout.resolve_or_create_worktree(nested, "codex/issue-1-widget", remote="origin")
+        checkout.existing_start_worktree(nested, "codex/issue-1-widget")
 
 
-def test_resolve_or_create_worktree_refuses_the_repositorys_own_main_checkout(
+def test_existing_start_worktree_refuses_the_repositorys_own_main_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Issue #322 review finding 2: `path` resolving to this repository's own
@@ -1546,7 +1550,105 @@ def test_resolve_or_create_worktree_refuses_the_repositorys_own_main_checkout(
     with pytest.raises(
         ClaimError, match="is a repository's own main checkout, not a linked worktree"
     ):
-        checkout.resolve_or_create_worktree(caller, "codex/issue-1-widget", remote="origin")
+        checkout.existing_start_worktree(caller, "codex/issue-1-widget")
+
+
+def _conventional_checkout(tmp_path: Path) -> Path:
+    return _scratch_git_repository(tmp_path)
+
+
+def _checkout_whose_git_directory_names_it(tmp_path: Path) -> Path:
+    """A submodule's layout: the git directory lives elsewhere and records
+    its checkout as `core.worktree`."""
+    (tmp_path / "modules").mkdir()
+    repository = _scratch_git_repository(
+        tmp_path, f"--separate-git-dir={tmp_path / 'modules' / 'repo'}"
+    )
+    _real_git(repository, "config", "core.worktree", "../../repo")
+    return repository
+
+
+def _linked_lane_of(main: Path, tmp_path: Path) -> Path:
+    lane = tmp_path / "lane"
+    _real_git(main, "worktree", "add", "-q", str(lane), "-b", "codex/issue-1-widget")
+    return lane
+
+
+def _git_directory_kept_elsewhere(tmp_path: Path) -> Path:
+    """A `--separate-git-dir` repository with no `core.worktree`: its git
+    directory records no way back to its main checkout."""
+    return _scratch_git_repository(tmp_path, f"--separate-git-dir={tmp_path / 'store'}")
+
+
+@pytest.mark.parametrize(
+    ("build_checkout", "runs_in_linked_lane"),
+    [
+        pytest.param(_conventional_checkout, False, id="conventional-main"),
+        pytest.param(_conventional_checkout, True, id="conventional-linked"),
+        pytest.param(_checkout_whose_git_directory_names_it, False, id="core-worktree-main"),
+        pytest.param(_checkout_whose_git_directory_names_it, True, id="core-worktree-linked"),
+        pytest.param(_git_directory_kept_elsewhere, False, id="separate-git-dir-main"),
+    ],
+)
+def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_checkout: Callable[[Path], Path],
+    runs_in_linked_lane: bool,
+) -> None:
+    """Issue #479 (START-19): `start` builds beside the main checkout, never
+    nested under a linked caller's, whatever layout its git directory has."""
+    main = build_checkout(tmp_path)
+    caller = _linked_lane_of(main, tmp_path) if runs_in_linked_lane else main
+    monkeypatch.chdir(caller)
+
+    assert checkout.main_checkout_root(toplevel=caller) == main.resolve()
+
+
+def _linked_to_a_git_directory_kept_elsewhere(
+    tmp_path: Path, _monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    return _git_directory_kept_elsewhere(tmp_path)
+
+
+def _core_worktree_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A conventional repository whose `core.worktree` read fails outright."""
+    _stub_one_git_call(
+        monkeypatch,
+        ["config", "--get", "core.worktree"],
+        exit_status=128,
+        stderr="fatal: bad config line 1",
+    )
+    return _conventional_checkout(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("build_checkout", "refusal"),
+    [
+        pytest.param(
+            _linked_to_a_git_directory_kept_elsewhere,
+            r"main checkout unknown: git directory .* names no checkout; "
+            r"run start from the main checkout",
+            id="names-no-checkout",
+        ),
+        pytest.param(_core_worktree_unreadable, "fatal: bad config line 1", id="config-fails"),
+    ],
+)
+def test_main_checkout_root_refuses_a_linked_worktree_it_cannot_trace_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_checkout: Callable[[Path, pytest.MonkeyPatch], Path],
+    refusal: str,
+) -> None:
+    """Issue #479 (START-19, START-24): from a linked worktree whose git
+    directory records no checkout, or whose `core.worktree` git cannot read,
+    `start` refuses rather than build beside, or read the board
+    configuration of, the linked worktree itself."""
+    lane = _linked_lane_of(build_checkout(tmp_path, monkeypatch), tmp_path)
+    monkeypatch.chdir(lane)
+
+    with pytest.raises(ClaimError, match=refusal):
+        checkout.main_checkout_root(toplevel=lane)
 
 
 def test_worktree_on_branch_finds_the_one_matching_path(tmp_path: Path) -> None:
@@ -1658,23 +1760,6 @@ def test_branch_exists_fails_loud_on_an_unexpected_git_exit(
         checkout.branch_exists("x")
 
 
-def test_create_linked_worktree_fails_loud_when_the_fetch_itself_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = _bare_remote_repository_with_one_commit(tmp_path)
-    monkeypatch.chdir(repo)
-    _stub_one_git_call(
-        monkeypatch, ["fetch", "origin"], exit_status=1, stderr="fatal: could not read from remote"
-    )
-
-    with pytest.raises(ClaimError, match="could not read from remote"):
-        checkout.create_linked_worktree(
-            tmp_path / "repo-worktrees" / "issue-9-widget",
-            branch="codex/issue-9-widget",
-            remote="origin",
-        )
-
-
 def test_create_linked_worktree_fails_loud_when_worktree_add_itself_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1739,8 +1824,18 @@ def test_remove_linked_worktree_reports_the_worktree_removed_and_the_branch_kept
     assert "not fully merged" in outcome.branch.reason
 
 
-def test_branch_merged_into_default_fails_loud_when_the_fetch_itself_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "fetch_trunk",
+    [
+        pytest.param(lambda: checkout.fetched_trunk("origin"), id="start"),
+        pytest.param(
+            lambda: checkout.branch_merged_into_default("feature", remote="origin"),
+            id="release-merged",
+        ),
+    ],
+)
+def test_a_trunk_read_fails_loud_when_the_fetch_itself_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fetch_trunk: Callable[[], object]
 ) -> None:
     repo = _bare_remote_repository_with_one_commit(tmp_path)
     monkeypatch.chdir(repo)
@@ -1749,7 +1844,7 @@ def test_branch_merged_into_default_fails_loud_when_the_fetch_itself_fails(
     )
 
     with pytest.raises(ClaimError, match="could not read from remote"):
-        checkout.branch_merged_into_default("feature", remote="origin")
+        fetch_trunk()
 
 
 def test_branch_merged_into_default_fails_loud_on_an_unexpected_merge_base_exit(

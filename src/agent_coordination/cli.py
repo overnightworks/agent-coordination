@@ -162,7 +162,7 @@ def _reject_wide_scope(
     versioned: tuple[str, ...],
     whole_reason: str | None,
     *,
-    context: RunContext,
+    directories: tuple[str, ...],
     whole_from_body: Callable[[], str | None] | None = None,
 ) -> tuple[int, int, float, str | None]:
     """`scope`'s own width gate (issue #326), `whole_reason`'s own text
@@ -172,11 +172,10 @@ def _reject_wide_scope(
     trips and the caller named none, so a narrow scope or an explicit
     `--whole` never costs the body read `whole_from_body` performs.
     `rescope` passes no `whole_from_body` at all, and keeps the plain
-    refusal: it never reads an item's own body for this."""
+    refusal: it never reads an item's own body for this. `directories` are
+    the scope entries that name a directory in the tree `versioned` lists
+    (`checkout._scope_directories`)."""
     n, total, share = _scope_cost(versioned, scope)
-    directories = checkout._scope_directories(
-        scope, directory=context.directory, toplevel=lambda: context.toplevel
-    )
     trip = protocol.wide_scope_trip(
         scope, directories=directories, covered_file_count=n, versioned_file_count=total
     )
@@ -286,12 +285,24 @@ def _resolved_claim_branch(arguments: argparse.Namespace, *, directory: Path | N
 def _request(
     arguments: argparse.Namespace, *, directory: Path | None = None
 ) -> protocol.ClaimRequest:
-    """The validated `ClaimRequest` `claim` submits, `arguments.scope`
-    bound as-is when given. Omitted -- issue mode only (issue #337); lane
-    mode still refuses it, `_cmd_claim`'s own first check -- it binds the
-    empty tuple instead of raising: `_cmd_claim` replaces it with the
-    item's own body scope, or a live claim's stored scope on replay, before
-    this request's scope ever reaches a wide-scope check or a write."""
+    """`_claim_request`, checked against the checkout it is made in:
+    `claim` stands in the worktree it claims."""
+    request = _claim_request(arguments, directory=directory)
+    checkout._validate_checkout(request, directory=directory)
+    return request
+
+
+def _claim_request(
+    arguments: argparse.Namespace, *, directory: Path | None = None
+) -> protocol.ClaimRequest:
+    """The `ClaimRequest` `claim` submits, `arguments.scope` bound as-is
+    when given. Omitted -- issue mode only (issue #337); lane mode still
+    refuses it, `_checked_claim`'s own first check -- it binds the empty
+    tuple instead of raising: `_checked_claim` replaces it with the item's
+    own body scope, or a live claim's stored scope on replay, before this
+    request's scope ever reaches a wide-scope check or a write. With
+    `--base` and `--branch` given it reads no checkout at all (issue #479:
+    `start` checks its claim before the worktree exists)."""
     agent = protocol._outbound_text(checkout.resolved_agent(arguments.agent), "agent", maximum=128)
     role = protocol._outbound_text(arguments.role, "role", maximum=64)
     base = (
@@ -310,7 +321,7 @@ def _request(
     resource = getattr(arguments, "resource", None)
     if resource is not None:
         resource = protocol._outbound_resource_name(resource)
-    request = protocol.ClaimRequest(
+    return protocol.ClaimRequest(
         identity=identity,
         agent=agent,
         role=role,
@@ -322,8 +333,6 @@ def _request(
         whole_reason=whole_reason,
         resource=resource,
     )
-    checkout._validate_checkout(request, directory=directory)
-    return request
 
 
 LANE_ISSUE_HELP = "omit for lane mode, derived from a docs/ or fix/ checkout branch"
@@ -4628,7 +4637,11 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
             combined,
             versioned,
             requested.whole_reason or selected.whole_reason,
-            context=checkout_context,
+            directories=checkout._scope_directories(
+                combined,
+                directory=checkout_context.directory,
+                toplevel=lambda: checkout_context.toplevel,
+            ),
         )
     except protocol.ClaimError as error:
         raise _RescopePreconditionError(str(error)) from error
@@ -4857,6 +4870,7 @@ def _scope_versioning(
     *,
     context: RunContext,
     whole_from_body: Callable[[], str | None] | None = None,
+    revision: str | None = None,
 ) -> tuple[ScopeVersioning, str | None]:
     """`claim`'s local, forge-free scope checks (issue #207's comma guard,
     the wide-scope width gate) against the real checkout, run once the
@@ -4868,11 +4882,16 @@ def _scope_versioning(
     gate actually admitted the scope with (issue #399): `whole_reason`
     itself, or `whole_from_body()`'s own result when the gate tripped and
     needed it -- the caller's own claim persists this, not the raw
-    `whole_reason` it passed in."""
-    versioned = checkout.versioned_paths(directory=context.directory)
+    `whole_reason` it passed in. Given `revision`, the scope is measured
+    against that commit's tree instead of the checkout (issue #479:
+    `start`'s fetched trunk, before any worktree of it exists)."""
+    versioned = checkout.versioned_paths(directory=context.directory, revision=revision)
     _reject_ungrounded_comma_scope(scope, versioned, flag="--scope")
+    directories = checkout._scope_directories(
+        scope, directory=context.directory, toplevel=lambda: context.toplevel, revision=revision
+    )
     n, total, share, effective_whole_reason = _reject_wide_scope(
-        scope, versioned, whole_reason, context=context, whole_from_body=whole_from_body
+        scope, versioned, whole_reason, directories=directories, whole_from_body=whole_from_body
     )
     return ScopeVersioning(n, total, share), effective_whole_reason
 
@@ -4935,7 +4954,9 @@ def _claim_target_checks(
     return checks, target_issue, replayed
 
 
-def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_claim(
+    parsed: argparse.Namespace, session: _WriteSession, *, worktree: Path | None = None
+) -> int:
     """`claim`'s own `--json` refusals (issue #406, `ClaimReason`):
     `_claim_write`'s typed exceptions choose `target_invalid`/
     `body_invalid`/`claim_conflict`; `RepoMeaninglessUnderStateRefError`
@@ -4944,7 +4965,7 @@ def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
     `unavailable`, matching `ask`/`rule`/`brief`'s own catch-all."""
     as_json = parsed.json
     try:
-        return _claim_write(parsed, session)
+        return _claim_write(parsed, session, worktree=worktree)
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(ClaimReason.INVALID_USAGE, error, as_json=as_json)
     except _ClaimTargetInvalidError as error:
@@ -4960,16 +4981,78 @@ def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
 class _ClaimConflictError(protocol.ClaimError):
     """`apply()`'s own `protocol.ClaimConflictError` -- identity already
     claimed, claim id already consumed, or a resource conflict -- rewrapped
-    around `store.commit_transition`'s one call site in `_claim_write`
-    (issue #406, CLM-25) so `--json` can choose `claim_conflict` by type.
-    A transport, git, lineage, or retry-exhaustion failure from the same
-    call site is a different `protocol.ClaimError` and passes through
-    unwrapped to `_cmd_claim`'s `unavailable` catch-all (CLM-27)."""
+    (`_named_claim_conflict`) where `_checked_claim` runs `apply` on the
+    observed state and around `store.commit_transition`'s one call site in
+    `_committed_claim` (issue #406, CLM-25; issue #479) so `--json` can
+    choose `claim_conflict` by type. A transport, git, lineage, or
+    retry-exhaustion failure from the commit is a different
+    `protocol.ClaimError` and passes through unwrapped to `_cmd_claim`'s
+    `unavailable` catch-all (CLM-27)."""
 
 
-def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _named_claim_conflict(
+    error: protocol.ClaimConflictError, storage: body.Storage
+) -> _ClaimConflictError:
+    return _ClaimConflictError(error.named(board.item_labeller(storage)))
+
+
+def _claim_write(
+    parsed: argparse.Namespace, session: _WriteSession, *, worktree: Path | None = None
+) -> int:
+    """`claim` made in the session's own checkout, or in `worktree` when
+    given (`start` claiming in a lane worktree that already stands, issue
+    #479): then the request is read and checked in `worktree` and the scope
+    measured against its HEAD, while the claim's checks read the session's
+    own board configuration -- the main checkout's."""
+    if worktree is None:
+        requested = _request(parsed, directory=session.context.directory)
+        plan = _checked_claim(requested, session)
+        worktree = session.context.toplevel
+    else:
+        requested = _request(parsed, directory=worktree)
+        plan = _checked_claim(requested, session, revision=requested.base)
+    if plan.refused:
+        _refuse_claim(parsed.json, plan.target_issue, plan.checks)
+        return 2
+    _print_claim_checks(plan, as_json=parsed.json)
+    claimed, live = _committed_claim(plan, worktree=worktree)
+    return _report_claim(plan, claimed, live, as_json=parsed.json)
+
+
+@dataclass(frozen=True)
+class _ClaimPlan:
+    """What `claim`'s check phase accepted, and everything its commit phase
+    writes and reports (issue #479): `start` runs the two phases around the
+    worktree it builds, so a refusal comes before the build."""
+
+    requested: protocol.ClaimRequest
+    observed: protocol.ClaimState
+    canonical_remote: str
+    storage: body.Storage
+    versioning: ScopeVersioning
+    checks: tuple[SliceCheck, ...]
+    target_issue: int | None
+    replayed: protocol.ActiveClaim | None
+    intent: protocol.ClaimIntent
+
+    @property
+    def refused(self) -> bool:
+        return any(check.level == "error" for check in self.checks)
+
+
+def _checked_claim(
+    requested: protocol.ClaimRequest, session: _WriteSession, *, revision: str | None = None
+) -> _ClaimPlan:
+    """`claim`'s check phase: every refusal a claim meets before its one
+    ledger write -- the scope's shape and width, the store, the target's
+    slice rules, and the ledger's own conflict, `protocol.apply` run on the
+    observed state (issue #479). Refusing slice rules come back in the plan
+    for the caller to report in its own shape; every other refusal raises.
+    `revision` names the commit the scope is measured against when the
+    session's own checkout is not the one claimed in (`start`'s fetched
+    trunk before its worktree exists, or the HEAD of a lane worktree that
+    already stands); the session's own checkout otherwise."""
     context = session.context
-    requested = _request(parsed, directory=context.directory)
     if isinstance(requested.identity, protocol.LaneIdentity) and not requested.scope:
         raise protocol.ClaimUnavailableError(LANE_CLAIM_SCOPE_REQUIRED)
     open_by_number: dict[int, board.Issue] | None = None
@@ -4986,6 +5069,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
             requested.whole_reason,
             context=context,
             whole_from_body=_whole_from_item_body(session, requested.identity, open_by_number=None),
+            revision=revision,
         )
         requested = replace(requested, whole_reason=effective_whole)
         observed = context.observation
@@ -5007,6 +5091,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
             whole_from_body=_whole_from_item_body(
                 session, requested.identity, open_by_number=open_by_number
             ),
+            revision=revision,
         )
         requested = replace(requested, whole_reason=effective_whole)
     worktree = context.toplevel
@@ -5014,75 +5099,215 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
     checks, target_issue, replayed = _claim_target_checks(
         session, requested, observed, _ClaimTargetContext(storage, worktree, open_by_number)
     )
-    if any(check.level == "error" for check in checks):
-        _refuse_claim(parsed.json, target_issue, checks)
-        return 2
-    for check in checks:
-        print(check.render(), file=sys.stderr if parsed.json else sys.stdout)
-    if replayed is None:
-        intent = _claim_intent_from_request(requested, uuid.uuid4().hex)
+    plan = _ClaimPlan(
+        requested=requested,
+        observed=observed,
+        canonical_remote=canonical_remote,
+        storage=storage,
+        versioning=versioning,
+        checks=checks,
+        target_issue=target_issue,
+        replayed=replayed,
+        intent=_claim_intent_from_request(requested, uuid.uuid4().hex),
+    )
+    if replayed is None and not plan.refused:
         try:
-            new_state = store.commit_transition(
-                worktree=worktree,
-                remote=canonical_remote,
-                subject=_transition_subject("claim", requested.identity, requested.branch),
-                intent=intent,
-            )
+            protocol.apply(observed, plan.intent)
         except protocol.ClaimConflictError as error:
-            raise _ClaimConflictError(error.named(board.item_labeller(storage))) from error
-        claimed = new_state.claims[protocol.claim_key(requested.identity, requested.branch)]
-        live = tuple(new_state.claims.values())
-    else:
-        claimed = replayed
-        live = tuple(observed.claims.values())
+            raise _named_claim_conflict(error, storage) from error
+    return plan
+
+
+def _print_claim_checks(plan: _ClaimPlan, *, as_json: bool) -> None:
+    for check in plan.checks:
+        print(check.render(), file=sys.stderr if as_json else sys.stdout)
+
+
+@dataclass
+class _WitnessedPush:
+    """The store's own `git push`, remembering that one was sent (issue
+    #479): the remote may accept a push even when its answer never comes
+    back, and a timed-out push may land after any read, so only the store
+    ever judges whether its claim was written. Once a push was sent,
+    `start` never undoes the worktree that claim may name (START-25)."""
+
+    sent: bool = False
+
+    def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
+        self.sent = True
+        store.GitPushTransport().push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+
+
+def _committed_claim(
+    plan: _ClaimPlan, *, worktree: Path, transport: store.PushTransport | None = None
+) -> tuple[protocol.ActiveClaim, tuple[protocol.ActiveClaim, ...]]:
+    """`claim`'s commit phase: the plan's one ledger write, made from
+    `worktree` through `transport` (the store's own push when omitted), or
+    the replayed claim it already names, with every live claim after it."""
+    if plan.replayed is not None:
+        return plan.replayed, tuple(plan.observed.claims.values())
+    requested = plan.requested
+    try:
+        new_state = store.commit_transition(
+            worktree=worktree,
+            remote=plan.canonical_remote,
+            subject=_transition_subject("claim", requested.identity, requested.branch),
+            intent=plan.intent,
+            transport=transport,
+        )
+    except protocol.ClaimConflictError as error:
+        raise _named_claim_conflict(error, plan.storage) from error
+    claimed = new_state.claims[protocol.claim_key(requested.identity, requested.branch)]
+    return claimed, tuple(new_state.claims.values())
+
+
+def _report_claim(
+    plan: _ClaimPlan,
+    claimed: protocol.ActiveClaim,
+    live: tuple[protocol.ActiveClaim, ...],
+    *,
+    as_json: bool,
+) -> int:
     touches = protocol.conflicting_claims(live, claimed)
-    if parsed.json:
-        return _claim_json(claimed, versioning=versioning, touches=touches, checks=checks)
-    print(f"CLAIMED {_claim_subject(claimed, storage)}: {claimed.claim_id}")
+    if as_json:
+        return _claim_json(claimed, versioning=plan.versioning, touches=touches, checks=plan.checks)
+    print(f"CLAIMED {_claim_subject(claimed, plan.storage)}: {claimed.claim_id}")
     print(
         _claim_cost_line(
-            versioning.versioned_files,
-            versioning.versioned_files_total,
-            requested.scope,
+            plan.versioning.versioned_files,
+            plan.versioning.versioned_files_total,
+            plan.requested.scope,
             touches,
-            storage,
+            plan.storage,
         )
     )
     return 0
 
 
-def _start_worktree_path(toplevel: Path, *, number: int, slug: str) -> Path:
-    return toplevel.parent / f"{toplevel.name}-worktrees" / f"issue-{number}-{slug}"
+def _start_worktree_path(main_checkout: Path, *, number: int, slug: str) -> Path:
+    return main_checkout.parent / f"{main_checkout.name}-worktrees" / f"issue-{number}-{slug}"
+
+
+@dataclass(frozen=True)
+class _StartTarget:
+    """The worktree `start` claims in and the branch it stands on."""
+
+    path: Path
+    branch: str
+
+
+def _runs_in_lane_worktree(context: RunContext, lane_branch: str) -> bool:
+    """Whether `start` runs inside a linked worktree checked out on
+    `lane_branch` -- the live claim's own lane (issue #479), whatever slug
+    its path carries."""
+    caller = checkout.resolve_path_checkout(context.toplevel)
+    return (
+        caller is not None
+        and caller.kind is checkout.CheckoutKind.LINKED_WORKTREE
+        and caller.branch == lane_branch
+    )
+
+
+def _resumable_start_claim(
+    live: protocol.ActiveClaim | None, branch: str
+) -> protocol.ActiveClaim | None:
+    """`live`, when `start` resumes it rather than claiming afresh.
+    `claim_key` alone is an issue-only key for an `IssueIdentity` (it never
+    folds `branch` into the key at all): a live record found under it may
+    belong to a different agent, a different role, or a different branch
+    entirely, so resume requires this session's own agent, `start`'s own
+    claiming role, and the expected lane branch too -- the same facts
+    `release`'s own claimant/branch checks require, plus the role a
+    reviewer claim on the same item must never satisfy (review/gate
+    finding). A mismatch falls through to the fresh claim, which refuses
+    with the store's own "is claimed by ..." conflict."""
+    if (
+        live is not None
+        and live.agent == checkout.resolved_agent(None)
+        and live.role == DEFAULT_CLAIM_ROLE
+        and live.branch == branch
+    ):
+        return live
+    return None
+
+
+def _print_start_target(target: _StartTarget) -> None:
+    print(f"worktree: {target.path}")
+    print(f"branch: {target.branch}")
+
+
+def _remove_refused_start_worktree(target: _StartTarget) -> None:
+    """Undo the build of a `start` whose claim was refused after the check
+    phase passed (issue #479), saying so: a refusal must leave no worktree
+    or branch behind. When git will not remove the worktree, that is said
+    too, beside the refusal rather than in its place."""
+    try:
+        outcome = checkout.remove_linked_worktree(target.path, branch=target.branch)
+    except protocol.ClaimError as error:
+        print(
+            f"worktree {target.path} and branch '{target.branch}' this start created "
+            f"kept: git failure: {error}",
+            file=sys.stderr,
+        )
+        return
+    if outcome.branch.removed:
+        print(
+            f"removed worktree {target.path} and branch '{target.branch}' this start created",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"removed worktree {target.path} this start created; "
+        f"branch '{target.branch}' kept: {outcome.branch.reason}",
+        file=sys.stderr,
+    )
 
 
 RESUME_SCOPE_MISMATCH = "live claim scope differs; release it first"
+
+
+def _refuse_resume_scope_mismatch(live: protocol.ActiveClaim, parsed: argparse.Namespace) -> None:
+    if parsed.scope is not None and protocol.valid_scope(parsed.scope) != live.scope:
+        raise protocol.ClaimUnavailableError(RESUME_SCOPE_MISMATCH)
+
+
+def _checked_start_resume(
+    live: protocol.ActiveClaim,
+    parsed: argparse.Namespace,
+    *,
+    context: RunContext,
+    revision: str | None = None,
+) -> ScopeVersioning:
+    """Every refusal `start`'s resume of `live` can meet, run before anything
+    is printed or built (issue #479): an explicit `--scope` that disagrees
+    with the live claim's own stored scope (review/gate finding: resume must
+    not silently ignore it), then the stored scope's own shape and width
+    against `context`'s checkout -- or `revision`, the fetched trunk a gone
+    worktree is rebuilt from. `--whole` is never required here even when the
+    live scope is wide, since the stored claim's own `whole_reason` already
+    justified it once."""
+    _refuse_resume_scope_mismatch(live, parsed)
+    versioning, _effective_whole = _scope_versioning(
+        live.scope,
+        parsed.whole if parsed.whole is not None else live.whole_reason,
+        context=context,
+        revision=revision,
+    )
+    return versioning
 
 
 def _print_start_resume(
     live: protocol.ActiveClaim,
     observed: protocol.ClaimState,
     storage: body.Storage,
-    parsed: argparse.Namespace,
-    *,
-    context: RunContext,
+    versioning: ScopeVersioning,
 ) -> None:
     """`start`'s own resume path (issue #322 review finding 1): prints the
     same `CLAIMED ...`/cost-line grammar a fresh claim prints, for the live
     claim `_cmd_start` already found in the store -- the same
     `observed.claims` lookup `status`/`release` use -- rather than minting a
-    second, fresh id for an item that already has one. An explicit `--scope`
-    that disagrees with the live claim's own stored scope is refused
-    (review/gate finding: resume must not silently ignore it); `--whole` is
-    never required here even when the live scope is wide, since the stored
-    claim's own `whole_reason` already justified it once."""
-    if parsed.scope is not None and protocol.valid_scope(parsed.scope) != live.scope:
-        raise protocol.ClaimUnavailableError(RESUME_SCOPE_MISMATCH)
+    second, fresh id for an item that already has one."""
     print(f"CLAIMED {_claim_subject(live, storage)}: {live.claim_id}")
-    versioning, _effective_whole = _scope_versioning(
-        live.scope,
-        parsed.whole if parsed.whole is not None else live.whole_reason,
-        context=context,
-    )
     touches = protocol.conflicting_claims(tuple(observed.claims.values()), live)
     print(
         _claim_cost_line(
@@ -5095,11 +5320,13 @@ def _print_start_resume(
     )
 
 
-def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _start_branch_and_slug(parsed: argparse.Namespace, context: RunContext) -> tuple[str, str]:
+    """The lane branch and slug `start` builds for an open item, refusing a
+    missing or closed one, an unusable slug, and an unsafe prefix before any
+    git write."""
     number = parsed.item
-    client = session.forge()
-    item = client.item_reference(number)
-    label = board.item_label(number, session.context.config.storage)
+    item = context.forge.item_reference(number)
+    label = board.item_label(number, context.config.storage)
     if item.state is forge.ItemState.MISSING:
         raise protocol.ClaimUnavailableError(f"issue {label} does not exist here")
     if item.state is forge.ItemState.CLOSED:
@@ -5112,62 +5339,207 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     prefix = checkout.branch_prefix_for_identity()
     branch = f"{prefix}/issue-{number}-{slug}"
     checkout.refuse_unsafe_start_branch(branch, prefix=prefix)
-    worktree_path = _start_worktree_path(session.context.toplevel, number=number, slug=slug)
-    checkout.resolve_or_create_worktree(
-        worktree_path, branch, remote=session.context.canonical_remote
+    return branch, slug
+
+
+def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
+    """Checks, then builds (issue #479): a worktree already standing -- the
+    caller's own lane, or a prior `start`'s at the computed path -- is
+    claimed in place; otherwise the claim is checked against the freshly
+    fetched trunk before the worktree is built, so a refusal leaves
+    nothing behind. The item, the store, and every check the claim makes
+    read the main checkout's own board configuration, never a lane
+    worktree's the caller stands in or claims in: a lane may be changing
+    its `board.toml`."""
+    caller = session.context
+    main_context = caller.for_directory(
+        checkout.main_checkout_root(toplevel=caller.toplevel), is_toplevel=True
     )
-    print(f"worktree: {worktree_path}")
-    print(f"branch: {branch}")
-    identity = _resolved_identity(number, branch)
-    worktree_context = session.context.for_directory(worktree_path)
-    observed = worktree_context.observation
+    branch, slug = _start_branch_and_slug(parsed, main_context)
+    observed = main_context.observation
     _require_state_ref(observed)
-    storage = worktree_context.config.storage
-    # `claim_key` alone is an issue-only key for an `IssueIdentity` (it never
-    # folds `branch` into the key at all): a live record found under it may
-    # belong to a different agent, a different role, or a different branch
-    # entirely, so resume requires this session's own agent, `start`'s own
-    # claiming role, and the expected lane branch too -- the same facts
-    # `release`'s own claimant/branch checks require, plus the role a reviewer
-    # claim on the same item must never satisfy (review/gate finding). A
-    # mismatch falls through to the fresh-claim path below, which raises the
-    # store's own "is claimed by ..." conflict.
-    live = observed.claims.get(protocol.claim_key(identity, branch))
-    agent = checkout.resolved_agent(None)
-    if (
-        live is not None
-        and live.agent == agent
-        and live.role == DEFAULT_CLAIM_ROLE
-        and live.branch == branch
-    ):
-        _print_start_resume(live, observed, storage, parsed, context=worktree_context)
-        return 0
-    claim_parsed = argparse.Namespace(
-        issue=number,
+    live = observed.claims.get(protocol.claim_key(_resolved_identity(parsed.item, branch), branch))
+    if live is not None and _runs_in_lane_worktree(caller, live.branch):
+        own_lane = _StartTarget(caller.toplevel, live.branch)
+        return _claim_in_start_worktree(parsed, main_context, own_lane, observed, live)
+    target = _StartTarget(
+        _start_worktree_path(main_context.toplevel, number=parsed.item, slug=slug), branch
+    )
+    if checkout.existing_start_worktree(target.path, branch):
+        return _claim_in_start_worktree(parsed, main_context, target, observed, live)
+    resumed = _resumable_start_claim(live, branch)
+    if resumed is not None:
+        return _rebuild_and_resume(parsed, main_context, target, observed, resumed)
+    return _check_build_and_claim(parsed, main_context, target)
+
+
+def _start_claim_arguments(
+    parsed: argparse.Namespace,
+    *,
+    base: str | None = None,
+    branch: str | None = None,
+    claim_id: str | None = None,
+) -> argparse.Namespace:
+    """The `aco claim` arguments `start` claims with: this session's own
+    agent as the builder, and a fresh id, exactly as a bare `aco claim`
+    mints one (issue #322 review finding 1) -- `start` resumes a live claim
+    by name before it ever claims, so CLAIM-15's own replay-by-claim-id
+    logic never needs to recognize a `start`-minted id as special. A
+    resume passes its live claim's own `claim_id`, so it never computes a
+    second one."""
+    return argparse.Namespace(
+        issue=parsed.item,
         agent=None,
         role=DEFAULT_CLAIM_ROLE,
-        base=None,
-        branch=None,
+        base=base,
+        branch=branch,
         scope=parsed.scope,
-        # A fresh id, exactly as a bare `aco claim` mints one (issue #322
-        # review finding 1): the lookup above already resumed a live claim
-        # by name when one exists, so this path only ever runs for an item
-        # that has none yet, and CLAIM-15's own replay-by-claim-id logic
-        # never needs to recognize a `start`-minted id as special.
-        claim_id=None,
+        claim_id=claim_id,
         out_of_order=parsed.out_of_order,
         whole=parsed.whole,
         resource=None,
         json=False,
     )
-    # The worktree's own context (issue #322 review finding 2, issue #457),
-    # never `session.forge` itself: that forge is held by the caller
-    # checkout's context since the item-existence read above, and reusing it
-    # here would let the worktree-scoped claim read a state-ref snapshot
-    # taken before the worktree existed instead of from the checkout it
-    # actually claims in.
-    claim_session = _WriteSession(forge=_LazyForge(worktree_context), release_branch=None)
-    return _cmd_claim(claim_parsed, claim_session)
+
+
+def _claim_in_start_worktree(
+    parsed: argparse.Namespace,
+    context: RunContext,
+    target: _StartTarget,
+    observed: protocol.ClaimState,
+    live: protocol.ActiveClaim | None,
+) -> int:
+    """Claim, or resume, in a worktree that already stands: nothing is
+    built, so a refusal has nothing to undo. `context` is the main
+    checkout's; only the scope is measured in the worktree itself."""
+    resumed = _resumable_start_claim(live, target.branch)
+    if resumed is not None:
+        versioning = _checked_start_resume(
+            resumed, parsed, context=context.for_directory(target.path)
+        )
+        _print_start_target(target)
+        _print_start_resume(resumed, observed, context.config.storage, versioning)
+        return 0
+    _print_start_target(target)
+    # The main checkout's one observation, the same snapshot the lookup above
+    # read (CAS-53): nothing fetched since.
+    claim_session = _WriteSession(forge=_LazyForge(context), release_branch=None)
+    return _cmd_claim(_start_claim_arguments(parsed), claim_session, worktree=target.path)
+
+
+def _rebuild_and_resume(
+    parsed: argparse.Namespace,
+    context: RunContext,
+    target: _StartTarget,
+    observed: protocol.ClaimState,
+    resumed: protocol.ActiveClaim,
+) -> int:
+    """A live claim of this session's whose worktree is gone: its scope is
+    checked against the fetched trunk first, then the worktree is built
+    again from that trunk and the claim reprinted, never a second one
+    minted. A worktree that stands on another commit -- another fetch moved
+    the trunk after the checks -- is removed again, as a fresh build's is
+    (START-18)."""
+    trunk = checkout.fetched_trunk(context.canonical_remote)
+    versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
+    checked = _claim_request(
+        _start_claim_arguments(parsed, base=trunk, branch=target.branch, claim_id=resumed.claim_id)
+    )
+    checkout.create_linked_worktree(
+        target.path, branch=target.branch, remote=context.canonical_remote
+    )
+    _print_start_target(target)
+    try:
+        _validate_built_worktree(checked, target)
+    except protocol.ClaimError as error:
+        return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
+    _print_start_resume(resumed, observed, context.config.storage, versioning)
+    return 0
+
+
+def _check_build_and_claim(
+    parsed: argparse.Namespace, context: RunContext, target: _StartTarget
+) -> int:
+    """Fetch the trunk, run `claim`'s check phase against that one commit,
+    then build the worktree from the trunk and run the commit phase (issue
+    #479). Only a refusal between the build and the claim's push removes
+    the build again: the trunk moved under another fetch meanwhile, the new
+    worktree failing `claim`'s own checkout preconditions, or the ledger
+    refusing the write before it pushed -- a claim that landed after the
+    checks, a store it cannot reach. Once the push was sent the store alone
+    knows whether the claim was written, so a failure after it keeps the
+    worktree and says the outcome is uncertain (START-25). An interrupt or
+    an unexpected error is no refusal."""
+    trunk = checkout.fetched_trunk(context.canonical_remote)
+    # The main checkout observed afresh, never the observation the
+    # item-existence read already holds: the fetch above may take a while,
+    # and the claim must read the item as it stands once the fetch is done,
+    # not the snapshot that read took (issue #322 review finding 2, CAS-55).
+    check_context = context.observed_afresh()
+    check_session = _WriteSession(forge=_LazyForge(check_context), release_branch=None)
+    requested = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
+    plan = _checked_claim(requested, check_session, revision=trunk)
+    if plan.refused:
+        _refuse_claim(False, plan.target_issue, plan.checks)
+        return 2
+    checkout.create_linked_worktree(
+        target.path, branch=target.branch, remote=context.canonical_remote
+    )
+    _print_start_target(target)
+    _print_claim_checks(plan, as_json=False)
+    push = _WitnessedPush()
+    try:
+        _validate_built_worktree(requested, target)
+        # Written from the built worktree, so the lane's own lineage stamp
+        # and fetch anchor start at its claim (CAS-09).
+        claimed, claims = _committed_claim(plan, worktree=target.path, transport=push)
+    except protocol.ClaimError as error:
+        if push.sent:
+            return _report_uncertain_start_claim(error, target)
+        reason = (
+            ClaimReason.CLAIM_CONFLICT
+            if isinstance(error, _ClaimConflictError)
+            else ClaimReason.UNAVAILABLE
+        )
+        return _refuse_built_start(reason, error, target)
+    return _report_claim(plan, claimed, claims, as_json=False)
+
+
+def _validate_built_worktree(request: protocol.ClaimRequest, target: _StartTarget) -> None:
+    """`claim`'s own checkout preconditions against the worktree `start`
+    built. Its base is the trunk `start` checked, so a base mismatch means
+    another fetch moved the trunk between the checks and the build, and
+    rerunning `start` checks the trunk as it stands now (START-26)."""
+    try:
+        checkout._validate_checkout(request, directory=target.path)
+    except checkout.CheckoutBaseMismatchError as error:
+        raise protocol.ClaimUnavailableError(
+            "the trunk moved after start checked it; run start again"
+        ) from error
+
+
+def _report_uncertain_start_claim(error: protocol.ClaimError, target: _StartTarget) -> int:
+    """A claim write that failed after its push was sent: the store alone
+    knows whether the claim landed, so the worktree it may name stays, and
+    the next `start` resumes whichever it finds (START-25)."""
+    status = _refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
+    print(
+        f"the claim's push was sent, its outcome unknown; worktree {target.path} and "
+        f"branch '{target.branch}' kept; run start again to resume it",
+        file=sys.stderr,
+    )
+    return status
+
+
+def _refuse_built_start(
+    reason: ClaimReason, error: protocol.ClaimError, target: _StartTarget
+) -> int:
+    try:
+        return _refuse(reason, error, as_json=False)
+    finally:
+        # A refusal that cannot be written (a closed stderr) must still
+        # leave nothing behind (START-18).
+        _remove_refused_start_worktree(target)
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,7 @@ import runpy
 import shlex
 import sys
 import threading
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
@@ -1869,16 +1870,31 @@ def _start_scenario(
     _real_git(repo, "add", "base.txt")
     _real_git(repo, "commit", "-q", "-m", "initial")
     _push_repository_trunk(repo, "origin")
-    issue = board_issue(314, "Fresh Slug Title", complete_contract("Build it.", scope=["src/x.py"]))
-    client = FakeForge(board_issues=(issue,))
-    client.issue_references[314] = forge.ItemReference(
-        forge.ItemState.OPEN, issue.title, issue.body
-    )
-    monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
+    _serve_start_board(monkeypatch, _start_item())
     _patch_store_write(monkeypatch)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: agent})
     _redirect_toplevel(monkeypatch, repo)
     return repo
+
+
+def _start_item(body_text: str | None = None, *, kind: body.ItemKind | None = None) -> board.Issue:
+    """Item #314 as `start`'s scenarios know it: a scoped, complete body
+    unless the scenario names another."""
+    if body_text is None:
+        body_text = complete_contract("Build it.", scope=["src/x.py"])
+    return board_issue(314, "Fresh Slug Title", body_text, kind=kind)
+
+
+def _serve_start_board(monkeypatch: pytest.MonkeyPatch, *issues: board.Issue) -> FakeForge:
+    """A fake forge listing `issues` as the open board, the first of them the
+    open item `start` targets."""
+    target = issues[0]
+    client = FakeForge(board_issues=issues)
+    client.issue_references[target.number] = forge.ItemReference(
+        forge.ItemState.OPEN, target.title, target.body
+    )
+    monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
+    return client
 
 
 _START_WORKTREE_NAME = "issue-314-fresh-slug-title"
@@ -1940,6 +1956,111 @@ def test_start_resumes_an_existing_worktree_by_only_claiming(
     assert Path.cwd() == repo
 
 
+def test_start_from_a_linked_worktree_builds_beside_the_main_checkout(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 proof 2: the worktree's place comes from the main
+    checkout, never nested under the linked worktree the call runs in."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    _stand_in_another_lane(monkeypatch, repo, tmp_path)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    assert (status, capsys.readouterr().out.splitlines()[0]) == (0, f"worktree: {worktree}")
+    assert checkout.resolve_path_checkout(worktree) is not None
+
+
+def _stand_in_another_lane(monkeypatch: pytest.MonkeyPatch, repo: Path, tmp_path: Path) -> Path:
+    """Run from a linked worktree of `repo` on another item's lane."""
+    other_lane = tmp_path / "other-lane"
+    _real_git(repo, "worktree", "add", "-q", "-b", "codex/issue-9-other", str(other_lane))
+    _redirect_toplevel(monkeypatch, other_lane)
+    monkeypatch.chdir(other_lane)
+    return other_lane
+
+
+def _stand_in_the_items_released_lane(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, _tmp_path: Path
+) -> Path:
+    """Run from item #314's own clean lane worktree after its claim was
+    released: `start` claims there afresh (START-11)."""
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    assert issue_claim.main(["--repo", REPOSITORY, "release", "314", "--abandoned", "paused"]) == 0
+    lane = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _redirect_toplevel(monkeypatch, lane)
+    monkeypatch.chdir(lane)
+    return lane
+
+
+@pytest.mark.parametrize(
+    "stand_in_a_lane",
+    [
+        pytest.param(_stand_in_another_lane, id="another-lane-builds"),
+        pytest.param(_stand_in_the_items_released_lane, id="own-released-lane-claims"),
+    ],
+)
+def test_start_from_a_linked_worktree_checks_against_the_main_checkouts_board_config(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    stand_in_a_lane: Callable[[pytest.MonkeyPatch, Path, Path], Path],
+) -> None:
+    """Issue #479 (head ruling 27.09.2026): the claim's checks read the main
+    checkout's `board.toml`, never the one a lane the caller stands in has
+    committed -- whether `start` builds a new worktree or claims afresh in
+    the item's own released lane -- so a lane that drops `security` from the
+    priority labels must not let #314 pass the security item the main
+    checkout ranks first."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+    lane = stand_in_a_lane(monkeypatch, repo, tmp_path)
+    (lane / board.CONFIG_PATH).parent.mkdir()
+    (lane / board.CONFIG_PATH).write_text('priority_labels = ["cleanup"]\n')
+    _real_git(lane, "add", str(board.CONFIG_PATH))
+    _real_git(lane, "commit", "-q", "-m", "lane changes its board config")
+    security = board_issue(
+        500,
+        "Security first",
+        complete_contract("Claim #500.", scope=["src/y.py"]),
+        labels=("security",),
+    )
+    _serve_start_board(monkeypatch, _start_item(), security)
+    capsys.readouterr()
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    assert (status, _worktrees_and_branches(repo)) == (2, before)
+    assert "higher-priority actionable item #500" in capsys.readouterr().err
+
+
+def test_start_inside_its_own_lane_worktree_reprints_the_live_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 proof 2: `start` run inside the item's own lane worktree
+    -- its branch the live claim's, its slug not the title's, work in
+    progress in it -- reprints that claim instead of building another."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314", "--slug", "own-lane"]) == 0
+    claim_id = _claimed_line_id(capsys.readouterr().out, "issue #314")
+    worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-own-lane"
+    (worktree / "work.txt").write_text("in progress\n")
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    assert (status, _worktrees_and_branches(repo)) == (0, before)
+    assert capsys.readouterr().out.splitlines()[:3] == [
+        f"worktree: {worktree}",
+        "branch: codex/issue-314-own-lane",
+        f"CLAIMED issue #314: {claim_id}",
+    ]
+
+
 def test_start_refuses_a_slug_the_derived_rule_would_never_produce(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -1972,80 +2093,472 @@ def test_start_refuses_an_unsafe_identity_prefix_before_any_git_write(
     assert not (repo.parent / f"{repo.name}-worktrees").exists()
 
 
-def test_start_refuses_to_resume_a_live_claim_held_by_another_agent(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #322 review/gate: `claim_key` is an issue-only key for an
-    `IssueIdentity` (it never folds in `branch`), so a live claim on #314
-    held by a different agent on a different branch must never be silently
-    resumed as this session's own -- it falls through to the store's own
-    "is claimed by ..." conflict instead."""
-    repo = _start_scenario(monkeypatch, tmp_path)
-    foreign = _store_claim_from_request(
-        request(
-            "other-claim",
-            "Grok sess-9",
-            issue=314,
-            branch="grok/issue-314-other",
-            scope=("src/x.py",),
-        )
+def _worktrees_and_branches(repo: Path) -> tuple[str, str]:
+    return (
+        _real_git(repo, "worktree", "list", "--porcelain").stdout,
+        _real_git(repo, "branch", "--list").stdout,
     )
-    _patch_store_write(monkeypatch, foreign)
+
+
+def _serve_an_item_without_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_start_board(monkeypatch, _start_item(complete_contract("Build it.")))
+
+
+def _serve_a_malformed_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #310 finding 43: the block defect is named, never the less
+    specific "item names no scope"."""
+    _serve_start_board(
+        monkeypatch, _start_item(agent_claim_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n'))
+    )
+
+
+def _serve_a_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_start_board(monkeypatch, _start_item(kind=body.ItemKind.CONTAINER))
+
+
+def _serve_an_incomplete_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_start_board(monkeypatch, _start_item(body.BLOCK_CHILD_SKELETON))
+
+
+def _serve_a_higher_priority_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    security = board_issue(
+        11,
+        "Security first",
+        complete_contract("Claim #11.", scope=["src/y.py"]),
+        labels=("security",),
+    )
+    _serve_start_board(monkeypatch, _start_item(), security)
+
+
+def _serve_a_malformed_state_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PIN-29: another item the whole-board read refuses stops a fresh claim."""
+    client = _serve_start_board(monkeypatch, _start_item())
+
+    def another_item_malformed() -> tuple[board.Issue, ...]:
+        raise protocol.MalformedStateTreeError("item aco-3e26d9 has a malformed agent-claim block")
+
+    monkeypatch.setattr(client, "list_open_board_issues", another_item_malformed)
+
+
+def _hold_a_claim_by_another_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #322 review/gate: `claim_key` never folds in `branch`, so
+    another agent's claim on #314 is never resumed as this session's own."""
+    _hold_a_claim_on_the_item(monkeypatch, "Grok sess-9", branch="grok/issue-314-other")
+
+
+def _hold_a_reviewer_claim_on_the_lane_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #322 review/gate finding 3: this agent's own claim on the lane
+    branch, but as `reviewer`, is never resumed as `start`'s build claim."""
+    _hold_a_claim_on_the_item(monkeypatch, "Codex Sol", branch=_START_BRANCH, role="reviewer")
+
+
+def _hold_a_claim_on_the_item(
+    monkeypatch: pytest.MonkeyPatch, agent: str, *, branch: str, role: str = "builder"
+) -> None:
+    held = request("held-claim", agent, issue=314, role=role, branch=branch, scope=("src/x.py",))
+    _patch_store_write(monkeypatch, _store_claim_from_request(held))
+
+
+@pytest.mark.parametrize(
+    ("arrange", "arguments", "refusal"),
+    [
+        pytest.param(
+            _serve_an_item_without_scope, [], "item names no scope; pass --scope", id="no-scope"
+        ),
+        pytest.param(
+            _serve_a_malformed_body,
+            [],
+            "#314 body malformed: owner: unknown top-level key owner",
+            id="malformed-body",
+        ),
+        pytest.param(
+            _serve_a_container,
+            [],
+            "#314 is a container; claim a child",
+            id="container",
+        ),
+        pytest.param(
+            _serve_an_incomplete_body,
+            ["--scope", "src/x.py"],
+            "#314 body incomplete: Now, Next, Done when",
+            id="incomplete-body",
+        ),
+        pytest.param(
+            _serve_a_higher_priority_item,
+            [],
+            "higher-priority actionable item #11",
+            id="out-of-order",
+        ),
+        pytest.param(
+            _serve_a_malformed_state_item,
+            [],
+            "item aco-3e26d9 has a malformed agent-claim block",
+            id="malformed-state-item",
+        ),
+        pytest.param(
+            lambda _monkeypatch: None,
+            ["--scope", "a.py", "--scope", "b.py", "--scope", "c.py", "--scope", "d.py"],
+            "scope is wide: ",
+            id="wide-scope",
+        ),
+        pytest.param(
+            _hold_a_claim_by_another_agent,
+            [],
+            "issue #314 is claimed by Grok sess-9",
+            id="claimed-by-another-agent",
+        ),
+        pytest.param(
+            _hold_a_reviewer_claim_on_the_lane_branch,
+            [],
+            "issue #314 is claimed by Codex Sol",
+            id="reviewer-claim-on-the-lane-branch",
+        ),
+    ],
+)
+def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch], None],
+    arguments: list[str],
+    refusal: str,
+) -> None:
+    """Issue #479 proof 1: every check that can refuse the claim runs
+    before `start` builds, so a refusal builds nothing -- no worktree, no
+    branch, no `worktree:` line -- and has nothing to undo."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    arrange(monkeypatch)
+    monkeypatch.chdir(repo)
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314", *arguments])
+
+    out, err = capsys.readouterr()
+    assert (status, _worktrees_and_branches(repo), out) == (2, before, "")
+    assert refusal in err
+    assert "removed worktree" not in err
+
+
+def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
+    """Another agent's claim on #314 lands between `start`'s check phase and
+    its one ledger write."""
+    fake = _patch_store_write(monkeypatch)
+    held = _store_claim_from_request(
+        request("held-claim", "Grok sess-9", issue=314, branch="grok/issue-314-other", scope=("a",))
+    )
+    commit = fake.commit_transition
+
+    def racing_commit(
+        *,
+        worktree: Path,
+        subject: str,
+        intent: protocol.ClaimTransitionIntent,
+        remote: str,
+        transport: object,
+    ) -> protocol.ClaimState:
+        claims = {**fake.state.claims, protocol.claim_key(held.identity, held.branch): held}
+        fake.state = replace(fake.state, claims=claims)
+        return commit(
+            worktree=worktree, subject=subject, intent=intent, remote=remote, transport=transport
+        )
+
+    monkeypatch.setattr(store, "commit_transition", racing_commit)
+
+
+def _git_keeps_the_raced_branch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    _claim_lands_before_the_commit(monkeypatch, repo)
+    _stub_one_git_call(
+        monkeypatch,
+        ["branch", "-d", _START_BRANCH],
+        exit_status=1,
+        stderr="error: branch not fully merged",
+    )
+
+
+def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
+    """The ledger write fails before anything is written, with a refusal
+    that is no claim conflict."""
+
+    def unreachable(**_arguments: object) -> protocol.ClaimState:
+        raise protocol.ClaimUnavailableError("remote origin hung up")
+
+    monkeypatch.setattr(store, "commit_transition", unreachable)
+
+
+def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    """Another push moves the trunk after `start` fetched and checked it,
+    so the worktree it builds stands on a commit it never checked."""
+    real_fetched_trunk = checkout.fetched_trunk
+
+    def fetch_then_the_trunk_moves(remote: str) -> str:
+        trunk = real_fetched_trunk(remote)
+        _real_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
+        _real_git(repo, "push", "-q", "origin", "HEAD:main")
+        return trunk
+
+    monkeypatch.setattr(checkout, "fetched_trunk", fetch_then_the_trunk_moves)
+
+
+def _trunk_moves_while_a_gone_worktree_is_rebuilt(
+    monkeypatch: pytest.MonkeyPatch, repo: Path
+) -> None:
+    """Item #314's claim stays live while its worktree and branch are gone,
+    and the trunk moves after `start` fetched and checked it for the
+    rebuild."""
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    _remove_the_lane_pair(repo)
+    _trunk_moves_after_the_fetch(monkeypatch, repo)
+
+
+_REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start created"
+
+
+@pytest.mark.parametrize(
+    ("arrange", "refusal", "removal"),
+    [
+        pytest.param(
+            _claim_lands_before_the_commit,
+            "issue #314 is claimed by Grok sess-9",
+            _REMOVED_BOTH,
+            id="ledger-race",
+        ),
+        pytest.param(
+            _git_keeps_the_raced_branch,
+            "issue #314 is claimed by Grok sess-9",
+            "removed worktree {worktree} this start created; "
+            "branch '{branch}' kept: git failure: error: branch not fully merged",
+            id="git-keeps-the-branch",
+        ),
+        pytest.param(
+            _trunk_moves_after_the_fetch,
+            "the trunk moved after start checked it; run start again\n",
+            _REMOVED_BOTH,
+            id="trunk-moved",
+        ),
+        pytest.param(
+            _trunk_moves_while_a_gone_worktree_is_rebuilt,
+            "the trunk moved after start checked it; run start again\n",
+            _REMOVED_BOTH,
+            id="trunk-moved-under-a-rebuild",
+        ),
+        pytest.param(
+            _the_store_cannot_be_reached,
+            "remote origin hung up",
+            _REMOVED_BOTH,
+            id="store-unreachable",
+        ),
+    ],
+)
+def test_a_claim_refused_after_the_build_removes_what_start_built(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], None],
+    refusal: str,
+    removal: str,
+) -> None:
+    """Issue #479 (START-18, START-21, START-26): a claim refused between
+    the build and its push -- by the ledger, by the new worktree's own
+    checkout preconditions, or by a trunk that moved after the checks, a
+    live claim's rebuilt worktree included -- removes exactly the worktree
+    and branch this call built, and says so; when git
+    will not delete the branch the safe way, it says which branch stays and
+    why."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    arrange(monkeypatch, repo)
     monkeypatch.chdir(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
 
-    assert status == 2
-    assert "is claimed by Grok sess-9" in capsys.readouterr().err
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    err = capsys.readouterr().err
+    assert (status, worktree.exists()) == (2, False)
+    assert err.startswith(f"ERROR: {refusal}")
+    assert err.endswith(removal.format(worktree=worktree, branch=_START_BRANCH) + "\n")
 
 
-def test_start_refuses_to_resume_the_same_agents_claim_under_another_role(
+def test_a_refused_start_git_cannot_undo_keeps_the_refusal_and_names_what_stays(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Issue #322 review/gate finding 3: `claim_key` folds in neither `role`
-    nor `agent`, so a live claim on #314 held by this same session's own
-    agent and branch, but as `reviewer` rather than the `builder` role
-    `start` always claims with, must never be silently resumed as this
-    session's build claim -- it falls through to the store's own
-    "is claimed by ..." conflict, exactly as a different agent's claim
-    does."""
+    """Issue #479 (START-23): when git will not remove the worktree a
+    refused call built, the refusal and its exit stay, and a line names the
+    worktree and branch left standing and git's reason."""
     repo = _start_scenario(monkeypatch, tmp_path)
-    reviewer_claim = _store_claim_from_request(
-        request(
-            "reviewer-claim",
-            "Codex Sol",
-            issue=314,
-            role="reviewer",
-            branch=_START_BRANCH,
-            scope=("src/x.py",),
-        )
+    _claim_lands_before_the_commit(monkeypatch, repo)
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _stub_one_git_call(
+        monkeypatch,
+        ["worktree", "remove", str(worktree)],
+        exit_status=128,
+        stderr="fatal: cannot remove a locked working tree",
     )
-    _patch_store_write(monkeypatch, reviewer_claim)
     monkeypatch.chdir(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
 
-    assert status == 2
-    assert "is claimed by Codex Sol" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert (status, worktree.exists()) == (2, True)
+    assert err.startswith("ERROR: issue #314 is claimed by Grok sess-9")
+    assert err.endswith(
+        f"worktree {worktree} and branch '{_START_BRANCH}' this start created "
+        "kept: git failure: fatal: cannot remove a locked working tree\n"
+    )
 
 
+class _ClosedPipe(io.StringIO):
+    def write(self, _text: str) -> int:
+        raise BrokenPipeError
+
+
+def test_start_removes_what_it_built_even_when_its_refusal_cannot_be_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #479 (START-18): a claim refused after the build removes the
+    worktree and branch this call built even when stderr is a closed pipe
+    and the refusal itself cannot be written."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    _claim_lands_before_the_commit(monkeypatch, repo)
+    monkeypatch.chdir(repo)
+    before = _worktrees_and_branches(repo)
+    monkeypatch.setattr(sys, "stderr", _ClosedPipe())
+
+    with pytest.raises(BrokenPipeError):
+        issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    assert _worktrees_and_branches(repo) == before
+
+
+def test_start_keeps_its_worktree_when_the_report_fails_after_the_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #479 review finding 2: only a refused claim undoes the build; a
+    failure printing the report of a claim already written leaves the
+    worktree and branch that claim names."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+
+    def closed_pipe(*_arguments: object) -> str:
+        raise BrokenPipeError
+
+    monkeypatch.setattr(issue_claim, "_claim_cost_line", closed_pipe)
+
+    with pytest.raises(BrokenPipeError):
+        issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    live = store.fetch_state(worktree=Path("."), remote="origin").claims
+    assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) in live
+    assert checkout.resolve_path_checkout(worktree) is not None
+
+
+def _remove_the_lane_pair(repo: Path) -> None:
+    """Item #314's worktree and branch are gone while its claim stays live."""
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _real_git(repo, "worktree", "remove", str(worktree))
+    _real_git(repo, "branch", "-D", _START_BRANCH)
+
+
+def _keep_the_lane_pair(_repo: Path) -> None:
+    """Item #314's worktree and branch stand as its first `start` built them."""
+
+
+def test_start_rebuilds_the_gone_worktree_of_its_live_claim_and_reprints_that_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479: a live claim of this session whose worktree and branch
+    are both gone gets its worktree built again at the computed path and the
+    same claim reprinted, never a second id minted."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    claim_id = _claimed_line_id(capsys.readouterr().out, "issue #314")
+    _remove_the_lane_pair(repo)
+
+    def refuse_to_mint() -> uuid.UUID:
+        raise AssertionError("a resume computed a second claim id")
+
+    monkeypatch.setattr(uuid, "uuid4", refuse_to_mint)
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    assert status == 0
+    assert capsys.readouterr().out == (
+        f"worktree: {worktree}\n"
+        f"branch: {_START_BRANCH}\n"
+        f"CLAIMED issue #314: {claim_id}\n"
+        "0 of 4 versioned files (0%); overlaps no other open claims\n"
+    )
+    assert len(store.fetch_state(worktree=Path("."), remote="origin").claims) == 1
+    resolved = checkout.resolve_path_checkout(worktree)
+    assert resolved is not None
+    assert resolved.branch == _START_BRANCH
+
+
+_REAL_VERSIONED_PATHS = checkout.versioned_paths
+
+
+def test_start_refuses_to_rebuild_a_live_claim_whose_scope_the_trunk_no_longer_grounds(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 (START-22): the live claim's scope is measured against the
+    fetched trunk before its gone worktree is built again, so a comma path
+    the trunk has since deleted refuses with nothing built."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.setattr(checkout, "versioned_paths", _REAL_VERSIONED_PATHS)
+    (repo / "a,b.py").write_text("x\n")
+    _real_git(repo, "add", "a,b.py")
+    _real_git(repo, "commit", "-q", "-m", "comma path")
+    _push_repository_trunk(repo, "origin")
+    _serve_start_board(monkeypatch, _start_item(complete_contract("Build it.", scope=["a,b.py"])))
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    _remove_the_lane_pair(repo)
+    _real_git(repo, "rm", "-q", "a,b.py")
+    _real_git(repo, "commit", "-q", "-m", "comma path gone")
+    _push_repository_trunk(repo, "origin")
+    capsys.readouterr()
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    captured = capsys.readouterr()
+    assert (status, captured.out, _worktrees_and_branches(repo)) == (2, "", before)
+    assert captured.err.startswith("ERROR: 'a,b.py' matches no versioned file")
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_keep_the_lane_pair, id="worktree-standing"),
+        pytest.param(_remove_the_lane_pair, id="worktree-gone"),
+    ],
+)
 def test_start_resume_refuses_a_scope_that_differs_from_the_live_claim(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[Path], None],
 ) -> None:
     """Issue #322 review/gate: an explicit `--scope` on resume that disagrees
     with the live claim's own stored scope is refused rather than silently
-    ignored; the identical scope is accepted (covered by
+    ignored, and with the worktree gone nothing is built again (issue #479);
+    the identical scope is accepted (covered by
     `test_start_resumes_an_existing_worktree_by_only_claiming`'s bare
     resume, which passes no `--scope` at all)."""
     repo = _start_scenario(monkeypatch, tmp_path)
     monkeypatch.chdir(repo)
     assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
     capsys.readouterr()
+    arrange(repo)
+    before = _worktrees_and_branches(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314", "--scope", "src/other.py"])
 
-    assert status == 2
-    assert capsys.readouterr().err == f"ERROR: {issue_claim.RESUME_SCOPE_MISMATCH}\n"
+    captured = capsys.readouterr()
+    assert (status, captured.out) == (2, "")
+    assert captured.err == f"ERROR: {issue_claim.RESUME_SCOPE_MISMATCH}\n"
+    assert _worktrees_and_branches(repo) == before
 
 
 def test_start_resumes_a_wide_claim_without_repeating_whole(
@@ -2319,41 +2832,26 @@ def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
     assert answers == [root_answer] * 3
 
 
-def test_start_under_state_ref_claims_from_the_worktree_it_creates(
+def test_start_under_state_ref_claims_the_worktree_it_builds(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Issue #322 review finding 2: under `storage = "state-ref"`, `start`
-    must claim through a forge directed at the worktree it just created,
-    never the one it cached from the caller checkout before that worktree
-    existed. A real bare remote and a real `refs/aco/state` (`_use_real_store`)
-    prove it end to end: the claim `start` prints is read back through
-    `store.fetch_state` scoped to the worktree path itself, not the
-    original checkout. Both checkouts share the same bare remote, so that
-    final read alone would also pass under the pre-fix bug -- reusing
-    `session.forge()`'s cached instance for the claim never even calls
-    `_state_ref_forge` a second time, but the claim write itself is
-    resolved by `_cmd_claim`'s own `directory` argument regardless of which
-    forge instance served the claim, so it lands in the right place either
-    way. The recorded `directory` each `_state_ref_forge` call receives
-    (issue #322 review, delta finding 2) is what distinguishes the two: a
-    reused forge never resolves a second one at all, while the fix's fresh
-    instance resolves its last one against the created worktree."""
+    """Issue #322 review finding 2, end to end under `storage = "state-ref"`
+    with a real bare remote and a real `refs/aco/state`: the claim `start`
+    prints is the one the worktree it built reads back. That the claim's
+    checks read the item as it stands after the fetch, never the snapshot
+    `start`'s first read took, is
+    `test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch`.
+    The claim is written from the built worktree, so its lineage stamp names
+    the claim's own commit (issue #479, CAS-09)."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
-    real_state_ref_forge = issue_claim._state_ref_forge
-    recorded_directories: list[Path | None] = []
-
-    def recording_state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
-        recorded_directories.append(context.directory)
-        return real_state_ref_forge(context)
-
-    monkeypatch.setattr(issue_claim, "_state_ref_forge", recording_state_ref_forge)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
     assert status == 0
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    assert recorded_directories[-1] == worktree
+    state_tip = _real_git(repo, "ls-remote", "origin", store.STATE_REF).stdout.split()[0]
+    assert _lineage_observation(worktree)[0] == state_tip
     claim_id = _claimed_line_id(capsys.readouterr().out, f"issue {item_id}")
     live = store.fetch_state(worktree=worktree, remote="origin").claims
     claim = live[protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)]
@@ -2361,22 +2859,158 @@ def test_start_under_state_ref_claims_from_the_worktree_it_creates(
     assert claim.scope == ("src/x.py",)
 
 
-def test_start_under_state_ref_claims_against_the_item_current_when_the_worktree_exists(
+_SEAM_FAILURE = "fatal: not a git repository"
+_PUSH_TIMED_OUT = "git timed out while reading the claim state store"
+
+
+@pytest.mark.parametrize(
+    ("push_answer", "lands", "failing_seam", "reported"),
+    [
+        pytest.param(
+            None,
+            True,
+            "_write_lineage_stamp",
+            _SEAM_FAILURE,
+            id="lineage-stamp-fails-after-the-push",
+        ),
+        pytest.param(
+            protocol.PushRejectedError("fatal: the remote end hung up unexpectedly"),
+            True,
+            "fetch_state",
+            _SEAM_FAILURE,
+            id="answer-lost-and-its-search-fails",
+        ),
+        pytest.param(
+            protocol.ClaimError(_PUSH_TIMED_OUT),
+            True,
+            None,
+            _PUSH_TIMED_OUT,
+            id="push-times-out-after-landing",
+        ),
+        pytest.param(
+            protocol.ClaimError(_PUSH_TIMED_OUT),
+            False,
+            None,
+            _PUSH_TIMED_OUT,
+            id="push-times-out-before-the-remote-records-it",
+        ),
+        pytest.param(
+            protocol.PushRejectedError("! [remote rejected] (failed to lock)"),
+            False,
+            None,
+            f"{store.STATE_REF} rejected ",
+            id="store-rejects-every-push",
+        ),
+    ],
+)
+def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resumes_it(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    push_answer: protocol.ClaimError | None,
+    lands: bool,
+    failing_seam: str | None,
+    reported: str,
+) -> None:
+    """Issue #479 (head ruling, START-25): once the claim's push was sent,
+    only the store knows whether it was written, so any failure the write
+    still raises -- its lineage stamp, the search for a push whose answer
+    was lost, a push that timed out before or after it landed, a store that
+    rejected every push -- keeps the worktree and branch, says the outcome
+    is uncertain, and the next `start` resumes whichever outcome it finds."""
+    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    landed: list[protocol.ObjectId] = []
+    real_push = store.GitPushTransport.push
+
+    def push_and_note(
+        transport: store.GitPushTransport,
+        *,
+        worktree: Path,
+        remote: str,
+        ref: str,
+        new_oid: protocol.ObjectId,
+    ) -> None:
+        if lands:
+            real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+            landed.append(new_oid)
+        if push_answer is not None:
+            raise push_answer
+
+    with monkeypatch.context() as failing:
+        failing.setattr(store.GitPushTransport, "push", push_and_note)
+        if failing_seam is not None:
+            real_seam = getattr(store, failing_seam)
+
+            def seam_fails_once_landed(*arguments: object, **keywords: object) -> object:
+                if landed:
+                    raise protocol.ClaimError(_SEAM_FAILURE)
+                return real_seam(*arguments, **keywords)
+
+            failing.setattr(store, failing_seam, seam_fails_once_landed)
+
+        status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    err = capsys.readouterr().err
+    assert status == 2
+    assert err.startswith(f"ERROR: {reported}")
+    assert err.endswith(
+        f"\nthe claim's push was sent, its outcome unknown; worktree {worktree} and "
+        f"branch '{_START_BRANCH}' kept; run start again to resume it\n"
+    )
+    claim_key = protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)
+    assert (claim_key in store.fetch_state(worktree=repo, remote="origin").claims) is lands
+    kept = checkout.resolve_path_checkout(worktree)
+    assert kept is not None
+    assert (kept.kind, kept.branch) == (checkout.CheckoutKind.LINKED_WORKTREE, _START_BRANCH)
+
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
+
+
+def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_default_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #479 (CAS-55): the claim's checks observe the state ref again
+    once the trunk fetch is done, while the canonical remote and default
+    branch the run already read stay held -- one read of each per
+    directory `start` works in."""
+    _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    remote_url, default_branch_name = checkout.remote_url, checkout.default_branch_name
+    reads: list[tuple[str, Path | None]] = []
+
+    def counting_remote_url(remote: str, *, directory: Path | None = None) -> str:
+        reads.append(("remote url", directory))
+        return remote_url(remote, directory=directory)
+
+    def counting_default_branch_name(*, directory: Path | None = None) -> str | None:
+        reads.append(("default branch", directory))
+        return default_branch_name(directory=directory)
+
+    monkeypatch.setattr(checkout, "remote_url", counting_remote_url)
+    monkeypatch.setattr(checkout, "default_branch_name", counting_default_branch_name)
+
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    assert {kind for kind, _directory in reads} == {"remote url", "default branch"}
+    assert [read for read in set(reads) if reads.count(read) > 1] == []
+
+
+def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Issue #322 review finding 2 (the fix's own gate): item #314 gains a
-    `scope` after `start`'s pre-worktree forge read but before its claim
-    step, exactly the window a caller-checkout-cached forge cannot see. A
-    fresh forge built from the worktree after `resolve_or_create_worktree`
-    re-reads the item and refuses the now-mismatched `--scope`; a forge
-    reused from the pre-worktree read would still see no `scope` at all and
+    """Issue #322 review finding 2 (the fix's own gate), moved before the
+    build by issue #479: item #314 gains a `scope` after `start`'s
+    item-existence read but while it fetches the trunk, exactly the window a
+    caller-checkout-cached forge cannot see. The claim's checks read a fresh
+    forge once the fetch is done and refuse the now-mismatched `--scope`; a
+    forge reused from the first read would still see no `scope` at all and
     wrongly let the claim through."""
     repo, remote, seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
-    real_resolve_or_create_worktree = checkout.resolve_or_create_worktree
+    real_fetched_trunk = checkout.fetched_trunk
 
-    def advance_item_then_create_worktree(path: Path, branch: str, *, remote: str) -> None:
-        real_resolve_or_create_worktree(path, branch, remote=remote)
+    def fetch_trunk_then_advance_item(remote: str) -> str:
+        trunk = real_fetched_trunk(remote)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(
@@ -2390,16 +3024,16 @@ def test_start_under_state_ref_claims_against_the_item_current_when_the_worktree
                 operation_id="item-op-314-race",
             ),
         )
+        return trunk
 
     remote_path = remote
-    monkeypatch.setattr(checkout, "resolve_or_create_worktree", advance_item_then_create_worktree)
+    monkeypatch.setattr(checkout, "fetched_trunk", fetch_trunk_then_advance_item)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
     assert status == 2
     assert capsys.readouterr().err == f"ERROR: {issue_claim.CLAIM_SCOPE_MISMATCH}\n"
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    live = store.fetch_state(worktree=worktree, remote="origin").claims
+    live = store.fetch_state(worktree=repo, remote="origin").claims
     assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) not in live
 
 
@@ -17813,18 +18447,34 @@ def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRu
 
 
 def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """The created worktree's scope entry is no git tree, so the width gate
-    (#326) asks the worktree context's held toplevel (issue #472). The
-    item is read from the caller checkout's observation, the claim checked
-    against the worktree's own (issue #477)."""
+    """Every read is of the caller's checkout, here the main one: once as
+    the command's own, once resolved as the main checkout whose context the
+    claim's checks run on once the trunk is fetched (issue #479, #322 review
+    finding 2), which observes the state ref afresh (CAS-55) while holding
+    that checkout's one board configuration read (#472); the width gate
+    measures the fetched trunk's own tree and asks no toplevel for a scope
+    entry that is no tree in it."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
-    worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-fresh-slug-title"
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
-        toplevel_reads={None: 1, worktree: 1},
-        config_reads={repo: 1, worktree: 1},
-        observations={repo: 1, worktree: 1},
+        toplevel_reads={None: 1, repo: 1},
+        config_reads={repo: 1},
+        observations={repo: 2},
     )
+
+
+def _start_refused_push_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    """A `start` whose store rejects every push of its claim reads exactly
+    what a successful one does: the store alone answers whether its push
+    was written, so keeping the build observes the state ref no third time
+    (issue #480 review finding 3, CAS-53, CAS-55, START-25)."""
+    run = _start_command(monkeypatch, tmp_path)
+
+    def rejected(_transport: store.GitPushTransport, **_arguments: object) -> None:
+        raise protocol.PushRejectedError("! [remote rejected] (failed to lock)")
+
+    monkeypatch.setattr(store.GitPushTransport, "push", rejected)
+    return replace(run, exit_code=2)
 
 
 @pytest.mark.parametrize(
@@ -17845,6 +18495,7 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
         pytest.param(_release_command, id="release"),
         pytest.param(_cut_command, id="two-write-cut"),
         pytest.param(_start_command, id="two-directory-state-ref-start"),
+        pytest.param(_start_refused_push_command, id="state-ref-start-refused-push"),
         pytest.param(_land_command, id="land-rereads-after-its-fast-forward"),
         pytest.param(_github_item_close_refusal_command, id="item-close-github-refusal"),
         pytest.param(_claim_comma_scope_refusal_command, id="claim-scope-shape-refusal"),
