@@ -225,6 +225,17 @@ class RunContext:
             remote, self._recorded_head(remote), directory=self.directory
         )
 
+    def fetch_trunk(self) -> str:
+        """Fetch the canonical remote, then answer its trunk ref as that
+        fetch left it, held for the rest of the run (issue #479): a
+        `{main, master}` guess taken before the fetch could name a stale
+        local `main` the fetch has since overtaken, so a ref held from
+        before is resolved again -- from the held recorded `HEAD`, never a
+        second read of it."""
+        checkout.fetch_remote(self.canonical_remote)
+        vars(self).pop("trunk_ref", None)
+        return self.trunk_ref
+
     def _recorded_head(self, remote: str) -> str | None:
         """`remote`'s recorded `HEAD` in this directory, read once per remote
         and held: the default branch (`origin`'s) and the trunk (the

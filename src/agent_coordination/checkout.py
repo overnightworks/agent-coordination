@@ -836,9 +836,7 @@ def _parsed_trunk_landing(fields: tuple[str, str, str, str]) -> TrunkLanding:
     return TrunkLanding(sha, committed_at.astimezone(UTC), classification, work_item_values)
 
 
-def trunk_landings(
-    trunk: str, depth: int, *, fetch_from: str | None = None
-) -> tuple[TrunkLanding, ...]:
+def trunk_landings(trunk: str, depth: int) -> tuple[TrunkLanding, ...]:
     """The most recent `depth` first-parent landings on `trunk` -- the
     caller's canonical remote's trunk ref (`trunk_ref`, or its
     `RunContext`'s own) -- oldest first, each classified from its own
@@ -848,20 +846,10 @@ def trunk_landings(
     is the contract: a ruling ages with trunk, not with local commits, and
     the trunk is the caller's own canonical remote's, never a hardcoded
     `origin`'s, so a repository configured with a different canonical remote
-    ages rulings against the trunk it actually lands on.
-
-    `fetch_from` refreshes that remote's own remote-tracking refs first
-    (issue #397): `release --merged <pr>`'s own merge-commit-trailer
-    verification under `storage = "github"` needs this walk to see a commit
-    GitHub just reported merged, which this checkout may never have fetched
-    before -- unlike every other caller here, which already runs against a
-    checkout whose remote-tracking refs some earlier step in the same
-    command already refreshed.
+    ages rulings against the trunk it actually lands on. A caller that must
+    see a commit the forge just reported merged fetches first
+    (`fetch_remote`, issue #397) and resolves `trunk` only after it.
     """
-    if fetch_from is not None:
-        result = _git_run(["fetch", fetch_from])
-        if result.exit_status != 0:
-            raise ClaimError(process.git_failure_detail(result))
     raw = _git_output(
         [
             "log",
@@ -1024,14 +1012,20 @@ def branch_exists(branch: str) -> bool:
     raise ClaimError(process.git_failure_detail(result))
 
 
-def fetched_trunk(remote: str, *, trunk: str) -> str:
-    """Fetch `remote` and answer the commit `trunk` -- its trunk ref, as the
-    caller's `RunContext` holds it -- names now (issue #479): `start` checks
-    its claim against this one commit -- the claim's base and the tree its
-    scope is measured against -- before it builds."""
+def fetch_remote(remote: str) -> None:
+    """Refresh `remote`'s remote-tracking refs in the calling process's own
+    checkout, failing loud when the fetch does. A trunk read resolves its
+    trunk ref only after this (issue #479): a `{main, master}` guess taken
+    before it could name a stale local branch the fetch has overtaken."""
     fetch = _git_run(["fetch", remote])
     if fetch.exit_status != 0:
         raise ClaimError(process.git_failure_detail(fetch))
+
+
+def trunk_commit(trunk: str) -> str:
+    """The commit the trunk ref `trunk` names now (issue #479): `start`
+    checks its claim against this one commit -- the claim's base and the
+    tree its scope is measured against -- before it builds."""
     return _git_output(["rev-parse", "--verify", f"{trunk}^{{commit}}"])
 
 
@@ -1040,7 +1034,7 @@ def create_linked_worktree(
 ) -> None:
     """Create a linked worktree at `path` on a fresh `branch` from `trunk`,
     the canonical remote's trunk ref as the last fetch left it (issue #322;
-    `fetched_trunk`, issue #479): the `git worktree add` step
+    `fetch_remote`, issue #479): the `git worktree add` step
     `ISOLATED_WORKTREE_RECIPE` used to spell out for a person to type by
     hand, run through this module's own `_git_run` chokepoint so `start`
     opens no new subprocess call site. Built from the trunk's ref, so the

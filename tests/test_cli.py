@@ -1939,6 +1939,28 @@ def test_start_creates_the_linked_worktree_and_claims_it(
     assert Path.cwd() == repo
 
 
+def test_start_builds_from_the_fetched_trunk_when_no_remote_head_is_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #479 (START-01): with no recorded `origin/HEAD` and no
+    remote-tracking `main` before the fetch, the trunk is guessed only
+    after it, so start builds from the remote's `main` -- never from the
+    stale local `main` a guess taken before the fetch would name."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "landed elsewhere")
+    _real_git(repo, "push", "-q", "origin", "main")
+    landed = _real_git(repo, "rev-parse", "HEAD").stdout.strip()
+    _real_git(repo, "reset", "-q", "--hard", "HEAD~1")
+    _real_git(repo, "remote", "set-head", "origin", "--delete")
+    _real_git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+    monkeypatch.chdir(repo)
+
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    assert _real_git(worktree, "rev-parse", "HEAD").stdout.strip() == landed
+
+
 def test_start_resumes_an_existing_worktree_by_only_claiming(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -2289,15 +2311,15 @@ def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -
 def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     """Another push moves the trunk after `start` fetched and checked it,
     so the worktree it builds stands on a commit it never checked."""
-    real_fetched_trunk = checkout.fetched_trunk
+    real_trunk_commit = checkout.trunk_commit
 
-    def fetch_then_the_trunk_moves(remote: str, *, trunk: str) -> str:
-        fetched = real_fetched_trunk(remote, trunk=trunk)
+    def fetched_then_the_trunk_moves(trunk: str) -> str:
+        fetched = real_trunk_commit(trunk)
         _real_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
         _real_git(repo, "push", "-q", "origin", "HEAD:main")
         return fetched
 
-    monkeypatch.setattr(checkout, "fetched_trunk", fetch_then_the_trunk_moves)
+    monkeypatch.setattr(checkout, "trunk_commit", fetched_then_the_trunk_moves)
 
 
 def _trunk_moves_while_a_gone_worktree_is_rebuilt(
@@ -3015,10 +3037,10 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     wrongly let the claim through."""
     repo, remote, seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
-    real_fetched_trunk = checkout.fetched_trunk
+    real_fetch_remote = checkout.fetch_remote
 
-    def fetch_trunk_then_advance_item(remote: str, *, trunk: str) -> str:
-        fetched = real_fetched_trunk(remote, trunk=trunk)
+    def fetch_trunk_then_advance_item(remote: str) -> None:
+        real_fetch_remote(remote)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(
@@ -3032,10 +3054,9 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
                 operation_id="item-op-314-race",
             ),
         )
-        return fetched
 
     remote_path = remote
-    monkeypatch.setattr(checkout, "fetched_trunk", fetch_trunk_then_advance_item)
+    monkeypatch.setattr(checkout, "fetch_remote", fetch_trunk_then_advance_item)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
@@ -14676,9 +14697,17 @@ def test_land_release_routing_reads_the_merge_commit_trailer_for_a_rerun(
         board.NoItemClassification(board.NoItemKind.FIX),
         (),
     )
-    monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: (landing,))
+    _stub_fetched_trunk_walk(monkeypatch, (landing,))
 
     assert issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, REPOSITORY) is None
+
+
+def _stub_fetched_trunk_walk(
+    monkeypatch: pytest.MonkeyPatch, landings: tuple[checkout.TrunkLanding, ...]
+) -> None:
+    """The rerun's fetch succeeds and its trunk walk answers `landings`."""
+    monkeypatch.setattr(checkout, "fetch_remote", lambda _remote: None)
+    monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: landings)
 
 
 def test_land_release_routing_refuses_a_rerun_with_no_usable_merge_commit_trailer(
@@ -14688,7 +14717,7 @@ def test_land_release_routing_refuses_a_rerun_with_no_usable_merge_commit_traile
     by name when the walked trunk carries the sha with neither a
     `Work-Item:` nor a `No-Item:` trailer -- never a bare re-read of the
     pull request's own body."""
-    monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
+    _stub_fetched_trunk_walk(monkeypatch, ())
 
     with pytest.raises(ClaimError, match="carries no `Work-Item:` or `No-Item:` trailer"):
         issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, REPOSITORY)

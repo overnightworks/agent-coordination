@@ -2983,9 +2983,7 @@ def _verify_merged_release(
             f"not the default branch {default_branch!r}"
         )
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
-    landings = checkout.trunk_landings(
-        context.trunk_ref, TRUNK_LANDING_DEPTH, fetch_from=context.canonical_remote
-    )
+    landings = checkout.trunk_landings(context.fetch_trunk(), TRUNK_LANDING_DEPTH)
     if isinstance(identity, protocol.LaneIdentity):
         defect = _trunk_no_item_landing_defect(landings, detail.merge_commit, detail.number)
         if defect is not None:
@@ -5442,7 +5440,7 @@ def _rebuild_and_resume(
     minted. A worktree that stands on another commit -- another fetch moved
     the trunk after the checks -- is removed again, as a fresh build's is
     (START-18)."""
-    trunk = checkout.fetched_trunk(context.canonical_remote, trunk=context.trunk_ref)
+    trunk = checkout.trunk_commit(context.fetch_trunk())
     versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
     checked = _claim_request(
         _start_claim_arguments(parsed, base=trunk, branch=target.branch, claim_id=resumed.claim_id)
@@ -5470,7 +5468,7 @@ def _check_build_and_claim(
     knows whether the claim was written, so a failure after it keeps the
     worktree and says the outcome is uncertain (START-25). An interrupt or
     an unexpected error is no refusal."""
-    trunk = checkout.fetched_trunk(context.canonical_remote, trunk=context.trunk_ref)
+    trunk = checkout.trunk_commit(context.fetch_trunk())
     # The main checkout observed afresh, never the observation the
     # item-existence read already holds: the fetch above may take a while,
     # and the claim must read the item as it stands once the fetch is done,
@@ -6047,9 +6045,8 @@ def _land_release_routing(
         if isinstance(classification, board.WorkItemClassification):
             return classification.item.number
         return None
-    landings = checkout.trunk_landings(
-        checkout.trunk_ref(canonical_remote), TRUNK_LANDING_DEPTH, fetch_from=canonical_remote
-    )
+    checkout.fetch_remote(canonical_remote)
+    landings = checkout.trunk_landings(checkout.trunk_ref(canonical_remote), TRUNK_LANDING_DEPTH)
     landing = next((entry for entry in landings if entry.sha == merge_sha), None)
     trunk_classification = None if landing is None else landing.classification
     if isinstance(trunk_classification, board.TrunkWorkItemClassification):

@@ -882,14 +882,13 @@ def test_trunk_landings_read_the_named_remotes_trunk_not_the_work_branch(
     assert not any("origin" in argument for call in observed for argument in call)
 
 
-def test_trunk_landings_with_fetch_refreshes_the_remote_first(
+def test_trunk_landings_after_a_fetch_see_a_commit_this_checkout_never_fetched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Issue #397: `fetch=True` -- `release --merged <pr>`'s own
-    merge-commit verification under `storage = github` -- refreshes
-    `remote`'s remote-tracking ref before the walk, so a commit GitHub just
-    reported merged is visible even when nothing else in this checkout
-    fetched it yet."""
+    """Issue #397: `release --merged <pr>`'s own merge-commit verification
+    under `storage = github` fetches the remote before it walks the trunk,
+    so a commit GitHub just reported merged is visible even when nothing
+    else in this checkout fetched it yet."""
     repo = _bare_remote_repository_with_one_commit(tmp_path)
     clone = tmp_path / "clone"
     _real_git(tmp_path, "clone", "-q", str(tmp_path / "remote.git"), str(clone))
@@ -899,25 +898,13 @@ def test_trunk_landings_with_fetch_refreshes_the_remote_first(
     _push_repository_trunk(repo, "origin")
     monkeypatch.chdir(clone)
 
-    landings = _LIVE_TRUNK_LANDINGS(checkout.trunk_ref("origin"), 20, fetch_from="origin")
+    checkout.fetch_remote("origin")
+    landings = _LIVE_TRUNK_LANDINGS(checkout.trunk_ref("origin"), 20)
 
     assert [landing.classification for landing in landings] == [
         None,
         board.TrunkWorkItemClassification((10,)),
     ]
-
-
-def test_trunk_landings_with_fetch_fails_loud_when_the_fetch_itself_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = _bare_remote_repository_with_one_commit(tmp_path)
-    monkeypatch.chdir(repo)
-    _stub_one_git_call(
-        monkeypatch, ["fetch", "origin"], exit_status=1, stderr="fatal: could not read from remote"
-    )
-
-    with pytest.raises(ClaimError, match="could not read from remote"):
-        checkout.trunk_landings("refs/remotes/origin/main", 20, fetch_from="origin")
 
 
 def test_trunk_ref_fails_loud_when_no_candidate_branch_resolves(
@@ -1391,9 +1378,8 @@ def _bare_remote_repository_with_one_commit(tmp_path: Path) -> Path:
 
 
 def _build_start_worktree(worktree: Path, branch: str) -> None:
-    trunk = checkout.trunk_ref("origin")
-    checkout.fetched_trunk("origin", trunk=trunk)
-    checkout.create_linked_worktree(worktree, branch=branch, trunk=trunk)
+    checkout.fetch_remote("origin")
+    checkout.create_linked_worktree(worktree, branch=branch, trunk=checkout.trunk_ref("origin"))
 
 
 def test_create_linked_worktree_builds_from_the_fetched_trunk(
@@ -1822,9 +1808,7 @@ def test_remove_linked_worktree_reports_the_worktree_removed_and_the_branch_kept
 @pytest.mark.parametrize(
     "fetch_trunk",
     [
-        pytest.param(
-            lambda: checkout.fetched_trunk("origin", trunk="refs/remotes/origin/main"), id="start"
-        ),
+        pytest.param(lambda: checkout.fetch_remote("origin"), id="start-and-merged-trunk-walk"),
         pytest.param(
             lambda: checkout.branch_merged_into_default("feature", remote="origin"),
             id="release-merged",
