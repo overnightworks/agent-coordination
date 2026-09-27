@@ -94,7 +94,7 @@ another claim landed after the checks, removes what this call built (START-18).
 - `start` never launches a second, competing way to run git: every worktree it builds, resumes, or refuses goes through the one git launcher every other command in this package already uses.
 - `start` never overwrites, deletes, or reuses a worktree sitting on a different branch than the one it computed (START-09), or one that belongs to a foreign checkout (START-13): it refuses by name and leaves that worktree exactly as found.
 - `start` never derives the claimed scope independently of `aco claim`'s own body-scope resolution: an explicit `--scope` that disagrees with the item's own body still refuses the same way (CLAIM-54).
-- `start` never reads or writes `refs/aco/state` itself: every claim write happens inside the one `aco claim` call it makes from the resolved worktree.
+- `start` never writes `refs/aco/state` itself: its one claim write is `aco claim`'s own, made after `aco claim`'s own checks passed.
 - `start` never removes a worktree or branch it did not build in the same call: a refused resume leaves the worktree it found exactly as found.
 - `start` never reuses a prior, now-terminal claim id for the same item: a clean resume with no live claim mints a fresh one (START-11), exactly as a first build would.
 - `start` never gains a `--json` mode: its own parser defines no such flag, so every outcome, success or refusal, is `worktree:`/`branch:` text or a stderr sentence (own product decision).
