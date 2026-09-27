@@ -1,0 +1,8 @@
+claim_id = "8916da5f36b8462dbacc9da437b9ac2b"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "8652b0d544b7cb3ec55667e090604a1ddaa9bf1d"
+branch = "claude/issue-512-remote-needs-url"
+scope = ["specs/board.spec.md", "specs/check.spec.md", "specs/claim.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_session.py"]
+opened_commit = "3ad6a570b7d6260892b052167afd5c926df6a13e"
+whole_reason = "one owner of the canonical-remote question, its callers and their specs"
