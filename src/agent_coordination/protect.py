@@ -431,13 +431,15 @@ PROTECT_UNGUARDED_ENV = "ACO_PROTECT_UNGUARDED"
 
 def _unguarded_directories() -> tuple[Path, ...]:
     """The directories `ACO_PROTECT_UNGUARDED` names (`os.pathsep`-separated,
-    issue #483), symlink-resolved; unset or empty names none. An entry that
-    is not an existing absolute directory fails closed (PROT-41), raised for
+    issue #483), symlink-resolved; unset or empty names none. Any other
+    entry that is not an existing absolute directory -- an empty one
+    between separators included -- fails closed (PROT-41), raised for
     `cli`'s deny frame like a missing identity: a typo must never silently
     guard nothing, nor exempt whatever a relative entry happens to meet."""
-    entries = [
-        entry for entry in os.environ.get(PROTECT_UNGUARDED_ENV, "").split(os.pathsep) if entry
-    ]
+    value = os.environ.get(PROTECT_UNGUARDED_ENV, "")
+    if not value:
+        return ()
+    entries = value.split(os.pathsep)
     for entry in entries:
         if not (os.path.isabs(entry) and os.path.isdir(entry)):
             raise protocol.ClaimError(

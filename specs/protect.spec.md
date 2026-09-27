@@ -128,7 +128,8 @@ session; a new gated tool joins both the table and that matcher.
 repositories a tester may write freely -- a scratchpad of throwaway
 checkouts. The match is on the repository's own common git directory, so a
 worktree's own location never exempts it; unset or empty, every repository
-is judged.
+is judged. Any other value is read entry by entry, so an empty entry
+between separators is malformed like any other (PROT-41).
 
 - [ ] [PROT-40] A path whose repository's git directory, symlink-resolved, sits at or below an `ACO_PROTECT_UNGUARDED` directory allows after PROT-38, before PROT-11, reading no identity or store (see E-PROT-13).
 - [ ] [PROT-41] An `ACO_PROTECT_UNGUARDED` entry not an existing absolute directory denies `ACO_PROTECT_UNGUARDED: <entry> is not an absolute directory` for a path in a checkout, after PROT-38 (see E-PROT-13).
