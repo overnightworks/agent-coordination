@@ -3658,7 +3658,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
             number=number,
             closed_at=closed_at,
             freed=_item_close_freed(client, number),
-            parent_closable=_parent_closable_number(client, number, body.Storage.STATE_REF),
+            parent_closable=_closable_parent_of_a_closed_item(client, number),
         )
         _print_item_close_result(result, as_json=as_json)
         return 0
@@ -3683,6 +3683,23 @@ def _refuse_an_unreadable_relative(
     if parent is not None:
         relatives.add(parent)
     client.item_references(sorted(relatives))
+
+
+def _closable_parent_of_a_closed_item(
+    client: state_board.StateRefBoard, closed_item: int
+) -> int | None:
+    """`_parent_closable_number`'s parent hint, withheld while the parent's
+    own `item close` would refuse by an unreadable relative (issue #536,
+    ITEM-54): the hint recommends that close, so it asks the very check
+    that close runs rather than contradicting it."""
+    closable = _parent_closable_number(client, closed_item, body.Storage.STATE_REF)
+    if closable is None:
+        return None
+    try:
+        _refuse_an_unreadable_relative(client, closable, with_parent=True)
+    except protocol.MalformedStateTreeError:
+        return None
+    return closable
 
 
 def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]:

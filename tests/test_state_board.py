@@ -4117,6 +4117,17 @@ class TestCliStateRefForge:
             "freed: none",
         ]
 
+    @pytest.mark.parametrize(
+        ("neighbours", "parent_closable"),
+        [
+            pytest.param({}, CLOSE_PARENT_NUMBER, id="last-open-child"),
+            pytest.param(
+                {f"{MALFORMED_ID}.md": b"no block\n"},
+                None,
+                id="last-readable-child-beside-an-unreadable-item",
+            ),
+        ],
+    )
     def test_item_close_json_carries_the_parent_closable_number(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -4124,18 +4135,22 @@ class TestCliStateRefForge:
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        neighbours: dict[str, bytes],
+        parent_closable: int | None,
     ) -> None:
         """Issue #348, Beweis 4 (JSON): `parent_closable` carries the same
-        number the text form's parent hint names."""
-        self._live_state_ref_checkout(
-            monkeypatch, tmp_path, bare_remote, worktree, _close_parent_scenario_item_files()
-        )
+        number the text form's parent hint names. Issue #536 (ITEM-54):
+        beside an item whose record does not read, that item counts as the
+        parent's child, so the parent's own close would refuse by it and
+        the hint names no parent rather than recommending that close."""
+        item_files = {**_close_parent_scenario_item_files(), **neighbours}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
         status = issue_claim.main(["item", "close", str(CLOSE_CHILD_NUMBER), "--json"])
 
         assert status == 0
         payload = json.loads(capsys.readouterr().out)
-        assert payload["parent_closable"] == CLOSE_PARENT_NUMBER
+        assert payload["parent_closable"] == parent_closable
 
     def test_item_close_refuses_a_second_close_with_the_closed_date_and_leaves_the_oid_unchanged(
         self,
