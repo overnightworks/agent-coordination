@@ -7114,7 +7114,11 @@ def _next_under_board_config_keyed(
     ("arrange", "shown_as"),
     [
         pytest.param(_release_freeing_titled, "next: #81 score {score}: {escaped}\n", id="release"),
-        pytest.param(_rulings_of_titled, "#10 1/1: {escaped}\n", id="rulings"),
+        pytest.param(
+            _rulings_of_titled,
+            "#10 1/1: {escaped}\n  1 open: {escaped_on_one_line}\n",
+            id="rulings",
+        ),
         pytest.param(
             _claim_past_titled,
             "WARNING: higher-priority actionable item #11 (score {score}) is free: {escaped};",
@@ -7137,7 +7141,9 @@ def test_one_line_printers_show_foreign_text_as_next_escapes_it(
     """Issue #540 lines 1 and 2: `release`'s `next:` line, the `rulings`
     text, `claim`'s out-of-order warning and the board configuration's
     unknown-key refusal show RLO, U+061C, U+2060 and a tag character as
-    their printable escapes, while TAB and the Umlaut stay as they are."""
+    their printable escapes, while TAB and the Umlaut stay as they are;
+    the `rulings` line summary (RUL-11) escapes the same controls after
+    RUL-02 folds its whitespace onto one line."""
     foreign = (
         "Über\N{RIGHT-TO-LEFT OVERRIDE}RLO\N{ARABIC LETTER MARK}ALM"
         "\N{WORD JOINER}WJ\N{TAG LATIN CAPITAL LETTER A}TAG\tGröße"
@@ -7146,6 +7152,7 @@ def test_one_line_printers_show_foreign_text_as_next_escapes_it(
         "Über\N{REVERSE SOLIDUS}u202eRLO\N{REVERSE SOLIDUS}u061cALM"
         "\N{REVERSE SOLIDUS}u2060WJ\N{REVERSE SOLIDUS}U000e0041TAG\tGröße"
     )
+    escaped_on_one_line = escaped.replace("\t", " ")
     arguments = arrange(monkeypatch, tmp_path, foreign)
 
     issue_claim.main(arguments)
@@ -7154,6 +7161,7 @@ def test_one_line_printers_show_foreign_text_as_next_escapes_it(
 
     assert _raw_terminal_controls(printed) == set()
     expected = re.escape(shown_as).replace(r"\{escaped\}", re.escape(escaped))
+    expected = expected.replace(r"\{escaped_on_one_line\}", re.escape(escaped_on_one_line))
     expected = expected.replace(r"\{score\}", r"-?\d+").replace(r"\{config\}", r"\S+")
     assert re.search(expected, printed), printed
 
