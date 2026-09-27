@@ -1118,6 +1118,8 @@ def test_github_adapter_reads_a_file_absent_at_a_commit_as_none() -> None:
         pytest.param(json.dumps({"encoding": "base64", "content": 5}), id="content-not-text"),
         pytest.param(json.dumps({"encoding": "base64", "content": "abc"}), id="bad-padding"),
         pytest.param(json.dumps({"encoding": "base64", "content": "/w=="}), id="not-utf-8"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "!!!!"}), id="not-alphabet"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "ä==="}), id="not-ascii"),
     ],
 )
 def test_github_adapter_fails_loud_on_malformed_file_contents(answer: str) -> None:

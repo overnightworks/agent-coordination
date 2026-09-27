@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import os
 import re
@@ -1043,9 +1042,12 @@ class GitHubForge:
         content = value.get("content")
         if value.get("encoding") != "base64" or not isinstance(content, str):
             raise forge.ForgeMalformedResponseError(MALFORMED_FILE_CONTENTS)
+        # GitHub wraps the base64 text across lines; strict decoding refuses
+        # anything else outside the alphabet instead of silently dropping it.
+        unwrapped = "".join(content.split())
         try:
-            return base64.b64decode(content).decode("utf-8")
-        except (binascii.Error, UnicodeDecodeError) as error:
+            return base64.b64decode(unwrapped, validate=True).decode("utf-8")
+        except ValueError as error:
             raise forge.ForgeMalformedResponseError(MALFORMED_FILE_CONTENTS) from error
 
     def delete_branch(self, branch: str) -> None:
