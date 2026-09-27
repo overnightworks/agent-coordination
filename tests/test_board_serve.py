@@ -490,7 +490,7 @@ def _served_request(served: ServedServer, request: str, item: int) -> None:
 @pytest.mark.parametrize(
     ("requests", "reads_made"),
     [
-        pytest.param(("reload", "reload"), ("rebuild", "rebuild"), id="two-reloading-gets"),
+        pytest.param(("get", "reload"), ("held", "rebuild"), id="held-get-then-reloading-get"),
         pytest.param(("get", "post", "get"), ("held", "ruling", "rebuild"), id="get-post-get"),
     ],
 )
@@ -509,10 +509,12 @@ def test_every_request_reads_the_repository_through_its_own_fresh_context(
     The startup build and every rebuild also observe `refs/aco/state`
     exactly once (issue #477, CAS-54); so does a ruling click under
     `state-ref`, while under `github` a click writes the forge alone and
-    never observes it.
-    A context memoised across requests would leave the second of two
-    reloads reading nothing; one built only to rebuild or click would leave
-    the cached first GET without a child."""
+    never observes it -- so two GETs, the held page then a reload, observe
+    it twice counting startup, and GET -> POST -> GET three times under
+    `state-ref`.
+    A context memoised across requests would leave the reload reading
+    nothing or building no child; one built only to rebuild or click would
+    leave the held first GET without a child."""
     served = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
     children = _record_fresh_contexts(monkeypatch)
