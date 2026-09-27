@@ -10706,7 +10706,7 @@ def test_cli_claim_replay_of_a_wide_scope_without_whole_reads_only_its_own_item(
 ) -> None:
     """PIN-29/CLM-15 (issue #447): a replayed wide claim that names no
     `--whole` takes its item's own `whole` from that item alone, so a
-    whole-board read that would refuse (PIN-13) never stops the replay."""
+    whole-board read that would refuse (PIN-16) never stops the replay."""
     reason = "the four adapters share one lock"
     wide_scope = ["a.py", "b.py", "c.py", "d.py"]
     item_body = complete_contract("Ship it.", scope=wide_scope, whole=reason)
@@ -10718,7 +10718,9 @@ def test_cli_claim_replay_of_a_wide_scope_without_whole_reads_only_its_own_item(
     capsys.readouterr()
 
     def board_read_refused() -> tuple[board.Issue, ...]:
-        raise protocol.MalformedStateTreeError("items/notes.md is not a valid item file name")
+        raise protocol.MalformedStateTreeError(
+            "item aco-0a0a0a is referenced as a parent but does not exist"
+        )
 
     monkeypatch.setattr(client, "list_open_board_issues", board_read_refused)
 
@@ -14147,8 +14149,10 @@ def test_release_merged_fetches_each_candidates_dependencies_only_once(
     [
         pytest.param(forge.ForgeTransientError("gh: connection reset"), id="forge-outage"),
         pytest.param(
-            protocol.MalformedStateTreeError("items/notes.md is not a valid item file name"),
-            id="misnamed-state-ref-item-file",
+            protocol.MalformedStateTreeError(
+                "item aco-0a0a0a is referenced as a parent but does not exist"
+            ),
+            id="state-ref-item-names-a-missing-parent",
         ),
     ],
 )
@@ -14157,8 +14161,8 @@ def test_release_merged_prints_a_hint_instead_of_failing_when_the_board_is_unrea
     capsys: pytest.CaptureFixture[str],
     board_error: protocol.ClaimError,
 ) -> None:
-    """A forge outage -- or a misnamed state-ref item file the board read
-    refuses on (PIN-13, LAND-65) -- that only shows after the release itself already
+    """A forge outage -- or a state-ref item naming a missing parent the board
+    read refuses on (PIN-16, LAND-65) -- that only shows after the release itself already
     committed must not undo or fail it (issue #256): the release's own
     exit code and store effect stay exactly what a readable board would
     have produced, with one hint line standing in for `freed`/`next`."""
