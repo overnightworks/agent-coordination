@@ -126,22 +126,8 @@ def lane_changed_paths(tip: str, *, trunk: str, directory: Path) -> tuple[str, .
 def remote_url(remote: str, *, directory: Path | None = None) -> str:
     """One named remote's URL, read from `directory` via `-C` when given
     (issue #457: a `RunContext` for another checkout) or the calling
-    process's own cwd otherwise.
-
-    Generalizes `origin_remote_url` (issue #176, §2): the store's
-    `canonical_remote` is a separate, independently configured axis from
-    `origin` (the GitHub-repository-discovery fallback below) -- almost
-    always the same remote in practice, but not the same concept, so a
-    caller comparing a forge target against the canonical remote's own URL
-    needs to name that remote explicitly rather than assuming `origin`.
-    """
+    process's own cwd otherwise."""
     return _git_output(["config", "--get", f"remote.{remote}.url"], directory=directory)
-
-
-def origin_remote_url(*, directory: Path | None = None) -> str:
-    """The checkout's `origin` remote: `github.discover_repository`'s first,
-    cheap read, before it ever falls back to asking `gh`."""
-    return remote_url("origin", directory=directory)
 
 
 @dataclass(frozen=True)
@@ -361,6 +347,7 @@ def _worktree_repair_instruction(repair: WorktreeRepair, *, branch: str | None) 
 def _validate_worktree_branch(
     branch: str,
     *,
+    default_branch: str | None,
     repair: WorktreeRepair = WorktreeRepair.CREATE,
     directory: Path | None = None,
 ) -> None:
@@ -368,13 +355,14 @@ def _validate_worktree_branch(
     from `directory` via `-C` when given (issue #322: `start`'s own resolved
     worktree, never a process-wide `os.chdir`) or the calling process's own
     cwd otherwise -- `claim`'s own precondition, since a fresh claim is
-    created by literally standing in the worktree it claims. `rescope` no
-    longer shares this (issue #314): it judges an already-resolved
-    `PathCheckout` instead, via `_refuse_shared_checkout` below, so a
-    rescope invoked from a foreign cwd is not silently judged by the wrong
-    checkout.
+    created by literally standing in the worktree it claims. `default_branch`
+    is the canonical remote's recorded default branch, or `None` when none
+    is recorded (issue #490). `rescope` no longer shares this (issue #314):
+    it judges an already-resolved `PathCheckout` instead, via
+    `_refuse_shared_checkout` below, so a rescope invoked from a foreign cwd
+    is not silently judged by the wrong checkout.
     """
-    if is_default_branch(branch, directory=directory):
+    if is_default_branch(branch, default_branch):
         raise ClaimError(
             f"{ISOLATED_NON_MAIN_BRANCH_REFUSAL}{_worktree_repair_instruction(repair, branch=None)}"
         )
@@ -631,20 +619,22 @@ def _resolve_checkout(directory: Path) -> PathCheckout:
     )
 
 
-def _refuse_shared_checkout(path_checkout: PathCheckout, *, repair: WorktreeRepair) -> None:
+def _refuse_shared_checkout(
+    path_checkout: PathCheckout, *, default_branch: str | None, repair: WorktreeRepair
+) -> None:
     """`rescope`'s own worktree-isolation refusal (issue #314): the same
     invariant `_validate_worktree_branch` enforces for `claim`, judged from
-    an already path-resolved checkout's own `directory` instead of a fresh
-    git read in the calling process's own cwd (gate G4).
+    an already path-resolved checkout and `default_branch`, the canonical
+    remote's recorded default branch in that checkout (issue #490), instead
+    of a fresh git read in the calling process's own cwd (gate G4).
 
     Unlike `claim`'s own `is_default_branch`, which falls back to guessing
-    `{main, master}` when `origin/HEAD` cannot be resolved, this denies
+    `{main, master}` when no default branch is recorded, this denies
     outright: `rescope` judges an attacker-reachable payload location, so a
     repository whose default branch is `trunk`, read from a checkout with no
-    recorded `origin/HEAD` yet, must never slip through unnoticed as "not
-    the default branch".
+    recorded `HEAD` yet, must never slip through unnoticed as "not the
+    default branch".
     """
-    default_branch = default_branch_name(directory=path_checkout.toplevel)
     if default_branch is None:
         raise ClaimError(DEFAULT_BRANCH_UNKNOWN_REASON)
     if path_checkout.branch == default_branch:
@@ -672,17 +662,25 @@ class CheckoutBaseMismatchError(ClaimError):
     trunk that moved after its checks in its own sentence (START-26)."""
 
 
-def _validate_checkout(request: ClaimRequest, *, directory: Path | None = None) -> None:
+def _validate_checkout(
+    request: ClaimRequest,
+    *,
+    default_branch: Callable[[], str | None],
+    directory: Path | None = None,
+) -> None:
     """`claim`'s own preconditions against `directory` via `-C` when given
     (issue #322: `start`'s own resolved worktree, never a process-wide
-    `os.chdir`) or the calling process's own cwd otherwise."""
+    `os.chdir`) or the calling process's own cwd otherwise, judging the
+    recorded default branch `default_branch` answers as
+    `_validate_worktree_branch` does -- asked only once the base matches,
+    so a refusal before it reads no configuration (issue #490)."""
     head = _git_output(["rev-parse", "HEAD"], directory=directory)
     if head != request.base:
         raise CheckoutBaseMismatchError(
             f"claim base {request.base} does not match checkout HEAD {head}; "
             "omit --base to use checkout HEAD"
         )
-    _validate_worktree_branch(request.branch, directory=directory)
+    _validate_worktree_branch(request.branch, default_branch=default_branch(), directory=directory)
     dirty = _git_output(["status", "--porcelain"], directory=directory)
     if dirty:
         named = named_with_overflow_count(_dirty_paths(dirty))
@@ -694,9 +692,9 @@ DEFAULT_BRANCH_FALLBACK = frozenset({"main", "master"})
 # `protect`'s and `rescope`'s own denial when a resolved checkout's default
 # branch cannot be determined at all (issue #314 gate G4): unlike `claim`'s
 # `is_default_branch` fallback below, they never guess -- see
-# `_refuse_shared_checkout`'s and `_protect_basic_checkout_denial`'s own
-# docstrings for why the two callers of the same `default_branch_name`
-# resolver accept different risk here.
+# `_refuse_shared_checkout`'s and `_protect_not_main_denial`'s own
+# docstrings for why the callers of the same `recorded_default_branch`
+# reader accept different risk here.
 DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 
 # One owner for `protect`'s "not main" denial (issue #314 repeat gate,
@@ -712,59 +710,59 @@ def recorded_head_ref(remote: str, *, directory: Path | None = None) -> str | No
     `refs/remotes/origin/trunk`), read from `directory` via `-C` when given
     (issue #314: a resolved checkout's own lookup, never the calling
     process's cwd) or the process's own checkout otherwise -- `None` when a
-    clone, a fetch, or `git remote set-head` never recorded one. The one
-    reader of a remote's `HEAD`; each caller decides its own fallback (issue
-    #238), since `claim`, `protect`, and the trunk word or guess
-    differently."""
+    clone, a fetch, or `git remote set-head` never recorded one, or when
+    the branch it names no longer resolves (issue #490: the remote renamed
+    it and `fetch --prune` removed the old one). The one reader of a
+    remote's `HEAD`; each caller decides its own fallback (issue #238),
+    since `claim`, `protect`, and the trunk word or guess differently.
+
+    One git read resolves the symbolic ref and proves its target exists; a
+    plain, non-symbolic `HEAD` ref names itself and so no branch."""
+    head = f"refs/remotes/{remote}/HEAD"
     try:
         symbolic = _git_output(
-            ["symbolic-ref", "--quiet", f"refs/remotes/{remote}/HEAD"], directory=directory
+            ["rev-parse", "--verify", "--quiet", "--symbolic-full-name", head],
+            directory=directory,
         )
     except ClaimError:
         return None
-    return symbolic or None
+    return None if symbolic == head else symbolic
 
 
-def default_branch_name(*, directory: Path | None = None) -> str | None:
-    """The repository's default branch name, read from `directory`'s own
-    `origin/HEAD` when given (issue #314) or the process's own checkout
-    otherwise, or `None` when git cannot resolve it."""
-    remote = "origin"
-    ref = recorded_head_ref(remote, directory=directory)
-    if ref is None:
+def recorded_default_branch(remote: str, *, directory: Path | None = None) -> str | None:
+    """The default branch name `remote`'s recorded `HEAD` names in
+    `directory` (issue #490), or `None` when `recorded_head_ref` finds none
+    -- the offline checks' default branch, asked of the canonical remote."""
+    recorded_head = recorded_head_ref(remote, directory=directory)
+    if recorded_head is None:
         return None
-    return ref.removeprefix(f"refs/remotes/{remote}/")
+    return recorded_head.removeprefix(f"refs/remotes/{remote}/")
 
 
-def is_default_branch(branch: str, *, directory: Path | None = None) -> bool:
+def is_default_branch(branch: str, default_branch: str | None) -> bool:
     """Whether `branch` is the repository's default branch (issue #238):
-    the name `origin/HEAD` resolves to, or the historical `{"main", "master"}`
-    guess when a repository has no recorded `origin/HEAD`.
+    `default_branch` -- `recorded_default_branch`'s answer -- or the
+    historical `{"main", "master"}` guess when none is recorded.
 
-    `claim`'s own worktree precondition (`_validate_worktree_branch`) alone:
-    read from `directory` via `-C` when given (issue #322: `start`'s own
-    resolved worktree) or the calling process's own cwd otherwise, since a
-    fresh claim is created by literally standing in the worktree it claims
-    -- there is no attacker-reachable payload location to spoof here, so the
-    historical guess stays an accepted risk (issue #238) this function keeps
-    unchanged. `protect` and `rescope` judge a resolved checkout's default
-    branch directly through `default_branch_name(directory=...)` instead
-    (issue #314 gate G4) and deny outright when it cannot be resolved,
-    rather than share this guess.
+    `claim`'s own worktree precondition (`_validate_worktree_branch`) alone,
+    since a fresh claim is created by literally standing in the worktree it
+    claims -- there is no attacker-reachable payload location to spoof
+    here, so the historical guess stays an accepted risk (issue #238).
+    `protect` and `rescope` deny outright when no default branch is
+    recorded (issue #314 gate G4), rather than share this guess.
     """
-    resolved = default_branch_name(directory=directory)
-    if resolved is not None:
-        return branch == resolved
+    if default_branch is not None:
+        return branch == default_branch
     return branch in DEFAULT_BRANCH_FALLBACK
 
 
 def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> None:
     """`land`'s own precondition (issue #405): the checkout at `directory`
-    (or the calling process's own cwd) must already sit on the repository's
-    default branch with nothing uncommitted, since `land` fast-forwards that
-    exact branch in place once its merge succeeds -- raises the ruled
-    refusal otherwise."""
-    branch = default_branch_name(directory=directory)
+    (or the calling process's own cwd) must already sit on the default
+    branch `origin`'s recorded `HEAD` names, with nothing uncommitted, since
+    `land` fast-forwards that exact branch in place once its merge succeeds
+    -- raises the ruled refusal otherwise."""
+    branch = recorded_default_branch("origin", directory=directory)
     if branch is None:
         raise ClaimError(DEFAULT_BRANCH_UNKNOWN_REASON)
     current = current_branch(directory=directory)
@@ -776,7 +774,7 @@ def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> 
 def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) -> str:
     """`remote`'s trunk ref in `directory`: `recorded_head` -- `remote`'s
     recorded `HEAD` as `recorded_head_ref` read it -- or, when `remote`
-    never recorded one, the historical `{main, master}` guess, `remote`'s
+    never recorded one or it dangles, the historical `{main, master}` guess, `remote`'s
     own before the local branch (issues #238, #304). A `RunContext` asks
     this once per directory, and again only after its run's fetch (issue
     #488), so a trunk is never resolved from a `HEAD` read before it."""

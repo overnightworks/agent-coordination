@@ -41,6 +41,7 @@ from board_fixtures import (
     slice_entries,
 )
 from cli_fixtures import (
+    RECORDED_ORIGIN_HEAD_READ,
     _assert_missing_identity_message,
     _forbid_forge_resolution,
     _forbid_git_fill,
@@ -54,6 +55,7 @@ from cli_fixtures import (
     _stub_one_git_call,
     arrange_scope_width,
     count_context_reads,
+    dangle_recorded_head,
     fetched_once_then_read,
     landed_from_another_clone,
     main_exit_code,
@@ -2777,21 +2779,27 @@ def _state_ref_item_body(title: str, **block_fields: object) -> str:
 
 
 def _real_state_ref_start_scenario(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, canonical_remote: str = "origin"
 ) -> tuple[Path, Path, protocol.ObjectId]:
     """A real bare-remote-backed, `storage = "state-ref"` repository (issue
     #322 review finding 2) with item #314 open, untitled scope, ready for
     `start` -- the state-ref counterpart of `_start_scenario`, real
     `refs/aco/state` and all (`_use_real_store`), since `_FakeStore` cannot
-    see which directory a read ran against."""
+    see which directory a read ran against. A `canonical_remote` other than
+    `origin` keeps an `origin` beside it on the same bare remote that never
+    recorded its `HEAD` (issue #490)."""
     _use_real_store(monkeypatch)
-    repo, remote = _real_repository_with_bare_remote(tmp_path)
+    repo, remote = _real_repository_with_bare_remote(tmp_path, remote_name=canonical_remote)
     config_dir = repo / ".agent-claim"
     config_dir.mkdir()
-    (config_dir / "board.toml").write_text('storage = "state-ref"\n')
+    (config_dir / "board.toml").write_text(
+        f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
+    )
     _real_git(repo, "add", ".agent-claim/board.toml")
     _real_git(repo, "commit", "-q", "-m", "pin state-ref storage")
-    _push_repository_trunk(repo, "origin")
+    _push_repository_trunk(repo, canonical_remote)
+    if canonical_remote != "origin":
+        _real_git(repo, "remote", "add", "origin", str(remote))
     store.bootstrap(worktree=repo, remote=str(remote))
     content = _state_ref_item_body("Fresh Slug Title").encode()
     seeded_oid = store.hash_blob(repo, content)
@@ -2979,31 +2987,53 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
     assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
 
 
-def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_default_branch(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
+def test_start_observes_the_state_ref_afresh_and_its_default_branch_after_the_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, canonical_remote: str
 ) -> None:
     """Issue #479 (CAS-55): the claim's checks observe the state ref again
-    once the trunk fetch is done, while the canonical remote and default
-    branch the run already read stay held -- one read of each per
-    directory `start` works in."""
-    _real_state_ref_start_scenario(monkeypatch, tmp_path)
-    remote_url, default_branch_name = checkout.remote_url, checkout.default_branch_name
-    reads: list[tuple[str, Path | None]] = []
+    once the trunk fetch is done, while the canonical remote the run
+    already read stays held -- one read of it per directory `start` works
+    in. The default branch the built worktree is judged against is read
+    after that fetch, never one held from before it, since a fetch may
+    record or move the `HEAD` it names (issue #484 ruling). Both are the
+    canonical remote's: a `hub` starts from its own recorded `HEAD` beside
+    an `origin` that never recorded one (issue #490)."""
+    toplevel, _remote, _seeded_oid = _real_state_ref_start_scenario(
+        monkeypatch, tmp_path, canonical_remote=canonical_remote
+    )
+    remote_url, recorded_default_branch = checkout.remote_url, checkout.recorded_default_branch
+    fetch_remote = checkout.fetch_remote
+    reads: list[tuple[str, str, Path | None]] = []
 
     def counting_remote_url(remote: str, *, directory: Path | None = None) -> str:
-        reads.append(("remote url", directory))
+        reads.append(("remote url", remote, directory))
         return remote_url(remote, directory=directory)
 
-    def counting_default_branch_name(*, directory: Path | None = None) -> str | None:
-        reads.append(("default branch", directory))
-        return default_branch_name(directory=directory)
+    def counting_recorded_default_branch(
+        remote: str, *, directory: Path | None = None
+    ) -> str | None:
+        reads.append(("default branch", remote, directory))
+        return recorded_default_branch(remote, directory=directory)
+
+    def noted_fetch_remote(remote: str, *, directory: Path | None = None) -> None:
+        reads.append(("fetch", remote, directory))
+        fetch_remote(remote, directory=directory)
 
     monkeypatch.setattr(checkout, "remote_url", counting_remote_url)
-    monkeypatch.setattr(checkout, "default_branch_name", counting_default_branch_name)
+    monkeypatch.setattr(checkout, "recorded_default_branch", counting_recorded_default_branch)
+    monkeypatch.setattr(checkout, "fetch_remote", noted_fetch_remote)
 
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
-    assert {kind for kind, _directory in reads} == {"remote url", "default branch"}
-    assert [read for read in set(reads) if reads.count(read) > 1] == []
+    assert {(kind, remote) for kind, remote, _directory in reads} == {
+        ("remote url", canonical_remote),
+        ("default branch", canonical_remote),
+        ("fetch", canonical_remote),
+    }
+    remote_url_reads = [read for read in reads if read[0] == "remote url"]
+    assert len(remote_url_reads) == len(set(remote_url_reads))
+    after_the_fetch = reads[reads.index(("fetch", canonical_remote, toplevel)) + 1 :]
+    assert ("default branch", canonical_remote, toplevel) in after_the_fetch
 
 
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
@@ -5821,7 +5851,7 @@ def test_board_reads_priority_configuration_from_the_checkout_root(
     nested_directory.mkdir(parents=True)
     monkeypatch.chdir(nested_directory)
     toplevel_read = ("rev-parse", "--show-toplevel")
-    trunk_head_read = ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    trunk_head_read = RECORDED_ORIGIN_HEAD_READ
     answers = {toplevel_read: str(toplevel), trunk_head_read: "refs/remotes/origin/main"}
     observed: list[tuple[str, ...]] = []
 
@@ -7743,7 +7773,7 @@ def _patch_release_session(
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: agent})
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
     _patch_store_write(monkeypatch, *(_store_claim_from_request(claimed) for claimed in standing))
-    trunk_head = ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    trunk_head = RECORDED_ORIGIN_HEAD_READ
     if forbid_git:
 
         def git(arguments: list[str], **_kwargs: object) -> str:
@@ -7843,10 +7873,10 @@ def test_claim_request_binds_omitted_base_and_branch_to_checkout(
 
     if error is not None:
         with pytest.raises(ClaimError, match=error):
-            issue_claim._request(parsed)
+            issue_claim._request(parsed, default_branch=lambda: "main")
         return
 
-    claimed = issue_claim._request(parsed)
+    claimed = issue_claim._request(parsed, default_branch=lambda: "main")
     assert claimed.base == git_values[("rev-parse", "HEAD")]
     assert claimed.branch == git_values[("branch", "--show-current")]
 
@@ -7855,7 +7885,7 @@ def test_claim_request_refuses_a_base_that_is_not_a_full_commit_sha() -> None:
     parsed = _parse_claim_command("--base", "not-a-sha")
 
     with pytest.raises(ClaimError, match="base must be a full lowercase commit SHA"):
-        issue_claim._request(parsed)
+        issue_claim._request(parsed, default_branch=lambda: "main")
 
 
 def test_matching_store_claim_never_replays_an_issueless_lane() -> None:
@@ -7934,7 +7964,7 @@ def test_cli_claim_omitted_role_posts_default_and_explicit_wins(
 ) -> None:
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     claimed = issue_claim.main(
@@ -7968,7 +7998,7 @@ def test_cli_claim_empty_role_fails_closed_without_posting_builder(
 ) -> None:
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     argv = [
         "--repo",
@@ -7991,7 +8021,7 @@ def test_cli_claim_empty_role_fails_closed_without_posting_builder(
 
     parsed = issue_claim._parser().parse_args(argv)
     with pytest.raises(ClaimError, match=r"role.+must be one bounded non-empty line"):
-        issue_claim._request(parsed)
+        issue_claim._request(parsed, default_branch=lambda: "main")
 
     claimed = issue_claim.main(argv)
     captured = capsys.readouterr()
@@ -8066,7 +8096,7 @@ def test_request_and_cli_claim_fill_agent_from_documented_else_chain(
     if explicit is not None:
         command.extend(["--agent", explicit])
     parsed = issue_claim._parser().parse_args(command)
-    assert issue_claim._request(parsed).agent == agent
+    assert issue_claim._request(parsed, default_branch=lambda: "main").agent == agent
 
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
@@ -8097,7 +8127,7 @@ def test_invalid_agent_identity_fails_before_git_and_github(
         command.extend(["--agent", explicit])
     parsed = issue_claim._parser().parse_args(command)
     with pytest.raises(ClaimError, match="agent must be one bounded non-empty line"):
-        issue_claim._request(parsed)
+        issue_claim._request(parsed, default_branch=lambda: "main")
 
     _forbid_github_construction(monkeypatch)
     releases = [
@@ -8137,7 +8167,7 @@ def test_missing_agent_identity_fails_closed_without_github(
     command = _claim_without_agent_args()
     parsed = issue_claim._parser().parse_args(command)
     with pytest.raises(ClaimError) as raised:
-        issue_claim._request(parsed)
+        issue_claim._request(parsed, default_branch=lambda: "main")
     _assert_missing_identity_message(str(raised.value))
 
     _forbid_github_construction(monkeypatch)
@@ -8159,7 +8189,7 @@ def test_cli_same_filled_agent_can_claim_and_release_without_flag(
     _set_agent_identity_env(monkeypatch, {"GROK_SESSION_ID": "session-1"})
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     claimed = issue_claim.main(
@@ -8206,7 +8236,7 @@ def test_cli_two_session_claimants_cannot_release_without_extra_comment(
     _set_agent_identity_env(monkeypatch, {"GROK_SESSION_ID": "session-1"})
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     assert (
@@ -8450,7 +8480,7 @@ def test_cli_claim_and_release_round_trip_exit_codes(
 ) -> None:
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     claimed = issue_claim.main(
@@ -8951,7 +8981,7 @@ def test_cli_lane_claim_and_release_round_trip_without_issue_number(
     _set_agent_identity_env(monkeypatch, {"ACO_AGENT": "Codex Sol"})
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     git_values = {
         ("branch", "--show-current"): "docs/lane-cleanup",
@@ -9418,7 +9448,7 @@ def _arranged_claim_client(monkeypatch: pytest.MonkeyPatch) -> FakeForge:
     it different."""
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     git_values = _git_checkout()
     monkeypatch.setattr(
@@ -9805,7 +9835,7 @@ def test_cli_claim_replay_without_scope_takes_the_live_claims_own_stored_scope(
     )
     _patch_status_cli(monkeypatch, client)
     _patch_store_write(monkeypatch, _store_claim_from_request(existing))
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     claimed = issue_claim.main(
@@ -9842,7 +9872,7 @@ def test_cli_lane_claim_without_scope_refuses_by_name(
     `required=True`'s removal from `--scope` never reaches it -- omitting it
     still refuses, by name, and forge-free like every other lane claim."""
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     git_values = {("branch", "--show-current"): "docs/lane-cleanup"}
     monkeypatch.setattr(
         checkout, "_git_output", lambda arguments, **_kwargs: git_values[tuple(arguments)]
@@ -9863,7 +9893,7 @@ def test_cli_claim_replay_reports_the_matching_live_claim_after_an_interrupted_r
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
     _patch_store_write(monkeypatch, _store_claim_from_request(existing))
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     arguments = [
         "--repo",
@@ -9927,7 +9957,7 @@ def test_cli_claim_replay_refuses_a_live_claim_with_different_retry_fields(
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
     _patch_store_write(monkeypatch, _store_claim_from_request(existing))
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     assert (
@@ -9972,7 +10002,7 @@ def test_cli_claim_replay_skips_out_of_order_for_the_matching_lower_priority_ite
     client.board_dependencies = {12: (block_dependency(11),)}
     _patch_status_cli(monkeypatch, client)
     _patch_store_write(monkeypatch, _store_claim_from_request(existing))
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
@@ -10020,7 +10050,7 @@ def test_cli_claim_replay_does_not_bypass_out_of_order_for_another_agent(
     client.board_dependencies = {12: (block_dependency(11),)}
     _patch_status_cli(monkeypatch, client)
     _patch_store_write(monkeypatch, _store_claim_from_request(existing))
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
@@ -10057,7 +10087,7 @@ def test_cli_claim_replay_does_not_resurrect_a_released_claim(
 ) -> None:
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     _patch_store_write(monkeypatch, consumed_ids=frozenset({protocol.ClaimId("released-claim")}))
 
@@ -10100,7 +10130,7 @@ def test_cli_claim_scope_keeps_a_comma_inside_one_path(
     the old splitting would have claimed as its own path."""
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: ("docs/report,v2.md",))
 
@@ -10164,7 +10194,7 @@ def test_cli_claim_scope_comma_differs_from_repeated_scope_flags(
     the repeated form two distinct paths."""
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     monkeypatch.setattr(
         checkout, "versioned_paths", lambda **_kwargs: ("docs/PRODUCT.md,src/widget.py",)
@@ -10230,7 +10260,7 @@ def test_cli_claim_refuses_a_comma_scope_that_matches_nothing_in_the_checkout(
     naming the one-path-per-flag rule."""
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     status = issue_claim.main(
@@ -10268,7 +10298,7 @@ def test_cli_claim_accepts_a_scope_path_without_a_comma_that_does_not_exist_yet(
     comma-free path git has never heard of still claims cleanly."""
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     status = issue_claim.main(
@@ -11223,7 +11253,7 @@ def test_cli_claim_touches_stay_empty_beside_a_disjoint_standing_claim(
     standing = request("claim-a", "Ada", issue=73, scope=("LICENSE",))
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     _patch_store_write(monkeypatch, _store_claim_from_request(standing))
 
@@ -11259,7 +11289,7 @@ def test_cli_claim_json_lists_an_overlapping_standing_claim_as_a_touch(
     standing = request("claim-a", "Ada", issue=73, scope=("src",))
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     _patch_store_write(monkeypatch, _store_claim_from_request(standing))
 
@@ -11303,7 +11333,7 @@ def test_cli_claim_json_touch_key_set_is_unchanged_by_the_human_overlap_line(
     )
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(
         checkout,
         "_scope_directories",
@@ -11579,7 +11609,7 @@ def test_cli_claim_json_prints_acquired_claim_object(
 ) -> None:
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     claimed = issue_claim.main(
@@ -11870,7 +11900,7 @@ def test_cli_claim_json_conflict_prints_the_stdout_error_object_not_a_success_sh
     standing = request(issue=72, scope=("src",))
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     _patch_store_write(monkeypatch, _store_claim_from_request(standing))
 
@@ -11912,7 +11942,7 @@ def test_cli_claim_json_transport_failure_reports_unavailable_not_conflict(
     does."""
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     _patch_store_write(monkeypatch)
 
@@ -11991,7 +12021,7 @@ def test_cli_claim_resource_prints_the_allocated_value(
 ) -> None:
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     status = issue_claim.main(
@@ -12029,7 +12059,7 @@ def test_cli_two_claims_of_the_same_directory_are_advisory(
 ) -> None:
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(
         checkout,
         "_scope_directories",
@@ -12093,7 +12123,7 @@ def test_cli_claim_on_a_directory_names_the_file_a_standing_claim_holds_under_it
     single file a standing claim already holds."""
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(
         checkout,
         "_scope_directories",
@@ -12181,7 +12211,7 @@ def test_cli_two_claims_of_the_same_file_are_advisory(
 ) -> None:
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     first = issue_claim.main(
@@ -12265,7 +12295,7 @@ def test_cli_two_resource_claims_allocate_one_then_two(
 ) -> None:
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
 
     first = issue_claim.main(
@@ -12324,7 +12354,7 @@ def test_cli_resource_race_still_yields_unique_live_holds(
 ) -> None:
     client = FakeForge()
     _patch_status_cli(monkeypatch, client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     earlier = request(
         "earlier",
@@ -13960,6 +13990,48 @@ def test_a_command_fetches_its_trunk_once_and_reads_the_recorded_head_after_the_
 
     assert issue_claim.main(argv) == 0
     assert fetched_once_then_read(trunk_calls) == {(tmp_path / "repo").resolve(): True}
+
+
+def _start_on_github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    monkeypatch.chdir(_start_scenario(monkeypatch, tmp_path))
+    return ["--repo", REPOSITORY, "start", "314"]
+
+
+def _check_the_trunk_tip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _repo, sha_of = _check_sha(monkeypatch, tmp_path)
+    return ["check", sha_of("main")]
+
+
+def _board_on_github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
+    monkeypatch.chdir(_start_scenario(monkeypatch, tmp_path))
+    return ["--repo", REPOSITORY, "board", "--json"]
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_start_on_github, id="start"),
+        pytest.param(_check_the_trunk_tip, id="check"),
+        pytest.param(_board_on_github, id="board"),
+    ],
+)
+def test_a_command_resolves_origin_main_past_a_dangling_origin_head(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+) -> None:
+    """Issue #490 proof 2, against real git: the remote renamed `master` to
+    `main` and `origin/master` is gone, while `origin/HEAD` still names it.
+    `start`, `check` and `board` walk `origin/main` as their trunk instead
+    of failing on git's own error for a ref it cannot resolve."""
+    argv = arrange(monkeypatch, tmp_path)
+    dangle_recorded_head(tmp_path / "repo", "origin")
+
+    status = issue_claim.main(argv)
+
+    assert (status, capsys.readouterr().err) == (0, "")
 
 
 def test_release_merged_json_carries_the_worktree_cleanup_outcome(
@@ -16179,7 +16251,7 @@ def test_cli_claim_refuses_a_missing_state_ref(
     has."""
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     git_values = _git_checkout()
     monkeypatch.setattr(
@@ -16222,7 +16294,7 @@ def test_cli_claim_refuses_canonical_remote_mismatch_and_writes_nothing(
 ) -> None:
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     git_values = _git_checkout()
     monkeypatch.setattr(
@@ -16395,7 +16467,7 @@ def test_cli_lane_claim_rescope_and_release_are_forge_free_against_a_non_github_
         ),
     )
     monkeypatch.setattr(issue_claim, "datetime", FixedDateTime)
-    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+    monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
     # `rescope` fetches and commits real store state against its resolved
     # checkout's own toplevel (issue #314 delta, finding R1) -- unlike
@@ -16421,7 +16493,7 @@ def test_cli_lane_claim_rescope_and_release_are_forge_free_against_a_non_github_
             "--git-dir",
             "--git-common-dir",
         ): f"{real_toplevel}\n/repo/.git/worktrees/lane-cleanup\n/repo/.git",
-        ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
+        RECORDED_ORIGIN_HEAD_READ: "refs/remotes/origin/main",
     }
     monkeypatch.setattr(
         checkout, "_git_output", lambda arguments, **_kwargs: git_values[tuple(arguments)]
@@ -16495,16 +16567,30 @@ _UNTRACKED_BOARD_CONFIG_ERROR = (
     [
         pytest.param(["bootstrap"], id="bootstrap"),
         pytest.param(["board", "--json"], id="board"),
+        pytest.param(["claim", "1", "--scope", "README.md"], id="claim-ahead-of-clm-01"),
     ],
 )
 def test_untracked_board_config_refuses_every_store_command_by_name(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], arguments: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arguments: list[str],
 ) -> None:
     """Issue #315: an absent, untracked, or ignored `.agent-claim/board.toml`
     no longer reads as `storage = "github"`'s silent default -- `bootstrap`
     (which never resolves a forge) and `board` (which does, through
     `_LazyForge`) both refuse by the same sentence, naming the repair,
-    before either does any other work."""
+    before either does any other work. `claim` in the main checkout on
+    `main` refuses it ahead of CLM-01, since only the configuration names
+    the canonical remote whose recorded default branch CLM-01 judges
+    (CLM-30, issue #490)."""
+    repository, _remote = _real_repository_with_bare_remote(tmp_path)
+    (repository / "README.md").write_text("hello\n")
+    _real_git(repository, "add", "README.md")
+    _real_git(repository, "commit", "-q", "-m", "initial")
+    _push_repository_trunk(repository, "origin")
+    monkeypatch.chdir(repository)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(arguments)

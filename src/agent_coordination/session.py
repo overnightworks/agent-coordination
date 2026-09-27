@@ -86,6 +86,11 @@ def refuse_canonical_remote_mismatch(
 # these and keeps every other fact it read.
 _OBSERVATION_BOUND_FACTS = frozenset({"observation", "forge"})
 
+# The facts a `RunContext` resolves from the canonical remote's recorded
+# `HEAD`: a fetch may record or move it, so `fetched_trunk_ref` drops these
+# once it fetched and never keeps one read before (issue #484 ruling).
+_RECORDED_HEAD_FACTS = frozenset({"trunk_ref", "recorded_default_branch"})
+
 
 class RunContext:
     """The static facts of one command run in one directory, each read
@@ -176,9 +181,14 @@ class RunContext:
         """The canonical remote's configured URL, parsed host-neutrally
         (issue #245) -- read only when a forge target is resolved, so a
         forge-free command never errs on a non-GitHub canonical remote."""
-        return checkout.parse_remote_location(
-            checkout.remote_url(self.canonical_remote, directory=self.directory)
-        )
+        return checkout.parse_remote_location(self.canonical_remote_url)
+
+    @cached_property
+    def canonical_remote_url(self) -> str:
+        """The canonical remote's configured URL, as git records it: the
+        URL a forge target is compared against and discovered from (#310
+        finding 138)."""
+        return checkout.remote_url(self.canonical_remote, directory=self.directory)
 
     @cached_property
     def repository_id(self) -> forge.RepositoryId:
@@ -198,28 +208,34 @@ class RunContext:
             self.repo
             if self.repo is not None
             else github.discover_repository(
-                remote_url=self._origin_remote_url, directory=self.directory
+                remote_url=self.canonical_remote_url, directory=self.directory
             )
         )
         refuse_canonical_remote_mismatch(target, self.remote_location)
         return target
 
-    def _origin_remote_url(self) -> str:
-        return checkout.origin_remote_url(directory=self.directory)
-
     @cached_property
     def default_branch(self) -> str:
-        """The default branch by provider: `origin/HEAD` of this directory
-        under `state-ref` (every repository piloting that pin names its
-        canonical remote `origin`), the forge's own answer under `github`."""
+        """The default branch by provider: the canonical remote's recorded
+        default branch under `state-ref`, where that remote is the forge,
+        the forge's own answer under `github` (issue #484 rulings)."""
         if self.config.storage is not body.Storage.STATE_REF:
             return self.forge.default_branch()
-        branch = checkout.default_branch_name(directory=self.directory)
+        branch = self.recorded_default_branch
         if branch is None:
             raise protocol.ClaimUnavailableError(
-                "cannot resolve the default branch; run aco from a checkout with origin/HEAD set"
+                "cannot resolve the default branch; "
+                f"run aco from a checkout with {self.canonical_remote}/HEAD set"
             )
         return branch
+
+    @cached_property
+    def recorded_default_branch(self) -> str | None:
+        """The canonical remote's recorded default branch in this checkout,
+        or `None` when none is recorded or it dangles (issue #490): the
+        offline checks' default branch, each check keeping its own rule for
+        `None`."""
+        return checkout.recorded_default_branch(self.canonical_remote, directory=self.toplevel)
 
     @cached_property
     def trunk_ref(self) -> str:
@@ -233,12 +249,14 @@ class RunContext:
         remote -- at most once per run and remote (issue #488): the ref `start` builds
         from and `release --merged` verifies a fresh merge against. The
         recorded `HEAD` is read again after the fetch, never one held from
-        before it, since a fetch may record or move it: the held trunk is
-        dropped before the resolution, so one that fails is asked again."""
+        before it, since a fetch may record or move it: the held trunk and
+        recorded default branch are dropped before the resolution, so one
+        that fails is asked again."""
         if self._fetched_trunk_remote != self.canonical_remote:
             checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
             self._fetched_trunk_remote = self.canonical_remote
-            self.__dict__.pop("trunk_ref", None)
+            for fact in _RECORDED_HEAD_FACTS:
+                self.__dict__.pop(fact, None)
         return self.trunk_ref
 
     def _resolved_trunk_ref(self) -> str:

@@ -25,6 +25,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import TypeVar
 
@@ -341,15 +342,23 @@ def _protect_single_path_scope_miss_denial(
     return "claim first"
 
 
-def _protect_not_main_denial(path_checkout: checkout.PathCheckout) -> str | None:
+def _protect_not_main_denial(
+    path_checkout: checkout.PathCheckout, *, context: _ProtectContext
+) -> str | None:
     """`None` when `path_checkout` is a linked worktree off the repository's
     default branch; otherwise the "not main" family of denials gate G4
     names: the shared main checkout, a linked worktree that happens to sit
     on the default branch, or -- never `claim`'s own `{main, master}` guess
-    -- a checkout whose default branch cannot even be resolved."""
+    -- a checkout whose default branch cannot even be resolved. The default
+    branch is the checkout's canonical remote's recorded one (issue #490),
+    so a linked worktree whose board configuration cannot be read denies
+    with that refusal first (PROT-12)."""
     if path_checkout.kind is checkout.CheckoutKind.MAIN:
         return checkout.PROTECT_NOT_MAIN_REASON
-    default_branch = checkout.default_branch_name(directory=path_checkout.toplevel)
+    toplevel = path_checkout.toplevel
+    default_branch = checkout.recorded_default_branch(
+        context.canonical_remote_for(toplevel), directory=toplevel
+    )
     if default_branch is None:
         return checkout.DEFAULT_BRANCH_UNKNOWN_REASON
     if path_checkout.branch == default_branch:
@@ -441,14 +450,16 @@ def _landing_checkout_outside_every_repository(
     return checkout.resolve_nearest_existing_checkout(target.parent)
 
 
-def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None:
+def _protect_checkout_denial(
+    path_checkout: checkout.PathCheckout, *, context: _ProtectContext
+) -> str | None:
     """The denial a resolved checkout earns before any live claim is weighed:
     a checkout with no commit yet (gate G3 -- its branch name could
     otherwise coincidentally match a still-live claim's), or the "not main"
     family `_protect_not_main_denial` owns (gate G4)."""
     if not path_checkout.has_commit:
         return checkout.NO_COMMIT_CHECKOUT_REASON
-    return _protect_not_main_denial(path_checkout)
+    return _protect_not_main_denial(path_checkout, context=context)
 
 
 _SESSION_SETTINGS_DIRECTORY = ".claude/"
@@ -572,38 +583,61 @@ def _protect_checkout_scope_denial(
     store-free checks run before either store or the identity is read, so
     a link in a main checkout denies "not main" without them. Once both
     pass, each checkout's claim check runs, even after the target's
-    denies or fails to read its board, store, or identity. A target git
-    cannot resolve is the target's denial too, so it denies with that
-    failure before the link's own checkout is judged."""
+    denies or fails to read its board, store, or identity. A checkout
+    whose board configuration, store, or identity cannot be read denies
+    with that failure in the same target-first order: the target's failure
+    wins over the link's denial from the same check or a later one, and
+    the link's failure yields to any denial of the target's. Only the
+    check order itself overrides that: the link's store-free denial wins
+    over a failure in the target's claim check, since no claim check runs
+    while a store-free check denies. A target git cannot
+    resolve is the target's denial too, so it denies with that failure
+    before the link's own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
     link_target = _link_target_in_another_checkout(raw_path, path_checkout, operation=operation)
     judged = (link_target,) if link_target is not None else ()
     store_free_outcomes = [
-        _protect_store_free_outcome(judged_path, judged_checkout)
+        _outcome_or_failure(
+            partial(_protect_store_free_outcome, judged_path, judged_checkout, context=context)
+        )
         for judged_path, judged_checkout in (*judged, (raw_path, path_checkout))
     ]
-    for outcome in store_free_outcomes:
-        if isinstance(outcome, str):
-            return outcome
-    claim_verdicts: list[str | Exception | None] = []
-    for question in store_free_outcomes:
-        if not isinstance(question, _ClaimQuestion):
-            continue
-        # A failed board, store, or identity read is `cli`'s denial of this
-        # checkout alone: held back so the other checkout's claim check
-        # still runs, and so a target denial still wins over a link failure.
-        try:
-            claim_verdicts.append(
-                _protect_claim_denial(question, context=context, miss_denial=miss_denial)
-            )
-        except Exception as error:
-            claim_verdicts.append(error)
+    first_store_free_verdict = next(
+        (outcome for outcome in store_free_outcomes if isinstance(outcome, str | Exception)),
+        None,
+    )
+    if isinstance(first_store_free_verdict, str):
+        return first_store_free_verdict
+    claim_verdicts = [
+        outcome
+        if isinstance(outcome, Exception)
+        else _outcome_or_failure(
+            partial(_protect_claim_denial, outcome, context=context, miss_denial=miss_denial)
+        )
+        for outcome in store_free_outcomes
+        if isinstance(outcome, _ClaimQuestion | Exception)
+    ]
     verdict = next((verdict for verdict in claim_verdicts if verdict is not None), None)
     if isinstance(verdict, Exception):
         raise verdict
     return verdict
+
+
+_CheckoutOutcome = TypeVar("_CheckoutOutcome")
+
+
+def _outcome_or_failure(judge: Callable[[], _CheckoutOutcome]) -> _CheckoutOutcome | Exception:
+    """`judge`'s answer for one checkout, or the failure reading that
+    checkout's board, store, or identity raised: `cli`'s denial of this
+    checkout alone, held back so the other checkout is still judged; which
+    of the two verdicts wins follows `_protect_checkout_scope_denial`'s
+    target-first order (issue #486)."""
+    try:
+        return judge()
+    except Exception as error:
+        return error
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,7 +650,7 @@ class _ClaimQuestion:
 
 
 def _protect_store_free_outcome(
-    raw_path: str, path_checkout: checkout.PathCheckout
+    raw_path: str, path_checkout: checkout.PathCheckout, *, context: _ProtectContext
 ) -> str | _ClaimQuestion | None:
     """What `path_checkout` alone says about a write to `raw_path` before
     any store or identity is read: `None` when it is exempt, a denial when
@@ -625,7 +659,8 @@ def _protect_store_free_outcome(
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
     if _is_exempt(relative, path_checkout):
         return None
-    denial = _protect_checkout_denial(path_checkout) or checkout.unscopable_path_reason(
+    checkout_denial = _protect_checkout_denial(path_checkout, context=context)
+    denial = checkout_denial or checkout.unscopable_path_reason(
         raw_path, toplevel=path_checkout.toplevel
     )
     if denial is not None:

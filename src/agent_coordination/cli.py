@@ -283,12 +283,17 @@ def _resolved_claim_branch(arguments: argparse.Namespace, *, directory: Path | N
 
 
 def _request(
-    arguments: argparse.Namespace, *, directory: Path | None = None
+    arguments: argparse.Namespace,
+    *,
+    default_branch: Callable[[], str | None],
+    directory: Path | None = None,
 ) -> protocol.ClaimRequest:
     """`_claim_request`, checked against the checkout it is made in:
-    `claim` stands in the worktree it claims."""
+    `claim` stands in the worktree it claims, judged against the canonical
+    remote's recorded default branch `default_branch` answers (issue
+    #490)."""
     request = _claim_request(arguments, directory=directory)
-    checkout._validate_checkout(request, directory=directory)
+    checkout._validate_checkout(request, default_branch=default_branch, directory=directory)
     return request
 
 
@@ -3081,7 +3086,8 @@ class _StoreItemWriter:
 
 def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
     """The `state-ref` storage pin's forge (issues #248, #283): repository
-    identity and default branch from `context` (host-neutral, `origin/HEAD`),
+    identity and default branch from `context` (host-neutral, the canonical
+    remote's recorded `HEAD`),
     item content and blob oids read once through
     `store.read_item_files`/`ClaimState.items` of `context.observation` --
     the very snapshot the command's own checks read (issue #477) -- and a
@@ -3885,15 +3891,21 @@ def _rescope_checkout(parsed: argparse.Namespace) -> checkout.PathCheckout:
 
 
 def _rescope_command(
-    parsed: argparse.Namespace, path_checkout: checkout.PathCheckout
+    parsed: argparse.Namespace, path_checkout: checkout.PathCheckout, checkout_context: RunContext
 ) -> protocol.RescopeRequest:
+    """The rescope `parsed` asks for in `path_checkout`, judged against the
+    resolved checkout's own recorded default branch (issue #490)."""
     branch = path_checkout.branch
     if not branch:
         raise protocol.ClaimUnavailableError(
             "rescope requires a non-empty current branch; "
             "check out the claim branch, or pass an issue number"
         )
-    checkout._refuse_shared_checkout(path_checkout, repair=checkout.WorktreeRepair.RETURN_TO_CLAIM)
+    checkout._refuse_shared_checkout(
+        path_checkout,
+        default_branch=checkout_context.recorded_default_branch,
+        repair=checkout.WorktreeRepair.RETURN_TO_CLAIM,
+    )
     identity = _resolved_identity(_optional_issue_number(parsed.issue), branch)
     return protocol.RescopeRequest(
         identity=identity,
@@ -4617,8 +4629,8 @@ class _RescopePreconditionError(protocol.ClaimError):
 
 def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     path_checkout = _rescope_checkout(parsed)
-    requested = _rescope_command(parsed, path_checkout)
     checkout_context = run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
+    requested = _rescope_command(parsed, path_checkout, checkout_context)
     worktree = checkout_context.toplevel
     canonical_remote = checkout_context.canonical_remote
     observed = checkout_context.observation
@@ -5017,12 +5029,18 @@ def _claim_write(
     #479): then the request is read and checked in `worktree` and the scope
     measured against its HEAD, while the claim's checks read the session's
     own board configuration -- the main checkout's."""
+
+    def default_branch() -> str | None:
+        return session.context.recorded_default_branch
+
     if worktree is None:
-        requested = _request(parsed, directory=session.context.directory)
+        requested = _request(
+            parsed, default_branch=default_branch, directory=session.context.directory
+        )
         plan = _checked_claim(requested, session)
         worktree = session.context.toplevel
     else:
-        requested = _request(parsed, directory=worktree)
+        requested = _request(parsed, default_branch=default_branch, directory=worktree)
         plan = _checked_claim(requested, session, revision=requested.base)
     if plan.refused:
         _refuse_claim(parsed.json, plan.target_issue, plan.checks)
@@ -5464,7 +5482,7 @@ def _rebuild_and_resume(
     )
     _print_start_target(target)
     try:
-        _validate_built_worktree(checked, target)
+        _validate_built_worktree(checked, target, context)
     except protocol.ClaimError as error:
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     _print_start_resume(resumed, observed, context.config.storage, versioning)
@@ -5504,7 +5522,7 @@ def _check_build_and_claim(
     _print_claim_checks(plan, as_json=False)
     push = _WitnessedPush()
     try:
-        _validate_built_worktree(requested, target)
+        _validate_built_worktree(requested, target, check_context)
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(plan, worktree=target.path, transport=push)
@@ -5520,13 +5538,20 @@ def _check_build_and_claim(
     return _report_claim(plan, claimed, claims, as_json=False)
 
 
-def _validate_built_worktree(request: protocol.ClaimRequest, target: _StartTarget) -> None:
+def _validate_built_worktree(
+    request: protocol.ClaimRequest, target: _StartTarget, context: RunContext
+) -> None:
     """`claim`'s own checkout preconditions against the worktree `start`
-    built. Its base is the trunk `start` checked, so a base mismatch means
+    built, judged against the main checkout `context`'s recorded default
+    branch. Its base is the trunk `start` checked, so a base mismatch means
     another fetch moved the trunk between the checks and the build, and
     rerunning `start` checks the trunk as it stands now (START-26)."""
     try:
-        checkout._validate_checkout(request, directory=target.path)
+        checkout._validate_checkout(
+            request,
+            default_branch=lambda: context.recorded_default_branch,
+            directory=target.path,
+        )
     except checkout.CheckoutBaseMismatchError as error:
         raise protocol.ClaimUnavailableError(
             "the trunk moved after start checked it; run start again"
