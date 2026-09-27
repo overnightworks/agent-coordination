@@ -131,7 +131,7 @@ def remote_url(remote: str, *, directory: Path | None = None) -> str:
     return _git_output(["config", "--get", f"remote.{remote}.url"], directory=directory)
 
 
-def remote_is_configured(remote: str, *, directory: Path) -> bool:
+def remote_is_configured(remote: str, *, directory: Path | None) -> bool:
     """Whether the checkout at `directory` configures a remote named
     `remote` at all (issue #492): a board configuration may name a
     canonical remote this clone never added."""
@@ -723,13 +723,12 @@ def _unconfigured_remote_detail(remote: str) -> str:
     return f"canonical remote {remote!r} is not configured"
 
 
-def refuse_an_unconfigured_trunk_remote(remote: str, *, directory: Path) -> None:
-    """Every trunk reader's refusal when the checkout at `directory` never
-    configured its canonical `remote` (issue #508): such a remote has no
-    branches because it is not there, not because it is fresh, so neither
-    a fetch nor a local branch may stand in for its trunk."""
-    if not remote_is_configured(remote, directory=directory):
-        raise ClaimError(f"{TRUNK_UNKNOWN_REASON}: {_unconfigured_remote_detail(remote)}")
+def unconfigured_trunk_remote_refusal(remote: str) -> str:
+    """Every trunk reader's refusal for a canonical `remote` its checkout
+    never configured (issue #508): such a remote has no branches because it
+    is not there, not because it is fresh, so neither a fetch nor a local
+    branch may stand in for its trunk."""
+    return f"{TRUNK_UNKNOWN_REASON}: {_unconfigured_remote_detail(remote)}"
 
 
 def default_branch_unknown_reason(
@@ -834,14 +833,12 @@ def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) 
     branch at all -- a fresh or offline repository (issue #492 ruling): a
     remote that renamed its trunk to anything else refuses with the repair
     instead, since a local branch standing in for it would report an
-    unpushed local commit as landed. Without a recorded `HEAD`, a canonical
-    `remote` this checkout never configured refuses before any guess,
-    naming it (issue #508): it has no branches because it is not there,
-    not because it is fresh, and a ref of it left behind no longer answers
-    for it."""
+    unpushed local commit as landed. It trusts `remote` to be configured:
+    its `RunContext` refuses one this checkout never configured before it
+    reads `recorded_head` or asks this at all (issue #508), so neither a
+    ref such a remote left behind nor a local branch answers for it."""
     if recorded_head is not None:
         return recorded_head
-    refuse_an_unconfigured_trunk_remote(remote, directory=directory)
     remote_trunk = _first_resolving_ref(
         (f"refs/remotes/{remote}/main", f"refs/remotes/{remote}/master"), directory=directory
     )
@@ -1136,10 +1133,7 @@ def branch_exists(branch: str) -> bool:
 
 def fetch_remote(remote: str, *, directory: Path) -> None:
     """Refresh the canonical `remote`'s remote-tracking refs in `directory`
-    via `-C` before its trunk is read, failing loud with git's own detail
-    -- or, for a remote `directory` never configured, with the trunk
-    readers' own refusal naming it (issue #508)."""
-    refuse_an_unconfigured_trunk_remote(remote, directory=directory)
+    via `-C` before its trunk is read, failing loud with git's own detail."""
     fetch = _git_run(["fetch", remote], directory=directory)
     if fetch.exit_status != 0:
         raise ClaimError(process.git_failure_detail(fetch))

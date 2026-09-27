@@ -400,4 +400,5 @@ $ aco release 42 --merged 57
 exit 2
 ```
 
-`git branch --list` reads afterwards exactly as before the call: `ada/issue-42` stands.
+`git branch --list` reads afterwards exactly as before the call: `ada/issue-42` stands, the
+claim on #42 still stands, and no landing comment closed #42.

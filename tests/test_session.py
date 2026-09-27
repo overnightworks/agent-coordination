@@ -8,6 +8,7 @@ import io
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,16 @@ def _write_board_config(toplevel: Path, text: str) -> None:
     config_dir = toplevel / ".agent-claim"
     config_dir.mkdir(parents=True)
     (config_dir / "board.toml").write_text(text)
+
+
+def _checkout_configuring(tmp_path: Path, remote: str, board_config: str) -> Path:
+    """A real checkout `worktree` that configures `remote`, with
+    `board_config` as its board configuration."""
+    worktree = tmp_path / "worktree"
+    _real_git(tmp_path, "init", "-q", str(worktree))
+    _real_git(worktree, "remote", "add", remote, "git@github.com:owner/repo.git")
+    _write_board_config(worktree, board_config)
+    return worktree
 
 
 def test_remote_location_parses_the_canonical_remote_url(
@@ -142,10 +153,11 @@ def test_repository_id_discovers_the_repository_of_the_context_directory(
         return forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo")
 
     monkeypatch.setattr(github, "discover_repository", discover_repository)
+    worktree = _checkout_configuring(tmp_path, "origin", "")
 
-    _ = _context().for_directory(tmp_path, is_toplevel=True).repository_id
+    _ = _context().for_directory(worktree, is_toplevel=True).repository_id
 
-    assert discovered_for == [tmp_path]
+    assert discovered_for == [worktree]
 
 
 @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
@@ -156,12 +168,10 @@ def test_default_branch_under_state_ref_reads_the_canonical_remotes_head_in_the_
     a context for `start`'s created worktree reads the recorded `HEAD`
     there, never from the calling process's own cwd -- the canonical
     remote's, whichever it is (issue #490)."""
-    worktree = tmp_path / "worktree"
-    _write_board_config(
-        worktree, f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
-    )
-    monkeypatch.setattr(
-        checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
+    worktree = _checkout_configuring(
+        tmp_path,
+        canonical_remote,
+        f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n',
     )
     reads: list[tuple[str, Path | None]] = []
 
@@ -226,11 +236,7 @@ def test_a_context_for_another_directory_reads_its_remotes_there(
     process's cwd, so a child context never pairs its own configuration
     with another checkout's remote -- one read of the canonical remote's
     URL answers both (#310 finding 138)."""
-    worktree = tmp_path / "worktree"
-    _write_board_config(worktree, "")
-    monkeypatch.setattr(
-        checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
-    )
+    worktree = _checkout_configuring(tmp_path, "origin", "")
     read_from: list[tuple[str, Path | None]] = []
 
     def remote_url(remote: str, *, directory: Path | None = None) -> str:
@@ -253,11 +259,7 @@ def test_a_failed_observation_is_fetched_again_and_a_successful_one_is_held(
     """Issue #477 (CAS-53): a fetch of `refs/aco/state` that fails is never held --
     the context's next ask fetches again, from its toplevel over its
     canonical remote -- while one that succeeds answers every later ask."""
-    worktree = tmp_path / "worktree"
-    _write_board_config(worktree, "")
-    monkeypatch.setattr(
-        checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
-    )
+    worktree = _checkout_configuring(tmp_path, "origin", "")
     observed = ClaimState(tip=None, claims={})
     fetched_from: list[tuple[Path, str]] = []
 
@@ -469,6 +471,70 @@ def test_a_trunk_the_fetch_pruned_fails_loud_on_every_ask_never_answered_by_the_
         context.fetched_trunk_ref()
 
     assert held == "refs/remotes/origin/main"
+
+
+def _hub_never_added(_repository: Path) -> None:
+    """The board names `hub`, but this clone only ever added `origin`."""
+
+
+def _hub_removed_leaving_its_refs(repository: Path) -> None:
+    """`hub` was added, fetched with its `HEAD` recorded, then dropped from
+    the configuration: its remote-tracking refs outlive it."""
+    _real_git(repository, "remote", "add", "hub", str(repository.parent / "remote.git"))
+    _real_git(repository, "fetch", "-q", "hub")
+    _real_git(repository, "remote", "set-head", "hub", "main")
+    _real_git(repository, "config", "--remove-section", "remote.hub")
+
+
+@pytest.mark.parametrize(
+    "unconfigure_hub",
+    [
+        pytest.param(_hub_never_added, id="never-added"),
+        pytest.param(_hub_removed_leaving_its_refs, id="removed-leaving-its-refs"),
+    ],
+)
+@pytest.mark.parametrize(
+    "read",
+    [
+        pytest.param(lambda context: context.trunk_ref, id="trunk"),
+        pytest.param(lambda context: context.fetched_trunk_ref(), id="fetched-trunk"),
+        pytest.param(lambda context: context.observation, id="observation"),
+        pytest.param(lambda context: context.default_branch, id="default-branch"),
+        pytest.param(lambda context: context.repository_id, id="repository"),
+    ],
+)
+def test_every_read_of_a_canonical_remote_the_checkout_does_not_configure_refuses_naming_it(
+    tmp_path: Path,
+    unconfigure_hub: Callable[[Path], None],
+    read: Callable[[RunContext], object],
+) -> None:
+    """Issue #508 proof 1, against real git: the board names `hub`, which
+    this checkout does not configure, so its trunk, its fetch, its state
+    ref, its default branch and the repository it names all refuse by
+    naming it -- never answered by the local `main` or by the refs a
+    removed `hub` left behind."""
+    repository = _pushed_repository(tmp_path, 'storage = "state-ref"\ncanonical_remote = "hub"\n')
+    unconfigure_hub(repository)
+    context = _context().for_directory(repository)
+
+    with pytest.raises(ClaimError) as refusal:
+        read(context)
+
+    assert str(refusal.value) == (
+        "cannot determine the trunk: canonical remote 'hub' is not configured"
+    )
+
+
+def test_a_configured_canonical_remote_without_branches_still_guesses_the_local_trunk(
+    tmp_path: Path,
+) -> None:
+    """Issue #508 proof 2: `hub` is configured but carries no branch yet --
+    a fresh or offline repository -- so the trunk is still the local
+    `main` (issue #492 ruling)."""
+    repository = _pushed_repository(tmp_path, 'canonical_remote = "hub"\n')
+    _real_git(repository, "remote", "add", "hub", str(tmp_path / "hub.git"))
+
+    assert _context().for_directory(repository).trunk_ref == "main"
 
 
 def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:

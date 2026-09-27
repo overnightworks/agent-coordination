@@ -538,13 +538,15 @@ def _fetch_state_ref_board(
 
 def _store_item_writer(remote: Path, worktree_path: Path) -> ItemWriter:
     """The production `cli._StoreItemWriter`, writing from `worktree_path`
-    over `remote` through a run context that stands for that checkout."""
+    over `remote` -- configured there as its canonical remote -- through a
+    run context that stands for that checkout."""
 
     def no_forge(_context: RunContext) -> forge.ForgeReader:
         raise AssertionError("an item write never builds a forge")
 
+    _git("config", "remote.canonical.url", str(remote), cwd=worktree_path)
     context = RunContext(None, build_forge=no_forge).for_directory(worktree_path, is_toplevel=True)
-    context.config = board.BoardConfig(canonical_remote=str(remote), storage=Storage.STATE_REF)
+    context.config = board.BoardConfig(canonical_remote="canonical", storage=Storage.STATE_REF)
     return issue_claim._StoreItemWriter(context)
 
 

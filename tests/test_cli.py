@@ -63,6 +63,7 @@ from cli_fixtures import (
     main_exit_code,
     run_context_over,
     stub_board_config_tracked,
+    stub_every_remote_configured,
     trunk_git_calls,
 )
 from github_fixtures import LANDING_BRANCH, MERGE_COMMIT_SHA, WORK_ITEM_ISSUE
@@ -101,6 +102,7 @@ GitHubForge = github.GitHubForge
 _LIVE_TRUNK_LANDINGS = checkout.trunk_landings
 _LIVE_TRUNK_REF_AFTER = checkout.trunk_ref_after
 _LIVE_FETCH_REMOTE = checkout.fetch_remote
+_LIVE_REMOTE_IS_CONFIGURED = checkout.remote_is_configured
 
 LANDED = protocol.MergedRelease(12)
 
@@ -9139,6 +9141,7 @@ def _patch_store_write(
     monkeypatch.setattr(
         checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
     )
+    stub_every_remote_configured(monkeypatch)
     return fake
 
 
@@ -9166,6 +9169,7 @@ def _patch_status_store(
     monkeypatch.setattr(
         checkout, "remote_url", lambda remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
     )
+    stub_every_remote_configured(monkeypatch)
     keyed = {protocol.claim_key(claim.identity, claim.branch): claim for claim in claims}
     state = protocol.ClaimState(tip=protocol.ObjectId(BASE), claims=keyed)
     monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: state)
@@ -14432,11 +14436,22 @@ def test_a_command_resolves_origin_main_past_a_dangling_origin_head(
     assert (status, capsys.readouterr().err) == (0, "")
 
 
+def _ask_git_which_remotes_are_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real git answers whether the checkout configures a remote, never
+    `stub_every_remote_configured`'s fake, which says yes to any remote."""
+    monkeypatch.setattr(checkout, "remote_is_configured", _LIVE_REMOTE_IS_CONFIGURED)
+
+
 def _name_hub_as_the_canonical_remote(repo: Path) -> None:
     """The board names `hub`, but this clone only ever added `origin`."""
     configuration = repo / ".agent-claim"
     configuration.mkdir(exist_ok=True)
     (configuration / "board.toml").write_text('canonical_remote = "hub"\n')
+
+
+def _leave_hub_unconfigured(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    _name_hub_as_the_canonical_remote(repo)
+    _ask_git_which_remotes_are_configured(monkeypatch)
 
 
 _UNCONFIGURED_HUB_SENTENCE = "cannot determine the trunk: canonical remote 'hub' is not configured"
@@ -14468,17 +14483,23 @@ def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
     """Issue #508 proof 1, against real git: the board names `hub`, which
     this clone never added, so `start`, `release --merged` and `board`
     refuse by naming it rather than fetching nothing or reading the local
-    `main` as its trunk, before `start` builds anything."""
+    `main` as its trunk -- before any write: `start` builds nothing, the
+    claim still stands and the forge closed nothing (START-28, REL-39)."""
     argv = arrange(monkeypatch, tmp_path)
     repo = tmp_path / "repo"
-    _name_hub_as_the_canonical_remote(repo)
+    _leave_hub_unconfigured(monkeypatch, repo)
     branches_before = _real_git(repo, "branch", "--list").stdout
+    claims_before = store.fetch_state(worktree=repo, remote="hub").claims
+    client = github.GitHubForge(github.repository_id(REPOSITORY))
+    assert isinstance(client, FakeForge)
 
     status = issue_claim.main(argv)
 
     printed = capsys.readouterr()
     assert (status, printed.out, printed.err) == (2, expected_out, _UNCONFIGURED_HUB)
     assert _real_git(repo, "branch", "--list").stdout == branches_before
+    assert store.fetch_state(worktree=repo, remote="hub").claims == claims_before
+    assert client.landing_comments == {}
 
 
 def _rename_master_to_trunk(repo: Path, remote: Path, *, keep_recorded_head: bool) -> None:
@@ -14546,6 +14567,7 @@ def test_check_never_takes_a_local_branch_for_the_trunk_of_a_remote_with_branche
     while a canonical remote the clone never configured is named (issue #508
     proofs 1 and 2)."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
+    _ask_git_which_remotes_are_configured(monkeypatch)
     repo, remote = _real_repository_with_bare_remote(tmp_path)
     _real_git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
     _real_git(repo, "branch", "-m", "main", "master")
@@ -17678,7 +17700,7 @@ def test_cli_brief_touched_lists_only_the_lane_own_change_after_a_trunk_pull(
     assert read_touched(capsys.readouterr().out) == ["README.md"]
 
 
-def _rename_the_local_main(repository: Path) -> None:
+def _rename_the_local_main(_monkeypatch: pytest.MonkeyPatch, repository: Path) -> None:
     _real_git(repository, "branch", "-m", "main", "trunk")
 
 
@@ -17687,11 +17709,7 @@ def _rename_the_local_main(repository: Path) -> None:
     ("remove_the_trunk", "sentence"),
     [
         pytest.param(_rename_the_local_main, _NO_TRUNK_SENTENCE, id="no-candidate"),
-        pytest.param(
-            _name_hub_as_the_canonical_remote,
-            _UNCONFIGURED_HUB_SENTENCE,
-            id="unconfigured-remote",
-        ),
+        pytest.param(_leave_hub_unconfigured, _UNCONFIGURED_HUB_SENTENCE, id="unconfigured-remote"),
     ],
 )
 def test_cli_brief_refuses_naming_the_trunk_when_no_trunk_resolves(
@@ -17699,7 +17717,7 @@ def test_cli_brief_refuses_naming_the_trunk_when_no_trunk_resolves(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     output_flags: tuple[str, ...],
-    remove_the_trunk: Callable[[Path], None],
+    remove_the_trunk: Callable[[pytest.MonkeyPatch, Path], None],
     sentence: str,
 ) -> None:
     """Issue #468 BRIEF-20: with a branchless remote and no local `main` or
@@ -17708,12 +17726,12 @@ def test_cli_brief_refuses_naming_the_trunk_when_no_trunk_resolves(
     never configured is named instead, local `main` or not (issue #508,
     BRIEF-22)."""
     repository, base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
-    remove_the_trunk(repository)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "No trunk.")
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
     claim = _brief_claim(base)
     _patch_store_write(monkeypatch, claim, ages={claim.claim_id: datetime(2026, 8, 20, tzinfo=UTC)})
+    remove_the_trunk(monkeypatch, repository)
     monkeypatch.chdir(repository)
 
     status = issue_claim.main(["--repo", REPOSITORY, "brief", "258", *output_flags])
