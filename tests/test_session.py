@@ -486,13 +486,21 @@ def _hub_removed_leaving_its_refs(repository: Path) -> None:
     _real_git(repository, "config", "--remove-section", "remote.hub")
 
 
-@pytest.mark.parametrize(
-    "unconfigure_hub",
-    [
-        pytest.param(_hub_never_added, id="never-added"),
-        pytest.param(_hub_removed_leaving_its_refs, id="removed-leaving-its-refs"),
-    ],
+def _hub_left_a_fetch_line_without_a_url(repository: Path) -> None:
+    """A local `remote.hub.fetch` with no `remote.hub.url` makes git list
+    `hub` beside the refs it left behind (issue #512)."""
+    _hub_removed_leaving_its_refs(repository)
+    _real_git(repository, "config", "remote.hub.fetch", "+refs/heads/*:refs/remotes/hub/*")
+
+
+_UNCONFIGURED_HUBS = (
+    pytest.param(_hub_never_added, id="never-added"),
+    pytest.param(_hub_removed_leaving_its_refs, id="removed-leaving-its-refs"),
+    pytest.param(_hub_left_a_fetch_line_without_a_url, id="fetch-line-without-url"),
 )
+
+
+@pytest.mark.parametrize("unconfigure_hub", _UNCONFIGURED_HUBS)
 @pytest.mark.parametrize(
     "read",
     [
@@ -525,13 +533,7 @@ def test_every_read_of_a_canonical_remote_the_checkout_does_not_configure_refuse
     )
 
 
-@pytest.mark.parametrize(
-    "unconfigure_hub",
-    [
-        pytest.param(_hub_never_added, id="never-added"),
-        pytest.param(_hub_removed_leaving_its_refs, id="removed-leaving-its-refs"),
-    ],
-)
+@pytest.mark.parametrize("unconfigure_hub", _UNCONFIGURED_HUBS)
 def test_a_canonical_remote_the_checkout_does_not_configure_records_no_default_branch(
     tmp_path: Path, unconfigure_hub: Callable[[Path], None]
 ) -> None:

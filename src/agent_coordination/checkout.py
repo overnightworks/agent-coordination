@@ -133,9 +133,12 @@ def remote_url(remote: str, *, directory: Path | None = None) -> str:
 
 def remote_is_configured(remote: str, *, directory: Path | None) -> bool:
     """Whether the checkout at `directory` configures a remote named
-    `remote` at all (issue #492): a board configuration may name a
-    canonical remote this clone never added."""
-    return remote in _git_output(["remote"], directory=directory).splitlines()
+    `remote` with a URL (issues #492, #512): a board configuration may name
+    a canonical remote this clone never added, and a `remote.<name>` line
+    without a URL -- a global `prune`, a local `fetch` -- lets git list a
+    remote there is nothing to fetch from."""
+    url_read = ["config", "--get", "--default", "", f"remote.{remote}.url"]
+    return bool(_git_output(url_read, directory=directory))
 
 
 @dataclass(frozen=True)
