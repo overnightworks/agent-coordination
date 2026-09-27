@@ -627,6 +627,11 @@ _MALFORMED_CONTENTS = pytest.mark.parametrize(
             _blank_title_item(), "has a malformed agent-claim block", id="blank-record-title"
         ),
         pytest.param(b"\xff\xfe not utf-8", "is not valid UTF-8", id="not-utf8"),
+        pytest.param(
+            _container_body_with_slices(((1, "Line one|Line two"),)).replace("|", "\v").encode(),
+            "has a malformed agent-claim block",
+            id="raw-vertical-tab-in-a-slice-title",
+        ),
     ],
 )
 

@@ -108,7 +108,7 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 - [ ] [BODY-46] A second entry repeating an earlier `index` prints `body malformed: slice[1].index: slice[1].index duplicates slice index 4` on stderr, exit `2`.
 - [ ] [BODY-47] An entry whose `title` is missing, blank or not a string prints `body malformed: slice[0].title: slice[0].title must be a non-empty string`, exit `2`; one line only (BODY-63).
 - [ ] [BODY-63] A title holding U+2028, U+2029 or any control but TAB prints `body malformed: slice[0].title: slice[0].title of row <i> holds U+000B; a slice title stays on one line`, exit `2` (see E-BODY-06).
-- [ ] [BODY-64] BODY-63 is checked where a body is handed in — `aco body --check`, `aco check <n>`, `aco item new`, `aco item edit`; a stored body a read meets keeps reading, and `aco next` names its row (NEXT-32).
+- [ ] [BODY-64] BODY-63 applies wherever a body's shape is judged — `aco body --check`, `aco check <n>`, `aco item new`, `aco item edit`; `board`/`next` keep reading a stored body, `next` naming its row (NEXT-32).
 - [ ] [BODY-48] An entry key outside `index`, `title` and `scope` prints `body malformed: slice[0].<key>: unknown key slice[0].<key>`, exit `2`; per-slice done-when and dependencies stay in the prose.
 - [ ] [BODY-49] A block carrying `slice = []` is valid with nothing left to cut: `aco body --check` prints `body ok`, exit `0`, and the empty table stays present in the body.
 

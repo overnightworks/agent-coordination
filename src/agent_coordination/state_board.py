@@ -191,9 +191,7 @@ class NewItemWrite:
 def _valid_record(text: str) -> Mapping[str, object] | None:
     """`text`'s own `[record]` table when its `agent-claim` block is VALID
     under `Storage.STATE_REF` -- the same block grammar `body.py` already
-    reads, gated open to `record` only there -- else `None`. The one rule
-    an item file is read with, which every write also asks of the bytes it
-    is about to store (issue #517, `_readable_content`)."""
+    reads, gated open to `record` only there -- else `None`."""
     parsed = parse_body(text, storage=Storage.STATE_REF)
     return parsed.record if parsed.read_state is BodyReadState.VALID else None
 
@@ -221,18 +219,17 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return _MalformedItem(problem="is not valid UTF-8", defect=_NOT_UTF8, oid=oid)
-    record = _valid_record(text)
-    if record is None:
-        defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
+    parsed = parse_body(text, storage=Storage.STATE_REF)
+    if parsed.read_state is not BodyReadState.VALID or parsed.record is None:
         return _MalformedItem(
             problem="has a malformed agent-claim block",
-            defect=(defects or (_NO_RECORD,))[0],
+            defect=(parsed.contract.defects or (_NO_RECORD,))[0],
             oid=oid,
             text=text,
             title=readable_record_title(text),
             parent=readable_record_parent(text),
         )
-    return _DecodedItem(record=items.parse_item_record(item_id, record), body=text, oid=oid)
+    return _DecodedItem(record=items.parse_item_record(item_id, parsed.record), body=text, oid=oid)
 
 
 def _malformed_item_refusal(item_id: str, malformed: _MalformedItem) -> MalformedStateTreeError:

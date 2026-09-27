@@ -1442,11 +1442,12 @@ def _breaks_a_line(character: str) -> bool:
 
 
 def _slice_title_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, ...]:
-    """The write-side rule a read never applies (issue #517 line 2): a slice
-    title is one line, since `next` prints it inside a runnable `cut`, so a
-    body handed in for writing refuses every control character but TAB and
-    every line or paragraph separator. A body stored before this rule still
-    reads, and `next` names such a row instead of printing its `cut`."""
+    """The rule wherever a body's shape is judged -- `body --check`,
+    `check`, `item new`/`item edit` (issue #517 line 2): a slice title is
+    one line, since `next` prints it inside a runnable `cut`, so every
+    control character but TAB and every line or paragraph separator is a
+    defect. `board` and `next` keep reading a body stored before this rule,
+    and `next` names such a row instead of printing its `cut`."""
     defects: list[ContractDefect] = []
     for position, row in enumerate(slices):
         breaking = next((character for character in row.title if _breaks_a_line(character)), None)
