@@ -69,7 +69,6 @@ from agent_coordination import (
     github,
     items,
     metrics,
-    process,
     protocol,
     state_board,
     store,
@@ -1939,28 +1938,6 @@ def test_start_creates_the_linked_worktree_and_claims_it(
     assert Path.cwd() == repo
 
 
-def test_start_builds_from_the_fetched_trunk_when_no_remote_head_is_recorded(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Issue #479 (START-01): with no recorded `origin/HEAD` and no
-    remote-tracking `main` before the fetch, the trunk is guessed only
-    after it, so start builds from the remote's `main` -- never from the
-    stale local `main` a guess taken before the fetch would name."""
-    repo = _start_scenario(monkeypatch, tmp_path)
-    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "landed elsewhere")
-    _real_git(repo, "push", "-q", "origin", "main")
-    landed = _real_git(repo, "rev-parse", "HEAD").stdout.strip()
-    _real_git(repo, "reset", "-q", "--hard", "HEAD~1")
-    _real_git(repo, "remote", "set-head", "origin", "--delete")
-    _real_git(repo, "update-ref", "-d", "refs/remotes/origin/main")
-    monkeypatch.chdir(repo)
-
-    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
-
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    assert _real_git(worktree, "rev-parse", "HEAD").stdout.strip() == landed
-
-
 def test_start_resumes_an_existing_worktree_by_only_claiming(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -2311,15 +2288,15 @@ def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -
 def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     """Another push moves the trunk after `start` fetched and checked it,
     so the worktree it builds stands on a commit it never checked."""
-    real_trunk_commit = checkout.trunk_commit
+    real_fetched_trunk = checkout.fetched_trunk
 
-    def fetched_then_the_trunk_moves(trunk: str) -> str:
-        fetched = real_trunk_commit(trunk)
+    def fetch_then_the_trunk_moves(remote: str) -> str:
+        trunk = real_fetched_trunk(remote)
         _real_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
         _real_git(repo, "push", "-q", "origin", "HEAD:main")
-        return fetched
+        return trunk
 
-    monkeypatch.setattr(checkout, "trunk_commit", fetched_then_the_trunk_moves)
+    monkeypatch.setattr(checkout, "fetched_trunk", fetch_then_the_trunk_moves)
 
 
 def _trunk_moves_while_a_gone_worktree_is_rebuilt(
@@ -2789,28 +2766,21 @@ def _state_ref_item_body(title: str, **block_fields: object) -> str:
 
 
 def _real_state_ref_start_scenario(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, canonical_remote: str = "origin"
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> tuple[Path, Path, protocol.ObjectId]:
     """A real bare-remote-backed, `storage = "state-ref"` repository (issue
     #322 review finding 2) with item #314 open, untitled scope, ready for
     `start` -- the state-ref counterpart of `_start_scenario`, real
     `refs/aco/state` and all (`_use_real_store`), since `_FakeStore` cannot
-    see which directory a read ran against. A `canonical_remote` other than
-    `origin` keeps an `origin` beside it on the same bare remote, as a
-    fork's clone does, so both remotes record a `HEAD`."""
+    see which directory a read ran against."""
     _use_real_store(monkeypatch)
-    repo, remote = _real_repository_with_bare_remote(tmp_path, remote_name=canonical_remote)
+    repo, remote = _real_repository_with_bare_remote(tmp_path)
     config_dir = repo / ".agent-claim"
     config_dir.mkdir()
-    (config_dir / "board.toml").write_text(
-        f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
-    )
+    (config_dir / "board.toml").write_text('storage = "state-ref"\n')
     _real_git(repo, "add", ".agent-claim/board.toml")
     _real_git(repo, "commit", "-q", "-m", "pin state-ref storage")
-    _push_repository_trunk(repo, canonical_remote)
-    if canonical_remote != "origin":
-        _real_git(repo, "remote", "add", "origin", str(remote))
-        _push_repository_trunk(repo, "origin")
+    _push_repository_trunk(repo, "origin")
     store.bootstrap(worktree=repo, remote=str(remote))
     content = _state_ref_item_body("Fresh Slug Title").encode()
     seeded_oid = store.hash_blob(repo, content)
@@ -2998,39 +2968,30 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
     assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
 
 
-@pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
-def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_trunk_head(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, canonical_remote: str
+def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_default_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Issue #479 (CAS-55): the claim's checks observe the state ref again
-    once the trunk fetch is done, while the canonical remote's URL and its
-    recorded `HEAD` the run already read stay held -- one read of each per
-    directory `start` works in, whichever remote is canonical. Counted at
-    the one git launcher, keyed by the directory git ran in, so every
-    reader of a recorded `HEAD` is seen: the default branch, the trunk
-    fetch, the trunk walk behind the claim's board, and the worktree build
-    alike."""
-    _real_state_ref_start_scenario(monkeypatch, tmp_path, canonical_remote=canonical_remote)
-    monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
-    remote_url, launch = checkout.remote_url, checkout._git_run
-    reads: list[tuple[str, Path]] = []
+    once the trunk fetch is done, while the canonical remote and default
+    branch the run already read stay held -- one read of each per
+    directory `start` works in."""
+    _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    remote_url, default_branch_name = checkout.remote_url, checkout.default_branch_name
+    reads: list[tuple[str, Path | None]] = []
 
     def counting_remote_url(remote: str, *, directory: Path | None = None) -> str:
-        reads.append(("remote url", (directory or Path.cwd()).resolve()))
+        reads.append(("remote url", directory))
         return remote_url(remote, directory=directory)
 
-    def counting_git_run(
-        arguments: list[str], *, directory: Path | None = None
-    ) -> process.CapturedResult:
-        if arguments[0] == "symbolic-ref":
-            reads.append(("recorded head", (directory or Path.cwd()).resolve()))
-        return launch(arguments, directory=directory)
+    def counting_default_branch_name(*, directory: Path | None = None) -> str | None:
+        reads.append(("default branch", directory))
+        return default_branch_name(directory=directory)
 
     monkeypatch.setattr(checkout, "remote_url", counting_remote_url)
-    monkeypatch.setattr(checkout, "_git_run", counting_git_run)
+    monkeypatch.setattr(checkout, "default_branch_name", counting_default_branch_name)
 
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
-    assert {kind for kind, _directory in reads} == {"remote url", "recorded head"}
+    assert {kind for kind, _directory in reads} == {"remote url", "default branch"}
     assert [read for read in set(reads) if reads.count(read) > 1] == []
 
 
@@ -3046,10 +3007,10 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     wrongly let the claim through."""
     repo, remote, seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
-    real_fetch_remote = checkout.fetch_remote
+    real_fetched_trunk = checkout.fetched_trunk
 
-    def fetch_trunk_then_advance_item(remote: str) -> None:
-        real_fetch_remote(remote)
+    def fetch_trunk_then_advance_item(remote: str) -> str:
+        trunk = real_fetched_trunk(remote)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(
@@ -3063,9 +3024,10 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
                 operation_id="item-op-314-race",
             ),
         )
+        return trunk
 
     remote_path = remote
-    monkeypatch.setattr(checkout, "fetch_remote", fetch_trunk_then_advance_item)
+    monkeypatch.setattr(checkout, "fetched_trunk", fetch_trunk_then_advance_item)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
@@ -5875,7 +5837,7 @@ def test_board_reads_priority_configuration_from_the_checkout_root(
     projected = issue_claim._board(run_context_over(client), ())
 
     assert [item.number for item in projected.items] == [21, 20]
-    assert ["rev-parse", "--show-toplevel"] in observed
+    assert observed == [["rev-parse", "--show-toplevel"]]
 
 
 def test_next_names_a_cuttable_container_slice(
@@ -7768,14 +7730,11 @@ def _patch_release_session(
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: agent})
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
     _patch_store_write(monkeypatch, *(_store_claim_from_request(claimed) for claimed in standing))
-    trunk_head = ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
     if forbid_git:
 
         def git(arguments: list[str], **_kwargs: object) -> str:
             if tuple(arguments) == ("rev-parse", "--show-toplevel"):
                 return "/repo"
-            if tuple(arguments) == trunk_head:
-                return "refs/remotes/origin/main"
             pytest.fail("explicit --claim-id must not inspect checkout branch")
 
         monkeypatch.setattr(checkout, "_git_output", git)
@@ -7783,7 +7742,6 @@ def _patch_release_session(
     git_values = {
         ("branch", "--show-current"): branch or "",
         ("rev-parse", "--show-toplevel"): "/repo",
-        trunk_head: "refs/remotes/origin/main",
     }
     monkeypatch.setattr(
         checkout, "_git_output", lambda arguments, **_kwargs: git_values[tuple(arguments)]
@@ -14706,17 +14664,9 @@ def test_land_release_routing_reads_the_merge_commit_trailer_for_a_rerun(
         board.NoItemClassification(board.NoItemKind.FIX),
         (),
     )
-    _stub_fetched_trunk_walk(monkeypatch, (landing,))
+    monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: (landing,))
 
     assert issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, REPOSITORY) is None
-
-
-def _stub_fetched_trunk_walk(
-    monkeypatch: pytest.MonkeyPatch, landings: tuple[checkout.TrunkLanding, ...]
-) -> None:
-    """The rerun's fetch succeeds and its trunk walk answers `landings`."""
-    monkeypatch.setattr(checkout, "fetch_remote", lambda _remote: None)
-    monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: landings)
 
 
 def test_land_release_routing_refuses_a_rerun_with_no_usable_merge_commit_trailer(
@@ -14726,7 +14676,7 @@ def test_land_release_routing_refuses_a_rerun_with_no_usable_merge_commit_traile
     by name when the walked trunk carries the sha with neither a
     `Work-Item:` nor a `No-Item:` trailer -- never a bare re-read of the
     pull request's own body."""
-    _stub_fetched_trunk_walk(monkeypatch, ())
+    monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
 
     with pytest.raises(ClaimError, match="carries no `Work-Item:` or `No-Item:` trailer"):
         issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, REPOSITORY)
@@ -14808,8 +14758,8 @@ def test_release_branch_selects_a_lane_claim_without_checking_out_that_branch(
     """`--branch` selects the same lane claim `claim --branch` would (issue
     #250), but -- unlike `claim`'s own `--branch` -- never inspects the
     checkout branch at all: `forbid_git` fails the test the moment anything
-    but `rev-parse --show-toplevel` or the trunk's recorded `HEAD` reaches
-    git, so a deleted or foreign worktree can never block this release."""
+    but `rev-parse --show-toplevel` reaches git, so a deleted or foreign
+    worktree can never block this release."""
     standing = request("mine", "Ada", issue=None, branch=LANE_BRANCH, scope=("docs",))
     client = FakeForge()
     if outcome_flags[0] == "--merged":
@@ -14839,9 +14789,8 @@ def test_release_branch_selects_a_coordinator_override_from_another_checkout(
     """The headline scenario (issue #250): naming the lane's own `--branch`
     alongside `--claim-id` for a coordinator-override abandon works from any
     checkout, not only one on the lane branch -- `forbid_git` fails the test
-    the moment anything but `rev-parse --show-toplevel` or the trunk's
-    recorded `HEAD` reaches git, so a checkout left on another branch
-    entirely can never block this release."""
+    the moment anything but `rev-parse --show-toplevel` reaches git, so a
+    checkout left on another branch entirely can never block this release."""
     standing = request(
         "mine", "Ada", issue=None, branch=LANE_BRANCH, role="reviewer", scope=("docs",)
     )

@@ -139,34 +139,28 @@ def test_repository_id_discovers_the_repository_of_the_context_directory(
     assert discovered_for == [tmp_path]
 
 
-def test_default_branch_and_trunk_under_state_ref_share_one_read_of_origin_head_there(
+def test_default_branch_under_state_ref_reads_origin_head_of_the_context_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Issue #322 review finding 1, now the context's own fact (issue #457):
     a context for `start`'s created worktree reads `origin/HEAD` there,
-    never from the calling process's own cwd -- and once (issue #479): the
-    default branch and the trunk of the canonical remote `origin` share
-    that one read."""
+    never from the calling process's own cwd."""
     worktree = tmp_path / "worktree"
     _write_board_config(worktree, 'storage = "state-ref"\n')
     monkeypatch.setattr(
         checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
     )
-    read_from: list[tuple[str, Path | None]] = []
+    read_from: list[Path | None] = []
 
-    def recorded_head_ref(remote: str, *, directory: Path | None = None) -> str:
-        read_from.append((remote, directory))
-        return "refs/remotes/origin/main"
+    def default_branch_name(*, directory: Path | None = None) -> str:
+        read_from.append(directory)
+        return "main"
 
-    monkeypatch.setattr(checkout, "recorded_head_ref", recorded_head_ref)
+    monkeypatch.setattr(checkout, "default_branch_name", default_branch_name)
 
-    context = _context().for_directory(worktree)
+    branch = _context().for_directory(worktree).default_branch
 
-    assert (context.default_branch, context.trunk_ref, read_from) == (
-        "main",
-        "refs/remotes/origin/main",
-        [("origin", worktree)],
-    )
+    assert (branch, read_from) == ("main", [worktree])
 
 
 def test_a_context_for_another_directory_reads_its_remotes_there(
