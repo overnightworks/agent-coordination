@@ -86,6 +86,11 @@ def refuse_canonical_remote_mismatch(
 # these and keeps every other fact it read.
 _OBSERVATION_BOUND_FACTS = frozenset({"observation", "forge"})
 
+# The facts a `RunContext` resolves from the canonical remote's recorded
+# `HEAD`: a fetch may record or move it, so `fetched_trunk_ref` drops these
+# once it fetched and never keeps one read before (issue #484 ruling).
+_RECORDED_HEAD_FACTS = frozenset({"trunk_ref", "recorded_default_branch"})
+
 
 class RunContext:
     """The static facts of one command run in one directory, each read
@@ -244,12 +249,14 @@ class RunContext:
         remote -- at most once per run and remote (issue #488): the ref `start` builds
         from and `release --merged` verifies a fresh merge against. The
         recorded `HEAD` is read again after the fetch, never one held from
-        before it, since a fetch may record or move it: the held trunk is
-        dropped before the resolution, so one that fails is asked again."""
+        before it, since a fetch may record or move it: the held trunk and
+        recorded default branch are dropped before the resolution, so one
+        that fails is asked again."""
         if self._fetched_trunk_remote != self.canonical_remote:
             checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
             self._fetched_trunk_remote = self.canonical_remote
-            self.__dict__.pop("trunk_ref", None)
+            for fact in _RECORDED_HEAD_FACTS:
+                self.__dict__.pop(fact, None)
         return self.trunk_ref
 
     def _resolved_trunk_ref(self) -> str:

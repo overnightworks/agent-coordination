@@ -2987,17 +2987,22 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
 
 
 @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
-def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_default_branch(
+def test_start_observes_the_state_ref_afresh_and_its_default_branch_after_the_fetch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, canonical_remote: str
 ) -> None:
     """Issue #479 (CAS-55): the claim's checks observe the state ref again
-    once the trunk fetch is done, while the canonical remote and default
-    branch the run already read stay held -- one read of each per
-    directory `start` works in. Both are the canonical remote's: a `hub`
-    starts from its own recorded `HEAD` beside an `origin` that never
-    recorded one (issue #490)."""
-    _real_state_ref_start_scenario(monkeypatch, tmp_path, canonical_remote=canonical_remote)
+    once the trunk fetch is done, while the canonical remote the run
+    already read stays held -- one read of it per directory `start` works
+    in. The default branch the built worktree is judged against is read
+    after that fetch, never one held from before it, since a fetch may
+    record or move the `HEAD` it names (issue #484 ruling). Both are the
+    canonical remote's: a `hub` starts from its own recorded `HEAD` beside
+    an `origin` that never recorded one (issue #490)."""
+    toplevel, _remote, _seeded_oid = _real_state_ref_start_scenario(
+        monkeypatch, tmp_path, canonical_remote=canonical_remote
+    )
     remote_url, recorded_default_branch = checkout.remote_url, checkout.recorded_default_branch
+    fetch_remote = checkout.fetch_remote
     reads: list[tuple[str, str, Path | None]] = []
 
     def counting_remote_url(remote: str, *, directory: Path | None = None) -> str:
@@ -3010,15 +3015,24 @@ def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_def
         reads.append(("default branch", remote, directory))
         return recorded_default_branch(remote, directory=directory)
 
+    def noted_fetch_remote(remote: str, *, directory: Path | None = None) -> None:
+        reads.append(("fetch", remote, directory))
+        fetch_remote(remote, directory=directory)
+
     monkeypatch.setattr(checkout, "remote_url", counting_remote_url)
     monkeypatch.setattr(checkout, "recorded_default_branch", counting_recorded_default_branch)
+    monkeypatch.setattr(checkout, "fetch_remote", noted_fetch_remote)
 
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
     assert {(kind, remote) for kind, remote, _directory in reads} == {
         ("remote url", canonical_remote),
         ("default branch", canonical_remote),
+        ("fetch", canonical_remote),
     }
-    assert [read for read in set(reads) if reads.count(read) > 1] == []
+    remote_url_reads = [read for read in reads if read[0] == "remote url"]
+    assert len(remote_url_reads) == len(set(remote_url_reads))
+    after_the_fetch = reads[reads.index(("fetch", canonical_remote, toplevel)) + 1 :]
+    assert ("default branch", canonical_remote, toplevel) in after_the_fetch
 
 
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
