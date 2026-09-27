@@ -25,6 +25,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import TypeVar
 
@@ -582,38 +583,53 @@ def _protect_checkout_scope_denial(
     store-free checks run before either store or the identity is read, so
     a link in a main checkout denies "not main" without them. Once both
     pass, each checkout's claim check runs, even after the target's
-    denies or fails to read its board, store, or identity. A target git
-    cannot resolve is the target's denial too, so it denies with that
-    failure before the link's own checkout is judged."""
+    denies or fails to read its board, store, or identity. A checkout
+    whose board configuration fails its store-free checks fails for itself
+    alone, as a failed claim check does, so the other checkout's
+    store-free or claim denial still wins over it. A target git cannot
+    resolve is the target's denial too, so it denies with that failure
+    before the link's own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
     link_target = _link_target_in_another_checkout(raw_path, path_checkout, operation=operation)
     judged = (link_target,) if link_target is not None else ()
     store_free_outcomes = [
-        _protect_store_free_outcome(judged_path, judged_checkout, context=context)
+        _outcome_or_failure(
+            partial(_protect_store_free_outcome, judged_path, judged_checkout, context=context)
+        )
         for judged_path, judged_checkout in (*judged, (raw_path, path_checkout))
     ]
     for outcome in store_free_outcomes:
         if isinstance(outcome, str):
             return outcome
-    claim_verdicts: list[str | Exception | None] = []
-    for question in store_free_outcomes:
-        if not isinstance(question, _ClaimQuestion):
-            continue
-        # A failed board, store, or identity read is `cli`'s denial of this
-        # checkout alone: held back so the other checkout's claim check
-        # still runs, and so a target denial still wins over a link failure.
-        try:
-            claim_verdicts.append(
-                _protect_claim_denial(question, context=context, miss_denial=miss_denial)
-            )
-        except Exception as error:
-            claim_verdicts.append(error)
+    claim_verdicts = [
+        outcome
+        if isinstance(outcome, Exception)
+        else _outcome_or_failure(
+            partial(_protect_claim_denial, outcome, context=context, miss_denial=miss_denial)
+        )
+        for outcome in store_free_outcomes
+        if isinstance(outcome, _ClaimQuestion | Exception)
+    ]
     verdict = next((verdict for verdict in claim_verdicts if verdict is not None), None)
     if isinstance(verdict, Exception):
         raise verdict
     return verdict
+
+
+_CheckoutOutcome = TypeVar("_CheckoutOutcome")
+
+
+def _outcome_or_failure(judge: Callable[[], _CheckoutOutcome]) -> _CheckoutOutcome | Exception:
+    """`judge`'s answer for one checkout, or the failure reading that
+    checkout's board, store, or identity raised: `cli`'s denial of this
+    checkout alone, held back so the other checkout is still judged and
+    its denial wins over this failure (issue #486)."""
+    try:
+        return judge()
+    except Exception as error:
+        return error
 
 
 @dataclass(frozen=True, slots=True)
