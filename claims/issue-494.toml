@@ -1,8 +1,0 @@
-claim_id = "0b38110cd2b64936931ec48afb71be9f"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "4bb177128afd90c79e64a8b4bdaae0cdecd7c478"
-branch = "claude/issue-494-runcontext-b2-transition"
-scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/ref-store-cas.spec.md", "specs/start.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "src/agent_coordination/session.py", "src/agent_coordination/store.py", "tests/cli_fixtures.py", "tests/test_board_serve.py", "tests/test_cli.py", "tests/test_protect.py", "tests/test_protocol.py", "tests/test_session.py", "tests/test_state_board.py", "tests/test_store.py"]
-opened_commit = "8602e3be0c1519c1fe0b973ffa89b281c958f2f4"
-whole_reason = "Transitionen übernehmen die Beobachtung des Laufs, nur ein abgelehnter Push liest frisch, und der Store sagt selbst, wann ein Schreibzugriff ungewiss ist"
