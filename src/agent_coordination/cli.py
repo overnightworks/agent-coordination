@@ -3669,7 +3669,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
 
 
 def _refuse_an_unreadable_relative(
-    client: forge.ForgeReader, number: int, *, with_parent: bool
+    client: state_board.StateRefBoard, number: int, *, with_parent: bool
 ) -> None:
     """Refuses by the lowest id while one of `number`'s children -- a
     malformed item the state-ref board cannot place under a parent counting
@@ -3679,8 +3679,7 @@ def _refuse_an_unreadable_relative(
     malformed item never blocks the write. `parent_number` refuses a parent
     `items/` lacks (PIN-16) here too, before the write rather than after it."""
     relatives = {child.number for child in client.list_children(number)}
-    if isinstance(client, state_board.StateRefBoard):
-        relatives.update(client.unplaced_child_numbers(number))
+    relatives.update(client.unplaced_child_numbers(number))
     parent = client.parent_number(number) if with_parent else None
     if parent is not None:
         relatives.add(parent)
