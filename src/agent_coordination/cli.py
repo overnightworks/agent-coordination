@@ -5444,9 +5444,12 @@ def _check_build_and_claim(
 def _refuse_built_start(
     reason: ClaimReason, error: protocol.ClaimError, target: _StartTarget
 ) -> int:
-    status = _refuse(reason, error, as_json=False)
-    _remove_refused_start_worktree(target)
-    return status
+    try:
+        return _refuse(reason, error, as_json=False)
+    finally:
+        # A refusal that cannot be written (a closed stderr) must still
+        # leave nothing behind (START-18).
+        _remove_refused_start_worktree(target)
 
 
 @dataclass(frozen=True)

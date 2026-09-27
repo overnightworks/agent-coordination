@@ -2266,6 +2266,29 @@ def test_a_claim_refused_after_the_build_removes_what_start_built(
     assert err.endswith(removal.format(worktree=worktree, branch=_START_BRANCH) + "\n")
 
 
+class _ClosedPipe(io.StringIO):
+    def write(self, _text: str) -> int:
+        raise BrokenPipeError
+
+
+def test_start_removes_what_it_built_even_when_its_refusal_cannot_be_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #479 (START-18): a claim refused after the build removes the
+    worktree and branch this call built even when stderr is a closed pipe
+    and the refusal itself cannot be written."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    _claim_lands_before_the_commit(monkeypatch, repo)
+    monkeypatch.chdir(repo)
+    before = _worktrees_and_branches(repo)
+    monkeypatch.setattr(sys, "stderr", _ClosedPipe())
+
+    with pytest.raises(BrokenPipeError):
+        issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    assert _worktrees_and_branches(repo) == before
+
+
 def test_start_keeps_its_worktree_when_the_report_fails_after_the_claim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
