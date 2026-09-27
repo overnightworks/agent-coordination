@@ -1,0 +1,8 @@
+claim_id = "b9f9c5530b6b4d6c9f61967e3d662506"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "6247ccc630712d175876d397cdaf0439314de4f9"
+branch = "claude/issue-508-unconfigured-remote"
+scope = ["scripts/test_budget_ratchet.txt", "specs/brief.spec.md", "specs/check.spec.md", "specs/release.spec.md", "specs/start.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_session.py"]
+opened_commit = "a9b886e32acfded256250bfad50458cd18f9f07c"
+whole_reason = "ein nicht konfiguriertes kanonisches Remote wird genannt, nie durch einen lokalen Zweig als Trunk ersetzt"
