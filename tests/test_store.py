@@ -2578,10 +2578,10 @@ def _the_answer_and_its_re_read_are_lost(
 def _the_landed_push_cannot_stamp_its_lineage(
     monkeypatch: pytest.MonkeyPatch, _bare_remote: Path, _worktree: Path
 ) -> None:
-    def unwritable(worktree: Path, tip: protocol.ObjectId) -> None:
-        raise protocol.ClaimError("fatal: cannot lock ref")
+    def disk_full(*_arguments: object, **_keywords: object) -> None:
+        raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(store, "_write_lineage_stamp", unwritable)
+    monkeypatch.setattr(store.os, "replace", disk_full)
 
 
 def _every_push_is_rejected(

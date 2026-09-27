@@ -1606,10 +1606,11 @@ def _uncertain_once_sent() -> Iterator[None]:
     """Once a push is sent, only the remote knows whether it landed: a
     failure before the store has either re-read the ref after a rejection or
     finished its own bookkeeping after a landing leaves the write's outcome
-    unknown (issue #494), in the failure's own words."""
+    unknown (issue #494), in the failure's own words -- a git refusal and
+    the lineage stamp's own filesystem failure alike."""
     try:
         yield
-    except ClaimError as error:
+    except (ClaimError, OSError) as error:
         raise UncertainWriteError(str(error)) from error
 
 
