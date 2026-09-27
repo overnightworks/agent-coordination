@@ -87,7 +87,7 @@ def _absent_board_config_refusal(toplevel: Path) -> str:
     if _branch_removed_board_config(trunk, toplevel):
         return (
             f"{board.CONFIG_PATH} was removed on this branch; restore it with "
-            f"git checkout {trunk_name} -- {board.CONFIG_PATH}"
+            f"git checkout {trunk_name} -- :/{board.CONFIG_PATH}"
         )
     return (
         f"{board.CONFIG_PATH} does not exist in this checkout, but {trunk_name} "
