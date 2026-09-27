@@ -3631,7 +3631,8 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     item, naming its date. An unreadable item refuses at its own read; an
     unreadable parent or child, or a parent `items/` lacks, refuses before
     the write (`_refuse_an_unreadable_relative`); any other malformed item only goes
-    unfreed. Prints one line, `CLOSED aco-xxxxxx` (`--json`:
+    unfreed, and one failing the `freed:` read after the write turns that line
+    into a hint (issue #541). Prints one line, `CLOSED aco-xxxxxx` (`--json`:
     `{"item", "number", "closed_at", "parent_closable"}`), then `release
     --merged`'s own `freed:` line -- open items whose only open local
     blocker was this one (`_freed_item_numbers`, issue #256; nothing new) --
@@ -3653,11 +3654,13 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
             )
         _refuse_an_unreadable_relative(client, number, with_parent=True)
         closed_at = client.close_item(number)
+        freed, freed_hint = _item_close_freed_or_hint(client, number)
         result = _ItemCloseResult(
             item_id=items.format_item_id(number),
             number=number,
             closed_at=closed_at,
-            freed=_item_close_freed(client, number),
+            freed=freed,
+            freed_hint=freed_hint,
             parent_closable=_closable_parent_of_a_closed_item(client, number),
         )
         _print_item_close_result(result, as_json=as_json)
@@ -3715,16 +3718,31 @@ def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]
     return _freed_item_numbers(dependencies, landed)
 
 
+def _item_close_freed_or_hint(
+    client: forge.ForgeReader, number: int
+) -> tuple[tuple[int, ...] | None, str | None]:
+    """`_item_close_freed`, read after the close is already written (issue
+    #541, ITEM-55): an unrelated item that does not read can no longer undo
+    that close, so it downgrades `freed:` to one hint naming the item and its
+    defect rather than failing a close that stood."""
+    try:
+        return _item_close_freed(client, number), None
+    except protocol.MalformedStateTreeError as error:
+        return None, f"hint: freed: unknown -- {error}"
+
+
 @dataclass(frozen=True)
 class _ItemCloseResult:
     """Everything `_print_item_close_result` needs for one `item close`
     (issue #348), bundled so the printer itself takes one argument instead
-    of PLR0913's five-scalar ceiling."""
+    of PLR0913's five-scalar ceiling. `freed` is `None` exactly when
+    `freed_hint` names why it could not be read (issue #541)."""
 
     item_id: str
     number: int
     closed_at: str
-    freed: tuple[int, ...]
+    freed: tuple[int, ...] | None
+    freed_hint: str | None
     parent_closable: int | None
 
 
@@ -3738,12 +3756,17 @@ def _print_item_close_result(result: _ItemCloseResult, *, as_json: bool) -> None
             closed_at=result.closed_at,
             parent_closable=result.parent_closable,
         )
+        if result.freed_hint is not None:
+            print(result.freed_hint, file=sys.stderr)
         return
     print(f"CLOSED {result.item_id}")
-    # `item close` only ever runs under `storage = "state-ref"`
-    # (`_cmd_item_close`'s own refusal otherwise), so `freed:`'s own id
-    # chooser is fixed here rather than threaded as a further field.
-    print(_release_freed_line(result.freed, body.Storage.STATE_REF))
+    if result.freed is None:
+        print(result.freed_hint)
+    else:
+        # `item close` only ever runs under `storage = "state-ref"`
+        # (`_cmd_item_close`'s own refusal otherwise), so `freed:`'s own id
+        # chooser is fixed here rather than threaded as a further field.
+        print(_release_freed_line(result.freed, body.Storage.STATE_REF))
     parent_line = _parent_closable_line(result.parent_closable, body.Storage.STATE_REF)
     if parent_line is not None:
         print(parent_line)

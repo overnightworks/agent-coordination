@@ -4064,6 +4064,53 @@ class TestCliStateRefForge:
         assert f"#{CLOSE_TARGET_NUMBER}" not in next_out
         assert "blocked by" not in next_out
 
+    @pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+    def test_item_close_reports_success_and_a_freed_hint_beside_an_unrelated_missing_blocker(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        as_json: bool,
+    ) -> None:
+        """Issue #541 (ITEM-55): an unrelated item naming a blocker `items/`
+        lacks fails only `freed:`'s read after the close is written, so the
+        close still reports success and the state ref holds it; the failed
+        read becomes one hint line (stderr under `--json`)."""
+        unrelated_id = "aco-000010"
+        missing_blocker_id = "aco-ffffff"
+        unrelated_body = _state_ref_body(
+            _CLOSE_TARGET_PROJECTION,
+            _record(title="Unrelated", state="open", kind="task", blocked_by=(missing_blocker_id,)),
+        )
+        item_files = {
+            **_close_scenario_item_files(),
+            f"{unrelated_id}.md": unrelated_body.encode(),
+        }
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        hint = (
+            f"hint: freed: unknown -- item {missing_blocker_id} "
+            "is listed as a blocker but does not exist"
+        )
+        arguments = ["item", "close", str(CLOSE_BLOCKER_NUMBER), *(["--json"] if as_json else [])]
+
+        status = issue_claim.main(arguments)
+
+        captured = capsys.readouterr()
+        if as_json:
+            payload = json.loads(captured.out)
+            assert (payload["reason"], payload["item"]) == ("closed", CLOSE_BLOCKER_ID)
+            assert captured.err.splitlines() == [hint]
+        else:
+            assert captured.out.splitlines() == [f"CLOSED {CLOSE_BLOCKER_ID}", hint]
+            assert captured.err == ""
+        assert status == 0
+        state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
+        assert state.tip is not None
+        stored = store.read_item_files(worktree, state.tip)[f"{CLOSE_BLOCKER_ID}.md"].decode()
+        assert _decoded_record(stored, CLOSE_BLOCKER_ID).state is items.RecordState.CLOSED
+
     def test_item_close_prints_the_parent_hint_for_the_last_open_child(
         self,
         monkeypatch: pytest.MonkeyPatch,
