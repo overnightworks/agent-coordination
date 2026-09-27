@@ -1,8 +1,0 @@
-claim_id = "0d982b09b6904c9698869c0d4e5d2994"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "15882e371768b5a9998bdb0d39b1a2be4254c6df"
-branch = "claude/issue-505-land-config-guard"
-scope = ["README.md", "scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/board.spec.md", "specs/body.spec.md", "specs/bootstrap.spec.md", "specs/check.spec.md", "specs/claim.spec.md", "specs/land.spec.md", "specs/protect.spec.md", "specs/rescope.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "src/agent_coordination/github.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_protect.py", "tests/test_session.py"]
-opened_commit = "fdc2aa6fb536a4bdfe5a577bab694557eb866834"
-whole_reason = "eine fehlende Konfiguration bekommt einen Adoptionssatz, und land verweigert einen PR, der die Konfiguration unter seiner eigenen Landung wegzieht"
