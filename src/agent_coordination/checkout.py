@@ -1295,9 +1295,7 @@ def branch_merged_into_default(branch: str, *, remote: str) -> bool:
     never a literal descendant of the lane branch's own tip, so this reads
     `False` for one -- a safe, conservative "not merged" that only ever
     skips cleanup, never removes a branch git cannot itself prove is in."""
-    fetch = _git_run(["fetch", remote])
-    if fetch.exit_status != 0:
-        raise ClaimError(process.git_failure_detail(fetch))
+    fetch_remote(remote)
     trunk = trunk_ref(remote)
     result = _git_run(["merge-base", "--is-ancestor", branch, trunk])
     if result.exit_status == 0:
