@@ -315,7 +315,7 @@ class StateRefBoard:
         self._writer = writer
         self._items: dict[str, _DecodedItem] = {}
         self._malformed: dict[str, _MalformedItem] = {}
-        self._holds_well_formed = False
+        self._holds_items = False
         for filename, content in item_files.items():
             item_id = items.item_id_from_filename(filename)
             decoded = _decode_item(item_id, content, item_oids[item_id])
@@ -349,19 +349,44 @@ class StateRefBoard:
         state, and blockers are unknown, so what `item close` freed and a
         `board --serve` ruling click's write would guess past it. Reads that
         only project the board list it instead (issue #517)."""
-        if self._malformed:
-            item_id = min(self._malformed)
+        self._refuse_the_lowest_malformed(self._malformed)
+
+    def require_readable_around(self, number: int, *, with_parent: bool) -> None:
+        """Refuses like `require_well_formed`, but only while `number`'s own
+        item, one of its children, or -- `with_parent` -- its parent is
+        malformed (issue #536): a single-item write decides with those
+        alone, so an unrelated malformed item never blocks it. `number` is
+        one `items/` carries: the caller has already refused any other."""
+        item_id = self._by_number[number]
+        self._refuse_the_lowest_malformed((item_id,))
+        related = [
+            child_id for child_id, child in self._malformed.items() if child.parent == item_id
+        ]
+        parent_id = self._items[item_id].record.parent
+        if with_parent and parent_id is not None:
+            related.append(parent_id)
+        self._refuse_the_lowest_malformed(related)
+
+    def _refuse_the_lowest_malformed(self, item_ids: Iterable[str]) -> None:
+        malformed_ids = [item_id for item_id in item_ids if item_id in self._malformed]
+        if malformed_ids:
+            item_id = min(malformed_ids)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
 
     def hold_well_formed(self) -> None:
-        """`require_well_formed` now and through every later write of this
-        instance (issue #447): each write then commits only onto the very
-        `items/` this instance read, so an item going bad after this check
-        refuses the write instead of landing beside it -- the one guard a
-        whole-board command's write (`board --serve`'s ruling click) needs
-        to keep PIN-29 "before any write"."""
+        """`require_well_formed` now and `hold_items` through every later
+        write of this instance (issue #447) -- the one guard a whole-board
+        command's write (`board --serve`'s ruling click) needs to keep
+        PIN-29 "before any write"."""
         self.require_well_formed()
-        self._holds_well_formed = True
+        self.hold_items()
+
+    def hold_items(self) -> None:
+        """Every later write of this instance commits only onto the very
+        `items/` this instance read (issue #447), so an item written or gone
+        bad after the caller's check refuses the write instead of landing
+        beside it."""
+        self._holds_items = True
 
     def _write_item(self, item_id: str, *, expected: ObjectId | None, body: str) -> ObjectId:
         return self._writer.write_item(
@@ -372,9 +397,9 @@ class StateRefBoard:
         )
 
     def _store_expected(self) -> Mapping[str, ObjectId] | None:
-        """The whole `items/` map every write of a `hold_well_formed`
+        """The whole `items/` map every write of a `hold_items`
         instance commits onto (issue #447), else `None`."""
-        if not self._holds_well_formed:
+        if not self._holds_items:
             return None
         return {
             **{held_id: held.oid for held_id, held in self._malformed.items()},

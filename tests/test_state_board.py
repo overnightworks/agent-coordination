@@ -3078,6 +3078,12 @@ class TestCliStateRefForge:
             pytest.param(["item", "new", "--title", "Fresh Item"], MALFORMED_ID, id="item-new"),
             pytest.param(["item", "show", CHILD_B_ID], MALFORMED_ID, id="item-show-of-another"),
             pytest.param(["item", "show", CHILD_A_ID], CONTAINER_ID, id="item-show-of-a-child"),
+            pytest.param(["item", "close", CHILD_B_ID], MALFORMED_ID, id="item-close-of-another"),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--kind", "container"],
+                MALFORMED_ID,
+                id="edit-kind-of-another",
+            ),
         ],
     )
     def test_a_malformed_item_leaves_every_other_item_working(
@@ -3092,37 +3098,61 @@ class TestCliStateRefForge:
         """Issue #447 proof 1: an item `item new --title ""` once wrote,
         planted by hand, no longer stops `item new` or `item show` of any
         other item -- its own child included, whose header needs only the
-        parent's id."""
+        parent's id -- nor, issue #536, `item close` or `item edit --kind`
+        of an item it is neither, nor the parent or a child of."""
         item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
         assert issue_claim.main(arguments) == 0
 
     @pytest.mark.parametrize(
-        ("arguments", "piped_body", "planted"),
+        ("arguments", "piped_body", "planted", "planted_under"),
         [
-            pytest.param(["item", "show", MALFORMED_ID], None, MALFORMED_ID, id="item-show"),
-            pytest.param(["item", "close", MALFORMED_ID], None, MALFORMED_ID, id="item-close"),
+            pytest.param(["item", "show", MALFORMED_ID], None, MALFORMED_ID, None, id="item-show"),
             pytest.param(
-                ["item", "edit", MALFORMED_ID, "--size", "S"], None, MALFORMED_ID, id="edit-size"
+                ["item", "close", MALFORMED_ID], None, MALFORMED_ID, None, id="item-close"
+            ),
+            pytest.param(
+                ["item", "edit", MALFORMED_ID, "--size", "S"],
+                None,
+                MALFORMED_ID,
+                None,
+                id="edit-size",
             ),
             pytest.param(
                 ["item", "edit", MALFORMED_ID],
                 CONTAINER_BODY,
                 MALFORMED_ID,
+                None,
                 id="edit-without-a-record",
             ),
             pytest.param(
                 ["item", "close", CHILD_A_ID],
                 None,
                 CONTAINER_ID,
+                None,
                 id="item-close-of-a-child-under-a-malformed-parent",
             ),
             pytest.param(
-                ["item", "edit", CHILD_B_ID, "--kind", "container"],
+                ["item", "close", CONTAINER_ID],
                 None,
                 MALFORMED_ID,
-                id="edit-kind-beside-a-malformed-item",
+                CONTAINER_ID,
+                id="item-close-of-a-container-over-a-malformed-child",
+            ),
+            pytest.param(
+                ["item", "edit", MALFORMED_ID, "--kind", "container"],
+                None,
+                MALFORMED_ID,
+                None,
+                id="edit-kind-of-the-malformed-item",
+            ),
+            pytest.param(
+                ["item", "edit", CONTAINER_ID, "--kind", "task"],
+                None,
+                MALFORMED_ID,
+                CONTAINER_ID,
+                id="edit-kind-of-a-container-over-a-malformed-child",
             ),
         ],
     )
@@ -3136,12 +3166,13 @@ class TestCliStateRefForge:
         arguments: list[str],
         piped_body: str | None,
         planted: str,
+        planted_under: str | None,
     ) -> None:
         """Issue #447 proof 1: every command that must read exactly the
-        malformed item, or close or retype an item beside it, refuses by its id,
-        naming `item edit` with a valid `[record]` as the repair, and
-        nothing reaches the remote."""
-        item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
+        malformed item, or close or retype an item that is its parent or
+        child (issue #536), refuses by its id, naming `item edit` with a
+        valid `[record]` as the repair, and nothing reaches the remote."""
+        item_files = _item_files_with_a_malformed_item(_blank_title_item(planted_under), planted)
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
         remote_url = f"file://{bare_remote}"
