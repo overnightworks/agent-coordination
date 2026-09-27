@@ -106,7 +106,7 @@ class RunContext:
         self.repo = repo
         self.directory = directory
         self._build_forge = build_forge
-        self._trunk_fetched = False
+        self._fetched_trunk_remote: str | None = None
 
     def for_directory(self, directory: Path, *, is_toplevel: bool = False) -> RunContext:
         """A context for another checkout of the same run (`start`'s
@@ -122,10 +122,12 @@ class RunContext:
     def fresh(self) -> RunContext:
         """The same directory with nothing read yet (`board --serve`'s
         per-request context, `land`'s delegated release). The run's trunk
-        fetch is no read and carries over, so the fresh context resolves
-        the trunk anew without fetching it a second time (issue #488)."""
+        fetch is no read and carries over with the remote it fetched, so
+        the fresh context resolves the trunk anew without fetching that
+        remote a second time, yet fetches the canonical remote its reread
+        configuration names when that is another (issue #488)."""
         child = RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
-        child._trunk_fetched = self._trunk_fetched
+        child._fetched_trunk_remote = self._fetched_trunk_remote
         return child
 
     def observed_afresh(self) -> RunContext:
@@ -228,14 +230,14 @@ class RunContext:
 
     def fetched_trunk_ref(self) -> str:
         """The canonical remote's trunk ref once this checkout fetched that
-        remote -- at most once per run (issue #488): the ref `start` builds
+        remote -- at most once per run and remote (issue #488): the ref `start` builds
         from and `release --merged` verifies a fresh merge against. The
         recorded `HEAD` is read again after the fetch, never one held from
         before it, since a fetch may record or move it: the held trunk is
         dropped before the resolution, so one that fails is asked again."""
-        if not self._trunk_fetched:
+        if self._fetched_trunk_remote != self.canonical_remote:
             checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
-            self._trunk_fetched = True
+            self._fetched_trunk_remote = self.canonical_remote
             self.__dict__.pop("trunk_ref", None)
         return self.trunk_ref
 

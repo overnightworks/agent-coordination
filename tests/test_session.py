@@ -15,6 +15,7 @@ from cli_fixtures import (
     _push_repository_trunk,
     _real_git,
     _real_repository_with_bare_remote,
+    fetched_once_then_read,
     landed_from_another_clone,
     main_exit_code,
     stub_board_config_tracked,
@@ -314,6 +315,36 @@ def test_every_trunk_read_names_the_canonical_remote_never_a_diverging_origin(
         2,
         [],
     )
+
+
+def test_a_fresh_context_whose_configuration_names_another_remote_fetches_that_remote(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #488 with #457 proof 6: the run fetched `origin`, then the
+    landed configuration names `hub`, whose tracking ref stands one commit
+    behind it; the fresh context rereads that configuration and fetches
+    `hub` before answering, never taking `origin`'s fetch for `hub`'s."""
+    repository = _pushed_repository(tmp_path)
+    hub = tmp_path / "hub.git"
+    _real_git(tmp_path, "init", "-q", "--bare", "-b", "main", str(hub))
+    _real_git(repository, "remote", "add", "hub", str(hub))
+    stale = _commit(repository, "second")
+    _push_repository_trunk(repository, "hub")
+    landed = _commit(repository, "landed")
+    _real_git(repository, "push", "-q", "hub", "main")
+    _real_git(repository, "update-ref", "refs/remotes/hub/main", stale)
+    context = _context().for_directory(repository)
+    context.fetched_trunk_ref()
+    (repository / ".agent-claim" / "board.toml").write_text('canonical_remote = "hub"\n')
+    hub_reads = trunk_git_calls(monkeypatch, "hub")
+
+    fetched = context.fresh().fetched_trunk_ref()
+
+    assert (fetched, checkout.trunk_commit(fetched, directory=repository)) == (
+        "refs/remotes/hub/main",
+        landed,
+    )
+    assert fetched_once_then_read(hub_reads) == {repository.resolve(): True}
 
 
 def test_a_failed_trunk_fetch_fails_loud_and_is_fetched_again_on_the_next_ask(
