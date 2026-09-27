@@ -5820,11 +5820,14 @@ def test_board_reads_priority_configuration_from_the_checkout_root(
     nested_directory = toplevel / "src" / "agent_coordination"
     nested_directory.mkdir(parents=True)
     monkeypatch.chdir(nested_directory)
-    observed: list[list[str]] = []
+    toplevel_read = ("rev-parse", "--show-toplevel")
+    trunk_head_read = ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    answers = {toplevel_read: str(toplevel), trunk_head_read: "refs/remotes/origin/main"}
+    observed: list[tuple[str, ...]] = []
 
     def git_output(arguments: list[str], **_kwargs: object) -> str:
-        observed.append(arguments)
-        return str(toplevel)
+        observed.append(tuple(arguments))
+        return answers[tuple(arguments)]
 
     client = _MinimalForgeReader(
         open_issues=(
@@ -5847,7 +5850,7 @@ def test_board_reads_priority_configuration_from_the_checkout_root(
     projected = issue_claim._board(run_context_over(client), ())
 
     assert [item.number for item in projected.items] == [21, 20]
-    assert ["rev-parse", "--show-toplevel"] in observed
+    assert observed == [toplevel_read, trunk_head_read]
 
 
 def test_next_names_a_cuttable_container_slice(
