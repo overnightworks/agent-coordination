@@ -1072,21 +1072,8 @@ _JsonRows = list[_JsonObject]
 
 # `protocol.toml_string` is this repository's one TOML basic-string writer
 # (issue #378): it lives below this module in the Layers contract, so it is
-# imported rather than kept as a second escape table here.
-
-_TOML_MULTILINE_STRING_ESCAPES = {"\\": "\\\\", '"': '\\"'}
-
-
-def _toml_multiline_string(value: str) -> str:
-    """A TOML multi-line basic string for `value` -- an `[[expectation]]`
-    `picture`'s inline SVG (issue #295), which needs literal newlines a
-    single-line basic string cannot hold. Backslashes and quotes are
-    escaped so no run of the content can be mistaken for the closing
-    `\"\"\"`; raw newlines stay literal. `tomllib.loads` reads it back to
-    `value` unchanged -- the leading newline right after the opening
-    delimiter is the one TOML trims automatically, so none is added here."""
-    escaped = "".join(_TOML_MULTILINE_STRING_ESCAPES.get(char, char) for char in value)
-    return f'"""\n{escaped}"""'
+# imported rather than kept as a second escape table here, and so is its
+# multi-line twin `protocol.toml_multiline_string`.
 
 
 def _render_frozen_until(data: Mapping[str, object]) -> list[str]:
@@ -1145,7 +1132,9 @@ def _render_expectations(data: Mapping[str, object]) -> list[str]:
         if "example" in expectation:
             lines.append(f"example = {protocol.toml_string(expectation['example'])}")
         if "picture" in expectation:
-            lines.append(f"picture = {_toml_multiline_string(cast(str, expectation['picture']))}")
+            lines.append(
+                f"picture = {protocol.toml_multiline_string(cast(str, expectation['picture']))}"
+            )
     return lines
 
 
