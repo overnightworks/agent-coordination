@@ -2610,9 +2610,11 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
     repository placed inside it (`guarded-worktree`), a directory symlink
     into that guarded repository's main checkout (`guarded-link`), file
     symlinks from the throwaway checkout and its worktree into that main
-    checkout (`repo/into-guarded.md`, `lane/into-guarded.md`), and one from
+    checkout (`repo/into-guarded.md`, `lane/into-guarded.md`), one from
     the throwaway checkout into the guarded worktree
-    (`repo/into-guarded-worktree.md`)."""
+    (`repo/into-guarded-worktree.md`), and a dangling directory symlink
+    outside every repository into a directory of that main checkout not
+    created yet (`dangling`)."""
     guarded, _worktree = _protect_real_repo_with_worktree(tmp_path)
     scratch = tmp_path / "scratch"
     scratch.mkdir()
@@ -2631,6 +2633,7 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
     for link in (throwaway / "into-guarded.md", scratch / "lane" / "into-guarded.md"):
         link.symlink_to(guarded / "README.md")
     (throwaway / "into-guarded-worktree.md").symlink_to(scratch / "guarded-worktree" / "README.md")
+    (scratch / "dangling").symlink_to(guarded / "newdir", target_is_directory=True)
     return scratch
 
 
@@ -2641,6 +2644,7 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
     ("unguarded", "payload_for", "target", "status", "reason", "store_reads"),
     [
         (None, _write_target_payload, "repo/README.md", 2, "not main", 0),
+        (None, _write_target_payload, "dangling/file.md", 2, "not main", 0),
         ("{scratch}", _write_target_payload, "repo/README.md", 0, None, 0),
         ("{scratch}", _bash_rm_target_payload, "repo/README.md", 0, None, 0),
         ("{scratch}", _bash_rm_rf_target_payload, "repo", 0, None, 0),
@@ -2686,6 +2690,7 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
     ],
     ids=[
         "unset-guards-the-throwaway-checkout",
+        "unset-judges-a-write-below-a-dangling-directory-symlink-by-its-target",
         "write-allows",
         "bash-rm-allows",
         "bash-rm-rf-of-the-root-allows",

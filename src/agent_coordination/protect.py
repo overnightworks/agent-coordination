@@ -364,26 +364,50 @@ def _resolved_path_checkout(
     outside every repository (PROT-32: not aco's to judge, issue #448) --
     resolved from the path itself (issue #314), never from the hook
     process's cwd, so the same absolute path yields the same verdict from
-    any cwd, through the resolver `rescope` shares (issue #483).
+    any cwd, through the resolver `rescope` shares (issue #483). A path
+    outside every repository by its own directory is judged where a write
+    to it lands (`_landing_checkout_outside_every_repository`).
 
-    A file symlink whose own directory sits outside every repository, or in
-    an unguarded one (PROT-40), is judged by its target's checkout when the
-    operation `writes_through_file_symlink`: a write through such a link
-    still lands in whichever checkout its target lies in (issue #448 review
-    finding: a `~/.claude/CLAUDE.md` link into a main checkout; issue #483
-    review finding: a throwaway repository's link into a guarded one); an
-    operation on the link itself -- `rm` or `mv` of it -- never touches the
-    target, so it stays where the link lies (issue #448 review finding).
-    A guarded link's own directory wins, so no link can move a write out of
-    the gate that directory already imposes."""
+    A file symlink in an unguarded repository (PROT-40) is judged by its
+    target's checkout when the operation `writes_through_file_symlink`: a
+    write through such a link still lands in whichever checkout its target
+    lies in (issue #483 review finding: a throwaway repository's link into a
+    guarded one); an operation on the link itself -- `rm` or `mv` of it --
+    never touches the target, so it stays where the link lies. A guarded
+    link's own directory wins, so no link can move a write out of the gate
+    that directory already imposes."""
     path = Path(os.path.normpath(absolute_path))
     own_checkout = checkout.resolve_named_path_checkout(path)
+    if own_checkout is None:
+        return _landing_checkout_outside_every_repository(
+            path, writes_through_file_symlink=writes_through_file_symlink
+        )
     if not writes_through_file_symlink or path.is_dir() or not path.is_symlink():
         return own_checkout
     target_checkout = checkout.resolve_named_path_checkout(Path(os.path.realpath(path)))
-    if own_checkout is None or _leaves_unguarded_for_guarded(own_checkout, target_checkout):
+    if _leaves_unguarded_for_guarded(own_checkout, target_checkout):
         return target_checkout
     return own_checkout
+
+
+def _landing_checkout_outside_every_repository(
+    path: Path, *, writes_through_file_symlink: bool
+) -> checkout.PathCheckout | None:
+    """The checkout a write to `path`, whose own directory sits outside
+    every repository, still lands in, or `None` when it lands outside every
+    repository too. Any symlink on the way -- the file itself or an
+    ancestor directory, a dangling one included -- carries the write into
+    its target's checkout (issue #448 review finding: a
+    `~/.claude/CLAUDE.md` link into a main checkout; issue #483 review
+    finding: `mkdir -p` makes a dangling ancestor's target real before the
+    write), so that checkout judges it. An operation on the link itself --
+    `rm` or `mv` of it -- never touches the target, so it stays outside."""
+    if path.is_dir() or not writes_through_file_symlink:
+        return None
+    target = Path(os.path.realpath(path))
+    if target == path:
+        return None
+    return checkout.resolve_nearest_existing_checkout(target.parent)
 
 
 def _leaves_unguarded_for_guarded(
