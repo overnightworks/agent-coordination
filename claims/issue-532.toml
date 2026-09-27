@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "fbf954f945f8b0187fd3b53eb2bb93e3227a30bd"
 branch = "claude/issue-532-terminal-safe-next"
-scope = ["specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
+scope = ["scripts/vulture_whitelist.py", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
 opened_commit = "e554655b6986903a93cee691183c0c093c2e2dda"
 whole_reason = "one terminal-safe text owner and next's text output that uses it"
