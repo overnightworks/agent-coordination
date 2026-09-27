@@ -1,0 +1,7 @@
+claim_id = "cli-claim"
+agent = "Codex Sol"
+role = "builder"
+base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+branch = "docs/lane-cleanup"
+scope = ["docs", "src"]
+opened_commit = "467cd937415dc65b1577a1f23008a06997e94d6d"
