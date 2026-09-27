@@ -3576,7 +3576,7 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
         # #536), and holds the store it read through its write, so a child
         # written since refuses it rather than being guessed past (#447).
         if isinstance(client, state_board.StateRefBoard):
-            client.require_readable_around(number, with_parent=False)
+            _refuse_an_unreadable_relative(client, number, with_parent=False)
             client.hold_items()
         if kind is body.ItemKind.TASK and target.has_open_child:
             raise protocol.ClaimUnavailableError(
@@ -3651,7 +3651,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
             raise protocol.ClaimUnavailableError(
                 _missing_item_refusal(number, client, context.config.storage)
             )
-        client.require_readable_around(number, with_parent=True)
+        _refuse_an_unreadable_relative(client, number, with_parent=True)
         closed_at = client.close_item(number)
         result = _ItemCloseResult(
             item_id=items.format_item_id(number),
@@ -3665,6 +3665,22 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     except protocol.ClaimError as error:
         named = _named_refusal(error, body.Storage.STATE_REF)
         return _refuse(ItemReason.PRECONDITION_FAILED, named, as_json=as_json)
+
+
+def _refuse_an_unreadable_relative(
+    client: forge.ForgeReader, number: int, *, with_parent: bool
+) -> None:
+    """Refuses by the lowest id while one of `number`'s children or --
+    `with_parent` -- its parent does not read (issue #536, ITEM-53): a
+    single-item write decides with those alone, so each is read through
+    the one narrow `item_references` read, and an unrelated malformed item
+    never blocks the write. `parent_number` refuses a parent `items/` lacks
+    (PIN-16) here too, before the write rather than after it."""
+    relatives = {child.number for child in client.list_children(number)}
+    parent = client.parent_number(number) if with_parent else None
+    if parent is not None:
+        relatives.add(parent)
+    client.item_references(sorted(relatives))
 
 
 def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]:

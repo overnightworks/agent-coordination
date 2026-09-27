@@ -349,28 +349,8 @@ class StateRefBoard:
         state, and blockers are unknown, so what `item close` freed and a
         `board --serve` ruling click's write would guess past it. Reads that
         only project the board list it instead (issue #517)."""
-        self._refuse_the_lowest_malformed(self._malformed)
-
-    def require_readable_around(self, number: int, *, with_parent: bool) -> None:
-        """Refuses like `require_well_formed`, but only while `number`'s own
-        item, one of its children, or -- `with_parent` -- its parent is
-        malformed (issue #536): a single-item write decides with those
-        alone, so an unrelated malformed item never blocks it. `number` is
-        a readable item: the caller's own read of it has already refused
-        any other (ITEM-38)."""
-        item_id = self._by_number[number]
-        related = [
-            child_id for child_id, child in self._malformed.items() if child.parent == item_id
-        ]
-        parent_id = self._items[item_id].record.parent
-        if with_parent and parent_id is not None:
-            related.append(parent_id)
-        self._refuse_the_lowest_malformed(related)
-
-    def _refuse_the_lowest_malformed(self, item_ids: Iterable[str]) -> None:
-        malformed_ids = [item_id for item_id in item_ids if item_id in self._malformed]
-        if malformed_ids:
-            item_id = min(malformed_ids)
+        if self._malformed:
+            item_id = min(self._malformed)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
 
     def hold_well_formed(self) -> None:
