@@ -1037,6 +1037,19 @@ def fast_forward_default_branch(trunk: str, *, directory: Path) -> None:
         raise ClaimError(process.git_failure_detail(result))
 
 
+def merge_base(first: str, second: str, *, directory: Path) -> str | None:
+    """The best common ancestor commit of `first` and `second` in
+    `directory` (issue #524: the trunk commit a branch last merged or was
+    cut from), or `None` for unrelated histories, which `git merge-base`
+    alone answers with exit 1."""
+    result = _git_run(["merge-base", first, second], directory=directory)
+    if result.exit_status == 1:
+        return None
+    if result.exit_status != 0:
+        raise ClaimError(process.git_failure_detail(result))
+    return result.stdout.decode().strip()
+
+
 def resolved_agent(explicit: str | None) -> str:
     if explicit is not None:
         return _outbound_text(explicit, "agent", maximum=128)
