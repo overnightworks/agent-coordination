@@ -5123,12 +5123,26 @@ def _print_claim_checks(plan: _ClaimPlan, *, as_json: bool) -> None:
         print(check.render(), file=sys.stderr if as_json else sys.stdout)
 
 
+@dataclass
+class _WitnessedPush:
+    """The store's own `git push`, remembering that one landed (issue #479):
+    a failure `store.commit_transition` raises after that -- writing its
+    lineage stamp -- leaves the claim written, so `start` never undoes the
+    worktree that claim names."""
+
+    landed: bool = False
+
+    def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
+        store.GitPushTransport().push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+        self.landed = True
+
+
 def _committed_claim(
-    plan: _ClaimPlan, *, worktree: Path
+    plan: _ClaimPlan, *, worktree: Path, transport: store.PushTransport | None = None
 ) -> tuple[protocol.ActiveClaim, tuple[protocol.ActiveClaim, ...]]:
     """`claim`'s commit phase: the plan's one ledger write, made from
-    `worktree`, or the replayed claim it already names, with every live
-    claim after it."""
+    `worktree` through `transport` (the store's own push when omitted), or
+    the replayed claim it already names, with every live claim after it."""
     if plan.replayed is not None:
         return plan.replayed, tuple(plan.observed.claims.values())
     requested = plan.requested
@@ -5138,6 +5152,7 @@ def _committed_claim(
             remote=plan.canonical_remote,
             subject=_transition_subject("claim", requested.identity, requested.branch),
             intent=plan.intent,
+            transport=transport,
         )
     except protocol.ClaimConflictError as error:
         raise _named_claim_conflict(error, plan.storage) from error
@@ -5462,14 +5477,17 @@ def _check_build_and_claim(
     )
     _print_start_target(target)
     _print_claim_checks(plan, as_json=False)
+    push = _WitnessedPush()
     try:
         checkout._validate_checkout(requested, directory=target.path)
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
-        claimed, claims = _committed_claim(plan, worktree=target.path)
+        claimed, claims = _committed_claim(plan, worktree=target.path, transport=push)
     except _ClaimConflictError as error:
         return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     except protocol.ClaimError as error:
+        if push.landed:
+            raise
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)
 

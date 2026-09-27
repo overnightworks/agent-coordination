@@ -2248,11 +2248,18 @@ def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch, _repo: Path)
     commit = fake.commit_transition
 
     def racing_commit(
-        *, worktree: Path, subject: str, intent: protocol.ClaimTransitionIntent, remote: str
+        *,
+        worktree: Path,
+        subject: str,
+        intent: protocol.ClaimTransitionIntent,
+        remote: str,
+        transport: object,
     ) -> protocol.ClaimState:
         claims = {**fake.state.claims, protocol.claim_key(held.identity, held.branch): held}
         fake.state = replace(fake.state, claims=claims)
-        return commit(worktree=worktree, subject=subject, intent=intent, remote=remote)
+        return commit(
+            worktree=worktree, subject=subject, intent=intent, remote=remote, transport=transport
+        )
 
     monkeypatch.setattr(store, "commit_transition", racing_commit)
 
@@ -2839,6 +2846,47 @@ def test_start_under_state_ref_claims_the_worktree_it_builds(
     claim = live[protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)]
     assert claim.claim_id == claim_id
     assert claim.scope == ("src/x.py",)
+
+
+def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_claims_push(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 (head ruling 1c): once the claim's push landed, a failure
+    the write still raises -- its lineage stamp -- is reported, never
+    treated as a refusal: the worktree and branch the live claim names
+    stay."""
+    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    landed: list[protocol.ObjectId] = []
+    real_push = store.GitPushTransport.push
+    real_stamp = store._write_lineage_stamp
+
+    def push_and_note(
+        transport: store.GitPushTransport,
+        *,
+        worktree: Path,
+        remote: str,
+        ref: str,
+        new_oid: protocol.ObjectId,
+    ) -> None:
+        real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+        landed.append(new_oid)
+
+    def stamp_fails_once_landed(worktree: Path, tip: protocol.ObjectId) -> None:
+        if landed:
+            raise protocol.ClaimError("fatal: not a git repository")
+        real_stamp(worktree, tip)
+
+    monkeypatch.setattr(store.GitPushTransport, "push", push_and_note)
+    monkeypatch.setattr(store, "_write_lineage_stamp", stamp_fails_once_landed)
+
+    status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    assert (status, capsys.readouterr().err) == (2, "ERROR: fatal: not a git repository\n")
+    monkeypatch.setattr(store, "_write_lineage_stamp", real_stamp)
+    live = store.fetch_state(worktree=repo, remote="origin").claims
+    assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) in live
+    assert checkout.resolve_path_checkout(worktree) is not None
 
 
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
