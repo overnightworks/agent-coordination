@@ -2857,22 +2857,35 @@ _SEAM_FAILURE = "fatal: not a git repository"
 
 
 @pytest.mark.parametrize(
-    ("push_answer", "failing_seam", "reported"),
+    ("push_answer", "lands", "failing_seam", "reported"),
     [
         pytest.param(
-            None, "_write_lineage_stamp", _SEAM_FAILURE, id="lineage-stamp-fails-after-the-push"
+            None,
+            True,
+            "_write_lineage_stamp",
+            _SEAM_FAILURE,
+            id="lineage-stamp-fails-after-the-push",
         ),
         pytest.param(
             protocol.PushRejectedError("fatal: the remote end hung up unexpectedly"),
+            True,
             "fetch_state",
             _SEAM_FAILURE,
             id="answer-lost-and-its-search-fails",
         ),
         pytest.param(
             protocol.ClaimError("git timed out while reading the claim state store"),
+            True,
             None,
             "git timed out while reading the claim state store",
             id="push-times-out-after-landing",
+        ),
+        pytest.param(
+            protocol.ClaimError("git timed out while reading the claim state store"),
+            False,
+            None,
+            "git timed out while reading the claim state store",
+            id="push-times-out-before-the-remote-records-it",
         ),
     ],
 )
@@ -2881,13 +2894,16 @@ def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_cla
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     push_answer: protocol.ClaimError | None,
+    lands: bool,
     failing_seam: str | None,
     reported: str,
 ) -> None:
-    """Issue #479 (head ruling 1c): once the claim's push landed, a failure
-    the write still raises -- its lineage stamp, the search for a push whose
-    answer was lost, a push that timed out -- is reported, never treated as
-    a refusal: the worktree and branch the live claim names stay."""
+    """Issue #479 (head ruling 1c): once the claim's push was sent, a
+    failure the write still raises -- its lineage stamp, the search for a
+    push whose answer was lost, a push that timed out -- is reported, never
+    treated as a refusal: the worktree and branch the claim may name stay,
+    even while a timed-out push is not yet on the remote, which may still
+    record it after any read (issue #480 review finding 2)."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     landed: list[protocol.ObjectId] = []
     real_push = store.GitPushTransport.push
@@ -2900,8 +2916,9 @@ def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_cla
         ref: str,
         new_oid: protocol.ObjectId,
     ) -> None:
-        real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
-        landed.append(new_oid)
+        if lands:
+            real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+            landed.append(new_oid)
         if push_answer is not None:
             raise push_answer
 
@@ -2922,7 +2939,7 @@ def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_cla
     assert (status, capsys.readouterr().err) == (2, f"ERROR: {reported}\n")
     monkeypatch.undo()
     live = store.fetch_state(worktree=repo, remote="origin").claims
-    assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) in live
+    assert (protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) in live) is lands
     assert checkout.resolve_path_checkout(worktree) is not None
 
 

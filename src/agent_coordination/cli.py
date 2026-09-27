@@ -5138,19 +5138,16 @@ class _WitnessedPush:
         self.sent = True
         store.GitPushTransport().push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
 
-    def may_have_written(self, claim_id: protocol.ClaimId, context: RunContext) -> bool:
-        """Whether the failed write may have left `claim_id` in the store:
-        never before a push was sent, nor once a fresh read shows the store
-        never recorded that id -- every push rejected and found absent, the
-        exhaustion a stale lock or missing push rights cause. A read that
-        fails settles nothing."""
-        if not self.sent:
-            return False
-        try:
-            observed = context.fresh().observation
-        except protocol.ClaimError:
-            return True
-        return claim_id in observed.consumed_ids
+    def may_have_written(self, error: protocol.ClaimError) -> bool:
+        """Whether the write that failed with `error` may have left its claim
+        in the store: never before a push was sent; after one, unless the
+        store itself settled every push as unwritten -- each rejected and
+        its search finding it absent, then the retry budget spent or the
+        intent refused on that settled state, the only
+        `ClaimUnavailableError` a transition raises once it pushed. No read
+        of the store here could settle more: a timed-out push may still land
+        after it (issue #480 review findings 2 and 3)."""
+        return self.sent and not isinstance(error, protocol.ClaimUnavailableError)
 
 
 def _committed_claim(
@@ -5513,7 +5510,7 @@ def _check_build_and_claim(
         # showed every push of this call absent from: nothing was written.
         return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     except protocol.ClaimError as error:
-        if push.may_have_written(plan.intent.claim_id, check_context):
+        if push.may_have_written(error):
             raise
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)
