@@ -1432,6 +1432,9 @@ def _board_item(
             malformed_defect=(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
             ),
+            nested_container_repair=_nested_container_repair(
+                container_parent, container_progress, parsed.slices, config.storage
+            ),
         )
     )
     return BoardItem(
@@ -2038,7 +2041,8 @@ def _container_next_action(
 ) -> NextAction | None:
     """The action a childless container qualifies for, or `None` to skip it:
     a non-`VALID` body names its own finding elsewhere and is never guessed
-    through.
+    through, and a nested container's uncut row is one `cut` refuses, so it
+    names its repair under `SKIPPED` instead (issue #503).
 
     An uncut `[[slice]]` row is the only thing that makes this a
     `CutSliceAction` (#208): a container's `Next` line naming further work is
@@ -2051,6 +2055,8 @@ def _container_next_action(
     next_line = item.contract.next
     further_work = next_line if next_line is not None and has_further_work(next_line) else None
     uncut = uncut_by_container.get(item.number)
+    if uncut is not None and item.container_parent is not None:
+        return None
     if uncut is not None:
         cut_title = uncut.rows[0].title
         return CutSliceAction(item, container, further_work or cut_title, cut_title)
@@ -2303,6 +2309,31 @@ class _ActionabilityFacts:
     projectionless_idea: bool
     read_state: BodyReadState = BodyReadState.VALID
     malformed_defect: ContractDefect | None = None
+    nested_container_repair: str | None = None
+
+
+def _nested_container_repair(
+    container_parent: int | None,
+    progress: ContainerProgress | None,
+    slices: tuple[SliceRow, ...],
+    storage: Storage,
+) -> str | None:
+    """The repair a childless container nested under `container_parent`
+    needs before its uncut `[[slice]]` rows can become work (issue #503):
+    `cut` refuses a nested container, so `next` never proposes one and
+    names this instead -- its one row as its own scope and type `Task`, the
+    shape `start` accepts, or its several rows moved up to the parent."""
+    if container_parent is None or progress is None or progress.open_children or not slices:
+        return None
+    if len(slices) == 1:
+        return (
+            "nested container, which cut refuses; set its type Task and take "
+            f'slice "{slices[0].title}"\'s scope as its own'
+        )
+    return (
+        "nested container, which cut refuses; move its slice rows to "
+        f"{item_label(container_parent, storage)}"
+    )
 
 
 def _read_state_actionable_reason(facts: _ActionabilityFacts) -> str | None:
@@ -2335,5 +2366,5 @@ def _actionable_reason(facts: _ActionabilityFacts) -> str | None:
     if read_state_reason is not None:
         return read_state_reason
     if facts.kind is ItemKind.CONTAINER:
-        return "container; claim a child"
+        return facts.nested_container_repair or "container; claim a child"
     return _claim_or_completeness_reason(facts)

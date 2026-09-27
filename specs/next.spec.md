@@ -28,6 +28,7 @@ it, `<s>` an integer score.
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05 | NEXT-12 |
+| that container is nested under another container | NEXT-25 | NEXT-14 |
 | a childless container has no further `Next` work | NEXT-07 | NEXT-13 |
 | that same container still names further work | NEXT-06 | NEXT-13 |
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
@@ -55,6 +56,7 @@ it, `<s>` an integer score.
 - [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title "<cut title>"`, exit `0` (see E-NEXT-03).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
+- [ ] [NEXT-25] A childless container nested under an open container, with an uncut row, never gets `cut_slice` (`cut` refuses it, CUT-03); `SKIPPED` names its repair instead (see E-NEXT-09).
 
 ## `RECOVERY` and `SKIPPED`
 
@@ -233,3 +235,25 @@ $ aco --repo acme/items next --json
 {"ok": false, "reason": "invalid_usage", "message": "--repo is meaningless under storage = state-ref"}
 exit 2
 ```
+
+### E-NEXT-09 — a nested container's uncut row, never a `cut` that `cut` refuses
+
+Setup: bare-remote, fake `gh`, container `#298` with one open child, the container `#299`; `#299` has no open child and one `[[slice]]` row titled `Scheibe Z`
+
+```console
+$ aco next
+No actionable item.
+parallel: none
+scope unknown: none
+close: none
+
+SKIPPED
+#298: container; claim a child
+#299: nested container, which cut refuses; set its type Task and take slice "Scheibe Z"'s scope as its own
+exit 3
+$ aco cut 299 --title "Scheibe Z"
+2> ERROR: #299 is itself a child of example/agent-coordination#298; nested containers are not supported
+exit 2
+```
+
+With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to #298`.
