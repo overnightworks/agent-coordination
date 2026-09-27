@@ -1734,7 +1734,8 @@ def test_bounded_command_sets_github_quiet_environment() -> None:
     assert observed.splitlines() == ["1", "1"]
 
 
-def _non_github_remote_url() -> str:
+@pytest.fixture
+def non_github_remote_url() -> str:
     """A remote URL `discover_repository` reads first (issue #245) and finds
     no repository in, so it falls through to asking `gh` -- every test using
     this in place of a matching GitHub remote is exercising that fallback,
@@ -1743,7 +1744,7 @@ def _non_github_remote_url() -> str:
 
 
 def test_repository_resolution_uses_github_quiet_environment(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, non_github_remote_url: str
 ) -> None:
     observed: dict[str, object] = {}
 
@@ -1754,7 +1755,7 @@ def test_repository_resolution_uses_github_quiet_environment(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    resolved = github.discover_repository(remote_url=_non_github_remote_url())
+    resolved = github.discover_repository(remote_url=non_github_remote_url)
 
     assert resolved == forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repository")
     command = observed["command"]
@@ -1767,7 +1768,7 @@ def test_repository_resolution_uses_github_quiet_environment(
 
 
 def test_repository_resolution_asks_gh_about_the_named_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, non_github_remote_url: str
 ) -> None:
     """Issue #472: the `gh repo view` fallback resolves the checkout the
     caller named, never whatever this process's own cwd happens to be."""
@@ -1781,7 +1782,7 @@ def test_repository_resolution_asks_gh_about_the_named_directory(
 
     monkeypatch.setattr(process, "run_captured", spy_run_captured)
 
-    github.discover_repository(remote_url=_non_github_remote_url(), directory=tmp_path)
+    github.discover_repository(remote_url=non_github_remote_url, directory=tmp_path)
 
     assert asked_in == [tmp_path]
 
@@ -1910,7 +1911,7 @@ def test_recent_merged_pull_requests_fails_loud_on_an_uncalendared_merge_time(
 
 
 def test_missing_gh_repository_resolution_is_a_controlled_error(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, non_github_remote_url: str
 ) -> None:
     def missing(*args, **kwargs):
         raise FileNotFoundError
@@ -1918,21 +1919,23 @@ def test_missing_gh_repository_resolution_is_a_controlled_error(
     monkeypatch.setattr(subprocess, "run", missing)
 
     with pytest.raises(ClaimError, match="gh is required"):
-        github.discover_repository(remote_url=_non_github_remote_url())
+        github.discover_repository(remote_url=non_github_remote_url)
 
 
-def test_repository_resolution_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_repository_resolution_times_out(
+    monkeypatch: pytest.MonkeyPatch, non_github_remote_url: str
+) -> None:
     def timed_out(*args, **kwargs):
         raise subprocess.TimeoutExpired(["gh"], process.DEFAULT_TIMEOUT_SECONDS)
 
     monkeypatch.setattr(subprocess, "run", timed_out)
 
     with pytest.raises(ClaimError, match="gh timed out while resolving the repository"):
-        github.discover_repository(remote_url=_non_github_remote_url())
+        github.discover_repository(remote_url=non_github_remote_url)
 
 
 def test_repository_resolution_refuses_when_no_remote_matches(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, non_github_remote_url: str
 ) -> None:
     def failed_gh(*arguments, **kwargs):
         return subprocess.CompletedProcess(arguments[0], 1, b"", b"not a gh repo")
@@ -1940,7 +1943,7 @@ def test_repository_resolution_refuses_when_no_remote_matches(
     monkeypatch.setattr(subprocess, "run", failed_gh)
 
     with pytest.raises(ClaimError, match="cannot resolve GitHub repository"):
-        github.discover_repository(remote_url="https://example.com/owner/repo")
+        github.discover_repository(remote_url=non_github_remote_url)
 
 
 @pytest.mark.parametrize(
