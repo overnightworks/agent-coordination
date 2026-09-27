@@ -3058,30 +3058,39 @@ def _the_store_rejects_every_push(
         ),
     ],
 )
-def test_start_removes_its_build_when_the_store_refuses_its_sent_push_for_certain(
+@pytest.mark.parametrize(
+    "worktree_stood",
+    [pytest.param(False, id="built"), pytest.param(True, id="found-standing")],
+)
+def test_start_removes_only_its_own_build_when_the_store_refuses_its_sent_push_for_certain(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path, Path], None],
     refusal: str,
+    worktree_stood: bool,
 ) -> None:
     """Issue #498 (START-18, CAS-57): the claim's push was sent and
     rejected, and the store's re-read found nothing of it written -- a rival
     claim landed first, or the store rejected every retry -- so the refusal
-    is certain: the worktree and branch `start` built go, and a rival's
-    conflict names the item the way the board's storage does."""
+    is certain: the worktree and branch `start` built go, one it found
+    standing stays (START-11), and a rival's conflict names the item the way
+    the board's storage does."""
     repo, bare_remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    if worktree_stood:
+        _real_git(repo, "worktree", "add", "-q", "-b", _START_BRANCH, str(worktree))
     arrange(monkeypatch, repo, bare_remote)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
     err = capsys.readouterr().err
     assert status == 2
     assert err.startswith(f"ERROR: {refusal.format(item=items.format_item_id(314))}")
-    assert err.endswith(_REMOVED_BOTH.format(worktree=worktree, branch=_START_BRANCH) + "\n")
-    assert not worktree.exists()
-    assert _START_BRANCH not in _real_git(repo, "branch", "--list").stdout
+    removal = _REMOVED_BOTH.format(worktree=worktree, branch=_START_BRANCH)
+    assert (removal in err) is not worktree_stood
+    assert worktree.exists() is worktree_stood
+    assert (_START_BRANCH in _real_git(repo, "branch", "--list").stdout) is worktree_stood
     live = store.fetch_state(worktree=repo, remote="origin").claims.values()
     assert _START_BRANCH not in {claim.branch for claim in live}
 
