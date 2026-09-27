@@ -1316,7 +1316,9 @@ def existing_start_worktree(path: Path, branch: str) -> bool:
     if existing is None:
         raise ClaimError(NOT_A_WORKTREE_REFUSAL)
     _refuse_foreign_worktree(path, existing)
-    if attached_branch(existing.branch) != branch:
+    if not existing.branch:
+        raise ClaimError(f"worktree {path} has a detached HEAD; check out {branch} there first")
+    if existing.branch != branch:
         raise ClaimError(
             f"worktree {path} exists on branch {existing.branch!r}, not {branch!r}; "
             f"{_CHOOSE_A_DIFFERENT_WORKTREE_REPAIR}"

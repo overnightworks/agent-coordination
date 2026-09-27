@@ -2296,21 +2296,33 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
     assert "removed worktree" not in err
 
 
+_OWN_DETACHED_HEAD_REFUSAL = "HEAD is detached; check out the lane branch first"
+
+
 @pytest.mark.parametrize(
-    ("run_inside_the_worktree", "arguments"),
+    ("run_inside_the_worktree", "arguments", "refusal"),
     [
-        pytest.param(True, ["claim", "314", "--scope", "base.txt"], id="claim"),
+        pytest.param(
+            True, ["claim", "314", "--scope", "base.txt"], _OWN_DETACHED_HEAD_REFUSAL, id="claim"
+        ),
         pytest.param(
             True,
             ["claim", "314", "--scope", "base.txt", "--branch", "claude/issue-314-detached"],
+            _OWN_DETACHED_HEAD_REFUSAL,
             id="claim-with-branch",
         ),
         pytest.param(
             True,
             ["claim", "314", "--scope", "base.txt", "--branch", "main"],
+            _OWN_DETACHED_HEAD_REFUSAL,
             id="claim-with-trunk-branch",
         ),
-        pytest.param(False, ["start", "314"], id="start"),
+        pytest.param(
+            False,
+            ["start", "314"],
+            "worktree {worktree} has a detached HEAD; check out {branch} there first",
+            id="start-from-main",
+        ),
     ],
 )
 def test_a_detached_head_is_named_and_nothing_is_written(
@@ -2319,11 +2331,13 @@ def test_a_detached_head_is_named_and_nothing_is_written(
     tmp_path: Path,
     run_inside_the_worktree: bool,
     arguments: list[str],
+    refusal: str,
 ) -> None:
-    """Issue #526 (CLM-33, START-29): `claim` in a linked worktree on a
-    detached HEAD, and `start` finding one at its computed path, refuse by
-    naming the detached HEAD -- never a claim marker field -- and write no
-    claim, worktree, or branch."""
+    """Issue #526 (CLM-33, START-29), #528: `claim` in a linked worktree on
+    a detached HEAD refuses by naming its own detached HEAD, and `start`
+    run from main names the detached worktree at its computed path -- never
+    a claim marker field -- and neither writes a claim, worktree, or
+    branch."""
     repo = _start_scenario(monkeypatch, tmp_path)
     fake = _patch_store_write(monkeypatch)
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
@@ -2335,10 +2349,8 @@ def test_a_detached_head_is_named_and_nothing_is_written(
 
     status = issue_claim.main(["--repo", REPOSITORY, *arguments])
 
-    assert (status, capsys.readouterr().err) == (
-        2,
-        "ERROR: HEAD is detached; check out the lane branch first\n",
-    )
+    named = refusal.format(worktree=worktree, branch=_START_BRANCH)
+    assert (status, capsys.readouterr().err) == (2, f"ERROR: {named}\n")
     assert (_worktrees_and_branches(repo), fake.transitions) == (before, [])
 
 
