@@ -6565,7 +6565,9 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     a claim on exactly those paths -- or, when the container names its own
     top-level `scope`, the bare claim that derives it (NEXT-03) -- and once
     retyped `next`'s own `Run:` line names that same claim, which runs
-    unchanged in a real shell (#310 finding 168)."""
+    unchanged in a real shell, and the parallel tail reads the paths that
+    claim occupies instead of collapsing to unknown (NEXT-16; #310 finding
+    168)."""
     row_scope = ("docs/nested.md", "src/it's here.py")
     row = [{"index": 1, "title": "Scheibe Z", "scope": list(row_scope)}]
     nested_contract = (
@@ -6608,6 +6610,7 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     claim_exit_code = issue_claim.main(["--repo", REPOSITORY, *claim_arguments])
 
     assert claim_advice == run_line == expected_claim
+    assert "\nparallel: none\nscope unknown: none\n" in retyped_out
     assert (next_exit_code, retyped_exit_code, bash_exit_code, claim_exit_code) == (
         3,
         0,
