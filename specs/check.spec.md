@@ -117,7 +117,7 @@ is enough): <git detail>`.
 bare repository with `main` at one commit, a git identity, `origin/HEAD`,
 and `ACO_AGENT` set to `Ada`; `<owner>/<repo>` is the runner's own
 repository path. Every session that reaches this command's own dispatch
-also needs `.agent-claim/board.toml` tracked (PIN-01), since that read
+also needs `.agent-claim/board.toml` present and tracked (PIN-01/PIN-32), since that read
 comes before pull-request or issue mode ever run; the checkout-less
 session (E-CHECK-06) is the one exception, since it never reaches the
 dispatch at all. A session reading a pull request or an issue also names a

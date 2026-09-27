@@ -12,8 +12,8 @@ with it before either ever reads an issue (`## The shared forge
 precondition`, cited rather than restated by
 `specs/next.spec.md`/`specs/rulings.spec.md`). It never restates a fact
 another file already owns: `<label>`'s two forms and the Landungen pairing
-rule are `specs/landing-grammar.spec.md`'s (LAND-41..54); the untracked-pin
-refusal is `specs/storage-pin.spec.md`'s (PIN-01); the ruling a click on
+rule are `specs/landing-grammar.spec.md`'s (LAND-41..54); the absent- and
+untracked-pin refusals are `specs/storage-pin.spec.md`'s (PIN-01/PIN-32); the ruling a click on
 that page writes is `specs/rule.spec.md`'s (RULE-01..09);
 `specs/output.spec.md` owns the `--json` envelope itself (OUT-nn: key
 order, `ok`, `message`) that wraps BOARD-11's own top-level keys.
@@ -37,7 +37,8 @@ included.
 |---|---|---|---|
 | no `--json`, `--html`, or `--serve` given | BOARD-44 | BOARD-44 | BOARD-44 |
 | unsupported canonical-remote host | BOARD-02, BOARD-43 | BOARD-02 | BOARD-02 |
-| untracked `.agent-claim/board.toml` | PIN-01 (cited) | PIN-01 (cited) | PIN-01 (cited) |
+| `.agent-claim/board.toml` absent | PIN-32 (cited) | PIN-32 (cited) | PIN-32 (cited) |
+| `.agent-claim/board.toml` present but untracked or ignored | PIN-01 (cited) | PIN-01 (cited) | PIN-01 (cited) |
 | `--repo` under `storage = "state-ref"` | BOARD-42, BOARD-43 | BOARD-42 | — |
 | the Landungen view's own rows | BOARD-12 | BOARD-20 | BOARD-20 |
 | an item with no recognized `kind` | BOARD-08 | — | — |
@@ -69,7 +70,7 @@ included.
 does, before either reads a single issue -- cited there, not restated.
 
 - [ ] [BOARD-02] A canonical remote whose host is not GitHub refuses `ERROR: no forge adapter for host <host>`, exit `2`, before any GitHub read is made (see E-BOARD-01).
-- [ ] [BOARD-01] `board` reaches the same untracked-`.agent-claim/board.toml` refusal `specs/storage-pin.spec.md` owns (PIN-01), exit `2`, before the host check above ever runs.
+- [ ] [BOARD-01] `board` reaches the same absent- or untracked-`.agent-claim/board.toml` refusal `specs/storage-pin.spec.md` owns (PIN-01/PIN-32), exit `2`, before the host check above ever runs.
 - [ ] [BOARD-42] Under `storage = "state-ref"`, `board`/`next`/`rulings` resolve the state-ref forge like `item show`/`edit`/`close`; `--repo` there refuses the same as those (PIN-04, PIN-05).
 
 - BOARD-03, BOARD-04, BOARD-05, BOARD-06, BOARD-07, BOARD-09, BOARD-10, BOARD-24, BOARD-25, BOARD-29, BOARD-30 (retired 20.09.2026, issue #420, #390 Befund 13): the fixed-width text table (`board.render`) they described no longer exists; `--json`'s own item fields, `landings` array, `uncut` array, and `measurements` object (BOARD-11..14, BOARD-26, BOARD-27, BOARD-31) and `--html`'s own sections (BOARD-15..21, BOARD-28) carry the equivalent facts.

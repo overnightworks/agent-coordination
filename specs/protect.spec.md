@@ -8,7 +8,7 @@ payload envelope, every denial reason and the order they are judged in, and
 the allow/deny output and exit codes. `specs/claim-record.spec.md` owns a
 claim's own identity, scope grammar and overlap; `specs/ref-store-cas.spec.md`
 owns `refs/aco/state`'s own transport failures; `specs/storage-pin.spec.md`
-owns the board-configuration precondition (PIN-01) every store command
+owns the board-configuration precondition (PIN-01/PIN-32) every store command
 shares -- this file cites those IDs rather than restating them. `aco rescope`
 shares `protect`'s own checkout resolver and relative-path grammar (the
 `relative payload path`, `not in a repository`, and `no commit on this
@@ -139,7 +139,7 @@ between separators is malformed like any other (PROT-41).
 
 ## The live claim state
 
-- [ ] [PROT-29] A board-configuration failure (PIN-01), reached resolving the canonical remote -- a linked worktree's at PROT-12, else past the root gates -- denies its own bare sentence, no `ERROR:` prefix.
+- [ ] [PROT-29] A board-configuration failure (PIN-01/PIN-32), reached resolving the canonical remote -- a linked worktree's at PROT-12, else past the root gates -- denies its own bare sentence, no `ERROR:` prefix.
 - [ ] [PROT-15] A store fetch failure -- unreachable, malformed tree, or a lineage break -- denies `cannot reach refs/aco/state: <detail>`.
 - [ ] [PROT-16] A fetched state with no `refs/aco/state` at all denies `cannot reach refs/aco/state: <sentence>`, `<sentence>` the one `specs/ref-store-cas.spec.md` CAS-03 already owns.
 - [ ] [PROT-17] Any other uncaught exception denies `{"decision": "deny", "reason": "<message>"}`, that exception's own bare text, no traceback.

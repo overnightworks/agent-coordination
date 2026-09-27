@@ -5,7 +5,7 @@ before it reaches the forge, without ever reading a live item.
 `specs/body-block.spec.md` owns every defect and `body ok`/`body incomplete`
 sentence a checked block can carry (BODY-01..BODY-56) and this file cites
 those IDs rather than restating them. `specs/storage-pin.spec.md` owns the
-tracked-pin precondition `--check` reads (PIN-01); `[record]`'s own
+tracked-pin precondition `--check` reads (PIN-01/PIN-32); `[record]`'s own
 storage-gated validity is `specs/body-block.spec.md`'s own BODY-15/BODY-16.
 `specs/output.spec.md` owns the `--json` envelope itself (OUT-nn: key order,
 `ok`, `message`); this file names only `--check`'s own `reason` vocabulary
@@ -19,7 +19,8 @@ storage-gated validity is `specs/body-block.spec.md`'s own BODY-15/BODY-16.
 | stdin is a valid, complete block | — | BDY-07 (BODY-14) | BDY-09 |
 | stdin is malformed or incomplete | — | BDY-08 (BODY-01..56) | BDY-09 |
 | stdin is not valid UTF-8 | — | BDY-10 | BDY-10 |
-| `.agent-claim/board.toml` untracked or absent | — | BDY-11 (PIN-01) | BDY-11 |
+| `.agent-claim/board.toml` absent | — | BDY-11 (PIN-32) | BDY-11 |
+| `.agent-claim/board.toml` present but untracked or ignored | — | BDY-11 (PIN-01) | BDY-11 |
 | `storage = "state-ref"` vs default `"github"` | — | BDY-12 (BODY-15, BODY-16) | BDY-12 |
 
 ## Flags and modes
@@ -37,7 +38,7 @@ owns only the CLI-level framing around it.
 - [ ] [BDY-08] `aco body --check` prints every defect sentence on stderr, one per line, never truncated like `aco check` (CHECK-06, CHECK-07); exit `2`.
 - [ ] [BDY-09] `aco body --check --json` prints the envelope, `reason` below, `"defects": [...]` the same ordered sentences BDY-08 lists; exit `0` on `valid`, exit `2` otherwise (see E-BDY-03).
 - [ ] [BDY-10] Stdin that is not valid UTF-8 refuses `stdin is not valid UTF-8: <reason>; pipe the body as UTF-8 text`, `--json` `reason: "unavailable"`, exit `2`, before any parse is attempted.
-- [ ] [BDY-11] `aco body --check` against an untracked, absent, or ignored `.agent-claim/board.toml` refuses PIN-01's own sentence, `--json` `reason: "unavailable"`, before stdin is ever read.
+- [ ] [BDY-11] `aco body --check` refuses PIN-32's sentence on an absent `.agent-claim/board.toml`, PIN-01's on a present but untracked or ignored one, `--json` `reason: "unavailable"`, before stdin is ever read.
 - [ ] [BDY-12] `aco body --check` reads the storage pin for `[record]`'s validity: unknown under default `storage = "github"` (BODY-15), field-checked under `storage = "state-ref"` (BODY-16).
 
 `reason`, by stdin's own shape:
