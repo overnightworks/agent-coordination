@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from board_fixtures import BASE, REPOSITORY, _active_claim
 from cli_fixtures import (
+    RECORDED_ORIGIN_HEAD_READ,
     _forbid_forge_resolution,
     _forbid_github_construction,
     _forbid_protect_git_github_and_identity,
@@ -62,9 +63,6 @@ _PATH_CHECKOUT_ARGUMENTS = (
 )
 
 
-_ORIGIN_HEAD_SYMBOLIC_REF = ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
-
-
 def _protect_git_values(
     work: Path,
     *,
@@ -100,7 +98,7 @@ def _protect_git_values(
         ("config", "--get", "remote.origin.url"): f"git@github.com:{REPOSITORY}.git",
     }
     if origin_head is not None:
-        values[_ORIGIN_HEAD_SYMBOLIC_REF] = origin_head
+        values[RECORDED_ORIGIN_HEAD_READ] = origin_head
     return values
 
 
@@ -160,7 +158,7 @@ def _patch_protect_git(
                 "are a known checkout here"
             )
         key = tuple(arguments)
-        if key == _ORIGIN_HEAD_SYMBOLIC_REF and key not in values:
+        if key == RECORDED_ORIGIN_HEAD_READ and key not in values:
             # A real, unresolved `origin/HEAD` exits nonzero rather than
             # answering empty (measured locally, issue #238); `origin_head is
             # None` reproduces that shape rather than a missing-fixture-key
@@ -2437,10 +2435,6 @@ def _judge_decision_and_reason(verdict: protect.Verdict) -> tuple[protect.Decisi
     return verdict.decision, verdict.reason
 
 
-def _no_canonical_remote_call(_toplevel: Path) -> str:
-    pytest.fail("this denial must fire before the store's own canonical remote is ever read")
-
-
 def test_judge_denies_an_apply_patch_path_outside_the_live_claims_scope(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2501,16 +2495,18 @@ def test_judge_denies_a_bash_recognized_pattern_path_outside_the_live_claims_sco
 def test_judge_denies_a_path_resolving_to_the_checkout_root_before_reading_the_store(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """PROT-14 fires from the checkout gate alone, before the store's own
-    canonical remote is ever resolved (`_no_canonical_remote_call` fails the
-    test if it is): a payload path that resolves to exactly the checkout
-    root denies naming that root."""
+    """PROT-14 fires from the checkout gate alone, before the store is ever
+    read (`_store_must_not_be_read` fails the test if it is): a payload path
+    that resolves to exactly the checkout root denies naming that root. The
+    canonical remote is asked only for its recorded default branch (issue
+    #490)."""
     branch = "codex/issue-9-widget"
     worktree = _judge_worktree(tmp_path, branch=branch)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
     payload = {"toolName": "Edit", "toolInput": {"path": str(worktree)}}
 
-    verdict = protect.judge(payload, canonical_remote_for=_no_canonical_remote_call)
+    verdict = protect.judge(payload, canonical_remote_for=lambda _toplevel: "origin")
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -3110,6 +3106,119 @@ def test_protect_and_rescope_refuse_a_path_no_claim_can_cover_with_one_sentence(
     _use_real_path_is_tracked(monkeypatch)
     main, worktree = _protect_real_repo_with_worktree(tmp_path)
     path, sentence = build_case(main, worktree)
+    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
+
+    assert refusal_of(monkeypatch, capsys, path) == (2, sentence)
+
+
+def _hub_canonical_worktree_file(tmp_path: Path, *, hub_head: str | None, branch: str) -> Path:
+    """A file in a linked worktree on `branch` of a repository whose
+    tracked `board.toml` makes `hub` canonical, with `origin/HEAD` naming
+    `main` and `hub/HEAD` naming `hub_head` -- or never recorded (issue
+    #490)."""
+    main = tmp_path / "repo"
+    main.mkdir()
+    _real_git(main, "init", "-q", "-b", "main")
+    _real_git(main, "config", "user.name", "Test")
+    _real_git(main, "config", "user.email", "test@example.com")
+    (main / ".agent-claim").mkdir()
+    (main / ".agent-claim" / "board.toml").write_text('canonical_remote = "hub"\n')
+    _real_git(main, "add", "-f", ".agent-claim/board.toml")
+    _real_git(main, "commit", "-q", "-m", "initial")
+    _real_git(main, "branch", "trunk")
+    for remote in ("origin", "hub"):
+        _real_git(main, "remote", "add", remote, f"https://example.invalid/{remote}/repo.git")
+        _real_git(main, "update-ref", f"refs/remotes/{remote}/main", "HEAD")
+        _real_git(main, "update-ref", f"refs/remotes/{remote}/trunk", "HEAD")
+    _real_git(main, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    if hub_head is not None:
+        _real_git(main, "symbolic-ref", "refs/remotes/hub/HEAD", f"refs/remotes/hub/{hub_head}")
+    worktree = tmp_path / "repo-worktrees" / "lane"
+    worktree.parent.mkdir()
+    _real_git(main, "worktree", "add", "-q", str(worktree), "-B", branch)
+    return worktree / "widget.py"
+
+
+def _claim_refusal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], path: Path
+) -> tuple[int, str]:
+    """`claim` standing in `path`'s worktree: its toplevel read asks that
+    worktree, past the autouse toplevel isolation."""
+    isolated_git_output = checkout._git_output
+
+    def git_output(arguments: list[str], *, directory: Path | None = None) -> str:
+        return isolated_git_output(arguments, directory=directory or path.parent)
+
+    monkeypatch.setattr(checkout, "_git_output", git_output)
+    monkeypatch.chdir(path.parent)
+    status = issue_claim.main(["claim", "72", "--scope", path.name])
+    return status, capsys.readouterr().err.removeprefix("ERROR: ").removesuffix("\n")
+
+
+_CLAIM_ON_THE_DEFAULT_BRANCH = (
+    "build claims require an isolated non-main worktree branch; run git worktree add "
+    "../<repo>-worktrees/issue-<n>-<slug> -b <agent>/issue-<n>-<slug>"
+)
+
+
+@pytest.mark.parametrize(
+    ("refusal_of", "hub_head", "branch", "sentence"),
+    [
+        pytest.param(
+            _claim_refusal, "trunk", "trunk", _CLAIM_ON_THE_DEFAULT_BRANCH, id="claim-hub-default"
+        ),
+        pytest.param(
+            _claim_refusal,
+            None,
+            "master",
+            _CLAIM_ON_THE_DEFAULT_BRANCH,
+            id="claim-hub-unrecorded-guesses",
+        ),
+        pytest.param(_protect_refusal, "trunk", "trunk", "not main", id="protect-hub-default"),
+        pytest.param(
+            _rescope_refusal,
+            "trunk",
+            "trunk",
+            "build claims require an isolated non-main worktree branch; "
+            "run this command from this claim's own worktree, not the primary checkout",
+            id="rescope-hub-default",
+        ),
+        pytest.param(
+            _protect_refusal,
+            None,
+            "codex/issue-72-widget",
+            checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
+            id="protect-hub-unrecorded",
+        ),
+        pytest.param(
+            _rescope_refusal,
+            None,
+            "codex/issue-72-widget",
+            checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
+            id="rescope-hub-unrecorded",
+        ),
+    ],
+)
+def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    refusal_of: Callable[[pytest.MonkeyPatch, pytest.CaptureFixture[str], Path], tuple[int, str]],
+    hub_head: str | None,
+    branch: str,
+    sentence: str,
+) -> None:
+    """Issue #490 proof 1 (PROT-12, PROT-13, RESC-04, CLM-06): with `hub`
+    canonical and `origin/HEAD` naming `main`, a worktree on `hub`'s
+    default branch is refused; without a recorded `hub/HEAD`, `protect` and
+    `rescope` refuse `default branch unknown` while `claim` guesses
+    `main`/`master` -- `origin/HEAD` never answers for `hub`."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    _use_real_path_is_tracked(monkeypatch)
+    path = _hub_canonical_worktree_file(tmp_path, hub_head=hub_head, branch=branch)
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
 
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)

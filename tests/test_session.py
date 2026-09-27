@@ -148,28 +148,74 @@ def test_repository_id_discovers_the_repository_of_the_context_directory(
     assert discovered_for == [tmp_path]
 
 
-def test_default_branch_under_state_ref_reads_origin_head_of_the_context_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
+def test_default_branch_under_state_ref_reads_the_canonical_remotes_head_in_the_context_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, canonical_remote: str
 ) -> None:
     """Issue #322 review finding 1, now the context's own fact (issue #457):
-    a context for `start`'s created worktree reads `origin/HEAD` there,
-    never from the calling process's own cwd."""
+    a context for `start`'s created worktree reads the recorded `HEAD`
+    there, never from the calling process's own cwd -- the canonical
+    remote's, whichever it is (issue #490)."""
     worktree = tmp_path / "worktree"
-    _write_board_config(worktree, 'storage = "state-ref"\n')
+    _write_board_config(
+        worktree, f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
+    )
     monkeypatch.setattr(
         checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
     )
-    read_from: list[Path | None] = []
+    reads: list[tuple[str, Path | None]] = []
 
-    def default_branch_name(*, directory: Path | None = None) -> str:
-        read_from.append(directory)
+    def recorded_default_branch(remote: str, *, directory: Path | None = None) -> str:
+        reads.append((remote, directory))
         return "main"
 
-    monkeypatch.setattr(checkout, "default_branch_name", default_branch_name)
+    monkeypatch.setattr(checkout, "recorded_default_branch", recorded_default_branch)
 
     branch = _context().for_directory(worktree).default_branch
 
-    assert (branch, read_from) == ("main", [worktree])
+    assert (branch, reads) == ("main", [(canonical_remote, worktree)])
+
+
+def _hub_canonical_repository(tmp_path: Path, *, origin_url: str | None) -> Path:
+    """A repository whose canonical remote `hub` names `owner/repo` on
+    GitHub, with an `origin` at `origin_url` beside it when given."""
+    repository = tmp_path / "repo"
+    _real_git(tmp_path, "init", "-q", str(repository))
+    _write_board_config(repository, 'canonical_remote = "hub"\n')
+    _real_git(repository, "remote", "add", "hub", "git@github.com:owner/repo.git")
+    if origin_url is not None:
+        _real_git(repository, "remote", "add", "origin", origin_url)
+    return repository
+
+
+@pytest.mark.parametrize(
+    "origin_url",
+    [pytest.param(None, id="no-origin"), pytest.param("git@github.com:fork/repo.git", id="fork")],
+)
+def test_repository_id_is_discovered_from_the_canonical_remotes_url(
+    tmp_path: Path, origin_url: str | None
+) -> None:
+    """#310 finding 138: with `hub` canonical, the repository is discovered
+    from `hub`'s URL, with or without an `origin` -- a fork's `origin` is
+    never read."""
+    repository = _hub_canonical_repository(tmp_path, origin_url=origin_url)
+
+    context = RunContext(None, build_forge=_forge_never_built, directory=repository)
+
+    assert context.repository_id == forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo")
+
+
+def test_repository_id_refuses_a_repo_naming_the_fork_beside_the_canonical_remote(
+    tmp_path: Path,
+) -> None:
+    """#310 finding 138: `--repo` naming the fork an `origin` points at,
+    while `hub` is canonical, refuses loudly rather than reading the fork."""
+    repository = _hub_canonical_repository(tmp_path, origin_url="git@github.com:fork/repo.git")
+    fork = forge.RepositoryId(github.GITHUB_HOST, ("fork",), "repo")
+    context = RunContext(fork, build_forge=_forge_never_built, directory=repository)
+
+    with pytest.raises(ClaimUnavailableError, match="does not match canonical remote owner/repo"):
+        _ = context.repository_id
 
 
 def test_a_context_for_another_directory_reads_its_remotes_there(
@@ -178,7 +224,8 @@ def test_a_context_for_another_directory_reads_its_remotes_there(
     """Issue #457 proof 7: `for_directory` answers the canonical remote and
     the repository it names from its own checkout, never from the calling
     process's cwd, so a child context never pairs its own configuration
-    with another checkout's remote."""
+    with another checkout's remote -- one read of the canonical remote's
+    URL answers both (#310 finding 138)."""
     worktree = tmp_path / "worktree"
     _write_board_config(worktree, "")
     monkeypatch.setattr(
@@ -196,7 +243,7 @@ def test_a_context_for_another_directory_reads_its_remotes_there(
 
     assert (target, read_from) == (
         forge.RepositoryId(github.GITHUB_HOST, ("owner",), "repo"),
-        [("origin", worktree), ("origin", worktree)],
+        [("origin", worktree)],
     )
 
 

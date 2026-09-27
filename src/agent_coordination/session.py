@@ -176,9 +176,14 @@ class RunContext:
         """The canonical remote's configured URL, parsed host-neutrally
         (issue #245) -- read only when a forge target is resolved, so a
         forge-free command never errs on a non-GitHub canonical remote."""
-        return checkout.parse_remote_location(
-            checkout.remote_url(self.canonical_remote, directory=self.directory)
-        )
+        return checkout.parse_remote_location(self.canonical_remote_url)
+
+    @cached_property
+    def canonical_remote_url(self) -> str:
+        """The canonical remote's configured URL, as git records it: the
+        URL a forge target is compared against and discovered from (#310
+        finding 138)."""
+        return checkout.remote_url(self.canonical_remote, directory=self.directory)
 
     @cached_property
     def repository_id(self) -> forge.RepositoryId:
@@ -198,28 +203,34 @@ class RunContext:
             self.repo
             if self.repo is not None
             else github.discover_repository(
-                remote_url=self._origin_remote_url, directory=self.directory
+                remote_url=self.canonical_remote_url, directory=self.directory
             )
         )
         refuse_canonical_remote_mismatch(target, self.remote_location)
         return target
 
-    def _origin_remote_url(self) -> str:
-        return checkout.origin_remote_url(directory=self.directory)
-
     @cached_property
     def default_branch(self) -> str:
-        """The default branch by provider: `origin/HEAD` of this directory
-        under `state-ref` (every repository piloting that pin names its
-        canonical remote `origin`), the forge's own answer under `github`."""
+        """The default branch by provider: the canonical remote's recorded
+        default branch under `state-ref`, where that remote is the forge,
+        the forge's own answer under `github` (issue #484 rulings)."""
         if self.config.storage is not body.Storage.STATE_REF:
             return self.forge.default_branch()
-        branch = checkout.default_branch_name(directory=self.directory)
+        branch = self.recorded_default_branch
         if branch is None:
             raise protocol.ClaimUnavailableError(
-                "cannot resolve the default branch; run aco from a checkout with origin/HEAD set"
+                "cannot resolve the default branch; "
+                f"run aco from a checkout with {self.canonical_remote}/HEAD set"
             )
         return branch
+
+    @cached_property
+    def recorded_default_branch(self) -> str | None:
+        """The canonical remote's recorded default branch in this checkout,
+        or `None` when none is recorded or it dangles (issue #490): the
+        offline checks' default branch -- `claim`, `start`, `rescope` --
+        each keeping its own rule for `None`."""
+        return checkout.recorded_default_branch(self.canonical_remote, directory=self.toplevel)
 
     @cached_property
     def trunk_ref(self) -> str:

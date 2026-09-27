@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 from board_fixtures import BASE, request
 from cli_fixtures import (
-    _fallback_git_output,
     _git_checkout,
     _push_repository_trunk,
     _real_git,
@@ -33,17 +32,7 @@ _LIVE_VERSIONED_PATHS = checkout.versioned_paths
 _LIVE_TRUNK_LANDINGS = checkout.trunk_landings
 
 
-@pytest.mark.parametrize(
-    ("remote", "read_remote"),
-    [
-        pytest.param("origin", checkout.origin_remote_url, id="origin"),
-        pytest.param(
-            "upstream",
-            lambda **where: checkout.remote_url("upstream", **where),
-            id="named-remote",
-        ),
-    ],
-)
+@pytest.mark.parametrize("remote", ["origin", "upstream"])
 @pytest.mark.parametrize(
     "from_repository_cwd",
     [
@@ -55,7 +44,6 @@ def test_remote_url_reads_the_git_config_of_the_given_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     remote: str,
-    read_remote: Callable[..., str],
     from_repository_cwd: bool,
 ) -> None:
     """Issue #457 proof 7 at the checkout boundary: a remote's URL comes
@@ -69,7 +57,7 @@ def test_remote_url_reads_the_git_config_of_the_given_directory(
     monkeypatch.chdir(repo if from_repository_cwd else outside_every_repository)
     where = {} if from_repository_cwd else {"directory": repo}
 
-    assert read_remote(**where) == remote_urls[remote]
+    assert checkout.remote_url(remote, **where) == remote_urls[remote]
 
 
 @pytest.mark.parametrize(
@@ -122,7 +110,6 @@ def test_checkout_validation_binds_clean_head_and_branch(
 ) -> None:
     values = {
         ("rev-parse", "HEAD"): BASE,
-        ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
         ("branch", "--show-current"): "codex/issue-71-claims",
         ("rev-parse", "--git-dir"): "/repo/.git/worktrees/issue-71",
         ("rev-parse", "--git-common-dir"): "/repo/.git",
@@ -132,7 +119,7 @@ def test_checkout_validation_binds_clean_head_and_branch(
         checkout, "_git_output", lambda arguments, **_kwargs: values[tuple(arguments)]
     )
 
-    checkout._validate_checkout(request())
+    checkout._validate_checkout(request(), default_branch=lambda: "main")
 
 
 @pytest.mark.parametrize(
@@ -153,7 +140,6 @@ def test_checkout_validation_binds_clean_head_and_branch(
             request(),
             {
                 ("rev-parse", "HEAD"): BASE,
-                ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
                 ("branch", "--show-current"): "other",
                 ("rev-parse", "--git-dir"): "/repo/.git/worktrees/issue-71",
                 ("rev-parse", "--git-common-dir"): "/repo/.git",
@@ -165,7 +151,6 @@ def test_checkout_validation_binds_clean_head_and_branch(
             request(),
             {
                 ("rev-parse", "HEAD"): BASE,
-                ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
                 ("branch", "--show-current"): "codex/issue-71-claims",
                 ("rev-parse", "--git-dir"): "/repo/.git",
                 ("rev-parse", "--git-common-dir"): "/repo/.git",
@@ -177,7 +162,6 @@ def test_checkout_validation_binds_clean_head_and_branch(
             request(),
             {
                 ("rev-parse", "HEAD"): BASE,
-                ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
                 ("branch", "--show-current"): "codex/issue-71-claims",
                 ("rev-parse", "--git-dir"): "/repo/.git/worktrees/issue-71",
                 ("rev-parse", "--git-common-dir"): "/repo/.git",
@@ -198,7 +182,7 @@ def test_checkout_validation_rejects_false_or_late_claims(
     )
 
     with pytest.raises(ClaimError, match=message):
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: "main")
 
 
 def test_checkout_validation_names_the_base_repair(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -217,7 +201,7 @@ def test_checkout_validation_names_the_base_repair(monkeypatch: pytest.MonkeyPat
     candidate = request()
 
     with pytest.raises(ClaimError) as error:
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: "main")
 
     assert str(error.value) == (
         f"claim base {BASE} does not match checkout HEAD {'b' * 40}; "
@@ -226,33 +210,30 @@ def test_checkout_validation_names_the_base_repair(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.parametrize(
-    ("branch", "origin_head"),
+    ("branch", "default_branch"),
     [
-        pytest.param("main", "refs/remotes/origin/main", id="hardcoded-main"),
-        pytest.param("trunk", "refs/remotes/origin/trunk", id="repository-default-trunk"),
+        pytest.param("main", None, id="guessed-main"),
+        pytest.param("trunk", "trunk", id="repository-default-trunk"),
     ],
 )
 def test_checkout_validation_names_the_isolated_worktree_recipe_for_the_default_branch(
     monkeypatch: pytest.MonkeyPatch,
     branch: str,
-    origin_head: str,
+    default_branch: str | None,
 ) -> None:
     """Claiming from a checkout of the repository's default branch names the
     exact `git worktree add` recipe (#52), not just the rule it violates --
-    whether that default is the hardcoded `main` or one read from
-    `origin/HEAD` (issue #238: a repository whose default is `trunk` refuses
-    a claim from `trunk` the same way)."""
-    values = {
-        ("rev-parse", "HEAD"): BASE,
-        ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): origin_head,
-    }
+    whether that default is the guessed `main` or a recorded one (issue
+    #238: a repository whose default is `trunk` refuses a claim from
+    `trunk` the same way)."""
+    values = {("rev-parse", "HEAD"): BASE}
     monkeypatch.setattr(
         checkout, "_git_output", lambda arguments, **_kwargs: values[tuple(arguments)]
     )
     candidate = request(branch=branch)
 
     with pytest.raises(ClaimError) as error:
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: default_branch)
 
     assert str(error.value) == (
         "build claims require an isolated non-main worktree branch; "
@@ -267,7 +248,6 @@ def test_checkout_validation_names_the_isolated_worktree_recipe_for_a_shared_che
     worktree) names the same recipe as the trunk-branch refusal above."""
     values = {
         ("rev-parse", "HEAD"): BASE,
-        ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
         ("branch", "--show-current"): "codex/issue-71-claims",
         ("rev-parse", "--git-dir"): "/repo/.git",
         ("rev-parse", "--git-common-dir"): "/repo/.git",
@@ -279,7 +259,7 @@ def test_checkout_validation_names_the_isolated_worktree_recipe_for_a_shared_che
     candidate = request()
 
     with pytest.raises(ClaimError) as error:
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: "main")
 
     assert str(error.value) == (
         "build claims require a linked isolated worktree checkout; "
@@ -298,7 +278,6 @@ def test_checkout_validation_names_the_first_three_dirty_paths_and_the_rest_as_a
     )
     values = {
         ("rev-parse", "HEAD"): BASE,
-        ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
         ("branch", "--show-current"): "codex/issue-71-claims",
         ("rev-parse", "--git-dir"): "/repo/.git/worktrees/issue-71",
         ("rev-parse", "--git-common-dir"): "/repo/.git",
@@ -310,7 +289,7 @@ def test_checkout_validation_names_the_first_three_dirty_paths_and_the_rest_as_a
     candidate = request()
 
     with pytest.raises(ClaimError) as error:
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: "main")
 
     assert str(error.value) == (
         "claim must be acquired before the first worktree edit: "
@@ -325,7 +304,6 @@ def test_checkout_validation_names_every_dirty_path_when_three_or_fewer(
     three named."""
     values = {
         ("rev-parse", "HEAD"): BASE,
-        ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
         ("branch", "--show-current"): "codex/issue-71-claims",
         ("rev-parse", "--git-dir"): "/repo/.git/worktrees/issue-71",
         ("rev-parse", "--git-common-dir"): "/repo/.git",
@@ -337,7 +315,7 @@ def test_checkout_validation_names_every_dirty_path_when_three_or_fewer(
     candidate = request()
 
     with pytest.raises(ClaimError) as error:
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: "main")
 
     assert str(error.value) == "claim must be acquired before the first worktree edit: src/a.py"
 
@@ -510,85 +488,60 @@ _ISOLATED_NON_MAIN_BRANCH_SENTENCE = (
     "run this command from this claim's own worktree, not the primary checkout"
 )
 
-_FOREIGN_TOPLEVEL = Path("/foreign-worktree")
-
 
 @pytest.mark.parametrize(
-    ("toplevel", "branch", "kind", "origin_head", "expected"),
+    ("branch", "kind", "default_branch", "expected"),
     [
         pytest.param(
-            Path("/repo"),
             "main",
             checkout.CheckoutKind.LINKED_WORKTREE,
-            "refs/remotes/origin/main",
+            "main",
             _ISOLATED_NON_MAIN_BRANCH_SENTENCE,
             id="trunk-branch-names-none",
         ),
         pytest.param(
-            Path("/repo"),
             "codex/issue-211-worktree-repair-sentence",
             checkout.CheckoutKind.MAIN,
-            "refs/remotes/origin/main",
+            "main",
             "build claims require a linked isolated worktree checkout; "
             "run this command from this claim's own worktree on "
             "'codex/issue-211-worktree-repair-sentence', not the primary checkout",
             id="known-branch-named",
         ),
         pytest.param(
-            Path("/repo"),
             "master",
             checkout.CheckoutKind.LINKED_WORKTREE,
-            "refs/remotes/origin/master",
+            "master",
             _ISOLATED_NON_MAIN_BRANCH_SENTENCE,
             id="master-default-branch",
         ),
         pytest.param(
-            Path("/repo"),
             "trunk",
             checkout.CheckoutKind.LINKED_WORKTREE,
-            "refs/remotes/origin/trunk",
+            "trunk",
             _ISOLATED_NON_MAIN_BRANCH_SENTENCE,
             id="trunk-default-branch",
         ),
         pytest.param(
-            _FOREIGN_TOPLEVEL,
-            "trunk",
-            checkout.CheckoutKind.LINKED_WORKTREE,
-            "refs/remotes/origin/trunk",
-            _ISOLATED_NON_MAIN_BRANCH_SENTENCE,
-            id="foreign-checkout-default-differs-from-repo",
-        ),
-        pytest.param(
-            Path("/repo"),
-            "codex/issue-72-widget",
+            "main",
             checkout.CheckoutKind.LINKED_WORKTREE,
             None,
             checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
-            id="unresolved-origin-head",
+            id="unrecorded-default-branch-never-guessed",
         ),
     ],
 )
 def test_refuse_shared_checkout_matrix(
-    monkeypatch: pytest.MonkeyPatch,
-    toplevel: Path,
     branch: str,
     kind: checkout.CheckoutKind,
-    origin_head: str | None,
+    default_branch: str | None,
     expected: str,
 ) -> None:
     """`rescope`'s own worktree-isolation refusal (issue #314 repeat gate,
-    finding 3) resolves the repository's default branch the same way
-    `protect` does -- not just the hardcoded `main`/`master` fallback, but
-    any `origin/HEAD` a real clone can record (`master`, `trunk`), and never
-    falls back to that guess when `origin/HEAD` cannot be resolved at all.
-    `origin_head` is read *from `path_checkout.toplevel`* (issue #314): the
-    `foreign-checkout-default-differs-from-repo` row registers `/repo`'s own
-    default as `main` alongside `_FOREIGN_TOPLEVEL`'s own default as `trunk`
-    in the same fake, so a resolver that accidentally asked `/repo` instead
-    of the payload's own resolved toplevel would compare branch `trunk`
-    against default `main`, never raise, and fail this row outright --
-    unlike a fake with one single, ambient default that could never catch
-    that mistake.
+    finding 3) judges the repository's recorded default branch -- not just
+    the hardcoded `main`/`master` fallback, but any a real clone can record
+    (`master`, `trunk`) -- and never falls back to that guess when none is
+    recorded at all, not even for `main`.
 
     `RETURN_TO_CLAIM` is used throughout: `rescope` acts on a claim whose
     worktree already exists, so recommending the `git worktree add` recipe
@@ -599,36 +552,18 @@ def test_refuse_shared_checkout_matrix(
     known -- it is the same branch the caller resolved its identity from --
     so `RETURN_TO_CLAIM` names it instead of leaving the sentence
     branch-less."""
-    origin_head_by_toplevel: dict[Path, str] = {}
-    if toplevel != Path("/repo"):
-        # The foreign-checkout row proves directory-scoped resolution: `/repo`
-        # keeps its own default registered here too, so a resolver that
-        # accidentally read `/repo` instead of the payload's own toplevel
-        # sees a real (wrong) answer rather than an absent-key crash that
-        # would pass for an unrelated reason.
-        origin_head_by_toplevel[Path("/repo")] = "refs/remotes/origin/main"
-    if origin_head is not None:
-        origin_head_by_toplevel[toplevel] = origin_head
-
-    def git(arguments: list[str], *, directory: Path | None = None) -> str:
-        if arguments != ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]:
-            raise AssertionError(f"unexpected git read: {arguments}")
-        if directory not in origin_head_by_toplevel:
-            raise ClaimError("unknown git failure")
-        return origin_head_by_toplevel[directory]
-
-    monkeypatch.setattr(checkout, "_git_output", git)
     path_checkout = checkout.PathCheckout(
-        toplevel=toplevel,
+        toplevel=Path("/repo"),
         branch=branch,
         kind=kind,
-        common_directory=toplevel / ".git",
+        common_directory=Path("/repo/.git"),
         has_commit=True,
     )
+    repair = checkout.WorktreeRepair.RETURN_TO_CLAIM
 
     with pytest.raises(ClaimError) as error:
         checkout._refuse_shared_checkout(
-            path_checkout, repair=checkout.WorktreeRepair.RETURN_TO_CLAIM
+            path_checkout, default_branch=default_branch, repair=repair
         )
 
     assert str(error.value) == expected
@@ -638,32 +573,28 @@ def test_refuse_shared_checkout_matrix(
     ("branch", "denied"),
     [("main", True), ("master", True), ("trunk", False)],
 )
-@pytest.mark.parametrize("origin_head_empty", [False, True], ids=["raises", "empty"])
 def test_claim_default_branch_fallback_denies_only_main_and_master(
     monkeypatch: pytest.MonkeyPatch,
-    origin_head_empty: bool,
     branch: str,
     denied: bool,
 ) -> None:
-    """When `origin/HEAD` cannot be resolved, `claim`'s fallback (issue #238,
+    """When no default branch is recorded, `claim`'s fallback (issue #238,
     Grok review) still denies exactly the historical `{"main", "master"}`
     guess and nothing else -- `trunk` is not treated as default without a
-    resolved `origin/HEAD`, so deleting `DEFAULT_BRANCH_FALLBACK` would fail
-    this test by letting `main`/`master` through instead. Proven with both
-    the fake's raising shape (git's real behaviour, measured locally) and an
-    empty resolved name, so both routes to "unresolved" are pinned."""
+    recorded one, so deleting `DEFAULT_BRANCH_FALLBACK` would fail this
+    test by letting `main`/`master` through instead."""
     values = _git_checkout(branch=branch)
     monkeypatch.setattr(
-        checkout, "_git_output", _fallback_git_output(values, origin_head_empty=origin_head_empty)
+        checkout, "_git_output", lambda arguments, **_kwargs: values[tuple(arguments)]
     )
     candidate = request(branch=branch)
 
     if not denied:
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: None)
         return
 
     with pytest.raises(ClaimError, match="isolated non-main worktree branch"):
-        checkout._validate_checkout(candidate)
+        checkout._validate_checkout(candidate, default_branch=lambda: None)
 
 
 def test_versioned_paths_reads_nul_terminated_ls_files_without_stripping(
@@ -687,7 +618,7 @@ def test_versioned_paths_reads_nul_terminated_ls_files_without_stripping(
     "git_call",
     [
         pytest.param(_LIVE_VERSIONED_PATHS, id="versioned-paths"),
-        pytest.param(checkout.origin_remote_url, id="origin-remote-url"),
+        pytest.param(lambda: checkout.remote_url("origin"), id="remote-url"),
         pytest.param(
             lambda: checkout.path_is_tracked(board.CONFIG_PATH.as_posix()), id="path-is-tracked"
         ),
@@ -712,8 +643,8 @@ def test_checkout_git_calls_fail_loud_when_git_is_missing_or_times_out(
     raised: Exception,
     match: str,
 ) -> None:
-    """`versioned_paths`, `origin_remote_url`, and `path_is_tracked` -- all
-    direct `subprocess.run` callers (`_git_output` backs `origin_remote_url`)
+    """`versioned_paths`, `remote_url`, and `path_is_tracked` -- all
+    direct `subprocess.run` callers (`_git_output` backs `remote_url`)
     -- must translate a missing executable or a timeout to the same
     `ClaimError` text."""
 
@@ -897,6 +828,56 @@ def test_trunk_ref_after_falls_back_to_the_local_branch_name_when_remote_head_wa
         recorded_head,
         checkout.trunk_ref_after("hub", recorded_head, directory=repository),
     ) == (None, "main")
+
+
+def _record_origin_head(repo: Path, _remote: Path) -> None:
+    _real_git(repo, "push", "-q", "origin", "main")
+    _real_git(repo, "remote", "set-head", "origin", "main")
+
+
+def _leave_origin_head_unrecorded(repo: Path, _remote: Path) -> None:
+    _real_git(repo, "push", "-q", "origin", "main")
+
+
+def _record_origin_head_as_a_plain_ref(repo: Path, _remote: Path) -> None:
+    _real_git(repo, "push", "-q", "origin", "main")
+    _real_git(repo, "update-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+
+def _dangle_origin_head_after_a_rename(repo: Path, remote: Path) -> None:
+    """The remote renames its default branch `master` to `main` and a
+    `fetch --prune` drops `origin/master`, while `origin/HEAD` still names
+    it (issue #490)."""
+    _real_git(repo, "push", "-q", "origin", "main:master")
+    _real_git(repo, "remote", "set-head", "origin", "master")
+    _real_git(remote, "branch", "-m", "master", "main")
+    _real_git(repo, "fetch", "-q", "--prune", "origin")
+
+
+@pytest.mark.parametrize(
+    ("record", "expected_default_branch"),
+    [
+        pytest.param(_record_origin_head, "main", id="recorded"),
+        pytest.param(_leave_origin_head_unrecorded, None, id="never-recorded"),
+        pytest.param(_dangle_origin_head_after_a_rename, None, id="dangling"),
+        pytest.param(_record_origin_head_as_a_plain_ref, None, id="plain-ref"),
+    ],
+)
+def test_a_dangling_or_plain_recorded_head_counts_as_unrecorded_and_the_trunk_guesses_on(
+    tmp_path: Path, record: Callable[[Path, Path], None], expected_default_branch: str | None
+) -> None:
+    """Issue #490: a remote `HEAD` that names no resolvable branch counts
+    as never recorded -- no default branch, and the trunk guesses on with
+    `origin/main` instead of handing git a ref it cannot resolve."""
+    repo, remote = _real_repository_with_bare_remote(tmp_path)
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
+    record(repo, remote)
+    recorded_head = checkout.recorded_head_ref("origin", directory=repo)
+
+    assert (
+        checkout.recorded_default_branch("origin", directory=repo),
+        checkout.trunk_ref_after("origin", recorded_head, directory=repo),
+    ) == (expected_default_branch, "refs/remotes/origin/main")
 
 
 def test_trunk_landings_is_empty_when_trunk_has_no_first_parent_landings(

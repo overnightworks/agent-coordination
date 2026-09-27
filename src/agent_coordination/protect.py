@@ -341,15 +341,23 @@ def _protect_single_path_scope_miss_denial(
     return "claim first"
 
 
-def _protect_not_main_denial(path_checkout: checkout.PathCheckout) -> str | None:
+def _protect_not_main_denial(
+    path_checkout: checkout.PathCheckout, *, context: _ProtectContext
+) -> str | None:
     """`None` when `path_checkout` is a linked worktree off the repository's
     default branch; otherwise the "not main" family of denials gate G4
     names: the shared main checkout, a linked worktree that happens to sit
     on the default branch, or -- never `claim`'s own `{main, master}` guess
-    -- a checkout whose default branch cannot even be resolved."""
+    -- a checkout whose default branch cannot even be resolved. The default
+    branch is the checkout's canonical remote's recorded one (issue #490),
+    so a linked worktree whose board configuration cannot be read denies
+    with that refusal first (PROT-12)."""
     if path_checkout.kind is checkout.CheckoutKind.MAIN:
         return checkout.PROTECT_NOT_MAIN_REASON
-    default_branch = checkout.default_branch_name(directory=path_checkout.toplevel)
+    toplevel = path_checkout.toplevel
+    default_branch = checkout.recorded_default_branch(
+        context.canonical_remote_for(toplevel), directory=toplevel
+    )
     if default_branch is None:
         return checkout.DEFAULT_BRANCH_UNKNOWN_REASON
     if path_checkout.branch == default_branch:
@@ -441,14 +449,16 @@ def _landing_checkout_outside_every_repository(
     return checkout.resolve_nearest_existing_checkout(target.parent)
 
 
-def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None:
+def _protect_checkout_denial(
+    path_checkout: checkout.PathCheckout, *, context: _ProtectContext
+) -> str | None:
     """The denial a resolved checkout earns before any live claim is weighed:
     a checkout with no commit yet (gate G3 -- its branch name could
     otherwise coincidentally match a still-live claim's), or the "not main"
     family `_protect_not_main_denial` owns (gate G4)."""
     if not path_checkout.has_commit:
         return checkout.NO_COMMIT_CHECKOUT_REASON
-    return _protect_not_main_denial(path_checkout)
+    return _protect_not_main_denial(path_checkout, context=context)
 
 
 _SESSION_SETTINGS_DIRECTORY = ".claude/"
@@ -581,7 +591,7 @@ def _protect_checkout_scope_denial(
     link_target = _link_target_in_another_checkout(raw_path, path_checkout, operation=operation)
     judged = (link_target,) if link_target is not None else ()
     store_free_outcomes = [
-        _protect_store_free_outcome(judged_path, judged_checkout)
+        _protect_store_free_outcome(judged_path, judged_checkout, context=context)
         for judged_path, judged_checkout in (*judged, (raw_path, path_checkout))
     ]
     for outcome in store_free_outcomes:
@@ -616,7 +626,7 @@ class _ClaimQuestion:
 
 
 def _protect_store_free_outcome(
-    raw_path: str, path_checkout: checkout.PathCheckout
+    raw_path: str, path_checkout: checkout.PathCheckout, *, context: _ProtectContext
 ) -> str | _ClaimQuestion | None:
     """What `path_checkout` alone says about a write to `raw_path` before
     any store or identity is read: `None` when it is exempt, a denial when
@@ -625,7 +635,8 @@ def _protect_store_free_outcome(
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
     if _is_exempt(relative, path_checkout):
         return None
-    denial = _protect_checkout_denial(path_checkout) or checkout.unscopable_path_reason(
+    checkout_denial = _protect_checkout_denial(path_checkout, context=context)
+    denial = checkout_denial or checkout.unscopable_path_reason(
         raw_path, toplevel=path_checkout.toplevel
     )
     if denial is not None:

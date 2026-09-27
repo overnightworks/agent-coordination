@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import subprocess
 from collections import Counter
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,7 @@ import pytest
 from board_fixtures import BASE
 
 from agent_coordination import board, checkout, cli, forge, github, process, store
-from agent_coordination.protocol import ClaimError, ClaimState
+from agent_coordination.protocol import ClaimState
 from agent_coordination.session import RunContext
 
 
@@ -42,15 +41,27 @@ def _stub_one_git_call(
     monkeypatch.setattr(checkout, "_git_run", fake)
 
 
+def recorded_head_read(remote: str) -> tuple[str, ...]:
+    """The one git read `checkout.recorded_head_ref` sends for `remote`: a
+    fake keyed by it answers every reader of that remote's recorded `HEAD`."""
+    return (
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--symbolic-full-name",
+        f"refs/remotes/{remote}/HEAD",
+    )
+
+
+RECORDED_ORIGIN_HEAD_READ = recorded_head_read("origin")
+
+
 def trunk_git_calls(monkeypatch: pytest.MonkeyPatch, remote: str) -> list[tuple[str, Path]]:
     """Every `fetch <remote>` and every read of `<remote>`'s recorded `HEAD`
     the one git launcher runs from here on, in order, each keyed by the
     directory git ran in (issue #488): a count at the launcher sees every
     trunk reader, whichever function asked."""
-    watched = {
-        ("fetch", remote): "fetch",
-        ("symbolic-ref", "--quiet", f"refs/remotes/{remote}/HEAD"): "recorded head",
-    }
+    watched = {("fetch", remote): "fetch", recorded_head_read(remote): "recorded head"}
     calls: list[tuple[str, Path]] = []
     launch = checkout._git_run
 
@@ -172,33 +183,8 @@ def _git_checkout(
             "--git-common-dir",
         ): "\n".join((toplevel, git_directory, common_directory)),
         ("status", "--porcelain"): dirty,
-        ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"): "refs/remotes/origin/main",
+        RECORDED_ORIGIN_HEAD_READ: "refs/remotes/origin/main",
     }
-
-
-_ORIGIN_HEAD_SYMBOLIC_REF = ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
-
-
-def _fallback_git_output(
-    values: dict[tuple[str, ...], str], *, origin_head_empty: bool
-) -> Callable[[list[str]], str]:
-    """A `_git_output` fake for a clone whose `origin/HEAD` never got recorded
-    (issue #238, Grok review): measured locally, real
-    `git symbolic-ref --quiet refs/remotes/origin/HEAD` then exits non-zero
-    with empty stdout and stderr, which `_git_output` turns into
-    `ClaimError("unknown git failure")` -- the `origin_head_empty=True` branch
-    additionally covers the otherwise-untested case of git exiting 0 with an
-    empty ref name."""
-
-    def git(arguments: list[str], **_kwargs: object) -> str:
-        key = tuple(arguments)
-        if key == _ORIGIN_HEAD_SYMBOLIC_REF:
-            if origin_head_empty:
-                return ""
-            raise ClaimError("unknown git failure")
-        return values[key]
-
-    return git
 
 
 def _set_agent_identity_env(
@@ -288,7 +274,7 @@ def arrange_scope_width(
     )
     monkeypatch.setattr(checkout, "versioned_paths", lambda **_kwargs: versioned or ())
     if validate_checkout:
-        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, directory=None: None)
+        monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
 
 
 def run_context_over(client: forge.ForgeReader) -> RunContext:
