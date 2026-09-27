@@ -5005,7 +5005,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
         _refuse_claim(parsed.json, plan.target_issue, plan.checks)
         return 2
     _print_claim_checks(plan, as_json=parsed.json)
-    claimed, live = _committed_claim(plan)
+    claimed, live = _committed_claim(plan, worktree=session.context.toplevel)
     return _report_claim(plan, claimed, live, as_json=parsed.json)
 
 
@@ -5017,7 +5017,6 @@ class _ClaimPlan:
 
     requested: protocol.ClaimRequest
     observed: protocol.ClaimState
-    worktree: Path
     canonical_remote: str
     storage: body.Storage
     versioning: ScopeVersioning
@@ -5090,7 +5089,6 @@ def _checked_claim(
     plan = _ClaimPlan(
         requested=requested,
         observed=observed,
-        worktree=worktree,
         canonical_remote=canonical_remote,
         storage=storage,
         versioning=versioning,
@@ -5113,16 +5111,17 @@ def _print_claim_checks(plan: _ClaimPlan, *, as_json: bool) -> None:
 
 
 def _committed_claim(
-    plan: _ClaimPlan,
+    plan: _ClaimPlan, *, worktree: Path
 ) -> tuple[protocol.ActiveClaim, tuple[protocol.ActiveClaim, ...]]:
-    """`claim`'s commit phase: the plan's one ledger write, or the replayed
-    claim it already names, with every live claim after it."""
+    """`claim`'s commit phase: the plan's one ledger write, made from
+    `worktree`, or the replayed claim it already names, with every live
+    claim after it."""
     if plan.replayed is not None:
         return plan.replayed, tuple(plan.observed.claims.values())
     requested = plan.requested
     try:
         new_state = store.commit_transition(
-            worktree=plan.worktree,
+            worktree=worktree,
             remote=plan.canonical_remote,
             subject=_transition_subject("claim", requested.identity, requested.branch),
             intent=plan.intent,
@@ -5447,7 +5446,7 @@ def _check_build_and_claim(
         checkout._validate_checkout(requested, directory=target.path)
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
-        claimed, claims = _committed_claim(replace(plan, worktree=target.path))
+        claimed, claims = _committed_claim(plan, worktree=target.path)
     except _ClaimConflictError as error:
         return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     except protocol.ClaimError as error:
