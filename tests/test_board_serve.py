@@ -1035,14 +1035,15 @@ def test_new_token_mints_a_different_url(
     assert first_url != second_url
 
 
-def test_serve_refuses_a_malformed_item_before_minting_a_token(
+def test_serve_refuses_a_store_the_board_read_refuses_before_minting_a_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """PIN-29 (issue #447): while the store holds a malformed item, `board
-    --serve --new-token` refuses with that item's sentence before it writes a
-    token or binds a server a ruling click could write through."""
+    """PIN-13 (issues #447, #517): while the board read refuses the store --
+    a malformed item alone no longer does, it is listed (BOARD-54) -- `board
+    --serve --new-token` refuses with that sentence before it writes a token
+    or binds a server a ruling click could write through."""
     client = _served_board_environment(monkeypatch, tmp_path)
-    refusal = "item aco-3e26d9 has a malformed agent-claim block"
+    refusal = "items/not-an-item.md is not a valid item file name"
 
     def malformed_store() -> tuple[board.Issue, ...]:
         raise protocol.MalformedStateTreeError(refusal)
