@@ -2830,6 +2830,13 @@ PARENT_ISSUE_REFERENCE = board.IssueReference(REPOSITORY, 79)
         pytest.param(
             ItemKind.CONTAINER,
             (board.ChildItem(80, board.ChildState.CLOSED),),
+            agent_claim_body('version = 2\nnow = "N"\nnext = "keiner"\ndone_when = "D"\n'),
+            None,
+            id="a_malformed_parent_body_is_never_named",
+        ),
+        pytest.param(
+            ItemKind.CONTAINER,
+            (board.ChildItem(80, board.ChildState.CLOSED),),
             complete_contract("keiner"),
             79,
             id="no_open_children_and_no_uncut_row_names_the_parent",
