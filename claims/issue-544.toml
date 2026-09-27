@@ -1,0 +1,8 @@
+claim_id = "7e2b859d23c9446d9da1857276d254ae"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "bc2e2bac4085e2abfb39a5479f4014c17b3b6345"
+branch = "claude/issue-544-terminal-safe-bodies"
+scope = ["scripts/test_budget_ratchet.txt", "specs/brief.spec.md", "specs/item.spec.md", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
+opened_commit = "b54c83974a87814257c7368a9c1bc4c284f15825"
+whole_reason = "one terminal-safe owner for multi-line foreign text and the three printers that use it"
