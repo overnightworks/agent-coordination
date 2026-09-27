@@ -53,7 +53,14 @@ import pytest
 
 
 def run_gh(*arguments):
-    return subprocess.run(["gh", *arguments], capture_output=True, text=True, check=False)
+    # Its stdout is never captured, so a token gh does find cannot reach a failure report.
+    return subprocess.run(
+        ["gh", *arguments],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
 """
 _SCRATCH_GH_LOGIN_MODULE = (
     _SCRATCH_GH_PREAMBLE
@@ -325,8 +332,14 @@ def test_gh_under_the_plugin_has_no_login_and_stays_on_the_machine(
     """The real gh binary finds no login for its default host nor, in the
     operator's keyring, for github.com, and a request for its default host
     ends at the closed loopback port (#534 line 1)."""
+    # Its stdout is never captured, so a token gh does find cannot reach a failure report.
     gh = subprocess.run(
-        ["gh", *gh_arguments], cwd=tmp_path, capture_output=True, text=True, check=False
+        ["gh", *gh_arguments],
+        cwd=tmp_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
     )
 
     assert gh.returncode != 0
