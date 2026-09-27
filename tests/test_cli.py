@@ -2187,16 +2187,6 @@ def _serve_a_higher_priority_item(monkeypatch: pytest.MonkeyPatch) -> None:
     _serve_start_board(monkeypatch, _start_item(), security)
 
 
-def _serve_a_malformed_state_item(monkeypatch: pytest.MonkeyPatch) -> None:
-    """PIN-29: another item the whole-board read refuses stops a fresh claim."""
-    client = _serve_start_board(monkeypatch, _start_item())
-
-    def another_item_malformed() -> tuple[board.Issue, ...]:
-        raise protocol.MalformedStateTreeError("item aco-3e26d9 has a malformed agent-claim block")
-
-    monkeypatch.setattr(client, "list_open_board_issues", another_item_malformed)
-
-
 def _hold_a_claim_by_another_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     """Issue #322 review/gate: `claim_key` never folds in `branch`, so
     another agent's claim on #314 is never resumed as this session's own."""
@@ -2245,12 +2235,6 @@ def _hold_a_claim_on_the_item(
             [],
             "higher-priority actionable item #11",
             id="out-of-order",
-        ),
-        pytest.param(
-            _serve_a_malformed_state_item,
-            [],
-            "item aco-3e26d9 has a malformed agent-claim block",
-            id="malformed-state-item",
         ),
         pytest.param(
             lambda _monkeypatch: None,
@@ -6794,14 +6778,31 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
     assert (next_exit_code, bash_exit_code, cut_exit_code) == (0, 0, 0), capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        *(
+            f"Line one{line_break}Line two"
+            for line_break in ("\n", "\r", "\f", "\u0085", "\u2028", "\u2029")
+        ),
+        "Line one\n",
+    ],
+    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF"],
+)
 def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    title: str,
 ) -> None:
-    """Issue #513 line 2: a first uncut row whose title holds a line break
-    would split the printed `cut` over two lines, so `next` prints no `cut`
-    for it and names the row to shorten instead."""
+    """Issues #513 line 2 and #517 line 3: a first uncut row whose title,
+    stored before `item edit` refused it, holds any character that splits a
+    line would split the printed `cut` over two lines, so `next` prints no
+    `cut` for it and names the row to shorten instead."""
     _real_state_ref_repository(
-        monkeypatch, tmp_path, {50: _state_ref_container_body("Epic", "Line one\nLine two")}
+        monkeypatch,
+        tmp_path,
+        {50: _state_ref_container_body("Epic", title)},
     )
 
     exit_code = issue_claim.main(["next"])
@@ -10704,8 +10705,8 @@ def test_cli_claim_replay_of_a_wide_scope_without_whole_reads_only_its_own_item(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """PIN-29/CLM-15 (issue #447): a replayed wide claim that names no
-    `--whole` takes its item's own `whole` from that item alone, so another
-    item the whole-board read refuses never stops the replay."""
+    `--whole` takes its item's own `whole` from that item alone, so a
+    whole-board read that would refuse (PIN-16) never stops the replay."""
     reason = "the four adapters share one lock"
     wide_scope = ["a.py", "b.py", "c.py", "d.py"]
     item_body = complete_contract("Ship it.", scope=wide_scope, whole=reason)
@@ -10716,10 +10717,12 @@ def test_cli_claim_replay_of_a_wide_scope_without_whole_reads_only_its_own_item(
     assert issue_claim.main(argv) == 0
     capsys.readouterr()
 
-    def another_item_malformed() -> tuple[board.Issue, ...]:
-        raise protocol.MalformedStateTreeError("item aco-3e26d9 has a malformed agent-claim block")
+    def board_read_refused() -> tuple[board.Issue, ...]:
+        raise protocol.MalformedStateTreeError(
+            "item aco-0a0a0a is referenced as a parent but does not exist"
+        )
 
-    monkeypatch.setattr(client, "list_open_board_issues", another_item_malformed)
+    monkeypatch.setattr(client, "list_open_board_issues", board_read_refused)
 
     status = issue_claim.main(argv)
 
@@ -14063,6 +14066,41 @@ def test_release_merged_names_the_parent_hint_only_for_the_last_open_child(
     assert (hint in capsys.readouterr().out) is hint_expected
 
 
+def test_release_merged_beside_an_unreadable_parent_reports_freed_instead_of_a_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #517 line 4 (BOARD-54): a landed child whose container went
+    unreadable -- its kind unknown, its own state read refusing as the
+    state-ref adapter's does -- keeps the release's `freed:`/`next` report;
+    an unreadable parent is never named closable, so its refusal never
+    stands in for the report."""
+    client = _released_last_child_client(monkeypatch, sibling_open=False)
+    unreadable = client.parents[WORK_ITEM_ISSUE]
+    client.parents[WORK_ITEM_ISSUE] = board.ParentIssue(unreadable.reference, unreadable.body)
+    readable_reference = client.item_reference
+
+    def refusing_the_parent(number: int) -> forge.ItemReference:
+        if number == PARENT_OF_WORK_ITEM:
+            raise protocol.MalformedStateTreeError(
+                "item aco-000001 has a malformed agent-claim block"
+            )
+        return readable_reference(number)
+
+    monkeypatch.setattr(client, "item_reference", refusing_the_parent)
+
+    exit_code = issue_claim.main(
+        ["--repo", REPOSITORY, "release", str(WORK_ITEM_ISSUE), "--merged", "12"]
+    )
+
+    out = capsys.readouterr().out
+    assert (exit_code, "freed:" in out, "hint:" in out, "close it" in out) == (
+        0,
+        True,
+        False,
+        False,
+    )
+
+
 def test_release_merged_json_carries_the_parent_closable_number(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -14111,8 +14149,10 @@ def test_release_merged_fetches_each_candidates_dependencies_only_once(
     [
         pytest.param(forge.ForgeTransientError("gh: connection reset"), id="forge-outage"),
         pytest.param(
-            protocol.MalformedStateTreeError("item aco-3e26d9 has a malformed agent-claim block"),
-            id="malformed-state-ref-item",
+            protocol.MalformedStateTreeError(
+                "item aco-0a0a0a is referenced as a parent but does not exist"
+            ),
+            id="state-ref-item-names-a-missing-parent",
         ),
     ],
 )
@@ -14121,8 +14161,8 @@ def test_release_merged_prints_a_hint_instead_of_failing_when_the_board_is_unrea
     capsys: pytest.CaptureFixture[str],
     board_error: protocol.ClaimError,
 ) -> None:
-    """A forge outage -- or a malformed state-ref item the board read refuses
-    on (issue #447) -- that only shows after the release itself already
+    """A forge outage -- or a state-ref item naming a missing parent the board
+    read refuses on (PIN-16, LAND-65) -- that only shows after the release itself already
     committed must not undo or fail it (issue #256): the release's own
     exit code and store effect stay exactly what a readable board would
     have produced, with one hint line standing in for `freed`/`next`."""
@@ -19325,7 +19365,8 @@ def test_item_new_json_reports_ok_reason_created(
     _write_state_ref_pin(tmp_path)
     client = FakeForge(repository=forge.RepositoryId("file", (), str(tmp_path)))
     item_id = items.format_item_id(42)
-    monkeypatch.setattr(client, "create_item", lambda **_kwargs: item_id, raising=False)
+    monkeypatch.setattr(client, "compose_item", lambda **_kwargs: None, raising=False)
+    monkeypatch.setattr(client, "create_item", lambda _write: item_id, raising=False)
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
     monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: client)
 
@@ -19722,8 +19763,9 @@ def _state_ref_item_new(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> tuple[FakeForge, list[str]]:
     client = _state_ref_item_client(tmp_path)
+    monkeypatch.setattr(client, "compose_item", lambda **_kwargs: None, raising=False)
     monkeypatch.setattr(
-        client, "create_item", lambda **_kwargs: items.format_item_id(43), raising=False
+        client, "create_item", lambda _write: items.format_item_id(43), raising=False
     )
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
     return client, ["item", "new", "--title", "Fresh Item"]

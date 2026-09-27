@@ -523,7 +523,7 @@ def test_render_block_round_trips_question_example_and_a_multiline_picture() -> 
     SVG with embedded quotes and a backslash, a literal `\"\"\"` run that
     must not be mistaken for the closing delimiter, and a value ending in a
     trailing `"` right before the writer's own closing `\"\"\"` -- only a
-    TOML multi-line basic string (`_toml_multiline_string`), not the
+    TOML multi-line basic string (`protocol.toml_multiline_string`), not the
     single-line `toml_string` every other field uses, can carry this
     byte-exact."""
     picture = (
@@ -548,6 +548,33 @@ def test_render_block_round_trips_question_example_and_a_multiline_picture() -> 
     reparsed = tomllib.loads(render_block(data))
 
     assert reparsed == data
+
+
+@pytest.mark.parametrize(
+    "control_character",
+    [chr(code) for code in (*range(0x20), 0x7F)],
+    ids=lambda character: f"U+{ord(character):04X}",
+)
+def test_render_block_round_trips_a_picture_carrying_any_control_character(
+    control_character: str,
+) -> None:
+    """Issue #517: the picture writer escapes every control character the
+    reader forbids literal in a multi-line basic string, so a picture the
+    reader accepted -- an escaped U+000B, say -- is written back readable
+    rather than as TOML `tomllib.loads` refuses."""
+    data = {
+        "version": 1,
+        "now": "N",
+        "next": "X",
+        "done_when": "D",
+        "expectation": [
+            proposed_expectation(
+                "Proposed", picture=f"<svg>\n  before{control_character}after\n</svg>"
+            )
+        ],
+    }
+
+    assert tomllib.loads(render_block(data)) == data
 
 
 # --- expectation_lines / expectation_line_state / expectation_line_summary ---

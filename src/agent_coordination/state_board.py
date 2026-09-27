@@ -40,10 +40,13 @@ from . import board, forge, items
 from .body import (
     RECORD_KEY,
     BodyReadState,
+    ContractDefect,
     ItemKind,
     Storage,
+    body_defect_text,
     locate_agent_claim_block,
     parse_body,
+    readable_record_parent,
     readable_record_title,
     replace_agent_claim_block,
 )
@@ -64,8 +67,8 @@ STATE_REF_CAPABILITIES: Mapping[forge.ForgeOperation, forge.Capability] = Mappin
         forge.ForgeOperation.LIST_RECENT_MERGED_BOARD_PULL_REQUESTS: forge.Capability.UNSUPPORTED,
         forge.ForgeOperation.LIST_RECENTLY_CLOSED_ISSUES: forge.Capability.READ_ONLY,
         forge.ForgeOperation.LINK_CHILD: forge.Capability.READ_WRITE,
-        # `item new` creates a state-ref item through `create_item`, which
-        # mints its id and records its parent and origin in one write.
+        # `item new` creates a state-ref item through `compose_item` and `create_item`, which
+        # mint its id and record its parent and origin in one write.
         forge.ForgeOperation.CREATE_ISSUE: forge.Capability.UNSUPPORTED,
         forge.ForgeOperation.CREATE_CHILD: forge.Capability.READ_WRITE,
         forge.ForgeOperation.UPDATE_ITEM_BODY: forge.Capability.READ_WRITE,
@@ -133,15 +136,28 @@ class _DecodedItem:
 class _MalformedItem:
     """An item file whose bytes decode to no valid `agent-claim` block with
     a `[record]` table (issue #447): kept aside rather than refusing the
-    store at decode, so a read of any other single item still answers while
-    this item's own read and every whole-store read (PIN-29) refuse.
-    `problem` completes the sentence `item <id> ...`; `oid` is the
-    CAS `expected` a repairing `update_item_body` writes over; `title` is
-    the record's title when it alone still reads, for the twin search."""
+    store at decode, so a read of any other item still answers while this
+    item's own read refuses, and `board`/`next` list it by `defect` rather
+    than refusing the whole store (issue #517). `problem` completes the
+    sentence `item <id> ...`; `oid` is the CAS `expected` a repairing
+    `update_item_body` writes over; `text` is whatever of the file still
+    decodes; `title` is the record's title when it alone still reads, for
+    the twin search and the board's row; `parent` is the record's parent
+    when it alone still reads, so that container counts this item as an
+    open child."""
 
     problem: str
+    defect: ContractDefect
     oid: ObjectId
+    text: str = ""
     title: str | None = None
+    parent: str | None = None
+
+
+# The defects an item file the block grammar never reached is named by
+# (issue #517): its bytes are no UTF-8, or its valid block has no record.
+_NOT_UTF8 = ContractDefect("item", "item file is not valid UTF-8")
+_NO_RECORD = ContractDefect(RECORD_KEY, "no [record] table")
 
 
 @dataclass(frozen=True)
@@ -161,6 +177,17 @@ class LandingWrite:
     record: items.ItemRecord
 
 
+@dataclass(frozen=True)
+class NewItemWrite:
+    """A fresh item's write, composed and checked readable but not yet
+    applied (issue #517): `compose_item` builds it, `create_item` writes
+    it."""
+
+    item_id: str
+    record: items.ItemRecord
+    body: str
+
+
 def _valid_record(text: str) -> Mapping[str, object] | None:
     """`text`'s own `[record]` table when its `agent-claim` block is VALID
     under `Storage.STATE_REF` -- the same block grammar `body.py` already
@@ -169,23 +196,51 @@ def _valid_record(text: str) -> Mapping[str, object] | None:
     return parsed.record if parsed.read_state is BodyReadState.VALID else None
 
 
+def _readable_content(text: str) -> bytes:
+    """`text`, a body `_with_record` composed for a write, as the bytes to
+    store -- refused before any write when the read would set it aside
+    (issue #517): the composed `[record]` is always present, so the parse's
+    own first defect is the whole reason. A text holding a lone surrogate
+    (an argv byte that was no UTF-8) has no UTF-8 bytes at all, so it is
+    refused with the read's own not-UTF-8 defect."""
+    try:
+        content = text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise _unreadable_body_refusal(_NOT_UTF8) from None
+    defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
+    if defects:
+        raise _unreadable_body_refusal(defects[0])
+    return content
+
+
+def _unreadable_body_refusal(defect: ContractDefect) -> ClaimUnavailableError:
+    """ITEM-52's refusal of a write whose stored body the read would set
+    aside for `defect`."""
+    return ClaimUnavailableError(
+        f"{body_defect_text(defect)}; stored, that body would not read back, so nothing was written"
+    )
+
+
 def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | _MalformedItem:
     """`content` turned into a `_DecodedItem`, or set aside as a
     `_MalformedItem` (issue #447): every item file must be UTF-8 text whose
     block parses VALID with a `[record]` table; one that does not refuses
-    its own read and every whole-store read (PIN-29), never another item's."""
+    its own read, never another item's."""
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
-        return _MalformedItem(problem="is not valid UTF-8", oid=oid)
-    record = _valid_record(text)
-    if record is None:
+        return _MalformedItem(problem="is not valid UTF-8", defect=_NOT_UTF8, oid=oid)
+    parsed = parse_body(text, storage=Storage.STATE_REF)
+    if parsed.read_state is not BodyReadState.VALID or parsed.record is None:
         return _MalformedItem(
             problem="has a malformed agent-claim block",
+            defect=(parsed.contract.defects or (_NO_RECORD,))[0],
             oid=oid,
+            text=text,
             title=readable_record_title(text),
+            parent=readable_record_parent(text),
         )
-    return _DecodedItem(record=items.parse_item_record(item_id, record), body=text, oid=oid)
+    return _DecodedItem(record=items.parse_item_record(item_id, parsed.record), body=text, oid=oid)
 
 
 def _malformed_item_refusal(item_id: str, malformed: _MalformedItem) -> MalformedStateTreeError:
@@ -291,10 +346,9 @@ class StateRefBoard:
     def require_well_formed(self) -> None:
         """Refuses with the lowest malformed item's own sentence and repair
         while `items/` holds any (issue #447): a malformed item's parent,
-        state, and blockers are unknown, so every answer that enumerates the
-        whole store -- the board `board`/`next`/`rulings`/`cut` project, a
-        container's children, what `item close` freed -- would guess past
-        it."""
+        state, and blockers are unknown, so what `item close` freed and a
+        `board --serve` ruling click's write would guess past it. Reads that
+        only project the board list it instead (issue #517)."""
         if self._malformed:
             item_id = min(self._malformed)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
@@ -309,9 +363,12 @@ class StateRefBoard:
         self.require_well_formed()
         self._holds_well_formed = True
 
-    def _write_item(self, item_id: str, *, expected: ObjectId | None, content: bytes) -> ObjectId:
+    def _write_item(self, item_id: str, *, expected: ObjectId | None, body: str) -> ObjectId:
         return self._writer.write_item(
-            item_id, expected=expected, content=content, store_expected=self._store_expected()
+            item_id,
+            expected=expected,
+            content=_readable_content(body),
+            store_expected=self._store_expected(),
         )
 
     def _store_expected(self) -> Mapping[str, ObjectId] | None:
@@ -350,13 +407,9 @@ class StateRefBoard:
         kind = _item_kind(record.kind)
         children_closed = children_total = None
         if kind is ItemKind.CONTAINER:
-            children = tuple(
-                child for child in self._items.values() if child.record.parent == item_id
-            )
+            children = self._children(item_id)
             children_total = len(children)
-            children_closed = sum(
-                1 for child in children if child.record.state is items.RecordState.CLOSED
-            )
+            children_closed = sum(1 for child in children if child.state is board.ChildState.CLOSED)
         return board.Issue(
             record.number,
             record.title,
@@ -406,43 +459,82 @@ class StateRefBoard:
         return items.item_number(parent_id)
 
     def parent_issue(self, number: int) -> board.ParentIssue | None:
+        """`number`'s parent as the board reads it; an unreadable parent
+        (issue #517) is answered by its reference and whatever of its text
+        still decodes, its kind unknown, so the child still reads as nested
+        rather than refusing the whole board."""
         parent_number = self.parent_number(number)
         if parent_number is None:
             return None
-        parent = self._related(self._by_number[parent_number], missing=_PARENT_MISSING)
-        return board.ParentIssue(
-            board.IssueReference(self.repository.path, parent.record.number),
-            parent.body,
-            _item_kind(parent.record.kind),
-        )
+        parent_id = self._by_number[parent_number]
+        reference = board.IssueReference(self.repository.path, parent_number)
+        malformed = self._malformed.get(parent_id)
+        if malformed is not None:
+            return board.ParentIssue(reference, malformed.text, None)
+        parent = self._items[parent_id]
+        return board.ParentIssue(reference, parent.body, _item_kind(parent.record.kind))
 
     def list_children(self, number: int) -> tuple[board.ChildItem, ...]:
-        self.require_well_formed()
         item_id = self._by_number.get(number)
-        if item_id is None:
-            return ()
-        return tuple(
-            board.ChildItem(child.record.number, board.ChildState(child.record.state.value))
-            for child in self._items.values()
-            if child.record.parent == item_id
+        return () if item_id is None else self._children(item_id)
+
+    def _children(self, item_id: str) -> tuple[board.ChildItem, ...]:
+        """`item_id`'s children, an unreadable one whose `[record].parent`
+        still names it counted open (issue #517): its state may not read, so
+        its container never reads as childless past it."""
+        return (
+            *(
+                board.ChildItem(child.record.number, board.ChildState(child.record.state.value))
+                for child in self._items.values()
+                if child.record.parent == item_id
+            ),
+            *(
+                board.ChildItem(items.item_number(child_id), board.ChildState.OPEN)
+                for child_id, child in self._malformed.items()
+                if child.parent == item_id
+            ),
         )
 
     def default_branch(self) -> str:
         return self._default_branch
 
     def list_open_board_issues(self) -> tuple[board.Issue, ...]:
-        self.require_well_formed()
-        return tuple(
-            self._issue(item_id)
-            for item_id, decoded in self._items.items()
-            if decoded.record.state is items.RecordState.OPEN
+        """Every open item, plus every unreadable one as a row the board
+        names by its defect (issue #517): its state may not read, so it
+        counts as open, and one such item never hides the others."""
+        return (
+            *(
+                self._issue(item_id)
+                for item_id, decoded in self._items.items()
+                if decoded.record.state is items.RecordState.OPEN
+            ),
+            *(
+                self._unreadable_issue(item_id, malformed)
+                for item_id, malformed in self._malformed.items()
+            ),
+        )
+
+    @staticmethod
+    def _unreadable_issue(item_id: str, malformed: _MalformedItem) -> board.Issue:
+        """`malformed`'s board row: only its id, its title when that alone
+        still reads, and its defect are known -- its record's timestamps
+        are not, so its age counts from this read."""
+        read_at = items.format_record_timestamp(datetime.now(UTC))
+        return board.Issue(
+            items.item_number(item_id),
+            malformed.title or item_id,
+            (),
+            malformed.text,
+            read_at,
+            read_at,
+            unreadable=malformed.defect,
         )
 
     def open_issue(self, number: int) -> board.Issue | None:
         """`number`'s item as the board reads it while it is open, else
         `None` -- `item new --parent`'s one look at its parent's kind (issue
-        #503), which unlike `list_open_board_issues` never refuses on
-        another malformed item (ITEM-37)."""
+        #503), which reads that one item alone, so another malformed item
+        never refuses it (ITEM-37)."""
         decoded = self._decoded(number)
         if decoded is None or decoded.record.state is not items.RecordState.OPEN:
             return None
@@ -450,10 +542,9 @@ class StateRefBoard:
 
     def open_item_titles(self) -> tuple[tuple[int, str], ...]:
         """Every open item's number and title, the open half of `item new`'s
-        twin search: unlike `list_open_board_issues` it never refuses on a
-        malformed item (issue #447), so `item new` still runs beside one --
-        and a malformed item whose title still reads counts as open, since
-        its state may not."""
+        twin search: `item new` still runs beside a malformed item (issue
+        #447), and one whose title still reads counts as open, since its
+        state may not."""
         return (
             *(
                 (decoded.record.number, decoded.record.title)
@@ -473,6 +564,9 @@ class StateRefBoard:
             return ()
         dependencies: list[board.IssueDependency] = []
         for blocker_id in decoded.record.blocked_by:
+            if blocker_id in self._malformed:
+                dependencies.append(self._unreadable_blocker(blocker_id))
+                continue
             blocker = self._related(blocker_id, missing=_BLOCKER_MISSING)
             closed_at = None
             if blocker.record.closed_at is not None:
@@ -486,6 +580,16 @@ class StateRefBoard:
                 )
             )
         return tuple(dependencies)
+
+    def _unreadable_blocker(self, blocker_id: str) -> board.IssueDependency:
+        """An unreadable blocker (issue #517): its state does not read, so it
+        keeps blocking until repaired, rather than refusing the whole board."""
+        return board.IssueDependency(
+            board.IssueReference(self.repository.path, items.item_number(blocker_id)),
+            board.BlockerState.OPEN,
+            False,
+            None,
+        )
 
     def list_open_board_pull_requests(self) -> tuple[board.PullRequest, ...]:
         return ()
@@ -523,21 +627,23 @@ class StateRefBoard:
         to link."""
         del parent, child
 
-    def _write_new_item(
+    def compose_item(
         self,
         *,
-        parent_id: str | None,
         title: str,
         body: str,
         kind: ItemKind,
+        parent: int | None,
         origin: str | None = None,
-    ) -> str:
-        """The one write every fresh state-ref item goes through (issues
-        #283, #285, #316): mint an id, compose its `[record]`, one CAS
-        write, then fold the result into this instance's own view -- shared
-        by `create_item` (`aco item new`, an optional parent and origin) and
-        `create_child` (`cut`, always one, never an origin -- a cut child is
-        always this repository's own item)."""
+    ) -> NewItemWrite:
+        """A fresh state-ref item's one write (issues #283, #285, #316),
+        composed -- its id minted, its `[record]` filled -- and refused
+        before any write when the read would set it aside (issue #517), but
+        not yet applied. `origin` binds the item to a foreign forge issue
+        (`--origin FORGE#N`, already grammar-checked by `items.parse_origin`)
+        without aco governing that forge at all -- #230's own concept, "the
+        forge is pulled, never governed." `item new` composes before it
+        retypes a Task parent, so a refused item leaves the store untouched."""
         new_id = items.mint_item_id(self._by_number.values())
         now = items.format_record_timestamp(datetime.now(UTC))
         record = items.ItemRecord(
@@ -547,44 +653,28 @@ class StateRefBoard:
             kind=kind.value,
             labels=(),
             blocked_by=(),
-            parent=parent_id,
+            parent=None if parent is None else self._by_number[parent],
             origin=origin,
             created_at=now,
             updated_at=now,
             closed_at=None,
         )
         new_body = _with_record(body, record)
-        new_oid = self._write_item(new_id, expected=None, content=new_body.encode("utf-8"))
-        self._items[new_id] = _DecodedItem(record=record, body=new_body, oid=new_oid)
-        self._by_number[record.number] = new_id
-        return new_id
+        _readable_content(new_body)
+        return NewItemWrite(item_id=new_id, record=record, body=new_body)
 
-    def create_item(
-        self,
-        *,
-        title: str,
-        body: str,
-        kind: ItemKind,
-        parent: int | None,
-        origin: str | None = None,
-    ) -> str:
-        """`aco item new`'s own write path (issues #285, #316): the same one
-        write `create_child` performs, generalized to an optional parent and
-        origin -- so `cli.py` never grows a second way to create a state-ref
-        item. `origin` binds this item to a foreign forge issue
-        (`--origin FORGE#N`, already grammar-checked by `items.parse_origin`
-        before this is ever called) without aco governing that forge at all
-        -- #230's own concept, "the forge is pulled, never governed."
-        Returns the freshly minted item id rather than `create_child`'s
-        `.number`: called only from `cli.py`'s own state-ref-only `item new`
-        path, which prints the id itself."""
-        parent_id = None if parent is None else self._by_number[parent]
-        return self._write_new_item(
-            parent_id=parent_id, title=title, body=body, kind=kind, origin=origin
-        )
+    def create_item(self, write: NewItemWrite) -> str:
+        """`write` applied in one CAS write, then folded into this
+        instance's own view -- the one write every fresh state-ref item goes
+        through, `item new`'s and `cut`'s alike, so `cli.py` never grows a
+        second way to create one. Returns the freshly minted item id."""
+        new_oid = self._write_item(write.item_id, expected=None, body=write.body)
+        self._items[write.item_id] = _DecodedItem(record=write.record, body=write.body, oid=new_oid)
+        self._by_number[write.record.number] = write.item_id
+        return write.item_id
 
     def create_issue(self, *, title: str, body: str, kind: ItemKind) -> int:
-        """Unsupported (`STATE_REF_CAPABILITIES`): `create_item` mints a
+        """Unsupported (`STATE_REF_CAPABILITIES`): `compose_item` mints a
         state-ref item's id and records its parent and origin in one write."""
         raise forge.ForgeUnsupportedError(NO_BARE_ISSUE)
 
@@ -602,12 +692,14 @@ class StateRefBoard:
             updated_at=items.format_record_timestamp(datetime.now(UTC)),
         )
         new_body = _with_record(current.body, updated_record)
-        new_oid = self._write_item(item_id, expected=current.oid, content=new_body.encode("utf-8"))
+        new_oid = self._write_item(item_id, expected=current.oid, body=new_body)
         self._items[item_id] = _DecodedItem(record=updated_record, body=new_body, oid=new_oid)
 
     def create_child(self, *, parent: int, title: str, body: str, kind: ItemKind) -> int:
-        item_id = self.create_item(title=title, body=body, kind=kind, parent=parent)
-        return self._items[item_id].record.number
+        item_id = self.create_item(
+            self.compose_item(title=title, body=body, kind=kind, parent=parent)
+        )
+        return items.item_number(item_id)
 
     def update_item_body(self, number: int, body: str) -> None:
         """`body`, written back to `number`'s item file (issues #283, #287):
@@ -646,7 +738,7 @@ class StateRefBoard:
             self._refuse_unresolved_repair(updated_record)
             expected = malformed.oid
         new_body = _with_record(body, updated_record)
-        new_oid = self._write_item(item_id, expected=expected, content=new_body.encode("utf-8"))
+        new_oid = self._write_item(item_id, expected=expected, body=new_body)
         self._malformed.pop(item_id, None)
         self._items[item_id] = _DecodedItem(record=updated_record, body=new_body, oid=new_oid)
 
@@ -715,7 +807,7 @@ class StateRefBoard:
         return LandingWrite(
             item_id=item_id,
             expected=current.oid,
-            content=new_body.encode("utf-8"),
+            content=_readable_content(new_body),
             record=updated_record,
         )
 
