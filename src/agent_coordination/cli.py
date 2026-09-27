@@ -5123,6 +5123,10 @@ def _claim_write(
     own board configuration -- the main checkout's."""
 
     def default_branch() -> str | None:
+        # A remote this checkout does not configure records no default
+        # branch, so the `main`/`master` guess would judge the checkout
+        # against a trunk nobody named (issue #512): name the remote first.
+        context.refuse_unconfigured_canonical_remote()
         return context.recorded_default_branch
 
     if worktree is None:

@@ -37,7 +37,7 @@ included.
 |---|---|---|---|
 | no `--json`, `--html`, or `--serve` given | BOARD-44 | BOARD-44 | BOARD-44 |
 | unsupported canonical-remote host | BOARD-02, BOARD-43 | BOARD-02 | BOARD-02 |
-| canonical remote never configured | BOARD-53, BOARD-43 | BOARD-53 | BOARD-53 |
+| canonical remote with no URL configured | BOARD-53, BOARD-43 | BOARD-53 | BOARD-53 |
 | `.agent-claim/board.toml` absent | PIN-32 (cited) | PIN-32 (cited) | PIN-32 (cited) |
 | `.agent-claim/board.toml` present but untracked or ignored | PIN-01 (cited) | PIN-01 (cited) | PIN-01 (cited) |
 | `--repo` under `storage = "state-ref"` | BOARD-42, BOARD-43 | BOARD-42 | — |
@@ -71,7 +71,7 @@ included.
 does, before either reads a single issue -- cited there, not restated.
 
 - [ ] [BOARD-02] A canonical remote whose host is not GitHub refuses `ERROR: no forge adapter for host <host>`, exit `2`, before any GitHub read is made (see E-BOARD-01).
-- [ ] [BOARD-53] A canonical `<remote>` never configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-BOARD-20).
+- [ ] [BOARD-53] A canonical `<remote>` with no URL configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-BOARD-20).
 - [ ] [BOARD-01] `board` reaches the same absent- or untracked-`.agent-claim/board.toml` refusal `specs/storage-pin.spec.md` owns (PIN-01/PIN-32), exit `2`, before the host check above ever runs.
 - [ ] [BOARD-42] Under `storage = "state-ref"`, `board`/`next`/`rulings` resolve the state-ref forge like `item show`/`edit`/`close`; `--repo` there refuses the same as those (PIN-04, PIN-05).
 
@@ -88,7 +88,7 @@ does, before either reads a single issue -- cited there, not restated.
 | refusal | `reason` |
 |---|---|
 | PIN-04 (`--repo` under `storage = state-ref`), BOARD-39 (`--new-token` without `--serve`) | `invalid_usage` |
-| BOARD-02 (no forge adapter for host), BOARD-53 (canonical remote never configured), PIN-05 (no resolvable default branch) | `unavailable` |
+| BOARD-02 (no forge adapter for host), BOARD-53 (canonical remote with no URL configured), PIN-05 (no resolvable default branch) | `unavailable` |
 - [ ] [BOARD-12] Each `landings` row carries `{"item", "committed_at", "sha", "pull_request"}`, exactly one of `sha`/`pull_request` non-`null` (LAND-54).
 - [ ] [BOARD-13] Each item's `open_blockers` is split into a same-repository `int` list plus a sibling `foreign_blockers` list of `"<repository>#<n>"` strings, never one mixed list.
 - [ ] [BOARD-14] An `uncut` row's own `scope` key is present, canonical and non-empty only when that row carries a `scope` of its own; a scopeless row's object carries no `scope` key at all, never `"scope": null`.
@@ -168,9 +168,9 @@ $ aco board --json
 exit 2
 ```
 
-### E-BOARD-20 — a canonical remote the checkout never configured
+### E-BOARD-20 — a canonical remote with no URL configured
 
-Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`
+Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`, and `refs/remotes/hub/*` left behind
 
 ```console
 $ aco board --json

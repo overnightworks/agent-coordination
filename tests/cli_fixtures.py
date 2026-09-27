@@ -200,7 +200,6 @@ def _git_checkout(
             "--git-common-dir",
         ): "\n".join((toplevel, git_directory, common_directory)),
         ("status", "--porcelain"): dirty,
-        ("remote",): "origin",
         RECORDED_ORIGIN_HEAD_READ: "refs/remotes/origin/main",
     }
 

@@ -14712,8 +14712,56 @@ def _leave_hub_unconfigured(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None
     _ask_git_which_remotes_are_configured(monkeypatch)
 
 
+def _leave_hub_refs_without_a_url(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    """`hub` was fetched with its `HEAD` recorded, then lost its URL: its
+    remote-tracking refs outlive it (issue #512)."""
+    _leave_hub_unconfigured(monkeypatch, repo)
+    _real_git(repo, "remote", "add", "hub", str(repo.parent / "remote.git"))
+    _real_git(repo, "fetch", "-q", "hub")
+    _real_git(repo, "remote", "set-head", "hub", "main")
+    _real_git(repo, "config", "--remove-section", "remote.hub")
+
+
+def _leave_hub_a_global_prune_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    """A global `[remote "hub"] prune = true` makes git list `hub` though
+    no configuration gives it a URL."""
+    _leave_hub_refs_without_a_url(monkeypatch, repo)
+    global_config = repo.parent / "global.gitconfig"
+    global_config.write_text('[remote "hub"]\n\tprune = true\n')
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+
+
+def _leave_hub_a_local_fetch_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    """A local `remote.hub.fetch` without `remote.hub.url`."""
+    _leave_hub_refs_without_a_url(monkeypatch, repo)
+    _real_git(repo, "config", "remote.hub.fetch", "+refs/heads/*:refs/remotes/hub/*")
+
+
 _UNCONFIGURED_HUB_SENTENCE = "cannot determine the trunk: canonical remote 'hub' is not configured"
 _UNCONFIGURED_HUB = f"ERROR: {_UNCONFIGURED_HUB_SENTENCE}\n"
+
+
+def _check_an_unpushed_commit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    """`check` reads no forge; the served board only lets the scenario
+    prove the forge closed nothing."""
+    _serve_start_board(monkeypatch, _start_item())
+    repo, sha_of = _check_sha(monkeypatch, tmp_path)
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "unpushed", "-m", "Work-Item: #20")
+    return ["check", sha_of("HEAD")]
+
+
+def _claim_in_a_linked_worktree_on_main(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> list[str]:
+    """CLM-01's case (issue #512): a linked worktree sitting on `main`."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    worktree = tmp_path / "lane"
+    _real_git(repo, "checkout", "-q", "--detach")
+    _real_git(repo, "worktree", "add", "-q", str(worktree), "main")
+    _name_hub_as_the_canonical_remote(worktree)
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    return ["--repo", REPOSITORY, "claim", "314", "--scope", "src/x.py"]
 
 
 @pytest.mark.parametrize(
@@ -14729,6 +14777,16 @@ _UNCONFIGURED_HUB = f"ERROR: {_UNCONFIGURED_HUB_SENTENCE}\n"
             + "\n",
             id="board-json",
         ),
+        pytest.param(_check_an_unpushed_commit, "", id="check-unpushed"),
+        pytest.param(_claim_in_a_linked_worktree_on_main, "", id="claim-on-main"),
+    ],
+)
+@pytest.mark.parametrize(
+    "unconfigure_hub",
+    [
+        pytest.param(_leave_hub_unconfigured, id="never-added"),
+        pytest.param(_leave_hub_a_global_prune_line, id="global-prune-without-url"),
+        pytest.param(_leave_hub_a_local_fetch_line, id="local-fetch-without-url"),
     ],
 )
 def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
@@ -14737,15 +14795,19 @@ def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
     expected_out: str,
+    unconfigure_hub: Callable[[pytest.MonkeyPatch, Path], None],
 ) -> None:
     """Issue #508 proof 1, against real git: the board names `hub`, which
-    this clone never added, so `start`, `release --merged` and `board`
-    refuse by naming it rather than fetching nothing or reading the local
-    `main` as its trunk -- before any write: `start` builds nothing, the
-    claim still stands and the forge closed nothing (START-28, REL-39)."""
+    this clone never added, so `start`, `release --merged`, `board`,
+    `check` and `claim` refuse by naming it rather than fetching nothing or
+    reading the local `main` as its trunk -- before any write: `start`
+    builds nothing, the claim still stands and the forge closed nothing
+    (START-28, REL-39). A `hub` git lists only through a URL-less config
+    line, its refs left behind, is not configured either (issue #512), and
+    `claim` names it before its checkout check (CHECK-15, BOARD-53, CLM-32)."""
     argv = arrange(monkeypatch, tmp_path)
     repo = tmp_path / "repo"
-    _leave_hub_unconfigured(monkeypatch, repo)
+    unconfigure_hub(monkeypatch, repo)
     branches_before = _real_git(repo, "branch", "--list").stdout
     claims_before = store.fetch_state(worktree=repo, remote="hub").claims
     client = github.GitHubForge(github.repository_id(REPOSITORY))
@@ -17527,7 +17589,6 @@ def test_cli_lane_claim_rescope_and_release_are_forge_free_against_a_non_github_
             "--git-dir",
             "--git-common-dir",
         ): f"{real_toplevel}\n/repo/.git/worktrees/lane-cleanup\n/repo/.git",
-        ("remote",): "origin",
         RECORDED_ORIGIN_HEAD_READ: "refs/remotes/origin/main",
     }
     monkeypatch.setattr(

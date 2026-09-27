@@ -87,6 +87,7 @@ def _protect_git_values(
     rather than a missing fixture key."""
     resolved_git_directory = git_directory or (work / ".git" / "worktrees" / "issue-72")
     resolved_common_directory = common_directory or (work / ".git")
+    origin_url = f"git@github.com:{REPOSITORY}.git"
     values = {
         ("branch", "--show-current"): branch,
         ("rev-parse", "--verify", "HEAD"): BASE,
@@ -95,8 +96,10 @@ def _protect_git_values(
         ),
         # The canonical-remote comparison (issue #176, Erwartung 6) reads this
         # to confirm the fake forge target (REPOSITORY) matches it.
-        ("config", "--get", "remote.origin.url"): f"git@github.com:{REPOSITORY}.git",
-        ("remote",): "origin",
+        ("config", "--get", "remote.origin.url"): origin_url,
+        # `checkout.remote_is_configured` reads this to find the canonical
+        # remote has a URL (issue #512).
+        ("config", "--get", "--default", "", "remote.origin.url"): origin_url,
     }
     if origin_head is not None:
         values[RECORDED_ORIGIN_HEAD_READ] = origin_head
@@ -3331,3 +3334,35 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
 
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)
+
+
+@pytest.mark.parametrize(
+    "refusal_of", [_protect_refusal, _rescope_refusal], ids=["protect", "rescope"]
+)
+def test_protect_and_rescope_name_a_canonical_remote_that_has_config_lines_but_no_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    refusal_of: Callable[[pytest.MonkeyPatch, pytest.CaptureFixture[str], Path], tuple[int, str]],
+) -> None:
+    """Issue #512 line 1 (PROT-45, RESC-20): a `remote.upstream.fetch` line
+    without a URL, beside a `HEAD` the remote left behind, is still no
+    configured canonical remote -- `protect` and `rescope` name it rather
+    than judging its branch."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    empty_global_config = tmp_path / "global.gitconfig"
+    empty_global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_global_config))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    _use_real_path_is_tracked(monkeypatch)
+    path = _hub_canonical_worktree_file(
+        tmp_path, canonical="upstream", canonical_head="trunk", branch="codex/issue-72-widget"
+    )
+    _real_git(
+        path.parent, "config", "remote.upstream.fetch", "+refs/heads/*:refs/remotes/upstream/*"
+    )
+    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
+
+    assert refusal_of(monkeypatch, capsys, path) == (2, _UNCONFIGURED_UPSTREAM)

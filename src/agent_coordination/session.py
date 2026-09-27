@@ -193,13 +193,14 @@ class RunContext:
 
     @cached_property
     def canonical_remote_is_configured(self) -> bool:
-        """Whether the checkout configures the canonical remote at all,
-        answered once per context (issue #508) -- the one answer to that
-        question. `configured_canonical_remote` refuses on it before the
-        remote's URL, state ref, trunk, fetch and `default_branch`;
-        `recorded_default_branch`, the offline checks' read, answers `None`
-        on it instead and leaves `None` to each check's own rule. Neither
-        a remote-tracking ref a removed remote left behind nor a local
+        """Whether the checkout configures the canonical remote with a URL,
+        answered once per context (issues #508, #512) -- the one answer to
+        that question. `configured_canonical_remote` refuses on it before
+        the remote's URL, state ref, trunk, fetch, `default_branch` and
+        `claim`'s checkout check; `recorded_default_branch`, the offline
+        checks' read, answers `None` on it instead and leaves `None` to
+        each check's own rule. Neither a remote-tracking ref a removed
+        remote left behind, a URL-less `remote.<name>` line, nor a local
         branch ever answers for a remote that is not there."""
         return checkout.remote_is_configured(self.canonical_remote, directory=self.directory)
 
@@ -207,11 +208,16 @@ class RunContext:
     def configured_canonical_remote(self) -> str:
         """The canonical remote's name, refused by name when the checkout
         does not configure it (issue #508)."""
+        self.refuse_unconfigured_canonical_remote()
+        return self.canonical_remote
+
+    def refuse_unconfigured_canonical_remote(self) -> None:
+        """Refuse by name when the checkout does not configure the
+        canonical remote (issues #508, #512)."""
         if not self.canonical_remote_is_configured:
             raise protocol.ClaimError(
                 checkout.unconfigured_trunk_remote_refusal(self.canonical_remote)
             )
-        return self.canonical_remote
 
     @cached_property
     def canonical_remote_url(self) -> str:
