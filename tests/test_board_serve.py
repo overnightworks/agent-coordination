@@ -440,35 +440,42 @@ def test_a_rebuild_the_unreachable_remote_refuses_keeps_the_held_page_naming_it_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Issue #481, BOARD-52: while the remote is unreachable, a ruling
-    click, a reload, the page each redirects to, and a plain refresh all
-    answer -- no traceback, no dropped connection -- with the held page
-    naming the refusal; a reload once the remote answers again rebuilds."""
+    """Issue #481, BOARD-52: while the remote is unreachable, a reload on a
+    page nothing has made stale, the page it redirects to, a later refresh,
+    a ruling click, and the page the click redirects to all answer -- no
+    traceback, no dropped connection -- with the held page naming the
+    refusal; a reload once the remote answers again rebuilds."""
     token = served_board.server.token
     refusal = "cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128)"
 
     def unreachable_remote(_repository: forge.RepositoryId) -> FakeForge:
         raise protocol.ClaimError(refusal)
 
-    monkeypatch.setattr(github, "GitHubForge", unreachable_remote)
-
-    click = served_board.post_rule(
-        {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes"}
-    )
-    offline_reload = served_board.get(token=token, reload=True)
-    assert (click.status, offline_reload.status) == (303, 303)
-    assert click.location is not None
-    plain_location = f"/?t={token}"
-    assert offline_reload.location == plain_location
-    for answer in (
-        _request(served_board.server, "GET", click.location),
-        _request(served_board.server, "GET", plain_location),
-        served_board.get(token=token),
-    ):
+    def shows_the_held_page_naming_the_refusal(answer: _Response) -> None:
         page = answer.body.decode("utf-8")
         assert answer.status == 200
         assert html.escape(refusal) in page
         assert "Plain item" in page
+
+    monkeypatch.setattr(github, "GitHubForge", unreachable_remote)
+
+    # The reload comes before any click, so its redirect target and the
+    # refresh after it meet a held page no click has made stale: only the
+    # refusal the reload's own rebuild remembered can name the remote.
+    offline_reload = served_board.get(token=token, reload=True)
+    assert offline_reload.status == 303
+    assert offline_reload.location == f"/?t={token}"
+    shows_the_held_page_naming_the_refusal(
+        _request(served_board.server, "GET", offline_reload.location)
+    )
+    shows_the_held_page_naming_the_refusal(served_board.get(token=token))
+
+    click = served_board.post_rule(
+        {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes"}
+    )
+    assert click.status == 303
+    assert click.location is not None
+    shows_the_held_page_naming_the_refusal(_request(served_board.server, "GET", click.location))
     assert capsys.readouterr().err == ""
 
     served_board.client.board_issues = (
