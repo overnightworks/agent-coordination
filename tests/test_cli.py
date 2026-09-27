@@ -18225,6 +18225,17 @@ def _body_file_on_stdin(tmp_path: Path) -> Iterator[TextIO]:
 
 
 @contextlib.contextmanager
+def _piped_body_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    """`cat body.md | aco ...`: the read end of a pipe whose writer already
+    wrote the body and closed."""
+    read_end, write_end = os.pipe()
+    with os.fdopen(write_end, "w") as writer:
+        writer.write(_ITEM_NEW_BODY)
+    with os.fdopen(read_end) as stdin:
+        yield stdin
+
+
+@contextlib.contextmanager
 def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
     """The stdin an agent harness such as Claude Code's Bash tool hands a
     command: one end of a socket that never delivers a body."""
@@ -18302,6 +18313,17 @@ def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
             "ERROR: item edit --kind reads no stdin; drop the redirect\n",
             [],
             id="body_file_refuses",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _piped_body_on_stdin,
+            False,
+            2,
+            "",
+            "ERROR: item edit --kind reads no stdin; drop the redirect\n",
+            [],
+            id="piped_body_refuses",
         ),
         pytest.param(
             "484",
