@@ -14923,8 +14923,9 @@ def _land_on_the_forges_trunk(
     """`_land_scenario` with no recorded `HEAD`, where the forge alone
     names the default branch `trunk` (issue #492): `canonical` carries
     `trunk`, the lane branch, and the `main` the switch to `trunk` left
-    behind, and the checkout stands on `checked_out`. A canonical remote
-    other than `origin` is a fresh bare `<canonical>.git` the tracked board
+    behind, the lane branch stands in its own clean linked worktree `lane`,
+    and the checkout stands on `checked_out`. A canonical remote other than
+    `origin` is a fresh bare `<canonical>.git` the tracked board
     configuration names."""
     repo, client = _land_scenario(monkeypatch, tmp_path, set_head=False)
     client.default_branch_name = "trunk"
@@ -14941,6 +14942,7 @@ def _land_on_the_forges_trunk(
         _real_git(repo, "push", "-q", canonical, LANDING_BRANCH)
     _real_git(repo, "push", "-q", canonical, "trunk", "trunk:main")
     _real_git(repo, "checkout", "-q", "-B", checked_out)
+    _real_git(repo, "worktree", "add", "-q", str(tmp_path / "lane"), LANDING_BRANCH)
     return repo, client
 
 
@@ -14972,7 +14974,9 @@ def test_land_takes_the_forges_default_branch_where_the_remote_records_no_head(
     """Issue #492 proof 1, against real git: the forge's default branch is
     `trunk` and no `<canonical>/HEAD` is recorded. `land` runs from a clean
     `trunk`, fast-forwards it from `<canonical>/trunk` after fetching that
-    remote once, and a checkout on `main` refuses LANDCMD-11 naming `trunk`."""
+    remote once, and its delegated release removes the lane's worktree as
+    merged into that same `trunk`, never judged by the `main` left behind
+    (LANDCMD-21); a checkout on `main` refuses LANDCMD-11 naming `trunk`."""
     repo, client = _land_on_the_forges_trunk(
         monkeypatch, tmp_path, canonical=canonical, checked_out=checked_out
     )
@@ -14982,12 +14986,18 @@ def test_land_takes_the_forges_default_branch_where_the_remote_records_no_head(
 
     fetches = [call for call in trunk_calls if call[0] == "fetch"]
     local_trunk = _real_git(repo, "rev-parse", "trunk").stdout.strip()
-    assert (status, capsys.readouterr().err, fetches) == (
+    output = capsys.readouterr()
+    assert (status, output.err, fetches) == (
         expected_status,
         expected_error,
         [("fetch", repo.resolve())] * expected_fetches,
     )
-    assert (local_trunk == client.landings[12].merge_commit) is (expected_status == 0)
+    landed = expected_status == 0
+    assert (local_trunk == client.landings[12].merge_commit) is landed
+    assert ("worktree: removed\n" in output.out, (tmp_path / "lane").exists()) == (
+        landed,
+        not landed,
+    )
 
 
 def test_land_trunk_trailer_renders_the_trunk_grammar_for_both_classifications() -> None:

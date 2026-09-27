@@ -5696,7 +5696,9 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         else _landing_report(context, identity, worktree, new_state, storage)
     )
     worktree_cleanup = (
-        _cleanup_landed_worktree(parsed, resolved.selected.branch, context)
+        _cleanup_landed_worktree(
+            parsed, resolved.selected.branch, context, context.fetched_default_branch_ref
+        )
         if isinstance(outcome, protocol.MergedRelease)
         else None
     )
@@ -5736,7 +5738,10 @@ def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> s
 
 
 def _cleanup_landed_worktree(
-    parsed: argparse.Namespace, branch: str, context: RunContext
+    parsed: argparse.Namespace,
+    branch: str,
+    context: RunContext,
+    fetched_trunk_ref: Callable[[], str],
 ) -> checkout.WorktreeCleanupOutcome:
     """After a successful `--merged` release, remove the lane's local
     worktree and local branch when both are safe to remove, and report
@@ -5749,8 +5754,11 @@ def _cleanup_landed_worktree(
     failure at any step -- including one resolving which worktree matches
     `branch` at all -- is reported in the same `kept` line rather than
     swallowed. The run's own checkout is judged from the toplevel its
-    context already holds, never resolved a second time (issue #472). The
-    remote branch stays the forge merge's own business either way."""
+    context already holds, never resolved a second time (issue #472).
+    `fetched_trunk_ref` names the ref the lane must be merged into -- the
+    one its release judged the landing on (issue #492) -- asked only here,
+    so a failure to resolve it reads as `kept` too. The remote branch stays
+    the forge merge's own business either way."""
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
     try:
@@ -5762,7 +5770,7 @@ def _cleanup_landed_worktree(
         if matching is None:
             return checkout.worktree_cleanup_kept(WORKTREE_KEPT_NO_WORKTREE_REASON)
         return checkout.cleanup_landed_worktree(
-            matching, branch, trunk=context.fetched_trunk_ref(), directory=toplevel
+            matching, branch, trunk=fetched_trunk_ref(), directory=toplevel
         )
     except protocol.ClaimError as error:
         return checkout.worktree_cleanup_kept(f"git failure: {error}")
@@ -6313,7 +6321,9 @@ def _cmd_release_landed(
     )
     client.mark_landed(write, new_oid)
     landing, hint = _landing_report(context, identity, worktree, new_state, storage)
-    worktree_cleanup = _cleanup_landed_worktree(parsed, resolved.selected.branch, context)
+    worktree_cleanup = _cleanup_landed_worktree(
+        parsed, resolved.selected.branch, context, context.fetched_trunk_ref
+    )
     _print_release_result(
         ReleaseReport(
             resolved.selected,
