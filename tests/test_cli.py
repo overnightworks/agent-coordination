@@ -21,7 +21,7 @@ from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
-from typing import TextIO
+from typing import TextIO, cast
 
 import pytest
 from board_fixtures import (
@@ -2793,12 +2793,19 @@ def test_start_refuses_a_malformed_body_before_no_scope(
 
 
 def _state_ref_item_body(
-    title: str, *, closed_at: str | None = None, **block_fields: object
+    title: str,
+    *,
+    closed_at: str | None = None,
+    kind: body.ItemKind = body.ItemKind.TASK,
+    parent: int | None = None,
+    **block_fields: object,
 ) -> str:
-    """A state-ref task titled `title`, open unless it was closed at
-    `closed_at`, plus whichever further block fields (`scope`,
-    `expectation`) the scenario needs."""
+    """A state-ref item of `kind` titled `title`, open unless it was closed
+    at `closed_at`, a child of `parent` when one is named, plus whichever
+    further block fields (`scope`, `expectation`, `slice`) the scenario
+    needs."""
     closure = {} if closed_at is None else {"state": "closed", "closed_at": closed_at}
+    nesting = {} if parent is None else {"parent": items.format_item_id(parent)}
     data: dict[str, object] = {
         "version": 1,
         "now": "Ship it.",
@@ -2807,12 +2814,13 @@ def _state_ref_item_body(
         "record": {
             "title": title,
             "state": "open",
-            "kind": "task",
+            "kind": kind.value,
             "labels": [],
             "blocked_by": [],
             "created_at": "2026-09-10T00:00:00Z",
             "updated_at": "2026-09-10T00:00:00Z",
             **closure,
+            **nesting,
         },
         **block_fields,
     }
@@ -2829,6 +2837,25 @@ def _real_state_ref_start_scenario(
     see which directory a read ran against. A `canonical_remote` other than
     `origin` keeps an `origin` beside it on the same bare remote that never
     recorded its `HEAD` (issue #490)."""
+    repo, remote, seeded = _real_state_ref_repository(
+        monkeypatch,
+        tmp_path,
+        {314: _state_ref_item_body("Fresh Slug Title")},
+        canonical_remote=canonical_remote,
+    )
+    return repo, remote, seeded[314]
+
+
+def _real_state_ref_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    item_bodies: Mapping[int, str],
+    *,
+    canonical_remote: str = "origin",
+) -> tuple[Path, Path, dict[int, protocol.ObjectId]]:
+    """A real bare-remote-backed, `storage = "state-ref"` repository, its
+    real `refs/aco/state` seeded with one item per `item_bodies` entry,
+    the run standing in it; returns each seeded item's blob oid."""
     _use_real_store(monkeypatch)
     repo, remote = _real_repository_with_bare_remote(tmp_path, remote_name=canonical_remote)
     config_dir = repo / ".agent-claim"
@@ -2842,22 +2869,27 @@ def _real_state_ref_start_scenario(
     if canonical_remote != "origin":
         _real_git(repo, "remote", "add", "origin", str(remote))
     store.bootstrap(worktree=repo, remote=str(remote))
-    content = _state_ref_item_body("Fresh Slug Title").encode()
-    seeded_oid = store.hash_blob(repo, content)
-    store.commit_transition(
-        observed=fresh_observation(repo, remote),
-        subject=store.TransitionSubject(f"seed item {items.format_item_id(314)}"),
-        intent=protocol.ItemWriteIntent(
-            item_id=items.format_item_id(314),
-            expected=None,
-            new_oid=seeded_oid,
-            operation_id="item-op-314",
-        ),
-    )
+    seeded = {
+        number: _seed_state_ref_item(repo, remote, number, content)
+        for number, content in item_bodies.items()
+    }
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     _redirect_toplevel(monkeypatch, repo)
     monkeypatch.chdir(repo)
-    return repo, remote, seeded_oid
+    return repo, remote, seeded
+
+
+def _seed_state_ref_item(repo: Path, remote: Path, number: int, content: str) -> protocol.ObjectId:
+    item_id = items.format_item_id(number)
+    seeded_oid = store.hash_blob(repo, content.encode())
+    store.commit_transition(
+        observed=fresh_observation(repo, remote),
+        subject=store.TransitionSubject(f"seed item {item_id}"),
+        intent=protocol.ItemWriteIntent(
+            item_id=item_id, expected=None, new_oid=seeded_oid, operation_id=f"item-op-{number}"
+        ),
+    )
+    return seeded_oid
 
 
 @pytest.mark.parametrize(
@@ -5886,14 +5918,15 @@ def _arguments_bash_hands_aco(advice: str, tmp_path: Path) -> tuple[int, list[st
     """Bash's exit code and the argv it hands `aco` when the printed
     `advice` command runs verbatim in a throwaway git repository, `aco`
     standing in as a recorder of its own arguments -- so the caller runs
-    exactly those arguments through the real entry point (issue #510)."""
+    exactly those arguments through the real entry point (issue #510). A
+    scenario may run several pieces of advice in turn (issue #513)."""
     shim_directory = tmp_path / "shell-bin"
-    shim_directory.mkdir()
+    shim_directory.mkdir(exist_ok=True)
     recorder = shim_directory / "aco"
     recorder.write_text("#!/bin/sh\nprintf '%s\\0' \"$@\"\n")
     recorder.chmod(0o755)
     repository = tmp_path / "throwaway"
-    repository.mkdir()
+    repository.mkdir(exist_ok=True)
     _real_git(repository, "init", "--quiet")
     environment = {**os.environ, "PATH": f"{shim_directory}{os.pathsep}{os.environ['PATH']}"}
     ran = subprocess.run(
@@ -5908,6 +5941,7 @@ def _arguments_bash_hands_aco(advice: str, tmp_path: Path) -> tuple[int, list[st
         pytest.param("Scheibe 1", id="plain_title"),
         pytest.param('Say "hi" to $HOME', id="double_quotes_and_a_shell_variable"),
         pytest.param("it's `here`", id="single_quote_and_backticks"),
+        pytest.param("-draft", id="a_leading_dash"),
     ],
 )
 def test_next_prints_a_cut_command_bash_runs_as_printed_and_cut_accepts(
@@ -5917,7 +5951,9 @@ def test_next_prints_a_cut_command_bash_runs_as_printed_and_cut_accepts(
     slice_title: str,
 ) -> None:
     """Issue #510 line 1: the `cut` line `next` prints runs unchanged in a
-    real shell, whatever the slice title holds, and `cut` accepts it."""
+    real shell, whatever the slice title holds -- a leading `-` included,
+    since the title is attached as `--title=` (issue #513 line 1) -- and
+    `cut` accepts it."""
     toml_text = (
         'version = 1\nnow = "N"\nnext = "nichts"\ndone_when = "D"\n'
         f"[[slice]]\nindex = 1\ntitle = {json.dumps(slice_title)}\n"
@@ -6260,7 +6296,7 @@ def test_next_names_a_cuttable_container_slice(
     assert exit_code == 0
     assert capsys.readouterr().out == (
         "cut_slice #180: Scheibe B — Kartenraster\n"
-        "Next: aco cut 180 --title 'Scheibe B — Kartenraster'\n" + _PARALLEL_UNKNOWN_TAIL
+        "Next: aco cut 180 --title='Scheibe B — Kartenraster'\n" + _PARALLEL_UNKNOWN_TAIL
     )
 
 
@@ -6448,7 +6484,7 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
             REPOSITORY,
             ("Scheibe Z",),
             "nested container, which cut refuses; run aco item edit 299 --kind task and "
-            "claim it with aco claim 299 --scope <paths>",
+            "claim it with aco claim 299 --scope <paths> --out-of-order <reason>",
             id="open_container_parent_one_scopeless_row_names_the_task_repair",
         ),
         pytest.param(
@@ -6551,7 +6587,7 @@ def test_next_names_a_nested_containers_repair_where_cut_refuses_its_row(
 @pytest.mark.parametrize(
     ("top_level_scope", "expected_claim"),
     [
-        (None, "aco claim 299 --scope docs/nested.md --scope 'src/it'\"'\"'s here.py'"),
+        (None, "aco claim 299 --scope=docs/nested.md --scope='src/it'\"'\"'s here.py'"),
         (("docs/top.md",), "aco claim 299"),
     ],
     ids=["row-scope-only", "own-top-level-scope"],
@@ -6611,7 +6647,7 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     bash_exit_code, claim_arguments = _arguments_bash_hands_aco(run_line, tmp_path)
     claim_exit_code = issue_claim.main(["--repo", REPOSITORY, *claim_arguments])
 
-    assert claim_advice == run_line == expected_claim
+    assert (claim_advice, run_line) == (f"{expected_claim} --out-of-order <reason>", expected_claim)
     assert "\nparallel: none\nscope unknown: none\n" in retyped_out
     assert (next_exit_code, retyped_exit_code, bash_exit_code, claim_exit_code) == (
         3,
@@ -6621,6 +6657,171 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     ), capsys.readouterr().err
     claimed = store.fetch_state(worktree=Path("."), remote="origin").claims
     assert tuple(claim.scope for claim in claimed.values()) == (top_level_scope or row_scope,)
+
+
+def _state_ref_container_body(title: str, *slice_titles: str, parent: int | None = None) -> str:
+    rows = [{"index": index, "title": row} for index, row in enumerate(slice_titles, start=1)]
+    return _state_ref_item_body(title, kind=body.ItemKind.CONTAINER, parent=parent, slice=rows)
+
+
+def _printed_line_after(out: str, marker: str) -> str:
+    return out.split(marker, 1)[1].splitlines()[0]
+
+
+@pytest.mark.parametrize(
+    "advice_marker",
+    [
+        pytest.param("\nNext: ", id="first_actions_cut"),
+        pytest.param(
+            f'\n{items.format_item_id(41)}: cut slice "-später"; run ',
+            id="a_skipped_containers_cut",
+        ),
+    ],
+)
+def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    advice_marker: str,
+) -> None:
+    """Issue #513 lines 1 and 4: under a state-ref board a slice title
+    starting with `-` still reaches `cut` whole (`--title=`), and a second
+    cuttable container behind the first action is named under `SKIPPED` with
+    its own `cut`, never `container; claim a child` -- each command running
+    unchanged in a real shell."""
+    _real_state_ref_repository(
+        monkeypatch,
+        tmp_path,
+        {
+            40: _state_ref_container_body("First epic", "-draft"),
+            41: _state_ref_container_body("Second epic", "-später"),
+        },
+    )
+
+    next_exit_code = issue_claim.main(["next"])
+    advice = _printed_line_after(capsys.readouterr().out, advice_marker)
+    bash_exit_code, cut_arguments = _arguments_bash_hands_aco(advice, tmp_path)
+    cut_exit_code = issue_claim.main(cut_arguments)
+
+    assert (next_exit_code, bash_exit_code, cut_exit_code) == (0, 0, 0), capsys.readouterr().err
+
+
+def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #513 line 2: a first uncut row whose title holds a line break
+    would split the printed `cut` over two lines, so `next` prints no `cut`
+    for it and names the row to shorten instead."""
+    _real_state_ref_repository(
+        monkeypatch, tmp_path, {50: _state_ref_container_body("Epic", "Line one\nLine two")}
+    )
+
+    exit_code = issue_claim.main(["next"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 3
+    assert (
+        f"\n{items.format_item_id(50)}: slice row 1 title carries a line break; "
+        "shorten it to one line\n"
+    ) in out
+    assert "cut" not in out
+
+
+def test_state_ref_next_claim_in_a_skipped_reason_runs_past_a_higher_ranked_item(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #513 line 3: a nested container's repair names a claim that the
+    ordering rule would refuse while a higher-ranked item is free, so it
+    carries `--out-of-order <reason>`; filled in, the retype and the claim
+    both run unchanged in a real shell and succeed."""
+    repo, _remote, _seeded = _real_state_ref_repository(
+        monkeypatch,
+        tmp_path,
+        {
+            10: _state_ref_item_body("Top work", scope=["docs/top.md"]),
+            20: _state_ref_container_body("Epic"),
+            21: _state_ref_container_body("Nested epic", "Scheibe Z", parent=20),
+        },
+    )
+    lane = tmp_path / "repo-worktrees" / "issue-21-nested"
+    _real_git(repo, "worktree", "add", "-q", str(lane), "-b", "codex/issue-21-nested")
+    _redirect_toplevel(monkeypatch, lane)
+    monkeypatch.chdir(lane)
+    nested = items.format_item_id(21)
+
+    next_exit_code = issue_claim.main(["next"])
+    repair = _printed_line_after(capsys.readouterr().out, f"\n{nested}: ")
+    retype, claim = repair.removeprefix("nested container, which cut refuses; run ").split(
+        " and claim it with "
+    )
+    retype_bash_exit_code, retype_arguments = _arguments_bash_hands_aco(retype, tmp_path)
+    retype_exit_code = issue_claim.main(retype_arguments)
+    filled_claim = claim.replace("<paths>", "docs/nested.md").replace(
+        "<reason>", shlex.quote("the operator wants it first")
+    )
+    claim_bash_exit_code, claim_arguments = _arguments_bash_hands_aco(filled_claim, tmp_path)
+    in_order_exit_code = issue_claim.main(claim_arguments[:-2])
+    in_order_refusal = capsys.readouterr().err
+    claim_exit_code = issue_claim.main(claim_arguments)
+
+    assert claim_arguments[-2] == "--out-of-order"
+    assert "use --out-of-order REASON to proceed" in in_order_refusal
+    assert (
+        next_exit_code,
+        retype_bash_exit_code,
+        retype_exit_code,
+        claim_bash_exit_code,
+        in_order_exit_code,
+        claim_exit_code,
+    ) == (0, 0, 0, 0, 2, 0), capsys.readouterr().err
+
+
+def test_state_ref_next_json_names_items_by_the_ids_its_text_prints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #513 line 5: under a state-ref board every item `next --json`
+    names -- the action, a `parallel` candidate, a `scope_unknown` one, a
+    `close` one, a `skipped` one -- is the `aco-xxxxxx` id the text prints,
+    never the integer behind it."""
+    _real_state_ref_repository(
+        monkeypatch,
+        tmp_path,
+        {
+            10: _state_ref_item_body("Top work", scope=["docs/top.md"]),
+            11: _state_ref_item_body("Side work", scope=["docs/side.md"]),
+            12: _state_ref_item_body("Unscoped work"),
+            13: _state_ref_container_body("Finished epic"),
+            14: _state_ref_container_body("Running epic"),
+            15: _state_ref_item_body("Child work", parent=14, scope=["docs/child.md"]),
+        },
+    )
+
+    exit_code = issue_claim.main(["next", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert _next_json_item_references(payload) == (
+        items.format_item_id(10),
+        [items.format_item_id(11), items.format_item_id(15)],
+        [items.format_item_id(12)],
+        [items.format_item_id(13)],
+        [items.format_item_id(14)],
+    )
+
+
+def _next_json_item_references(
+    payload: dict[str, object],
+) -> tuple[object, list[object], object, object, list[object]]:
+    parallel = cast(dict[str, object], payload["parallel"])
+    candidates = cast(list[dict[str, object]], parallel["candidates"])
+    skipped = cast(list[dict[str, object]], payload["skipped"])
+    return (
+        payload["number"],
+        [candidate["number"] for candidate in candidates],
+        parallel["scope_unknown"],
+        payload["close"],
+        [entry["number"] for entry in skipped],
+    )
 
 
 def test_next_json_names_a_cuttable_container_slice(
@@ -6648,7 +6849,7 @@ def test_next_json_names_a_cuttable_container_slice(
     assert payload["title"] == "Epic"
     assert payload["slice"] == "Scheibe C"
     assert payload["cut_title"] == "Scheibe C"
-    assert payload["command"] == "aco cut 181 --title 'Scheibe C'"
+    assert payload["command"] == "aco cut 181 --title='Scheibe C'"
 
 
 def test_next_names_a_closeable_container(
@@ -6859,9 +7060,10 @@ def test_next_parallel_set_uses_a_cut_proposals_own_row_scope(
 
     assert exit_code == 0
     assert capsys.readouterr().out == (
-        "cut_slice #80: Cut it.\nNext: aco cut 80 --title 'Slice A'\n"
+        "cut_slice #80: Cut it.\nNext: aco cut 80 --title='Slice A'\n"
         "parallel: #81 (1 path)\nscope unknown: none\nclose: none\n"
-        "\nSKIPPED\n#81: container; claim a child\n#82: container; claim a child\n"
+        "\nSKIPPED\n#81: cut slice \"Slice B\"; run aco cut 81 --title='Slice B'\n"
+        "#82: cut slice \"Slice C\"; run aco cut 82 --title='Slice C'\n"
     )
 
     json_exit_code = issue_claim.main(["--repo", REPOSITORY, "next", "--json"])

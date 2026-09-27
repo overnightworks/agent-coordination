@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
-from typing import TypeGuard, cast
+from typing import TypeGuard, TypeVar, cast
 
 from . import items, metrics, protocol
 
@@ -2298,7 +2298,12 @@ def measurements_lines(measurements: Measurements) -> list[str]:
     return lines
 
 
-def _storage_item_name(number: int, storage: Storage, forge_name: str) -> str:
+# The forge form an item takes under `GITHUB`: text for a label or a
+# command argument, a bare number for a `--json` field (issue #513).
+_ForgeName = TypeVar("_ForgeName", int, str)
+
+
+def _storage_item_name(number: int, storage: Storage, forge_name: _ForgeName) -> str | _ForgeName:
     """The one storage switch every item name below asks (issue #471): under
     `storage = STATE_REF` `items.format_item_id`'s `aco-xxxxxx` -- an id
     `parse_item_reference` accepts right back, so what a command prints is
@@ -2354,18 +2359,45 @@ def item_argument(number: int, storage: Storage) -> str:
     return _storage_item_name(number, storage, str(number))
 
 
-# What an advice line names where it knows no paths to claim: an agent reads
-# it as "fill these in", which is why it stays outside `advice_command`'s
-# quoting rather than becoming one quoted `'<paths>'` argument.
+def item_json_reference(number: int, storage: Storage) -> int | str:
+    """`number` as a `--json` item field (issue #513): `item_label`'s own id
+    under `storage = STATE_REF`, the form the text beside it prints rather
+    than the internal integer behind it, and the bare number under
+    `GITHUB`, unchanged."""
+    return _storage_item_name(number, storage, number)
+
+
+# What an advice line names where it knows no paths to claim, or no reason
+# to claim out of order: an agent reads it as "fill these in", which is why
+# it stays outside `advice_command`'s quoting rather than becoming one
+# quoted `'<paths>'` argument.
 SCOPE_PLACEHOLDER = "--scope <paths>"
+OUT_OF_ORDER_PLACEHOLDER = "--out-of-order <reason>"
 
 
-def advice_command(*arguments: str) -> str:
+@dataclass(frozen=True)
+class AdviceOption:
+    """One option and its value in an advice command, printed attached as
+    `--name=<quoted value>` (issue #513): argparse then takes the value
+    whatever it starts with, where `--title -draft` refuses with `expected
+    one argument`."""
+
+    name: str
+    value: str
+
+    def rendered(self) -> str:
+        return f"{self.name}={shlex.quote(self.value)}"
+
+
+def advice_command(*arguments: str | AdviceOption) -> str:
     """The one rendering of an `aco` command a piece of advice names (issue
     #510): every argument quoted for a POSIX shell, so the line runs
     unchanged in the agent's real shell -- a title such as `Say "hi" to $HOME`
     reaches the command as written, never split or expanded."""
-    return shlex.join(("aco", *arguments))
+    return " ".join(
+        argument.rendered() if isinstance(argument, AdviceOption) else shlex.quote(argument)
+        for argument in ("aco", *arguments)
+    )
 
 
 def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
@@ -2373,9 +2405,16 @@ def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) 
     path of `scope`, none at all for `()` -- the item's own body scope, which
     `claim` derives itself -- and `SCOPE_PLACEHOLDER` when no paths are
     known (`None`)."""
-    scope_arguments = (argument for path in scope or () for argument in ("--scope", path))
-    command = advice_command("claim", item_argument(number, storage), *scope_arguments)
+    scope_options = (AdviceOption("--scope", path) for path in scope or ())
+    command = advice_command("claim", item_argument(number, storage), *scope_options)
     return command if scope is not None else f"{command} {SCOPE_PLACEHOLDER}"
+
+
+def cut_command(number: int, storage: Storage, title: str) -> str:
+    """The `cut` advice for container `number`'s first uncut row, titled
+    `title` (issue #510): `next`'s own action line and a `SKIPPED`
+    container's reason (issue #513) print this one command."""
+    return advice_command("cut", item_argument(number, storage), AdviceOption("--title", title))
 
 
 # git's own default abbreviation length -- a Landungen row's sha is evidence
@@ -2425,6 +2464,16 @@ class NestedRepairVerdict:
 
 
 @dataclass(frozen=True)
+class LineBreakTitleVerdict:
+    """The first uncut row, the one `cut` links, has a title holding a line
+    break (issue #513): a `cut` command naming it would spread over two
+    printed lines, so only shortening that title to one line helps. `row`
+    is the index `cut --row` names that row by."""
+
+    row: int
+
+
+@dataclass(frozen=True)
 class CheckVerdict:
     """No uncut row, but the container's own `Next` line, `next_step`, still
     names work: a `done_when` check, never a close."""
@@ -2440,7 +2489,13 @@ class CloseVerdict:
 
 # What a container with no open child is up for (issue #503), each verdict
 # carrying the data its own answer needs.
-ChildlessContainerVerdict = CutVerdict | NestedRepairVerdict | CheckVerdict | CloseVerdict
+ChildlessContainerVerdict = (
+    CutVerdict | NestedRepairVerdict | LineBreakTitleVerdict | CheckVerdict | CloseVerdict
+)
+
+
+def _carries_line_break(title: str) -> bool:
+    return "\n" in title or "\r" in title
 
 
 def _childless_container_verdict(
@@ -2451,10 +2506,17 @@ def _childless_container_verdict(
     closable parent all read this answer rather than re-deriving it. An
     uncut `[[slice]]` row is the only thing to cut (#208) -- unless the
     container is itself a child, which `cut` refuses (CUT-03), so only a
-    repair helps; with no row left, a `Next` line still naming work asks
-    for a `done_when` check, and only one naming none is closable."""
+    repair helps, or the row's title holds a line break no one-line advice
+    can carry (issue #513); with no row left, a `Next` line still naming
+    work asks for a `done_when` check, and only one naming none is
+    closable."""
+    if nesting_parent is not None and slices:
+        return NestedRepairVerdict(nesting_parent)
     if slices:
-        return CutVerdict() if nesting_parent is None else NestedRepairVerdict(nesting_parent)
+        first = slices[0]
+        if _carries_line_break(first.title):
+            return LineBreakTitleVerdict(first.index)
+        return CutVerdict()
     if has_further_work(next_line):
         return CheckVerdict(next_line)
     return CloseVerdict()
@@ -2485,9 +2547,16 @@ def _childless_container_reason(
     slices: tuple[SliceRow, ...],
     storage: Storage,
 ) -> str | None:
-    """Why container `number`, with no open child, is neither cut nor closed
-    (issue #503), or `None` for every verdict `next` already names otherwise."""
+    """What container `number`, with no open child, is up for when `SKIPPED`
+    names it (issue #503) -- for a cuttable one not `next`'s first action,
+    its `cut` (issue #513) -- or `None` for a closable one, which `close:`
+    names."""
     match verdict:
+        case CutVerdict():
+            title = slices[0].title
+            return f'cut slice "{title}"; run {cut_command(number, storage, title)}'
+        case LineBreakTitleVerdict(row=row):
+            return f"slice row {row} title carries a line break; shorten it to one line"
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):
@@ -2508,14 +2577,18 @@ def _nested_container_repair(
     `cut` refuses it, so `next` never proposes one and names this instead --
     for its one row, the `item edit --kind task` both storages run (ITEM-47)
     and the claim `work_item_claim_command` names for the task it becomes
-    (issue #510); for more rows, their move up to that
+    (issue #510), out of order since a `SKIPPED` item is never `next`'s first
+    action (issue #513); for more rows, their move up to that
     parent, named the way `cut`'s own refusal names it."""
     if len(slices) == 1:
         retype = advice_command("item", "edit", item_argument(number, storage), "--kind", "task")
         claim = work_item_claim_command(
             number, storage, own_scope, _work_item_scope(own_scope, slices)
         )
-        return f"nested container, which cut refuses; run {retype} and claim it with {claim}"
+        return (
+            f"nested container, which cut refuses; run {retype} "
+            f"and claim it with {claim} {OUT_OF_ORDER_PLACEHOLDER}"
+        )
     return (
         "nested container, which cut refuses; move its slice rows to "
         f"{relation_label(nesting_parent, storage)}"

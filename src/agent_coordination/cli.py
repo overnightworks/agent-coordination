@@ -1961,8 +1961,7 @@ def _next_action_command(
         return board.work_item_claim_command(
             action.item.number, storage, action.item.scope, action.scope
         )
-    container_argument = board.item_argument(action.container.number, storage)
-    return board.advice_command("cut", container_argument, "--title", action.cut_title)
+    return board.cut_command(action.container.number, storage, action.cut_title)
 
 
 class NextReason(StrEnum):
@@ -1999,10 +1998,11 @@ def _next_action_reason(action: board.NextAction) -> NextReason:
 def _next_action_payload(action: board.NextAction, storage: body.Storage) -> dict[str, object]:
     """The action-specific fields `_next_json` adds beyond `recovery`/`skipped`
     -- `_next_action_reason` now carries what an `"action"` key used to."""
+    number = board.item_json_reference(_next_action_item(action).number, storage)
     if isinstance(action, board.WorkItemAction):
         item = action.item
         payload: dict[str, object] = {
-            "number": item.number,
+            "number": number,
             "score": item.score,
             "title": item.title,
             "next": item.next_step,
@@ -2016,14 +2016,14 @@ def _next_action_payload(action: board.NextAction, storage: body.Storage) -> dic
         return payload
     if isinstance(action, board.CutSliceAction):
         return {
-            "number": action.container.number,
+            "number": number,
             "title": action.container.title,
             "slice": action.next_step,
             "cut_title": action.cut_title,
             "command": _next_action_command(action, storage),
         }
     return {
-        "number": action.container.number,
+        "number": number,
         "closed": action.container_progress.closed,
         "total": action.container_progress.total,
         "next_step": (action.next_step if isinstance(action, board.CheckContainerAction) else None),
@@ -2075,14 +2075,21 @@ def _close_line(close: tuple[int, ...], storage: body.Storage) -> str:
     return "close: " + ", ".join(board.item_label(number, storage) for number in close)
 
 
-def _parallel_json(parallel: board.ParallelSet) -> dict[str, object]:
+def _next_json_numbers(numbers: Iterable[int], storage: body.Storage) -> list[int | str]:
+    return [board.item_json_reference(number, storage) for number in numbers]
+
+
+def _parallel_json(parallel: board.ParallelSet, storage: body.Storage) -> dict[str, object]:
     return {
         "first_scope_unknown": parallel.first_scope_unknown,
         "candidates": [
-            {"number": candidate.number, "scope": list(candidate.scope)}
+            {
+                "number": board.item_json_reference(candidate.number, storage),
+                "scope": list(candidate.scope),
+            }
             for candidate in parallel.candidates
         ],
-        "scope_unknown": list(parallel.scope_unknown),
+        "scope_unknown": _next_json_numbers(parallel.scope_unknown, storage),
     }
 
 
@@ -2111,18 +2118,21 @@ def _next_json(report: _NextReport, storage: body.Storage) -> None:
     payload: dict[str, object] = {
         "recovery": [
             {
-                "number": recovery_item.number,
+                "number": board.item_json_reference(recovery_item.number, storage),
                 "title": recovery_item.title,
                 "step": board.RECOVERY_STEP,
             }
             for recovery_item in report.recovery
         ],
         "skipped": [
-            {"number": skipped_item.number, "reason": skipped_item.actionable_reason}
+            {
+                "number": board.item_json_reference(skipped_item.number, storage),
+                "reason": skipped_item.actionable_reason,
+            }
             for skipped_item in report.skipped
         ],
-        "parallel": _parallel_json(report.parallel),
-        "close": list(report.close),
+        "parallel": _parallel_json(report.parallel, storage),
+        "close": _next_json_numbers(report.close, storage),
     }
     if report.action is not None:
         payload.update(_next_action_payload(report.action, storage))
