@@ -2613,8 +2613,11 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
     checkout (`repo/into-guarded.md`, `lane/into-guarded.md`), one from
     the throwaway checkout into the guarded worktree
     (`repo/into-guarded-worktree.md`), one from the throwaway checkout into
-    its own git directory (`repo/into-own-git`), a directory symlink from
-    the throwaway checkout into a directory of the guarded main checkout
+    its own git directory (`repo/into-own-git`), into its own README
+    (`repo/into-own-readme.md`), and to a file outside every repository
+    (`repo/into-outside.md`), one from the guarded worktree into the
+    throwaway checkout (`guarded-worktree/into-throwaway.md`), a directory
+    symlink from the throwaway checkout into a directory of the guarded main checkout
     (`repo/into-guarded-directory`), and a dangling directory
     symlink outside every repository into a directory of that main checkout
     not created yet (`dangling`)."""
@@ -2637,6 +2640,11 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
         link.symlink_to(guarded / "README.md")
     (throwaway / "into-guarded-worktree.md").symlink_to(scratch / "guarded-worktree" / "README.md")
     (throwaway / "into-own-git").symlink_to(throwaway / ".git" / "description")
+    (throwaway / "into-own-readme.md").symlink_to(throwaway / "README.md")
+    outside = _file_outside_every_repository(tmp_path)
+    outside.write_text("outside\n")
+    (throwaway / "into-outside.md").symlink_to(outside)
+    (scratch / "guarded-worktree" / "into-throwaway.md").symlink_to(throwaway / "README.md")
     (throwaway / "into-guarded-directory").symlink_to(
         guarded / ".agent-claim", target_is_directory=True
     )
@@ -2672,6 +2680,16 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         ("{scratch}", _bash_copy_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
         ("{scratch}", _bash_move_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
         ("{scratch}", _bash_rm_target_payload, "repo/into-guarded-directory", 0, None, 0),
+        ("{scratch}", _write_target_payload, "repo/into-own-readme.md", 0, None, 0),
+        ("{scratch}", _write_target_payload, "repo/into-outside.md", 0, None, 0),
+        (
+            "{scratch}",
+            _write_target_payload,
+            "guarded-worktree/into-throwaway.md",
+            2,
+            "path required",
+            0,
+        ),
         (
             "scratch",
             _write_target_payload,
@@ -2722,6 +2740,9 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         "bash-cp-into-a-directory-symlink-into-a-guarded-checkout",
         "bash-mv-into-a-directory-symlink-into-a-guarded-checkout",
         "bash-rm-of-a-directory-symlink-into-a-guarded-checkout-allows",
+        "file-symlink-into-its-own-checkout-allows",
+        "file-symlink-outside-every-repository-allows",
+        "file-symlink-from-a-guarded-worktree-into-the-throwaway-checkout",
         "relative-entry-fails-closed",
         "missing-entry-fails-closed",
         "empty-trailing-entry-fails-closed",
