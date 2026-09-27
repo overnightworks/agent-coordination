@@ -22,6 +22,29 @@ _PROJECT_CONFIGURATION = Path(__file__).parent.parent / "pyproject.toml"
 _ALLOWED_PROTOCOLS_WHILE_COLLECTING = os.environ.get(GIT_ALLOW_PROTOCOL_ENV)
 
 
+_OPERATOR_GIT_ROUTES = ("GIT_PROXY_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT")
+
+
+def _machine_local_git_environment() -> dict[str, str]:
+    """The inherited environment without any route the operator configured:
+    no proxy, no git configuration beyond the repository's own, and an ssh
+    that reads no config file, so a probe the guard failed to stop still
+    dials the loopback address it names."""
+    inherited = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.lower().endswith("_proxy")
+        and not name.startswith("GIT_CONFIG")
+        and name not in _OPERATOR_GIT_ROUTES
+    }
+    return inherited | {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_SSH_COMMAND": f"ssh -F {os.devnull} -o BatchMode=yes",
+        "LC_ALL": "C",
+    }
+
+
 def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.CompletedProcess[str]:
     repository, bare_remote = _real_repository_with_bare_remote(tmp_path)
     _real_git(repository, "commit", "-q", "--allow-empty", "-m", "first")
@@ -29,7 +52,7 @@ def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.Co
     return subprocess.run(
         ["git", "push", "-q", "origin", "main"],
         cwd=repository,
-        env={**os.environ, "LC_ALL": "C"},
+        env=_machine_local_git_environment(),
         capture_output=True,
         text=True,
         check=False,
@@ -67,6 +90,23 @@ def test_push_to_a_non_local_remote_is_refused(tmp_path: Path, transport: str, u
 
     assert push.returncode != 0
     assert f"transport '{transport}' not allowed" in push.stderr
+
+
+def test_a_refused_remote_probe_ignores_operator_proxies_when_the_guard_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both proxy routes point at another loopback port, so this run stays
+    on the machine even while it proves the probe would bypass them."""
+    operator_proxy = "http://127.0.0.1:1"
+    monkeypatch.delenv(GIT_ALLOW_PROTOCOL_ENV)
+    monkeypatch.setenv("HTTPS_PROXY", operator_proxy)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.proxy")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", operator_proxy)
+
+    push = _push_to(tmp_path, lambda _bare_remote: "https://127.0.0.1:9/x.git")
+
+    assert "127.0.0.1 port 9" in push.stderr
 
 
 @pytest.mark.usefixtures("isolated_global_git_config")
