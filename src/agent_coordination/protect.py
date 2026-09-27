@@ -565,7 +565,9 @@ def _protect_checkout_scope_denial(
     A write through a symlink into another checkout runs the chain in both
     checkouts, the target's first (issue #486): either denial denies, and
     the target's wins when both do, so neither checkout's claim answers
-    for the other's bytes. A target git cannot resolve denies with that
+    for the other's bytes. The target is judged even where the link's own
+    checkout would deny without the store, so there the target's store
+    read and identity come first. A target git cannot resolve denies with that
     failure only where the link's own checkout allows, never outranking
     its own gate (issue #483 review finding)."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)

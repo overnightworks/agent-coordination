@@ -2841,26 +2841,65 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("payload_for", "link", "status", "reason"),
+    ("payload_for", "link", "agent", "status", "reason", "store_reads"),
     [
-        (_write_target_payload, f"{_CLAIMED_WORKTREE}/src/into-other.md", 2, "not main"),
-        (_write_target_payload, f"{_CLAIMED_WORKTREE}/src/into-nested.md", 2, "not main"),
-        (_write_target_payload, "claimed/repo/into-worktree.md", 2, "not main"),
+        (
+            _write_target_payload,
+            f"{_CLAIMED_WORKTREE}/src/into-other.md",
+            None,
+            2,
+            "not main",
+            0,
+        ),
+        (
+            _write_target_payload,
+            f"{_CLAIMED_WORKTREE}/src/into-nested.md",
+            None,
+            2,
+            "not main",
+            0,
+        ),
+        (_write_target_payload, "claimed/repo/into-worktree.md", "Ada", 2, "not main", 1),
+        (
+            _write_target_payload,
+            "claimed/repo/into-worktree.md",
+            None,
+            2,
+            protect.MISSING_HOOK_IDENTITY,
+            1,
+        ),
         (
             _write_target_payload,
             f"{_CLAIMED_WORKTREE}/src/into-nested-git",
+            "Ada",
             2,
             "not a checkout: {tmp_path}/" + _CLAIMED_WORKTREE + "/src/nested/repo/.git"
             " is a git directory",
+            1,
         ),
-        (_write_target_payload, f"{_CLAIMED_WORKTREE}/src/into-own.md", 0, None),
-        (_write_target_payload, f"{_CLAIMED_WORKTREE}/src/into-outside.md", 2, "path required"),
-        (_bash_rm_target_payload, f"{_CLAIMED_WORKTREE}/src/into-other.md", 2, "path required"),
+        (_write_target_payload, f"{_CLAIMED_WORKTREE}/src/into-own.md", "Ada", 0, None, 1),
+        (
+            _write_target_payload,
+            f"{_CLAIMED_WORKTREE}/src/into-outside.md",
+            None,
+            2,
+            "path required",
+            0,
+        ),
+        (
+            _bash_rm_target_payload,
+            f"{_CLAIMED_WORKTREE}/src/into-other.md",
+            None,
+            2,
+            "path required",
+            0,
+        ),
     ],
     ids=[
         "claimed-worktree-into-another-repositorys-main-checkout",
         "claimed-worktree-into-a-nested-main-checkout-its-scope-covers",
         "main-checkout-into-the-claimed-worktree",
+        "main-checkout-into-the-claimed-worktree-without-an-identity",
         "claimed-worktree-into-a-git-directory-no-checkout-resolves",
         "within-the-claimed-worktrees-scope",
         "claimed-worktree-outside-every-repository",
@@ -2873,8 +2912,10 @@ def test_protect_judges_a_write_through_a_symlink_by_the_link_and_the_target_che
     capsys: pytest.CaptureFixture[str],
     payload_for: Callable[[Path], dict[str, object]],
     link: str,
+    agent: str | None,
     status: int,
     reason: str | None,
+    store_reads: int,
 ) -> None:
     """PROT-44 (issue #486): a write through a file symlink is judged by the link's
     checkout and by the one its bytes land in, and the stricter verdict
@@ -2882,13 +2923,19 @@ def test_protect_judges_a_write_through_a_symlink_by_the_link_and_the_target_che
     another repository's, or a nested, main checkout, and a claim covering
     the target never opens a link in a main checkout. A target outside
     every repository, and `rm` of the link itself, stay the link's
-    checkout's alone."""
+    checkout's alone. The target's checkout is judged first, even where the
+    link's own would deny without the store, so its store read and identity
+    come first; every row without an identity proves its verdict needs none."""
     _symlinks_across_checkouts(tmp_path)
-    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: agent} if agent else None)
     claim = _protect_active_claim("Ada", scope=("src",), branch="codex/issue-72-widget")
-    monkeypatch.setattr(
-        store, "fetch_state", lambda *, worktree, remote: _protect_state_with_claim(claim)
-    )
+    fetches: list[Path] = []
+
+    def fetch_state(*, worktree: Path, remote: str) -> protocol.ClaimState:
+        fetches.append(worktree)
+        return _protect_state_with_claim(claim)
+
+    monkeypatch.setattr(store, "fetch_state", fetch_state)
 
     assert _protect_main(monkeypatch, payload_for(tmp_path / link)) == status
     _assert_protect_decision(
@@ -2896,6 +2943,7 @@ def test_protect_judges_a_write_through_a_symlink_by_the_link_and_the_target_che
         decision="deny" if reason else "allow",
         reason=reason.format(tmp_path=tmp_path) if reason else None,
     )
+    assert len(fetches) == store_reads
 
 
 def test_protect_denies_path_required_for_a_worktree_symlink_leading_outside_it(

@@ -64,7 +64,11 @@ checkout, its live state, and a repository-relative path are already in
 hand: a write that never gets that far -- outside every repository, in the
 main checkout, or a Bash command naming no pattern -- never needed an
 identity at all, so a session without one is stopped only where a claim
-could answer for it.
+could answer for it. A write through a symlink into another checkout is
+the one exception (PROT-44): the target's checkout is judged first, even
+where the link's own would deny without the store, so the target's store
+read and identity come first -- a link in a main checkout into a claimed
+worktree needs an identity before it denies "not main".
 
 ## The verdict's output
 
@@ -234,7 +238,7 @@ than a bare `claim first`.
 
 ## Never
 
-- `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, a path no claim can ever cover (PROT-14, PROT-42, PROT-43), a path outside every repository, or one in an unguarded repository, touches `store.fetch_state` zero times.
+- `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, a path no claim can ever cover (PROT-14, PROT-42, PROT-43), a path outside every repository, or one in an unguarded repository, touches `store.fetch_state` zero times -- except where a write through a symlink into another checkout is judged in the target's checkout first (PROT-44), whose store read comes before the link's own deny.
 - `protect` never exempts a guarded repository through an unguarded directory: its linked worktree placed there, a directory symlink into it, or a write through a file symlink from an unguarded repository into it is judged by the guarded checkout it lands in too, never by the link's own alone (PROT-40, PROT-44).
 - `protect` never lets a claim in one checkout authorize a write through a symlink whose bytes land in another: a link in a claimed worktree into a main checkout, a nested one included, denies `not main` (PROT-44).
 - `protect` never allows a write through a file symlink outside every repository as outside when its target lies in a checkout: that checkout judges the write (PROT-12 in a main checkout). A recognized `rm` or `mv` of the link itself never touches its target and stays outside (PROT-32).
