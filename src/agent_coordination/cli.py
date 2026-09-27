@@ -3727,7 +3727,7 @@ def _item_close_freed_or_hint(
     defect rather than failing a close that stood."""
     try:
         return _item_close_freed(client, number), None
-    except protocol.MalformedStateTreeError as error:
+    except (forge.ForgeError, protocol.MalformedStateTreeError) as error:
         return None, f"hint: freed: unknown -- {error}"
 
 

@@ -4065,34 +4065,48 @@ class TestCliStateRefForge:
         assert "blocked by" not in next_out
 
     @pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
-    def test_item_close_reports_success_and_a_freed_hint_beside_an_unrelated_missing_blocker(
+    @pytest.mark.parametrize(
+        ("unrelated_blocked_by", "refusal"),
+        [
+            (
+                ("aco-ffffff",),
+                "item aco-ffffff is listed as a blocker but does not exist",
+            ),
+            (
+                (CLOSE_TARGET_ID, CLOSE_TARGET_ID),
+                "GitHub returned a malformed board blocked-by list for #16: "
+                "listing total_blocked_by=2, detail length=2",
+            ),
+        ],
+        ids=["missing-blocker", "repeated-blocker"],
+    )
+    def test_item_close_reports_success_and_a_freed_hint_beside_an_unrelated_unreadable_blocker(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        unrelated_blocked_by: tuple[str, ...],
+        refusal: str,
         as_json: bool,
     ) -> None:
-        """Issue #541 (ITEM-55): an unrelated item naming a blocker `items/`
-        lacks fails only `freed:`'s read after the close is written, so the
-        close still reports success and the state ref holds it; the failed
-        read becomes one hint line (stderr under `--json`)."""
+        """Issue #541 (ITEM-55): an unrelated item whose stored blockers the
+        board read refuses -- one `items/` lacks, or one named twice -- fails
+        only `freed:`'s read after the close is written, so the close still
+        reports success and the state ref holds it; the failed read becomes
+        one hint line (stderr under `--json`)."""
         unrelated_id = "aco-000010"
-        missing_blocker_id = "aco-ffffff"
         unrelated_body = _state_ref_body(
             _CLOSE_TARGET_PROJECTION,
-            _record(title="Unrelated", state="open", kind="task", blocked_by=(missing_blocker_id,)),
+            _record(title="Unrelated", state="open", kind="task", blocked_by=unrelated_blocked_by),
         )
         item_files = {
             **_close_scenario_item_files(),
             f"{unrelated_id}.md": unrelated_body.encode(),
         }
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
-        hint = (
-            f"hint: freed: unknown -- item {missing_blocker_id} "
-            "is listed as a blocker but does not exist"
-        )
+        hint = f"hint: freed: unknown -- {refusal}"
         arguments = ["item", "close", str(CLOSE_BLOCKER_NUMBER), *(["--json"] if as_json else [])]
 
         status = issue_claim.main(arguments)
