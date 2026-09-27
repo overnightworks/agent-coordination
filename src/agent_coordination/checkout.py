@@ -999,12 +999,9 @@ def branch_exists(branch: str) -> bool:
 def fetched_trunk(remote: str, *, directory: Path | None = None) -> str:
     """Fetch `remote` and answer the commit its trunk names now (issue
     #479): `start` checks its claim against this one commit -- the claim's
-    base and the tree its scope is measured against -- and then builds the
-    worktree from the same commit, so a fetch elsewhere in between cannot
-    move what was checked. Reads `directory`'s own checkout via `-C` when
-    given (issue #394: `protect.judge`'s own direct tests build a worktree
-    fixture from an explicit repository path) or the calling process's own
-    checkout otherwise."""
+    base and the tree its scope is measured against -- before it builds.
+    Reads `directory`'s own checkout via `-C` when given or the calling
+    process's own checkout otherwise."""
     fetch = _git_run(["fetch", remote], directory=directory)
     if fetch.exit_status != 0:
         raise ClaimError(process.git_failure_detail(fetch))
@@ -1013,13 +1010,20 @@ def fetched_trunk(remote: str, *, directory: Path | None = None) -> str:
 
 
 def create_linked_worktree(
-    path: Path, *, branch: str, start_point: str, directory: Path | None = None
+    path: Path, *, branch: str, remote: str, directory: Path | None = None
 ) -> None:
     """Create a linked worktree at `path` on a fresh `branch` from
-    `start_point` (issue #322; `fetched_trunk`'s commit for `start`, issue
-    #479): the `git worktree add` step `ISOLATED_WORKTREE_RECIPE` used to
-    spell out for a person to type by hand, run through this module's own
-    `_git_run` chokepoint so `start` opens no new subprocess call site."""
+    `remote`'s own trunk as the last fetch left it (issue #322;
+    `fetched_trunk`, issue #479): the `git worktree add` step
+    `ISOLATED_WORKTREE_RECIPE` used to spell out for a person to type by
+    hand, run through this module's own `_git_run` chokepoint so `start`
+    opens no new subprocess call site. Built from the trunk's ref, so the
+    branch tracks it wherever git's own `branch.autoSetupMerge` says so.
+    Reads and writes `directory`'s own checkout via `-C` when given (issue
+    #394: `protect.judge`'s own direct tests build a worktree fixture from
+    an explicit repository path, never the test process's cwd) or the
+    calling process's own checkout otherwise."""
+    start_point = _trunk_ref(remote, directory=directory)
     result = _git_run(
         ["worktree", "add", str(path), "-b", branch, start_point], directory=directory
     )

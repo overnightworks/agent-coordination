@@ -5378,8 +5378,10 @@ def _rebuild_and_resume(
     checked first, then the worktree is built again from the fetched trunk
     and the claim reprinted, never a second one minted."""
     _refuse_resume_scope_mismatch(resumed, parsed)
-    trunk = checkout.fetched_trunk(context.canonical_remote)
-    checkout.create_linked_worktree(target.path, branch=target.branch, start_point=trunk)
+    checkout.fetched_trunk(context.canonical_remote)
+    checkout.create_linked_worktree(
+        target.path, branch=target.branch, remote=context.canonical_remote
+    )
     _print_start_target(target)
     worktree_context = context.for_directory(target.path)
     storage = worktree_context.config.storage
@@ -5391,9 +5393,11 @@ def _check_build_and_claim(
     parsed: argparse.Namespace, context: RunContext, target: _StartTarget
 ) -> int:
     """Fetch the trunk, run `claim`'s check phase against that one commit,
-    then build the worktree from it and run the commit phase (issue #479).
-    Only a claim the ledger refuses at the write -- one that landed after
-    the checks -- removes the build again; a failure once the claim is
+    then build the worktree from the trunk and run the commit phase (issue
+    #479). Only a refusal between the build and the write removes the build
+    again: the new worktree failing `claim`'s own checkout preconditions
+    (the trunk moved under another fetch meanwhile), or the ledger refusing
+    a claim that landed after the checks. A failure once the claim is
     written leaves the worktree standing with the claim that names it."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
     # A fresh context, never the caller's held forge: the fetch above may
@@ -5406,16 +5410,28 @@ def _check_build_and_claim(
     if plan.refused:
         _refuse_claim(False, plan.target_issue, plan.checks)
         return 2
-    checkout.create_linked_worktree(target.path, branch=target.branch, start_point=trunk)
+    checkout.create_linked_worktree(
+        target.path, branch=target.branch, remote=context.canonical_remote
+    )
     _print_start_target(target)
     _print_claim_checks(plan, as_json=False)
     try:
+        checkout._validate_checkout(requested, directory=target.path)
+    except protocol.ClaimError as error:
+        return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
+    try:
         claimed, claims = _committed_claim(plan)
     except _ClaimConflictError as error:
-        status = _refuse(ClaimReason.CLAIM_CONFLICT, error, as_json=False)
-        _remove_refused_start_worktree(target)
-        return status
+        return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)
+
+
+def _refuse_built_start(
+    reason: ClaimReason, error: protocol.ClaimError, target: _StartTarget
+) -> int:
+    status = _refuse(reason, error, as_json=False)
+    _remove_refused_start_worktree(target)
+    return status
 
 
 @dataclass(frozen=True)

@@ -1399,9 +1399,8 @@ def _bare_remote_repository_with_one_commit(tmp_path: Path) -> Path:
 
 
 def _build_start_worktree(worktree: Path, branch: str) -> None:
-    checkout.create_linked_worktree(
-        worktree, branch=branch, start_point=checkout.fetched_trunk("origin")
-    )
+    checkout.fetched_trunk("origin")
+    checkout.create_linked_worktree(worktree, branch=branch, remote="origin")
 
 
 def test_create_linked_worktree_builds_from_the_fetched_trunk(
@@ -1725,16 +1724,22 @@ def test_create_linked_worktree_fails_loud_when_worktree_add_itself_fails(
     repo = _bare_remote_repository_with_one_commit(tmp_path)
     monkeypatch.chdir(repo)
     worktree = tmp_path / "repo-worktrees" / "issue-9-widget"
-    trunk = checkout.fetched_trunk("origin")
     _stub_one_git_call(
         monkeypatch,
-        ["worktree", "add", str(worktree), "-b", "codex/issue-9-widget", trunk],
+        [
+            "worktree",
+            "add",
+            str(worktree),
+            "-b",
+            "codex/issue-9-widget",
+            "refs/remotes/origin/main",
+        ],
         exit_status=128,
         stderr="fatal: already exists",
     )
 
     with pytest.raises(ClaimError, match="fatal: already exists"):
-        checkout.create_linked_worktree(worktree, branch="codex/issue-9-widget", start_point=trunk)
+        checkout.create_linked_worktree(worktree, branch="codex/issue-9-widget", remote="origin")
 
 
 def test_remove_linked_worktree_fails_loud_when_worktree_remove_itself_fails(

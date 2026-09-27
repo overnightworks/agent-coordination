@@ -33,7 +33,7 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | a live claim on the target is held by a different agent or branch | START-16 |
 | a clean resume's own `--scope` differs from the live claim's stored scope | START-17 |
 | the claim's own checks refuse | START-23 |
-| the ledger refuses the claim after this call built the worktree | START-18 |
+| the claim is refused after this call built the worktree | START-18 |
 | git will not delete the branch a refused `start` built | START-21 |
 | run from a linked worktree | START-19 |
 | run from a linked worktree whose git directory names no checkout | START-22 |
@@ -58,9 +58,10 @@ brand-new id, never a stale or deterministic per-item one.
 `start` checks, then builds: target, slug, prefix, and the claim store are refused before any git
 write. Where no worktree stands yet, `start` fetches the trunk and runs every check the claim
 itself makes -- scope, container, body, a broken item, priority or `--out-of-order`, width, a
-claim already held -- against that one fetched commit, then builds the worktree from it: such a
-refusal builds nothing (START-23). Only the ledger refusing the claim at its one write, because
-another claim landed after the checks, removes what this call built (START-18).
+claim already held -- against that one fetched commit, then builds the worktree from the trunk:
+such a refusal builds nothing (START-23). Only a refusal between the build and the claim's one
+write -- another claim landed after the checks, or another fetch moved the trunk so the worktree
+stands on a commit the checks never saw -- removes what this call built (START-18).
 
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.
@@ -86,7 +87,7 @@ another claim landed after the checks, removes what this call built (START-18).
 - [ ] [START-16] A live claim on the target held by a different agent or branch is never silently resumed: it falls through to the ordinary claim path, refused by CLAIM-11's own sentence (see E-START-09).
 - [ ] [START-17] A resume's own explicit `--scope` disagreeing with the live claim's stored scope refuses `live claim scope differs; release it first`, exit `2` (see E-START-10).
 - [ ] [START-23] A refusal of the claim's own checks comes before the build: no `worktree:`/`branch:` line, no worktree, no branch; exit 2 (see E-START-11).
-- [ ] [START-18] A claim the ledger refuses at its write, after the build, removes the worktree and branch, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
+- [ ] [START-18] A claim refused after the build removes the worktree and branch, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
 - [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 
 ## Never

@@ -2175,9 +2175,9 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
     assert "removed worktree" not in err
 
 
-def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
     """Another agent's claim on #314 lands between `start`'s check phase and
-    its one ledger write: the only refusal left after the build."""
+    its one ledger write."""
     fake = _patch_store_write(monkeypatch)
     held = _store_claim_from_request(
         request("held-claim", "Grok sess-9", issue=314, branch="grok/issue-314-other", scope=("a",))
@@ -2194,42 +2194,67 @@ def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(store, "commit_transition", racing_commit)
 
 
+def _git_keeps_the_raced_branch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    _claim_lands_before_the_commit(monkeypatch, repo)
+    _stub_one_git_call(
+        monkeypatch,
+        ["branch", "-d", _START_BRANCH],
+        exit_status=1,
+        stderr="error: branch not fully merged",
+    )
+
+
+def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    """Another push moves the trunk after `start` fetched and checked it,
+    so the worktree it builds stands on a commit it never checked."""
+    real_fetched_trunk = checkout.fetched_trunk
+
+    def fetch_then_the_trunk_moves(remote: str, **kwargs: Path | None) -> str:
+        trunk = real_fetched_trunk(remote, **kwargs)
+        _real_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
+        _real_git(repo, "push", "-q", "origin", "HEAD:main")
+        return trunk
+
+    monkeypatch.setattr(checkout, "fetched_trunk", fetch_then_the_trunk_moves)
+
+
+_REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start created"
+
+
 @pytest.mark.parametrize(
-    ("git_keeps_the_branch", "removal"),
+    ("arrange", "refusal", "removal"),
     [
         pytest.param(
-            False,
-            "removed worktree {worktree} and branch '{branch}' this start created",
-            id="removes-both",
+            _claim_lands_before_the_commit,
+            "issue #314 is claimed by Grok sess-9",
+            _REMOVED_BOTH,
+            id="ledger-race",
         ),
         pytest.param(
-            True,
+            _git_keeps_the_raced_branch,
+            "issue #314 is claimed by Grok sess-9",
             "removed worktree {worktree} this start created; "
             "branch '{branch}' kept: git failure: error: branch not fully merged",
             id="git-keeps-the-branch",
         ),
+        pytest.param(_trunk_moves_after_the_fetch, "claim base ", _REMOVED_BOTH, id="trunk-moved"),
     ],
 )
-def test_a_claim_refused_at_the_commit_removes_what_start_built(
+def test_a_claim_refused_after_the_build_removes_what_start_built(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    git_keeps_the_branch: bool,
+    arrange: Callable[[pytest.MonkeyPatch, Path], None],
+    refusal: str,
     removal: str,
 ) -> None:
-    """Issue #479 (START-18, START-21): a claim the ledger refuses after the
-    build removes exactly the worktree and branch this call built, and says
-    so; when git will not delete the branch the safe way, it says which
-    branch stays and why."""
+    """Issue #479 (START-18, START-21): a claim refused between the build
+    and its write -- by the ledger, or by the new worktree's own checkout
+    preconditions -- removes exactly the worktree and branch this call
+    built, and says so; when git will not delete the branch the safe way,
+    it says which branch stays and why."""
     repo = _start_scenario(monkeypatch, tmp_path)
-    _claim_lands_before_the_commit(monkeypatch)
-    if git_keeps_the_branch:
-        _stub_one_git_call(
-            monkeypatch,
-            ["branch", "-d", _START_BRANCH],
-            exit_status=1,
-            stderr="error: branch not fully merged",
-        )
+    arrange(monkeypatch, repo)
     monkeypatch.chdir(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
@@ -2237,7 +2262,7 @@ def test_a_claim_refused_at_the_commit_removes_what_start_built(
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
     err = capsys.readouterr().err
     assert (status, worktree.exists()) == (2, False)
-    assert err.startswith("ERROR: issue #314 is claimed by Grok sess-9")
+    assert err.startswith(f"ERROR: {refusal}")
     assert err.endswith(removal.format(worktree=worktree, branch=_START_BRANCH) + "\n")
 
 
