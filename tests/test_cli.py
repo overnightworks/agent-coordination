@@ -6707,15 +6707,21 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
 
 
 @pytest.mark.parametrize(
-    "line_break",
-    ["\n", "\r", "\f", "\u0085", "\u2028", "\u2029"],
-    ids=["LF", "CR", "FF", "NEL", "LS", "PS"],
+    "title",
+    [
+        *(
+            f"Line one{line_break}Line two"
+            for line_break in ("\n", "\r", "\f", "\u0085", "\u2028", "\u2029")
+        ),
+        "Line one\n",
+    ],
+    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF"],
 )
 def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    line_break: str,
+    title: str,
 ) -> None:
     """Issues #513 line 2 and #517 line 3: a first uncut row whose title,
     stored before `item edit` refused it, holds any character that splits a
@@ -6724,7 +6730,7 @@ def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
     _real_state_ref_repository(
         monkeypatch,
         tmp_path,
-        {50: _state_ref_container_body("Epic", f"Line one{line_break}Line two")},
+        {50: _state_ref_container_body("Epic", title)},
     )
 
     exit_code = issue_claim.main(["next"])

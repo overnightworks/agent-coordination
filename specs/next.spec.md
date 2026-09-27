@@ -61,7 +61,7 @@ it, `<s>` an integer score.
 - [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title=<cut title>`, exit `0` (see E-NEXT-03).
 - [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: title `Say "hi" to $HOME` prints `--title='Say "hi" to $HOME'`.
 - [ ] [NEXT-31] An advice command attaches each option's value as `--title=<quoted>` or `--scope=<quoted>`, so a value starting with `-` still reaches it: title `-draft` prints `--title=-draft`.
-- [ ] [NEXT-32] A first uncut row whose title splits into lines (LF, CR, FF, VT, NEL, U+2028…) gets no `cut`; `SKIPPED` reads `slice row <i> title carries a line break; shorten it to one line` (E-NEXT-10).
+- [ ] [NEXT-32] A first uncut row whose title holds a line break (LF, VT, NEL, U+2028…; trailing too) gets no `cut`; `SKIPPED` reads `slice row <i> title carries a line break; shorten it to one line` (E-NEXT-10).
 - [ ] [NEXT-36] An item PIN-14/PIN-15 refuses is named under `SKIPPED` as `<item-id>: body malformed: <field>: <message>`; every other item still reads, one it blocks stays blocked (see E-NEXT-11).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).

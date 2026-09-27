@@ -2505,7 +2505,9 @@ ChildlessContainerVerdict = (
 
 
 def _carries_line_break(title: str) -> bool:
-    return len(title.splitlines()) > 1
+    # `splitlines` drops each line's ending -- a trailing one included, which
+    # a count of the lines would miss -- so any line break shortens the join.
+    return "".join(title.splitlines()) != title
 
 
 def _childless_container_verdict(
