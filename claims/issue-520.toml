@@ -1,8 +1,0 @@
-claim_id = "d8330d1e88654a04bb862afa1f92e2e1"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "067109812b4245fc434e0c2a22133bd2a5fb44dc"
-branch = "claude/issue-520-pin-merge-trunk"
-scope = ["specs/storage-pin.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_cli.py", "tests/test_session.py"]
-opened_commit = "d619184f653463bcf0a2ea78209768ebcca06d16"
-whole_reason = "one refusal sentence, its trunk read, its spec and proofs"
