@@ -3091,7 +3091,8 @@ def test_a_claim_whose_item_closes_under_its_rejected_push_refuses_and_writes_no
     """Issue #496 proof 2: the item is closed after the claim's checks judged
     it open, so the claim's first push is rejected; the retry re-reads the
     ref, finds the item's blob no longer the one checked, and refuses with
-    CAS-20's sentence -- no live claim ever stands on the closed item."""
+    CAS-20's sentence -- no live claim ever stands on the closed item
+    (CLM-31, START-27)."""
     repo, bare_remote, open_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     argv = arrange(monkeypatch, repo, tmp_path)
     real_push = store.GitPushTransport.push
@@ -7751,7 +7752,7 @@ def test_a_pinned_claim_refuses_once_its_item_closes_between_its_rejection_and_r
     item open and before its first push, so that push is rejected; the retry
     applies the claim to the fresh state, finds the item's blob no longer
     the pinned one, and refuses with CAS-20's sentence as a sent write -- the
-    item stays closed and no claim is written."""
+    item stays closed and no claim is written (CAS-59)."""
     worktree, bare_remote = _reset_repository(monkeypatch, tmp_path)
     _use_real_store(monkeypatch)
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
