@@ -6731,6 +6731,16 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     assert tuple(claim.scope for claim in claimed.values()) == (top_level_scope or row_scope,)
 
 
+# Issue #538: display controls a slice title refuses beside the Cc set --
+# the bidi override and isolate and the zero-width space -- with the code
+# point BODY-63 names.
+_BIDI_AND_ZERO_WIDTH_CONTROLS = (
+    ("\N{RIGHT-TO-LEFT OVERRIDE}", "U+202E"),
+    ("\N{LEFT-TO-RIGHT ISOLATE}", "U+2066"),
+    ("\N{ZERO WIDTH SPACE}", "U+200B"),
+)
+
+
 def _state_ref_container_body(title: str, *slice_titles: str, parent: int | None = None) -> str:
     rows = [{"index": index, "title": row} for index, row in enumerate(slice_titles, start=1)]
     return _state_ref_item_body(title, kind=body.ItemKind.CONTAINER, parent=parent, slice=rows)
@@ -6789,8 +6799,21 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
         "Retitle\x1b]0;pwned\x07",
         "Clear\x1b[2J",
         "Rubout\x7f",
+        *(f"Flip{control}side" for control, _codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS),
     ],
-    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF", "OSC-BEL", "CSI", "DEL"],
+    ids=[
+        "LF",
+        "CR",
+        "FF",
+        "NEL",
+        "LS",
+        "PS",
+        "trailing-LF",
+        "OSC-BEL",
+        "CSI",
+        "DEL",
+        *(codepoint for _control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS),
+    ],
 )
 def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_a_cut(
     monkeypatch: pytest.MonkeyPatch,
@@ -17803,6 +17826,15 @@ def test_body_check_names_a_body_with_no_recognized_block_as_malformed(
             "expectation[0].default: expectation[0] must be proposed (default) or ruled "
             "(ruling, ruled_on), not both",
             id="default-and-ruling",
+        ),
+        *(
+            pytest.param(
+                f'{MINIMAL_BLOCK_TOML}\n[[slice]]\nindex = 1\ntitle = "Flip{control}side"\n',
+                f"slice[0].title: slice[0].title of row 1 holds {codepoint}; "
+                "a slice title stays on one line",
+                id=f"slice-title-{codepoint}",
+            )
+            for control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS
         ),
     ],
 )
