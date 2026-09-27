@@ -47,7 +47,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
-| `--parent` an open Task, or `--kind` given, either storage | ITEM-45, ITEM-46 | — | ITEM-47..ITEM-49 | — |
+| `--parent` an open Task, or `--kind` given, either storage | ITEM-45, ITEM-46 | — | ITEM-47..ITEM-50 | — |
 | an item, open or closed | — | ITEM-07, ITEM-08 | — | — |
 | an unknown id | PIN-18 | ITEM-10 | PIN-23 | PIN-28 |
 | `storage = "github"` | ITEM-26..ITEM-31 | ITEM-11 | PIN-10 | PIN-11 |
@@ -126,6 +126,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 - [ ] [ITEM-47] `item edit --kind task|container` sets only an open item's type (else `#<n> is not an open item`), no stdin, both storages; prints `EDITED #<n> kind=<kind>` (`--json`: `item`, `kind`) (see E-ITEM-13).
 - [ ] [ITEM-48] `--kind task` on an item with an open child refuses `#<n> has an open child; a container with open children stays a container`, exit `2`, before any write (see E-ITEM-13).
 - [ ] [ITEM-49] A file or pipe on `--kind`'s stdin refuses `item edit --kind reads no stdin; drop the redirect`, exit `2`, before any write; a terminal or `/dev/null` there passes.
+- [ ] [ITEM-50] `--size`, `--whole` and `--kind` exclude one another: a second one refuses at argparse, `argument <second>: not allowed with argument <first>`, exit `2`, before any write.
 
 ## `item close`
 

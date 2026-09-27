@@ -852,17 +852,18 @@ def _add_item_parser(commands: argparse._SubParsersAction) -> None:
     edit.add_argument(
         "item", type=board.parse_item_reference, help=f"the item to edit, {ITEM_REF_HELP}"
     )
-    edit.add_argument(
+    one_field = edit.add_mutually_exclusive_group()
+    one_field.add_argument(
         "--size",
         choices=tuple(metrics.Size),
         help="set only this item's size class (any storage); skips the stdin body read",
     )
-    edit.add_argument(
+    one_field.add_argument(
         "--whole",
         metavar="REASON",
         help="set only this item's whole reason (any storage); skips the stdin body read",
     )
-    edit.add_argument(
+    one_field.add_argument(
         "--kind",
         choices=ITEM_EDIT_KINDS,
         help="set only this item's kind (any storage); skips the stdin body read",

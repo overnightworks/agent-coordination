@@ -18266,6 +18266,30 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
             [],
             id="piped_body_refuses",
         ),
+        pytest.param(
+            "484",
+            ("--size", "S", "--json"),
+            None,
+            False,
+            2,
+            '{"ok": false, "reason": "invalid_usage", '
+            '"message": "argument --size: not allowed with argument --kind"}\n',
+            "ERROR: argument --size: not allowed with argument --kind\n",
+            [],
+            id="size_beside_kind_refuses",
+        ),
+        pytest.param(
+            "484",
+            ("--whole", "one PR", "--json"),
+            None,
+            False,
+            2,
+            '{"ok": false, "reason": "invalid_usage", '
+            '"message": "argument --whole: not allowed with argument --kind"}\n',
+            "ERROR: argument --whole: not allowed with argument --kind\n",
+            [],
+            id="whole_beside_kind_refuses",
+        ),
     ],
 )
 def test_item_edit_kind_retypes_a_github_issue_or_refuses(
@@ -18284,10 +18308,11 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     """Issue #503 (ITEM-47): `item edit --kind` runs under
     `storage = "github"` too, through the same forge retype `item new
     --parent` uses, so `next`'s nested-container repair runs under both
-    storages; a retype the forge drops, an item that is not open, or a body
-    redirected onto stdin (which `--kind` never reads) refuses exit 2
-    before any retype; `--json` reports the `item` and its new `kind`.
-    stdin is a real descriptor, `/dev/null` unless the case pipes a body."""
+    storages; a retype the forge drops, an item that is not open, a body
+    redirected onto stdin (which `--kind` never reads), or `--size`/`--whole`
+    beside it (ITEM-50) refuses exit 2 before any retype; `--json` reports
+    the `item` and its new `kind`. stdin is a real descriptor, `/dev/null`
+    unless the case pipes a body."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
