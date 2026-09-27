@@ -18385,10 +18385,10 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     `storage = "github"` too, through the same forge retype `item new
     --parent` uses, so `next`'s nested-container repair runs under both
     storages; a retype the forge drops, an item that is not open, a body
-    file redirected onto stdin (which `--kind` never reads), or
+    file redirected onto stdin (which `--kind` never reads, ITEM-49), or
     `--size`/`--whole` beside it (ITEM-50) refuses exit 2 before any retype,
-    while a pipe, the empty socket an agent harness hands as stdin, or a
-    closed stdin passes (ITEM-49); `--json` reports
+    while a pipe, the empty socket an agent harness hands as
+    stdin, or a closed stdin passes (ITEM-51); `--json` reports
     the `item` label, its `number` and new `kind`. stdin is a real descriptor
     each case opens."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
