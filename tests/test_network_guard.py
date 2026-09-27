@@ -10,12 +10,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from functools import cache
 from pathlib import Path
 
 import pytest
-from cli_fixtures import _real_git, _real_repository_with_bare_remote
 from network_guard import GIT_ALLOW_PROTOCOL_ENV
 
 _PROJECT_CONFIGURATION = Path(__file__).parent.parent / "pyproject.toml"
@@ -82,18 +82,55 @@ def _machine_local_git_environment() -> dict[str, str]:
     }
 
 
-def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.CompletedProcess[str]:
-    repository, bare_remote = _real_repository_with_bare_remote(tmp_path)
-    _real_git(repository, "commit", "-q", "--allow-empty", "-m", "first")
-    _real_git(repository, "remote", "set-url", "origin", remote_url(bare_remote))
+@pytest.fixture
+def hostile_operator_git_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An operator git template whose config would reroute a `file://` remote
+    to a closed https port and refuse https outright, so any repository
+    these proofs initialize from it contaminates both the probe and its
+    control."""
+    template = tmp_path / "operator-template"
+    template.mkdir()
+    (template / "config").write_text(
+        '[url "https://127.0.0.1:9/"]\n\tinsteadOf = file://\n[protocol "https"]\n\tallow = never\n'
+    )
+    monkeypatch.setenv("GIT_TEMPLATE_DIR", str(template))
+
+
+def _machine_local_git(
+    directory: Path, *arguments: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", "push", "-q", "origin", "main"],
-        cwd=repository,
+        ["git", *arguments],
+        cwd=directory,
         env=_machine_local_git_environment(),
         capture_output=True,
         text=True,
-        check=False,
+        check=check,
     )
+
+
+def _init_machine_local_repository(directory: Path, *arguments: str) -> None:
+    """`git init` from a known-empty template, so no operator template
+    (`GIT_TEMPLATE_DIR`, `init.templateDir`) seeds a URL rewrite or protocol
+    rule into the repository a proof then runs git in."""
+    with tempfile.TemporaryDirectory() as empty_template:
+        _machine_local_git(directory, "init", "-q", f"--template={empty_template}", *arguments)
+
+
+def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.CompletedProcess[str]:
+    bare_remote = tmp_path / "remote.git"
+    repository = tmp_path / "repository"
+    bare_remote.mkdir()
+    repository.mkdir()
+    _init_machine_local_repository(bare_remote, "--bare", "-b", "main")
+    _init_machine_local_repository(repository, "-b", "main")
+    _machine_local_git(
+        repository,
+        *("-c", "user.name=Test", "-c", "user.email=test@example.com"),
+        *("commit", "-q", "--allow-empty", "-m", "first"),
+    )
+    _machine_local_git(repository, "remote", "add", "origin", remote_url(bare_remote))
+    return _machine_local_git(repository, "push", "-q", "origin", "main", check=False)
 
 
 @pytest.mark.parametrize(
@@ -103,6 +140,7 @@ def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.Co
         pytest.param(Path.as_uri, id="file-url"),
     ],
 )
+@pytest.mark.usefixtures("hostile_operator_git_template")
 def test_push_to_a_local_remote_still_works(
     tmp_path: Path, remote_url: Callable[[Path], str]
 ) -> None:
@@ -149,6 +187,7 @@ def test_a_refused_remote_probe_ignores_operator_proxies_when_the_guard_is_gone(
         pytest.param(["-p", "no:network_guard"], False, id="plugin-blocked"),
     ],
 )
+@pytest.mark.usefixtures("hostile_operator_git_template")
 def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -166,10 +205,10 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     operator_repository = tmp_path / "operator:temp"
     scratch = operator_repository / "scratch"
     scratch.mkdir(parents=True)
-    _real_git(operator_repository, "init", "-q")
-    _real_git(operator_repository, "config", "protocol.https.allow", "never")
+    _init_machine_local_repository(operator_repository)
+    _machine_local_git(operator_repository, "config", "protocol.https.allow", "never")
     # Its own repository ends discovery at the scratch directory, whatever encloses it.
-    _real_git(scratch, "init", "-q")
+    _init_machine_local_repository(scratch)
     monkeypatch.setenv("GIT_DIR", str(operator_repository / ".git"))
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.https.allow")
