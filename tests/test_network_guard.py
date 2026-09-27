@@ -43,6 +43,27 @@ def test_git_refuses_https_while_the_test_runs():
     assert_git_refuses_https()
 """
 )
+_SCRATCH_GH_LOGIN_MODULE = """
+import subprocess
+
+import pytest
+
+
+@pytest.mark.parametrize("host_arguments", [(), ("--hostname", "github.com")])
+def test_gh_finds_no_login(host_arguments):
+    token = subprocess.run(
+        ["gh", "auth", "token", *host_arguments], capture_output=True, text=True, check=False
+    )
+    assert token.returncode != 0, "gh found a login"
+"""
+
+_WITH_AND_WITHOUT_THE_PLUGIN = pytest.mark.parametrize(
+    ("plugin_arguments", "guarded"),
+    [
+        pytest.param([], True, id="plugin-loaded"),
+        pytest.param(["-p", "no:network_guard"], False, id="plugin-blocked"),
+    ],
+)
 
 
 @pytest.fixture
@@ -119,13 +140,7 @@ def test_a_refused_remote_probe_ignores_operator_proxies_when_the_guard_is_gone(
     assert "127.0.0.1 port 9" in push.stderr
 
 
-@pytest.mark.parametrize(
-    ("plugin_arguments", "guarded"),
-    [
-        pytest.param([], True, id="plugin-loaded"),
-        pytest.param(["-p", "no:network_guard"], False, id="plugin-blocked"),
-    ],
-)
+@_WITH_AND_WITHOUT_THE_PLUGIN
 @pytest.mark.usefixtures("hostile_operator_git_template")
 def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     tmp_path: Path,
@@ -153,13 +168,60 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.https.allow")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "never")
     (scratch / "conftest.py").write_text(_SCRATCH_CONFTEST)
-    probe = scratch / "test_scratch_probe.py"
-    probe.write_text(_SCRATCH_TEST_MODULE)
     unguarded_environment = {
         name: value
         for name, value in sealed_git_environment().items()
         if name != GIT_ALLOW_PROTOCOL_ENV
     }
+
+    run = _run_scratch_pytest(
+        scratch, _SCRATCH_TEST_MODULE, plugin_arguments, unguarded_environment
+    )
+
+    assert (run.returncode == 0) is guarded, run.stdout + run.stderr
+
+
+@_WITH_AND_WITHOUT_THE_PLUGIN
+def test_a_run_started_with_a_hostile_gh_login_finds_no_login(
+    tmp_path: Path, plugin_arguments: list[str], guarded: bool
+) -> None:
+    """A pytest run started with the operator's gh configuration and every
+    gh token variable set asks gh for a login from its module: it finds none
+    only while the plugin displaces them before the run begins (#534 line
+    1). The blocked run proves the seeded login is one gh would use."""
+    hostile_config = tmp_path / "operator-gh-config"
+    hostile_config.mkdir()
+    (hostile_config / "hosts.yml").write_text(
+        "".join(
+            f'"{host}":\n    oauth_token: operator-config-token\n    user: operator\n'
+            for host in ("github.com", UNREACHABLE_GH_HOST)
+        )
+    )
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    hostile_environment = sealed_git_environment() | {
+        "GH_CONFIG_DIR": str(hostile_config),
+        "GH_HOST": "github.com",
+        "GH_TOKEN": "operator-token",
+        "GITHUB_TOKEN": "operator-token",
+        "GH_ENTERPRISE_TOKEN": "operator-token",
+        "GITHUB_ENTERPRISE_TOKEN": "operator-token",
+    }
+
+    run = _run_scratch_pytest(
+        scratch, _SCRATCH_GH_LOGIN_MODULE, plugin_arguments, hostile_environment
+    )
+
+    assert (run.returncode == 0) is guarded, run.stdout + run.stderr
+
+
+def _run_scratch_pytest(
+    scratch: Path, probe_source: str, plugin_arguments: list[str], environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """A pytest run of `probe_source` in `scratch` under the project
+    configuration alone, started with exactly `environment`."""
+    probe = scratch / "test_scratch_probe.py"
+    probe.write_text(probe_source)
     command = [
         sys.executable,
         "-m",
@@ -174,12 +236,9 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
         *plugin_arguments,
         str(probe),
     ]
-
-    run = subprocess.run(
-        command, cwd=scratch, env=unguarded_environment, capture_output=True, text=True, check=False
+    return subprocess.run(
+        command, cwd=scratch, env=environment, capture_output=True, text=True, check=False
     )
-
-    assert (run.returncode == 0) is guarded, run.stdout + run.stderr
 
 
 @pytest.mark.parametrize(
