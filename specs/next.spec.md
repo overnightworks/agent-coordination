@@ -61,6 +61,7 @@ it, `<s>` an integer score.
 ## `RECOVERY` and `SKIPPED`
 
 - [ ] [NEXT-08] Every other unworkable item is named once under a trailing `SKIPPED` block, `<label>: <reason>`; a container `next` itself recommends cutting or closing is left out of that list.
+- [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
 
 ## `parallel:`
 

@@ -2136,7 +2136,7 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
         ]
     if isinstance(action, board.CheckContainerAction):
         return [
-            f"check_container {container_label}: no open children; check done_when",
+            f"check_container {container_label}: {board.CHECK_DONE_WHEN}",
             f"Next: {action.next_step}",
         ]
     progress = action.container_progress

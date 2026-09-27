@@ -1432,8 +1432,8 @@ def _board_item(
             malformed_defect=(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
             ),
-            nested_container_repair=_nested_container_repair(
-                container_parent, container_progress, parsed.slices, config.storage
+            childless_container_reason=_childless_container_reason(
+                container_parent, container_progress, parsed.slices, contract.next, config.storage
             ),
         )
     )
@@ -2309,22 +2309,44 @@ class _ActionabilityFacts:
     projectionless_idea: bool
     read_state: BodyReadState = BodyReadState.VALID
     malformed_defect: ContractDefect | None = None
-    nested_container_repair: str | None = None
+    childless_container_reason: str | None = None
 
 
-def _nested_container_repair(
+# `next`'s own words for a childless container whose `Next` line still names
+# work (issue #503): its `check_container` line and its `SKIPPED` reason,
+# never a close.
+CHECK_DONE_WHEN = "no open children; check done_when"
+
+
+def _childless_container_reason(
     container_parent: int | None,
     progress: ContainerProgress | None,
     slices: tuple[SliceRow, ...],
+    next_line: str | None,
     storage: Storage,
 ) -> str | None:
+    """Why a container with no open child is still not closable (issue
+    #503), or `None` when it has an open child, a row `cut` accepts, or
+    nothing left at all -- each of which `next` already names otherwise."""
+    if progress is None or progress.open_children:
+        return None
+    if slices:
+        return (
+            None
+            if container_parent is None
+            else _nested_container_repair(container_parent, slices, storage)
+        )
+    return CHECK_DONE_WHEN if has_further_work(next_line) else None
+
+
+def _nested_container_repair(
+    container_parent: int, slices: tuple[SliceRow, ...], storage: Storage
+) -> str:
     """The repair a childless container nested under `container_parent`
     needs before its uncut `[[slice]]` rows can become work (issue #503):
     `cut` refuses a nested container, so `next` never proposes one and
     names this instead -- its one row as its own scope and type `Task`, the
     shape `start` accepts, or its several rows moved up to the parent."""
-    if container_parent is None or progress is None or progress.open_children or not slices:
-        return None
     if len(slices) == 1:
         return (
             "nested container, which cut refuses; set its type Task and take "
@@ -2366,5 +2388,5 @@ def _actionable_reason(facts: _ActionabilityFacts) -> str | None:
     if read_state_reason is not None:
         return read_state_reason
     if facts.kind is ItemKind.CONTAINER:
-        return facts.nested_container_repair or "container; claim a child"
+        return facts.childless_container_reason or "container; claim a child"
     return _claim_or_completeness_reason(facts)

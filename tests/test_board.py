@@ -1634,6 +1634,7 @@ def test_next_action_never_cuts_a_container_whose_slice_table_is_empty() -> None
     assert isinstance(action, board.CheckContainerAction)
     assert (action.container.number, action.next_step) == (130, "Cut the next slice.")
     assert board.zero_cost_closes(projected) == ()
+    assert action.container.actionable_reason == board.CHECK_DONE_WHEN
 
 
 def test_next_action_closes_a_container_with_no_open_child_and_no_further_work() -> None:
