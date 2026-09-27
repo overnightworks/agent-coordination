@@ -495,6 +495,22 @@ class StateRefBoard:
             ),
         )
 
+    def unplaced_child_numbers(self, number: int) -> tuple[int, ...]:
+        """While `number`'s decoded item is a container, every malformed item
+        whose record names no parent that still reads: `_children` cannot
+        place it, yet it may be this container's open child (issue #536,
+        ITEM-54), so a close or retype deciding with the children refuses by
+        it rather than guessing past it. No other kind takes a child
+        (ITEM-45), so any other item has none."""
+        record = self._items[self._by_number[number]].record
+        if _item_kind(record.kind) is not ItemKind.CONTAINER:
+            return ()
+        return tuple(
+            items.item_number(malformed_id)
+            for malformed_id, malformed in self._malformed.items()
+            if malformed.parent is None
+        )
+
     def default_branch(self) -> str:
         return self._default_branch
 

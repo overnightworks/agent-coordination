@@ -365,6 +365,39 @@ def _malformed_item_refusal_case(
     )
 
 
+def _unplaced_malformed_child_cases() -> list[object]:
+    """`item close` and `item edit --kind task` of `CONTAINER_ID`, which has
+    no readable child, beside an item whose record does not read at all:
+    its parent is unknown, so it may be the container's open child (issue
+    #536, ITEM-48, ITEM-54), and each refuses by that item's repair."""
+    unreadable_contents = {
+        "no-block": (b"no block at all\n", "has a malformed agent-claim block"),
+        "broken-toml": (
+            _task_item(CONTAINER_ID).replace(b"version = 1", b"version = = 1"),
+            "has a malformed agent-claim block",
+        ),
+        "not-utf8": (
+            _task_item(CONTAINER_ID).replace(b"Slice A", b"Slice \xff A"),
+            "is not valid UTF-8",
+        ),
+    }
+    container_alone = {f"{CONTAINER_ID}.md": _item_files()[f"{CONTAINER_ID}.md"]}
+    return [
+        pytest.param(
+            arguments,
+            None,
+            {**container_alone, f"{MALFORMED_ID}.md": content},
+            _malformed_item_refusal(problem),
+            id=f"{command}-of-a-container-over-a-{name}-item",
+        )
+        for name, (content, problem) in unreadable_contents.items()
+        for command, arguments in (
+            ("item-close", ["item", "close", CONTAINER_ID]),
+            ("edit-kind", ["item", "edit", CONTAINER_ID, "--kind", "task"]),
+        )
+    ]
+
+
 # A second open expectation line beside `EXPECTATION_TEXT` (issue #283): one
 # CLI-level `aco rule` proof needs a line still open after the ruled one, so
 # `aco rulings` still has something to print for this item -- a fully-ruled
@@ -3178,6 +3211,7 @@ class TestCliStateRefForge:
                 f"item {DANGLING_PARENT_ID} is referenced as a parent but does not exist",
                 id="item-close-of-a-child-whose-parent-is-missing",
             ),
+            *_unplaced_malformed_child_cases(),
         ],
     )
     def test_an_item_whose_relatives_cannot_be_read_refuses_and_writes_nothing(
