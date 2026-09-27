@@ -2818,7 +2818,8 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
     (`src/into-other.md`), into the nested one (`src/into-nested.md`),
     within its own scope (`src/into-own.md`), and outside every repository
     (`src/into-outside.md`), and from `claimed/repo` into the worktree
-    (`into-worktree.md`)."""
+    (`into-worktree.md`); a link from each of the two into the nested
+    checkout's git directory (`into-nested-git`)."""
     for name in ("claimed", "other"):
         (tmp_path / name).mkdir()
     main, claimed_worktree = _protect_real_repo_with_worktree(tmp_path / "claimed")
@@ -2835,6 +2836,7 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
         source / "into-own.md": source / "x.py",
         source / "into-outside.md": tmp_path / "outside.md",
         main / "into-worktree.md": source / "x.py",
+        main / "into-nested-git": nested / ".git" / "description",
     }
     for link, target in links.items():
         link.symlink_to(target)
@@ -2871,11 +2873,20 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
         (
             _write_target_payload,
             f"{_CLAIMED_WORKTREE}/src/into-nested-git",
-            "Ada",
+            None,
             2,
             "not a checkout: {tmp_path}/" + _CLAIMED_WORKTREE + "/src/nested/repo/.git"
             " is a git directory",
-            1,
+            0,
+        ),
+        (
+            _write_target_payload,
+            "claimed/repo/into-nested-git",
+            None,
+            2,
+            "not a checkout: {tmp_path}/" + _CLAIMED_WORKTREE + "/src/nested/repo/.git"
+            " is a git directory",
+            0,
         ),
         (_write_target_payload, f"{_CLAIMED_WORKTREE}/src/into-own.md", "Ada", 0, None, 1),
         (
@@ -2901,6 +2912,7 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
         "main-checkout-into-the-claimed-worktree",
         "main-checkout-into-the-claimed-worktree-without-an-identity",
         "claimed-worktree-into-a-git-directory-no-checkout-resolves",
+        "main-checkout-into-a-git-directory-no-checkout-resolves",
         "within-the-claimed-worktrees-scope",
         "claimed-worktree-outside-every-repository",
         "bash-rm-of-the-link-itself",

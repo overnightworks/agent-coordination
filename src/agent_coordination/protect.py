@@ -403,13 +403,16 @@ def _link_target_in_another_checkout(
     #486: a claim in one checkout must never authorize bytes landing in
     another). `None` for a path that is no symlink, for `rm` or `mv` of a
     file link itself, which never touches the target, and for a target
-    in the link's own checkout or outside every repository -- the link's
-    own checkout answers for those alone. Raises git's own failure for a
-    target no checkout can be resolved for, a git directory among them."""
+    in the link's own checkout, its own repository's git directory, or
+    outside every repository -- the link's own checkout answers for those
+    alone. Raises git's own failure for a target no checkout can be
+    resolved for, another repository's git directory among them."""
     path = Path(os.path.normpath(absolute_path))
     if not path.is_symlink() or not operation.writes_through(path):
         return None
     target = os.path.realpath(path)
+    if Path(target).is_relative_to(link_checkout.common_directory.resolve()):
+        return None
     target_checkout = checkout.resolve_named_path_checkout(Path(target))
     if target_checkout is None or target_checkout.toplevel == link_checkout.toplevel:
         return None
@@ -567,31 +570,22 @@ def _protect_checkout_scope_denial(
     the target's wins when both do, so neither checkout's claim answers
     for the other's bytes. The target is judged even where the link's own
     checkout would deny without the store, so there the target's store
-    read and identity come first. A target git cannot resolve denies with that
-    failure only where the link's own checkout allows, never outranking
-    its own gate (issue #483 review finding)."""
+    read and identity come first. A target git cannot resolve is the
+    target's denial too, so it denies with that failure before the link's
+    own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
-
-    def link_denial() -> str | None:
-        return _protect_resolved_path_denial(
-            raw_path, path_checkout, context=context, miss_denial=miss_denial
+    link_target = _link_target_in_another_checkout(raw_path, path_checkout, operation=operation)
+    if link_target is not None:
+        target_denial = _protect_resolved_path_denial(
+            *link_target, context=context, miss_denial=miss_denial
         )
-
-    try:
-        link_target = _link_target_in_another_checkout(raw_path, path_checkout, operation=operation)
-    except protocol.ClaimError:
-        denial = link_denial()
-        if denial is None:
-            raise
-        return denial
-    if link_target is None:
-        return link_denial()
-    target_denial = _protect_resolved_path_denial(
-        *link_target, context=context, miss_denial=miss_denial
+        if target_denial is not None:
+            return target_denial
+    return _protect_resolved_path_denial(
+        raw_path, path_checkout, context=context, miss_denial=miss_denial
     )
-    return target_denial or link_denial()
 
 
 def _protect_resolved_path_denial(

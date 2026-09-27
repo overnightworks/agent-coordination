@@ -126,7 +126,7 @@ session; a new gated tool joins both the table and that matcher.
 - [ ] [PROT-36] A payload path naming a nested checkout's own root is judged by that checkout, never by an outer one its parent directory sits inside, before PROT-14 denies it.
 - [ ] [PROT-42] A path below a file denies `<path> cannot exist: <file> is a file`; below a dangling symlink, `<path> cannot exist: <link> is a dangling symlink` (see E-PROT-14).
 - [ ] [PROT-43] A path inside a bare repository or a checkout's own `.git` directory denies `not a checkout: <git-directory> is a git directory`, never git's own error text (see E-PROT-14).
-- [ ] [PROT-44] A write through a symlink into another checkout is judged in both; either denial denies, the target's when both do. `rm` or `mv` of a file link itself stays the link's checkout's.
+- [ ] [PROT-44] A write through a symlink into another checkout is judged in both; either denial denies, the target's when both do -- PROT-43 for a target in another repository's git directory included. `rm` or `mv` of a file link itself stays the link's checkout's.
 
 ## Unguarded repositories
 
