@@ -2890,7 +2890,7 @@ def _read_body_check_input() -> str:
         ) from error
 
 
-def _stdin_is_redirected() -> bool:
+def _stdin_is_a_regular_file() -> bool:
     """Whether a file a shell redirected (`< body.md`) stands on stdin --
     told from the descriptor's type, never by reading, since an idle pipe or
     socket a harness holds open would block a read forever. Only a regular
@@ -3527,13 +3527,13 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
     retype a person runs, over the `ForgeWriter.set_item_kind` both storages
     implement -- the repair `next` names for a nested container with one
     uncut row. Reads no stdin, and refuses a file redirected there before
-    any write, so a body redirected from a file is never silently dropped. A container with an
-    open child stays one, since a Task never has children to claim through.
-    Every refusal reports through the shared envelope as
-    `precondition_failed`."""
+    any write, so a body redirected from a file is never silently dropped.
+    A container with an open child stays one, since a Task never has
+    children to claim through. Every refusal reports through the shared
+    envelope as `precondition_failed`."""
     as_json = parsed.json
     try:
-        if _stdin_is_redirected():
+        if _stdin_is_a_regular_file():
             raise protocol.ClaimUnavailableError(ITEM_EDIT_KIND_STDIN_REFUSAL)
         client = context.forge_writer
         storage = context.config.storage

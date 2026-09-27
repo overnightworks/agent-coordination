@@ -18387,10 +18387,9 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     storages; a retype the forge drops, an item that is not open, a body
     file redirected onto stdin (which `--kind` never reads, ITEM-49), or
     `--size`/`--whole` beside it (ITEM-50) refuses exit 2 before any retype,
-    while a pipe, the empty socket an agent harness hands as
-    stdin, or a closed stdin passes (ITEM-51); `--json` reports
-    the `item` label, its `number` and new `kind`. stdin is a real descriptor
-    each case opens."""
+    while a pipe, the empty socket an agent harness hands as stdin, or a
+    closed stdin passes (ITEM-51); `--json` reports the `item` label, its
+    `number` and new `kind`. Each case sets its own stdin."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
