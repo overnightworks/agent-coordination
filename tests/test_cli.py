@@ -2305,6 +2305,11 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
             ["claim", "314", "--scope", "base.txt", "--branch", "claude/issue-314-detached"],
             id="claim-with-branch",
         ),
+        pytest.param(
+            True,
+            ["claim", "314", "--scope", "base.txt", "--branch", "main"],
+            id="claim-with-trunk-branch",
+        ),
         pytest.param(False, ["start", "314"], id="start"),
     ],
 )

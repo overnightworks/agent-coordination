@@ -384,11 +384,11 @@ def _validate_worktree_branch(
     `_refuse_shared_checkout` below, so a rescope invoked from a foreign cwd
     is not silently judged by the wrong checkout.
     """
+    current = attached_branch(current_branch(directory=directory))
     if is_default_branch(branch, default_branch):
         raise ClaimError(
             f"{ISOLATED_NON_MAIN_BRANCH_REFUSAL}{_worktree_repair_instruction(repair, branch=None)}"
         )
-    current = attached_branch(current_branch(directory=directory))
     git_directory = Path(_git_output(["rev-parse", "--git-dir"], directory=directory)).resolve()
     common_directory = Path(
         _git_output(["rev-parse", "--git-common-dir"], directory=directory)
