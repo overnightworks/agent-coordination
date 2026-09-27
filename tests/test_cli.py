@@ -2280,50 +2280,91 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
     assert "removed worktree" not in err
 
 
+_OWN_DETACHED_HEAD_REFUSAL = "HEAD is detached; check out the lane branch first"
+
+
 @pytest.mark.parametrize(
-    ("run_inside_the_worktree", "arguments"),
+    "arguments",
     [
-        pytest.param(True, ["claim", "314", "--scope", "base.txt"], id="claim"),
+        pytest.param(["claim", "314", "--scope", "base.txt"], id="claim"),
         pytest.param(
-            True,
             ["claim", "314", "--scope", "base.txt", "--branch", "claude/issue-314-detached"],
             id="claim-with-branch",
         ),
         pytest.param(
-            True,
             ["claim", "314", "--scope", "base.txt", "--branch", "main"],
             id="claim-with-trunk-branch",
         ),
-        pytest.param(False, ["start", "314"], id="start"),
     ],
 )
 def test_a_detached_head_is_named_and_nothing_is_written(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    run_inside_the_worktree: bool,
     arguments: list[str],
 ) -> None:
-    """Issue #526 (CLM-33, START-29): `claim` in a linked worktree on a
-    detached HEAD, and `start` finding one at its computed path, refuse by
-    naming the detached HEAD -- never a claim marker field -- and write no
-    claim, worktree, or branch."""
-    repo = _start_scenario(monkeypatch, tmp_path)
-    fake = _patch_store_write(monkeypatch)
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    _real_git(repo, "worktree", "add", "-q", "--detach", str(worktree))
-    caller = worktree if run_inside_the_worktree else repo
-    _redirect_toplevel(monkeypatch, caller)
-    monkeypatch.chdir(caller)
+    """Issue #526 (CLM-33): `claim` in a linked worktree on a detached HEAD
+    refuses by naming its own detached HEAD -- never a claim marker field
+    -- and writes no claim, worktree, or branch."""
+    repo, worktree, fake = _detached_start_worktree(monkeypatch, tmp_path)
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
     before = _worktrees_and_branches(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, *arguments])
 
-    assert (status, capsys.readouterr().err) == (
-        2,
-        "ERROR: HEAD is detached; check out the lane branch first\n",
-    )
+    assert (status, capsys.readouterr().err) == (2, f"ERROR: {_OWN_DETACHED_HEAD_REFUSAL}\n")
     assert (_worktrees_and_branches(repo), fake.transitions) == (before, [])
+
+
+@pytest.mark.parametrize(
+    ("branch_exists", "switch"),
+    [
+        pytest.param(False, ("switch", "-c"), id="branch-absent"),
+        pytest.param(True, ("switch",), id="branch-present"),
+    ],
+)
+def test_start_names_a_runnable_command_for_a_detached_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    branch_exists: bool,
+    switch: tuple[str, ...],
+) -> None:
+    """Issues #526 (START-29), #528: `start` run from main names the
+    detached worktree at its computed path and the git command that
+    attaches it to the lane branch, writes nothing, and that command runs
+    as printed in bash -- its path shell-quoted even under a parent
+    directory holding a space."""
+    parent_with_space = tmp_path / "with space"
+    parent_with_space.mkdir()
+    repo, worktree, fake = _detached_start_worktree(monkeypatch, parent_with_space)
+    if branch_exists:
+        _real_git(repo, "branch", _START_BRANCH)
+    _redirect_toplevel(monkeypatch, repo)
+    monkeypatch.chdir(repo)
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    advice = shlex.join(["git", "-C", str(worktree), *switch, _START_BRANCH])
+    named = f"worktree {worktree} has a detached HEAD; run {advice} first"
+    assert (status, capsys.readouterr().err) == (2, f"ERROR: {named}\n")
+    assert (_worktrees_and_branches(repo), fake.transitions) == (before, [])
+    subprocess.run(["bash", "-c", advice], check=True, capture_output=True)
+    assert _real_git(worktree, "branch", "--show-current").stdout.strip() == _START_BRANCH
+
+
+def _detached_start_worktree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, Path, _FakeStore]:
+    """A `start` scenario whose computed worktree path already holds a
+    worktree on a detached HEAD."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    fake = _patch_store_write(monkeypatch)
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _real_git(repo, "worktree", "add", "-q", "--detach", str(worktree))
+    return repo, worktree, fake
 
 
 def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:

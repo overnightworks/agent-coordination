@@ -2399,15 +2399,21 @@ class AdviceOption:
         return f"{self.name}={shlex.quote(self.value)}"
 
 
-def advice_command(*arguments: str | AdviceOption) -> str:
-    """The one rendering of an `aco` command a piece of advice names (issue
-    #510): every argument quoted for a POSIX shell, so the line runs
-    unchanged in the agent's real shell -- a title such as `Say "hi" to $HOME`
-    reaches the command as written, never split or expanded."""
+def shell_command(program: str, *arguments: str | AdviceOption) -> str:
+    """The one rendering of a command a piece of advice names (issue #510):
+    every argument quoted for a POSIX shell, so the line runs unchanged in
+    the agent's real shell -- a title such as `Say "hi" to $HOME` reaches
+    the command as written, never split or expanded."""
     return " ".join(
         argument.rendered() if isinstance(argument, AdviceOption) else shlex.quote(argument)
-        for argument in ("aco", *arguments)
+        for argument in (program, *arguments)
     )
+
+
+def advice_command(*arguments: str | AdviceOption) -> str:
+    """The `aco` command a piece of advice names, rendered by
+    `shell_command`."""
+    return shell_command("aco", *arguments)
 
 
 def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
