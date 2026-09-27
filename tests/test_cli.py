@@ -14927,9 +14927,13 @@ def _leave_hub_refs_without_a_url(monkeypatch: pytest.MonkeyPatch, repo: Path) -
 def _leave_hub_a_global_prune_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     """A global `[remote "hub"] prune = true` makes git list `hub` though
     no configuration gives it a URL, written into the isolated global
-    configuration `isolated_global_git_config` points git at."""
+    configuration `isolated_global_git_config` points git at -- never a
+    file outside this test's own directory, which may be the operator's."""
     _leave_hub_refs_without_a_url(monkeypatch, repo)
-    Path(os.environ["GIT_CONFIG_GLOBAL"]).write_text('[remote "hub"]\n\tprune = true\n')
+    global_config = Path(os.environ["GIT_CONFIG_GLOBAL"])
+    if not global_config.is_relative_to(repo.parent):
+        pytest.fail(f"{global_config} is not this test's isolated_global_git_config")
+    global_config.write_text('[remote "hub"]\n\tprune = true\n')
 
 
 def _leave_hub_a_local_fetch_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:

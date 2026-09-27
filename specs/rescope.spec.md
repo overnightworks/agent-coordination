@@ -57,7 +57,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 - [ ] [RESC-02] A resolved checkout with an empty current branch refuses `rescope requires a non-empty current branch; check out the claim branch, or pass an issue number`, exit `2`.
 - [ ] [RESC-03] Sharing main's git dir, rescope refuses `build claims require a linked isolated worktree checkout; run this command from this claim's own worktree on '<branch>', not the primary checkout`, exit `2`.
 - [ ] [RESC-20] RESC-03, RESC-04 and PROT-13 judge the default branch the resolved checkout's canonical remote records, after its board configuration (PIN-01/PIN-32) is read.
-- [ ] [RESC-21] A canonical `<remote>` with no URL configured refuses PROT-45's `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, before RESC-03/RESC-04 (see E-RESC-06).
+- [ ] [RESC-21] A canonical `<remote>` with no URL configured refuses PROT-45's sentence, exit `2`, before RESC-03/RESC-04 (see E-RESC-06).
 - [ ] [RESC-04] On the repository's own trunk branch, rescope refuses `build claims require an isolated non-main worktree branch; run this command from this claim's own worktree, not the primary checkout`, exit `2`.
 - [ ] [RESC-05] A `--add`/`--drop` path resolving outside the resolved checkout refuses `<flag> path '<path>' is outside the resolved checkout <toplevel>`, exit `2`.
 - [ ] [RESC-18] A `--add`/`--drop` path whose directories do not exist yet resolves its checkout from the nearest existing ancestor, as `protect` judges it (PROT-39); outside every repository it refuses PROT-10.
