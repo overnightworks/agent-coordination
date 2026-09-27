@@ -97,8 +97,8 @@ def _protect_git_values(
         # The canonical-remote comparison (issue #176, Erwartung 6) reads this
         # to confirm the fake forge target (REPOSITORY) matches it.
         ("config", "--get", "remote.origin.url"): origin_url,
-        # `checkout.remote_is_configured` reads this to find the canonical
-        # remote has a URL (issue #512).
+        # `checkout.unconfigured_remote_refusal` reads this to find the
+        # canonical remote has a URL (issues #512, #516).
         ("config", "--get", "--default", "", "remote.origin.url"): origin_url,
     }
     if origin_head is not None:
@@ -3222,9 +3222,10 @@ _CLAIM_ON_THE_DEFAULT_BRANCH = (
 )
 
 
-_UNCONFIGURED_UPSTREAM = "default branch unknown: canonical remote 'upstream' is not configured"
+_UNCONFIGURED_UPSTREAM = "cannot determine the trunk: canonical remote 'upstream' is not configured"
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize(
     ("refusal_of", "canonical", "canonical_head", "branch", "sentence"),
     [
@@ -3321,8 +3322,9 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     default branch is refused; without a recorded `hub/HEAD`, `protect` and
     `rescope` refuse `default branch unknown` while `claim` guesses
     `main`/`master` -- `origin/HEAD` never answers for `hub`. A canonical
-    remote the clone never added is named in that refusal, even where a
-    `HEAD` it left behind still resolves (issue #492)."""
+    remote the clone never added is named instead, in every command's own
+    sentence, even where a `HEAD` it left behind still resolves (issues
+    #492, #516)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -3336,6 +3338,7 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize(
     "refusal_of", [_protect_refusal, _rescope_refusal], ids=["protect", "rescope"]
 )
@@ -3352,9 +3355,6 @@ def test_protect_and_rescope_name_a_canonical_remote_that_has_config_lines_but_n
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    empty_global_config = tmp_path / "global.gitconfig"
-    empty_global_config.touch()
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_global_config))
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     _use_real_path_is_tracked(monkeypatch)
     path = _hub_canonical_worktree_file(

@@ -7569,8 +7569,9 @@ def _bootstrap_state(context: RunContext) -> int:
     untouched when it is already there. Forge-free (issue #245): `--repo` is
     meaningless here and unused. The context's configuration is the tracked
     one (#315), so an untracked `board.toml` refuses here too, before this
-    command's own first write."""
-    canonical_remote = context.canonical_remote
+    command's own first write, as a canonical remote with no URL does
+    (issue #516)."""
+    canonical_remote = context.configured_canonical_remote
     print(store.bootstrap(worktree=context.toplevel, remote=canonical_remote))
     return 0
 
@@ -7775,8 +7776,9 @@ def _reset_observation(
     `fetch_state`, so a broken lineage -- exactly what `reset` exists to
     recover from -- never blocks it, and so a dry run, a live-claim
     refusal, or a failed export writes no per-worktree stamp or anchor
-    (finding 2)."""
-    canonical_remote = context.canonical_remote
+    (finding 2). A canonical remote with no URL refuses before that read
+    (issue #516)."""
+    canonical_remote = context.configured_canonical_remote
     worktree = context.toplevel
     state = store.peek_state_for_reset(worktree=worktree, remote=canonical_remote)
     return worktree, canonical_remote, state
