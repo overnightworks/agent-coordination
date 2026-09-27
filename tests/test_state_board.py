@@ -372,8 +372,8 @@ def _container_alone() -> dict[str, bytes]:
 
 def _unplaced_malformed_child_cases() -> list[object]:
     """`item close` and `item edit --kind task` of `CONTAINER_ID`, which has
-    no readable child, beside an item whose record does not read at all:
-    its parent is unknown, so it may be the container's open child (issue
+    no readable child, beside an item whose record, or its parent, does not
+    read: its parent is unknown, so it may be the container's open child (issue
     #536, ITEM-48, ITEM-54), and each refuses by that item's repair."""
     unreadable_contents = {
         "no-block": (b"no block at all\n", "has a malformed agent-claim block"),
@@ -384,6 +384,10 @@ def _unplaced_malformed_child_cases() -> list[object]:
         "not-utf8": (
             _task_item(CONTAINER_ID).replace(b"Slice A", b"Slice \xff A"),
             "is not valid UTF-8",
+        ),
+        "non-string-parent": (
+            _task_item(CONTAINER_ID).replace(f'parent = "{CONTAINER_ID}"'.encode(), b"parent = 1"),
+            "has a malformed agent-claim block",
         ),
     }
     return [
