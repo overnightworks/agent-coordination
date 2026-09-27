@@ -459,12 +459,13 @@ def test_apply_claim_intent_replaying_its_own_claim_refuses_once_its_pinned_item
     claimed = protocol.apply(
         replace(_STATE_WITH_TIP, items={_LANDING_ITEM_ID: _LANDING_ITEM_OID}), pinned
     )
+    changed_since_the_claim = replace(claimed, items=items_after_the_claim)
 
     with pytest.raises(
         protocol.ClaimUnavailableError,
         match=rf"^item '{_LANDING_ITEM_ID}' was written since it was read ",
     ):
-        protocol.apply(replace(claimed, items=items_after_the_claim), pinned)
+        protocol.apply(changed_since_the_claim, pinned)
 
 
 @pytest.mark.parametrize(
