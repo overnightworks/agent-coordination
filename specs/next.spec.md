@@ -28,7 +28,7 @@ it, `<s>` an integer score.
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
-| a title, `Next` or slice title holds a control character | NEXT-37 | NEXT-11..14 |
+| a title, `Next`, slice title or `SKIPPED` reason holds a control character | NEXT-37 | NEXT-11..14 |
 | its first uncut row's title holds a line break or control character | NEXT-32 | NEXT-14 |
 | a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
 | a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
@@ -52,7 +52,7 @@ it, `<s>` an integer score.
 ## A work item action
 
 - [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>`, exit `0` (see E-NEXT-01).
-- [ ] [NEXT-37] Text shows a control character but TAB, or U+2028/U+2029, in a title, `Next` or slice title as its escape: `a\x1b[2J` prints as typed, `Größe` as is; `--json` unchanged.
+- [ ] [NEXT-37] Text shows a control character but TAB, or U+2028/U+2029, in a title, `Next`, slice title or `SKIPPED` reason (a frozen trigger) as its escape: `a\x1b[2J` prints as typed, `Größe` as is; `--json` unchanged.
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
 - [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope=<path>` per path of that row, with no `scope unknown`.
 - [ ] [NEXT-04] A still-proposed item adds `expectations unruled: refine before the pull`; a stale ruling adds `ruled <n> landings ago: refine again at the pull` -- never both (see E-NEXT-02).

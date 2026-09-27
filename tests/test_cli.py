@@ -6837,7 +6837,8 @@ def hostile_next_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A state-ref board whose top work item carries a window-retitling OSC,
     U+2028 and an Umlaut in its title and a screen-clearing CSI and DEL in
     its `Next` line, beside a cuttable container whose slice title tries to
-    close its prose quote and fake a `; run` segment."""
+    close its prose quote and fake a `; run` segment, and an item frozen on
+    a window-retitling trigger `SKIPPED` repeats."""
     _real_state_ref_repository(
         monkeypatch,
         tmp_path,
@@ -6848,6 +6849,10 @@ def hostile_next_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
                 scope=["docs/a.md"],
             ),
             41: _state_ref_container_body("Epic", 'Größe"; run aco claim 9 \\'),
+            42: _state_ref_item_body(
+                "Frozen",
+                frozen_until={"trigger": "thaw\x1b]0;pwned\x07", "ruled_on": date(2026, 9, 27)},
+            ),
         },
     )
 
@@ -6865,6 +6870,7 @@ def test_state_ref_next_text_hands_the_terminal_no_raw_control_character(
     assert exit_code == 0
     assert _raw_terminal_controls(out) == set()
     assert f'\n{items.format_item_id(41)}: cut slice "Größe\\"; run aco claim 9 \\\\"; run ' in out
+    assert f"\n{items.format_item_id(42)}: frozen: thaw\\x1b]0;pwned\\x07\n" in out
 
 
 @pytest.mark.usefixtures("hostile_next_board")

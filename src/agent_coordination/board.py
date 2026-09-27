@@ -2620,9 +2620,10 @@ def _cut_slice_reason(
 
 def terminal_reason(item: BoardItem, storage: Storage) -> str:
     """`item`'s `actionable_reason` as `next`'s text prints it under
-    `SKIPPED` (issue #532): a cut slice's title quoted by
-    `quoted_terminal_text`, so it cannot fake a `; run` segment (#310
-    finding 190). `actionable_reason` itself stays as the body holds it,
+    `SKIPPED` (issue #532): every foreign span -- a frozen trigger, a body
+    key a defect names -- through `terminal_text`, and a cut slice's title
+    quoted by `quoted_terminal_text`, so it cannot fake a `; run` segment
+    (#310 finding 190). `actionable_reason` itself stays as the body holds it,
     for `--json` and the HTML board, which escape on their own. A
     container's `CutVerdict` is always its reason: a malformed body, the
     one reason ranked above it, carries no slice row to cut."""
@@ -2630,7 +2631,7 @@ def terminal_reason(item: BoardItem, storage: Storage) -> str:
         case CutVerdict(title=title) if item.kind is ItemKind.CONTAINER:
             return _cut_slice_reason(item.number, storage, title, quoted_terminal_text)
         case _:
-            return str(item.actionable_reason)
+            return terminal_text(str(item.actionable_reason))
 
 
 def _nested_container_repair(
