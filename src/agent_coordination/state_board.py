@@ -206,15 +206,20 @@ def _readable_content(text: str) -> bytes:
     try:
         content = text.encode("utf-8")
     except UnicodeEncodeError:
-        defects: tuple[ContractDefect, ...] = (_NOT_UTF8,)
-    else:
-        defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
+        raise _unreadable_body_refusal(_NOT_UTF8) from None
+    defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
     if defects:
-        raise ClaimUnavailableError(
-            f"{body_defect_text(defects[0])}; stored, that body would not read back, "
-            "so nothing was written"
-        )
+        raise _unreadable_body_refusal(defects[0])
     return content
+
+
+def _unreadable_body_refusal(defect: ContractDefect) -> ClaimUnavailableError:
+    """ITEM-52's refusal of a write whose stored body the read would set
+    aside for `defect`."""
+    return ClaimUnavailableError(
+        f"{body_defect_text(defect)}; stored, that body would not read back, "
+        "so nothing was written"
+    )
 
 
 def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | _MalformedItem:
