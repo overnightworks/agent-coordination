@@ -1,0 +1,8 @@
+claim_id = "5643f167d571436c947462826a72d8b3"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "60a2157d64da241684c29369218ea8588c81b55d"
+branch = "claude/issue-530-test-network-guard"
+scope = [".github/workflows/ci.yml", "pyproject.toml", "scripts/test_budget_ratchet.txt", "tests/conftest.py", "tests/network_guard.py", "tests/test_network_guard.py", "tests/test_root_layout.py"]
+opened_commit = "0e0cb481e3e95d490b077db780fdb360dd298286"
+whole_reason = "one network guard for every test run, its plugin hook in the project configuration, and the CI token pin"
