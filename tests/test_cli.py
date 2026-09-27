@@ -17589,7 +17589,6 @@ def test_cli_lane_claim_rescope_and_release_are_forge_free_against_a_non_github_
             "--git-dir",
             "--git-common-dir",
         ): f"{real_toplevel}\n/repo/.git/worktrees/lane-cleanup\n/repo/.git",
-        ("remote",): "origin",
         RECORDED_ORIGIN_HEAD_READ: "refs/remotes/origin/main",
     }
     monkeypatch.setattr(
