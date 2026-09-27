@@ -2417,9 +2417,10 @@ def test_commit_transition_same_key_second_racer_names_the_holder(
 
     intent = _issue_claim_intent(42, agent="Grace", claim_id="a2", operation_id="op-2")
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="is claimed by Ada"):
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
         )
@@ -2437,9 +2438,10 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
 
     intent = _issue_claim_intent(42)
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="rejected 32 pushes") as raised:
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
             transport=transport,
@@ -2459,9 +2461,10 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_r
 
     intent = _issue_claim_intent(42)
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="moved 32 times") as raised:
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
             transport=transport,
@@ -2482,9 +2485,10 @@ def test_commit_transition_exhaustion_names_the_true_mix_when_the_ref_moves_once
 
     intent = _issue_claim_intent(42)
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="moved 1 time") as raised:
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
             transport=transport,
@@ -2770,9 +2774,10 @@ def test_commit_transition_item_create_refuses_a_duplicate_id(
     duplicate_intent = _hashed_item_intent(worktree, content=b"second\n", operation_id="op-2")
     duplicate_subject = store.TransitionSubject("create item aco-000001 again")
 
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="already exists"):
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=duplicate_subject,
             intent=duplicate_intent,
         )
@@ -2794,9 +2799,10 @@ def test_commit_transition_item_edit_refuses_a_stale_expected_oid_without_clobbe
     )
     edit_subject = store.TransitionSubject("edit item aco-000001")
 
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="written since it was read"):
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=edit_subject,
             intent=stale_intent,
         )

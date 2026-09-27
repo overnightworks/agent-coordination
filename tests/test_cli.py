@@ -7571,12 +7571,13 @@ def test_item_close_refuses_a_claim_that_lands_between_its_first_attempt_and_the
     )
     subject = store.TransitionSubject(f"write item {item_id}")
 
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(
         protocol.ClaimUnavailableError,
         match=r"^#10 has a live claim \(Codex Sol \(builder\)\); release the claim first$",
     ):
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=subject,
             intent=close,
             transport=racer,
@@ -7617,9 +7618,10 @@ def test_landing_intent_refuses_a_stale_item_oid_without_writing_anything(
     )
 
     subject = store.ClaimTransitionSubject("release issue 10", item="10")
+    observed = fresh_observation(worktree, bare_remote)
     with pytest.raises(protocol.ClaimUnavailableError, match="was written since it was read"):
         store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote),
+            observed=observed,
             subject=subject,
             intent=intent,
         )
