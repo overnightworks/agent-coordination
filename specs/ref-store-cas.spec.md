@@ -92,7 +92,7 @@ transition), and which of the three causes applies.
 
 - [ ] [CAS-18] `status`'s two store reads (a fetch, then every claim's age) make one `ls-remote`, `fetch`, `ls-tree`, `archive`, `log` call and four `rev-parse` calls, ten live claims or three hundred alike.
 - [ ] [CAS-53] Outside a write's own compare-and-swap, a command observes the ref at most once per checkout it works in (except CAS-54); its board and its own checks read that one snapshot.
-- [ ] [CAS-54] `board --serve` observes it once at startup, once per request that rebuilds its page, and under `state-ref` once per ruling click; `land` peeks it in its preflight and observes it afresh to release after its merge.
+- [ ] [CAS-54] `board --serve` observes it once at startup, per page-rebuilding request, and per `state-ref` ruling click; `land` peeks it in its preflight and observes it afresh to release after its merge.
 
 ## An item write's own compare-and-swap
 
