@@ -354,10 +354,12 @@ def count_context_reads(monkeypatch: pytest.MonkeyPatch) -> ContextReads:
             reads.toplevels[directory] += 1
         return git_output(arguments, directory=directory)
 
-    def counting_path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
+    def counting_path_is_tracked(
+        path: str, *, directory: Path | None = None, revision: str | None = None
+    ) -> bool:
         if path == board.CONFIG_PATH.as_posix():
             reads.configs[directory] += 1
-        return path_is_tracked(path, directory=directory)
+        return path_is_tracked(path, directory=directory, revision=revision)
 
     monkeypatch.setattr(checkout, "_git_output", counting_git_output)
     monkeypatch.setattr(checkout, "path_is_tracked", counting_path_is_tracked)
