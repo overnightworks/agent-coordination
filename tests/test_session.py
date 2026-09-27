@@ -11,10 +11,10 @@ import sys
 from pathlib import Path
 
 import pytest
-from cli_fixtures import stub_board_config_tracked
+from cli_fixtures import main_exit_code, stub_board_config_tracked
 
-from agent_coordination import checkout, cli, forge, github, session
-from agent_coordination.protocol import ClaimUnavailableError
+from agent_coordination import checkout, cli, forge, github, session, store
+from agent_coordination.protocol import ClaimState, ClaimUnavailableError
 from agent_coordination.session import RunContext
 
 
@@ -191,12 +191,34 @@ def test_a_context_for_another_directory_reads_its_remotes_there(
     )
 
 
-def _exit_code(command: list[str]) -> int | str | None:
-    """`main`'s exit code, whether it returns it or argparse exits with it."""
-    try:
-        return cli.main(command)
-    except SystemExit as exit_request:
-        return exit_request.code
+def test_a_failed_observation_is_fetched_again_and_a_successful_one_is_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #477 (CAS-53): a fetch of `refs/aco/state` that fails is never held --
+    the context's next ask fetches again, from its toplevel over its
+    canonical remote -- while one that succeeds answers every later ask."""
+    worktree = tmp_path / "worktree"
+    _write_board_config(worktree, "")
+    monkeypatch.setattr(
+        checkout, "_git_output", lambda _arguments, *, directory=None: str(directory)
+    )
+    observed = ClaimState(tip=None, claims={})
+    fetched_from: list[tuple[Path, str]] = []
+
+    def fetch_state(*, worktree: Path, remote: str) -> ClaimState:
+        fetched_from.append((worktree, remote))
+        if len(fetched_from) == 1:
+            raise ClaimUnavailableError("the remote is unreachable")
+        return observed
+
+    monkeypatch.setattr(store, "fetch_state", fetch_state)
+    context = _context().for_directory(worktree)
+
+    with pytest.raises(ClaimUnavailableError, match="the remote is unreachable"):
+        _ = context.observation
+    later_asks = (context.observation, context.observation)
+
+    assert (later_asks, fetched_from) == ((observed, observed), [(worktree, "origin")] * 2)
 
 
 def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,7 +254,7 @@ def test_a_command_that_needs_no_repository_reads_no_context(
     monkeypatch.setattr(cli, "_workspace_config_path", lambda: tmp_path / "workspace.toml")
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
 
-    assert _exit_code(command) == exit_code
+    assert main_exit_code(command) == exit_code
 
 
 @pytest.mark.parametrize(
@@ -269,7 +291,7 @@ def test_a_repo_that_is_not_owner_slash_repo_refuses_before_any_git_or_gh_call(
 
     monkeypatch.setattr(subprocess, "Popen", no_process)
 
-    assert _exit_code(["--repo", repo, *command]) == 2
+    assert main_exit_code(["--repo", repo, *command]) == 2
     refusal = f"ERROR: repository must be OWNER/REPO, not '{repo}'\n"
     assert capsys.readouterr() == (envelope, refusal)
 
@@ -289,4 +311,4 @@ def test_protect_judges_its_payload_without_ever_building_a_run_context(
     payload = {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "notes.txt")}}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
 
-    assert _exit_code(["protect"]) == 0
+    assert main_exit_code(["protect"]) == 0

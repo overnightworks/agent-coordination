@@ -3070,19 +3070,20 @@ def _state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
     """The `state-ref` storage pin's forge (issues #248, #283): repository
     identity and default branch from `context` (host-neutral, `origin/HEAD`),
     item content and blob oids read once through
-    `store.read_item_files`/`ClaimState.items`, and a write port over that
-    same `store` (`_StoreItemWriter`) -- this is the one place
-    `state_board.StateRefBoard` is ever handed live data or a way to write
-    it, since the Layers contract keeps that module from reaching `store`
-    itself. It reads and writes through `context`'s own worktree: `start`
-    (issue #322 review finding 2) hands it a context for the freshly created
-    worktree, so the worktree-scoped claim never reads a caller-checkout
-    snapshot cached before that worktree existed."""
+    `store.read_item_files`/`ClaimState.items` of `context.observation` --
+    the very snapshot the command's own checks read (issue #477) -- and a
+    write port over that same `store` (`_StoreItemWriter`) -- this is the
+    one place `state_board.StateRefBoard` is ever handed live data or a way
+    to write it, since the Layers contract keeps that module from reaching
+    `store` itself. It reads and writes through `context`'s own worktree:
+    `start` (issue #322 review finding 2) hands it a context for the freshly
+    created worktree, so the worktree-scoped claim never reads a
+    caller-checkout snapshot observed before that worktree existed."""
     repository = context.repository_id
     default_branch = context.default_branch
     worktree = context.toplevel
     canonical_remote = context.canonical_remote
-    state = store.fetch_state(worktree=worktree, remote=canonical_remote)
+    state = context.observation
     item_files = {} if state.tip is None else store.read_item_files(worktree, state.tip)
     return state_board.StateRefBoard(
         repository=repository,
@@ -3461,7 +3462,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
         if context.config.storage is not body.Storage.STATE_REF:
             raise protocol.ClaimUnavailableError(ITEM_CLOSE_GITHUB_REFUSAL)
         number = parsed.item
-        _worktree, _remote, observed = _store_observation(context)
+        observed = context.observation
         _require_state_ref(observed)
         protocol.require_no_live_claim(observed, protocol.IssueIdentity(number))
         client = _state_ref_board(context)
@@ -3624,18 +3625,6 @@ def _claim_history(worktree: Path, state: protocol.ClaimState) -> _ClaimHistory:
         lane_events=lifecycle.events,
         unparsed_lifecycle_commits=lifecycle.unparsed,
     )
-
-
-def _store_observation(context: RunContext) -> tuple[Path, str, protocol.ClaimState]:
-    """One fetch of `refs/aco/state` for a store command -- forge-free by
-    itself (issue #245), anchored to and fetched into `context`'s own
-    worktree (issue #322: `start`'s resolved worktree, never a process-wide
-    `os.chdir`). A command that also needs a forge resolves and
-    Erwartung-6-checks that target separately, the first time its context's
-    `forge` is actually asked for."""
-    canonical_remote = context.canonical_remote
-    worktree = context.toplevel
-    return worktree, canonical_remote, store.fetch_state(worktree=worktree, remote=canonical_remote)
 
 
 def _require_state_ref(state: protocol.ClaimState) -> None:
@@ -3926,10 +3915,9 @@ def _cmd_check(parsed: argparse.Namespace, session: _ReadSession) -> int:
         if reference.state is forge.ItemState.MISSING:
             outcome = _missing_number(repository, number, config.storage)
         elif reference.is_landing:
-            _worktree, _remote, observed = _store_observation(session.context)
             outcome = _pull_request_check(
                 session.context,
-                tuple(observed.claims.values()),
+                tuple(session.context.observation.claims.values()),
                 repository,
                 number,
                 config.storage,
@@ -4291,8 +4279,9 @@ def _brief_report(parsed: argparse.Namespace, session: _ReadSession) -> int:
     item = int(parsed.item)
     client = session.forge()
     item_body = client.item_reference(item).body or ""
-    worktree, remote, state = _store_observation(session.context)
-    live = _brief_live_claim(worktree, state, item)
+    context = session.context
+    remote = context.canonical_remote
+    live = _brief_live_claim(context.toplevel, context.observation, item)
     if live is None:
         tip: str | None = None
         touched: tuple[str, ...] = ()
@@ -4323,7 +4312,8 @@ def _cmd_status(parsed: argparse.Namespace, context: RunContext) -> int:
 
 
 def _status_read(parsed: argparse.Namespace, context: RunContext) -> int:
-    worktree, _remote, state = _store_observation(context)
+    worktree = context.toplevel
+    state = context.observation
     claims = tuple(state.claims.values())
     if parsed.path is not None:
         # `--path` prints no age, so it never reads a claim's ancestry: a
@@ -4355,13 +4345,14 @@ class _ObservedBoard:
 
 @dataclass(frozen=True)
 class _StoreAndIssues:
-    """`_store_observation_and_issues`'s own result: the claim-state fetch
-    and the open-issue list, read concurrently (issue #440) rather than one
-    after the other -- both are independent `git`/`gh` round trips a board
-    build always pays, and neither reads the other's result."""
+    """`_store_observation_and_issues`'s own result: the context's
+    observation of the claim state and the open-issue list, read
+    concurrently (issue #440) rather than one after the other -- neither
+    reads the other's result. Under `github` both are round trips a board
+    build pays; under `state-ref` the forge already holds the observation
+    and the item files before the threads start (issue #477), so neither
+    thread pays a round trip."""
 
-    worktree: Path
-    remote: str
     observed: protocol.ClaimState
     issues: tuple[board.Issue, ...]
 
@@ -4372,13 +4363,14 @@ def _store_observation_and_issues(context: RunContext) -> _StoreAndIssues:
     both -- every one that has not already been handed a pre-fetched
     `issues` tuple -- used to pay their wait times back to back. The forge
     is resolved first, on this thread, so its refusals keep their order and
-    the context's facts are read once, before either thread asks for them."""
+    the context's facts are read once, before either thread asks for them;
+    the state-ref board already reads the context's one observation there,
+    which the observing thread then finds held (issue #477)."""
     client = context.forge
     with ThreadPoolExecutor(max_workers=2) as pool:
-        observation = pool.submit(_store_observation, context)
+        observation = pool.submit(lambda: context.observation)
         issues = pool.submit(client.list_open_board_issues)
-        worktree, remote, observed = observation.result()
-        return _StoreAndIssues(worktree, remote, observed, issues.result())
+        return _StoreAndIssues(observation.result(), issues.result())
 
 
 def _observed_board(
@@ -4389,19 +4381,20 @@ def _observed_board(
     """`board`/`rulings`/`next` share this: the store's live claims, projected
     onto forge board data (issue #176 -- claims no longer come from the
     ledger; the forge is still the board's own data source)."""
+    context = session.context
     if issues is None:
-        fetched = _store_observation_and_issues(session.context)
-        worktree, observed, issues = fetched.worktree, fetched.observed, fetched.issues
+        fetched = _store_observation_and_issues(context)
+        observed, issues = fetched.observed, fetched.issues
     else:
         # A caller that already fetched `issues` itself (`rulings`) has
         # nothing left to overlap the state fetch with.
-        worktree, _remote, observed = _store_observation(session.context)
+        observed = context.observation
     live_claims = tuple(observed.claims.values())
     projected = _board(
-        session.context,
+        context,
         live_claims,
         issues=issues,
-        history=_claim_history(worktree, observed),
+        history=_claim_history(context.toplevel, observed),
     )
     return _ObservedBoard(projected, live_claims)
 
@@ -4431,7 +4424,7 @@ def _board_page(session: _ReadSession) -> board_html.BoardPage:
         context,
         tuple(fetched.observed.claims.values()),
         issues=fetched.issues,
-        history=_claim_history(fetched.worktree, fetched.observed),
+        history=_claim_history(context.toplevel, fetched.observed),
     )
     bodies = {issue.number: issue.body for issue in fetched.issues}
     toplevel = context.toplevel
@@ -4604,7 +4597,9 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     path_checkout = _rescope_checkout(parsed)
     requested = _rescope_command(parsed, path_checkout)
     checkout_context = run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
-    worktree, canonical_remote, observed = _store_observation(checkout_context)
+    worktree = checkout_context.toplevel
+    canonical_remote = checkout_context.canonical_remote
+    observed = checkout_context.observation
     _require_state_ref(observed)
     try:
         selected = _selected_store_claim(
@@ -4993,7 +4988,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
             whole_from_body=_whole_from_item_body(session, requested.identity, open_by_number=None),
         )
         requested = replace(requested, whole_reason=effective_whole)
-        worktree, canonical_remote, observed = _store_observation(context)
+        observed = context.observation
         _require_state_ref(observed)
         storage = context.config.storage
     else:
@@ -5001,7 +4996,7 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
         # come from the store, and usually the forge, before it can even be
         # shape-checked -- both observed exactly once, here, so an omitted-
         # scope claim never fetches either a second time (issue #337).
-        worktree, canonical_remote, observed = _store_observation(context)
+        observed = context.observation
         _require_state_ref(observed)
         storage = context.config.storage
         requested, open_by_number = _resolved_claim_request(requested, observed, session, storage)
@@ -5014,6 +5009,8 @@ def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
             ),
         )
         requested = replace(requested, whole_reason=effective_whole)
+    worktree = context.toplevel
+    canonical_remote = context.canonical_remote
     checks, target_issue, replayed = _claim_target_checks(
         session, requested, observed, _ClaimTargetContext(storage, worktree, open_by_number)
     )
@@ -5123,7 +5120,7 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     print(f"branch: {branch}")
     identity = _resolved_identity(number, branch)
     worktree_context = session.context.for_directory(worktree_path)
-    _worktree, _remote, observed = _store_observation(worktree_context)
+    observed = worktree_context.observation
     _require_state_ref(observed)
     storage = worktree_context.config.storage
     # `claim_key` alone is an issue-only key for an `IssueIdentity` (it never
@@ -5238,7 +5235,9 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         return _cmd_release_landed(parsed, session, identity, storage)
     merged = None if parsed.merged is None else _github_pull_request_number(parsed.merged)
     outcome = _release_outcome(merged, parsed.abandoned)
-    worktree, canonical_remote, observed = _store_observation(context)
+    worktree = context.toplevel
+    canonical_remote = context.canonical_remote
+    observed = context.observation
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(
         parsed, observed, identity, session.release_branch, storage
@@ -5778,7 +5777,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
     else:
 
         def claims_provider() -> protocol.ClaimState:
-            # `store.peek_state`, never `_store_observation`'s
+            # `store.peek_state`, never `RunContext.observation`'s
             # `fetch_state` (issue #405 review/gate finding): a pull
             # request this preflight goes on to refuse must anchor no ref
             # and stamp no lineage -- the same read-only requirement
@@ -5866,7 +5865,8 @@ def _cmd_release_landed(
             _missing_item_refusal(identity.issue, client, context.config.storage)
         )
     write = client.prepare_landing(identity.issue)
-    worktree, _remote, observed = _store_observation(context)
+    worktree = context.toplevel
+    observed = context.observation
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(
         parsed, observed, identity, session.release_branch, storage
@@ -7215,7 +7215,7 @@ def _reset_observation(
     context: RunContext,
 ) -> tuple[Path, str, protocol.ClaimState | protocol.UnreadableState]:
     """`reset`'s own state read (issue #298, 19.09.2026 gate finding 1):
-    `store.peek_state_for_reset` instead of `_store_observation`'s ordinary
+    `store.peek_state_for_reset` instead of `RunContext.observation`'s ordinary
     `fetch_state`, so a broken lineage -- exactly what `reset` exists to
     recover from -- never blocks it, and so a dry run, a live-claim
     refusal, or a failed export writes no per-worktree stamp or anchor
