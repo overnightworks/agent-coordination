@@ -8,8 +8,10 @@ while local paths and `file://` remotes keep working.
 
 The gh CLI would otherwise write to the live board with the operator's
 login. It reads an empty configuration directory, no token from the
-environment, and a default host on a closed loopback port, for which the
-keyring holds no token either. A nonexistent host name would not do: gh
+environment, no keyring, whose session bus address is unusable, and a
+default host on a closed loopback port. Without the keyring cut, a call
+naming github.com explicitly would find the operator's token there, since
+the empty configuration holds no entry for it. A nonexistent host name would not do: gh
 sends an enterprise host its request unauthenticated, so the name would
 still leave the machine as a DNS query.
 
@@ -28,6 +30,8 @@ GIT_ALLOW_PROTOCOL_ENV = "GIT_ALLOW_PROTOCOL"
 LOCAL_PROTOCOLS_ONLY = "file"
 
 UNREACHABLE_GH_HOST = "127.0.0.1:9"
+# gh's keyring is the Secret Service on the session bus; a `disabled:` address opens no bus.
+_UNUSABLE_SESSION_BUS_ADDRESS = "disabled:"
 # gh reads the enterprise pair for every host but github.com, and GH_HOST names one.
 _GH_TOKEN_ENVS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
 
@@ -44,6 +48,7 @@ def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
     _guard.setenv(GIT_ALLOW_PROTOCOL_ENV, LOCAL_PROTOCOLS_ONLY)
     _guard.setenv("GH_CONFIG_DIR", _empty_gh_config.name)
     _guard.setenv("GH_HOST", UNREACHABLE_GH_HOST)
+    _guard.setenv("DBUS_SESSION_BUS_ADDRESS", _UNUSABLE_SESSION_BUS_ADDRESS)
     for token_env in _GH_TOKEN_ENVS:
         _guard.setenv(token_env, "")
 
