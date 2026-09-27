@@ -78,7 +78,14 @@ _SCRATCH_GH_ROUTING_MODULE = (
 _LOOPBACK_ONLY_PROXY = "http://{UNREACHABLE_GH_HOST}"
 
 
-def test_a_request_naming_its_own_host_ends_at_the_loopback_proxy():
+@pytest.mark.parametrize(
+    "gh_arguments",
+    [
+        pytest.param(("issue", "list", "--repo", "o/r"), id="repository-scoped"),
+        pytest.param(("api", "--hostname", "example.invalid", "user"), id="explicit-host"),
+    ],
+)
+def test_a_request_ends_at_the_closed_loopback_port(gh_arguments):
     # Checked before gh runs, so a run the guard failed to reroute never leaves the machine.
     safe_routing = {{
         "HTTPS_PROXY": _LOOPBACK_ONLY_PROXY,
@@ -92,9 +99,9 @@ def test_a_request_naming_its_own_host_ends_at_the_loopback_proxy():
     routing = {{name: os.environ.get(name) for name in safe_routing}}
     assert routing == safe_routing, "{_UNSAFE_ROUTING}: " + repr(routing)
 
-    request = run_gh("api", "--hostname", "example.invalid", "user")
+    request = run_gh(*gh_arguments)
 
-    assert "proxyconnect tcp: dial tcp {UNREACHABLE_GH_HOST}" in request.stderr, request.stderr
+    assert "dial tcp {UNREACHABLE_GH_HOST}: connect" in request.stderr, request.stderr
 """
 )
 
@@ -268,16 +275,17 @@ def test_a_run_started_with_a_hostile_gh_setup_finds_no_login(
 
 
 @pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
-def test_a_run_started_with_a_hostile_gh_setup_keeps_a_named_host_request_on_the_machine(
+def test_a_run_started_with_a_hostile_gh_setup_keeps_its_gh_requests_on_the_machine(
     tmp_path: Path,
     hostile_gh_environment: dict[str, str],
     plugin_arguments: list[str],
     guarded: bool,
 ) -> None:
     """A pytest run started with the hostile gh setup sends a request for a
-    host it names only to the closed loopback port, and only while the
-    plugin displaces the setup's proxy, exemption and repository before the
-    run begins (#534 line 1); the blocked run reports that its module sees
+    repository on the default host and a request for a host it names only to
+    the closed loopback port, and only while the plugin displaces the
+    setup's proxy, exemption and repository before the run begins (#534
+    line 1); the blocked run reports that its module sees
     the seeded routing, and never sends the request, because the module
     checks the routing first."""
     run = _run_scratch_pytest(
