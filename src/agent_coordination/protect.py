@@ -600,9 +600,12 @@ def _protect_checkout_scope_denial(
         )
         for judged_path, judged_checkout in (*judged, (raw_path, path_checkout))
     ]
-    for outcome in store_free_outcomes:
-        if isinstance(outcome, str):
-            return outcome
+    first_store_free_verdict = next(
+        (outcome for outcome in store_free_outcomes if isinstance(outcome, str | Exception)),
+        None,
+    )
+    if isinstance(first_store_free_verdict, str):
+        return first_store_free_verdict
     claim_verdicts = [
         outcome
         if isinstance(outcome, Exception)

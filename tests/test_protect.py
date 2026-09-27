@@ -3006,15 +3006,22 @@ def test_protect_runs_both_symlink_claim_checks_when_one_store_read_fails(
 @pytest.mark.parametrize(
     ("link", "reason", "store_reads"),
     [
-        ("into-other.md", "not main", 0),
-        ("into-nested-worktree.md", "claim first", 1),
+        (f"{_CLAIMED_WORKTREE}/src/into-other.md", "not main", 0),
+        (f"{_CLAIMED_WORKTREE}/src/into-nested-worktree.md", "claim first", 1),
+        (
+            "claimed/repo/into-worktree.md",
+            ".agent-claim/board.toml is not tracked in this checkout, so its "
+            "storage pin cannot be trusted: git add -f .agent-claim/board.toml",
+            0,
+        ),
     ],
     ids=[
-        "target-main-checkout-denies-not-main",
-        "target-claim-denial-wins",
+        "link-fails-target-main-checkout-denies-not-main",
+        "link-fails-target-claim-denial-wins",
+        "target-fails-over-link-main-checkout",
     ],
 )
-def test_protect_lets_the_targets_denial_win_over_a_link_checkouts_untracked_board(
+def test_protect_lets_the_targets_verdict_win_when_one_checkouts_board_is_untracked(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -3022,10 +3029,11 @@ def test_protect_lets_the_targets_denial_win_over_a_link_checkouts_untracked_boa
     reason: str,
     store_reads: int,
 ) -> None:
-    """PROT-44 (issues #486, #490): a linked worktree whose board
-    configuration is untracked fails for itself alone when a write through
-    its symlink lands in another checkout -- the target's store-free or
-    claim denial is still the one reported."""
+    """PROT-44, PROT-29 (issues #486, #490): when a write through a symlink
+    lands in another checkout and one of the two checkouts' board
+    configuration is untracked, the target's verdict is the one reported --
+    its store-free or claim denial over a link that failed, and its own
+    failure over the link's "not main"."""
     _symlinks_across_checkouts(tmp_path)
     _use_real_path_is_tracked(monkeypatch)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
@@ -3040,7 +3048,7 @@ def test_protect_lets_the_targets_denial_win_over_a_link_checkouts_untracked_boa
 
     monkeypatch.setattr(store, "fetch_state", fetch_state)
 
-    payload = _write_target_payload(claimed_worktree / "src" / link)
+    payload = _write_target_payload(tmp_path / link)
     assert _protect_main(monkeypatch, payload) == 2
     _assert_protect_decision(capsys, decision="deny", reason=reason)
     assert len(fetches) == store_reads
