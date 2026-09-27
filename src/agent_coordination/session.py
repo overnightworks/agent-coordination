@@ -88,7 +88,8 @@ def _absent_board_config_refusal(toplevel: Path) -> str:
         )
     return (
         f"{board.CONFIG_PATH} does not exist in this checkout; merge a pull request "
-        f"adding only {board.CONFIG_PATH} into the default branch first, without aco"
+        f"adding only {board.CONFIG_PATH} into the default branch first, without aco "
+        "(fetch first if the default branch may already carry it)"
     )
 
 
