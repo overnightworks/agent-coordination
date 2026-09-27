@@ -435,6 +435,60 @@ def test_the_reload_link_redirects_so_a_later_plain_refresh_does_not_rebuild(
     assert "Renamed item" not in plain_body
 
 
+def test_a_rebuild_the_unreachable_remote_refuses_keeps_the_held_page_naming_it_until_one_succeeds(
+    served_board: ServedBoard,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #481, BOARD-52: while the remote is unreachable, a reload on a
+    page nothing has made stale, the page it redirects to, a ruling click,
+    and the page the click redirects to all answer -- no traceback, no
+    dropped connection -- with the held page naming the refusal; a reload
+    once the remote answers again rebuilds."""
+    token = served_board.server.token
+    refusal = "cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128)"
+
+    def unreachable_remote(_repository: forge.RepositoryId) -> FakeForge:
+        raise protocol.ClaimError(refusal)
+
+    def shows_the_held_page_naming_the_refusal(answer: _Response) -> None:
+        page = answer.body.decode("utf-8")
+        assert answer.status == 200
+        assert html.escape(refusal) in page
+        assert "Plain item" in page
+
+    monkeypatch.setattr(github, "GitHubForge", unreachable_remote)
+
+    # The reload comes before any click, so its redirect target meets a
+    # held page no click has made stale: only the refusal the reload's own
+    # rebuild remembered can name the remote.
+    offline_reload = served_board.get(token=token, reload=True)
+    assert offline_reload.status == 303
+    assert offline_reload.location is not None
+    assert offline_reload.location == f"/?t={token}"
+    shows_the_held_page_naming_the_refusal(
+        _request(served_board.server, "GET", offline_reload.location)
+    )
+
+    click = served_board.post_rule(
+        {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes"}
+    )
+    assert click.status == 303
+    assert click.location is not None
+    shows_the_held_page_naming_the_refusal(_request(served_board.server, "GET", click.location))
+    assert capsys.readouterr().err == ""
+
+    served_board.client.board_issues = (
+        replace(served_board.client.board_issues[0], title="Renamed item"),
+    )
+    monkeypatch.setattr(github, "GitHubForge", lambda _repository: served_board.client)
+    back_online_reload = served_board.get(token=token, reload=True)
+    assert back_online_reload.location == f"/?t={token}"
+    back_online = served_board.get(token=token).body.decode("utf-8")
+    assert "Renamed item" in back_online
+    assert html.escape(refusal) not in back_online
+
+
 @dataclass(frozen=True)
 class _CountedServe:
     """One storage's served board for the per-request count: the repository
