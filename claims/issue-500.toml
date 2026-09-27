@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "970f2ee63c3603118b602a0dc2f4e646faf17986"
 branch = "claude/issue-500-runcontext-c-wrappers"
-scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/start.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board_serve.py", "tests/test_cli.py", "tests/test_session.py"]
+scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/start.spec.md", "src/agent_coordination/board_serve.py", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board_serve.py", "tests/test_cli.py", "tests/test_session.py"]
 opened_commit = "9b00f415c31f019925537dfb69838ead980ab262"
 whole_reason = "die Session-Wrapper fallen weg, die Handler nehmen den RunContext direkt"
