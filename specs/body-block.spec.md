@@ -33,7 +33,7 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 | card field defective | BODY-34, BODY-36..BODY-42 | BODY-50 | BODY-52 |
 | `question` of exactly 160 characters | BODY-35 | — | — |
 | `[[slice]]` defective | BODY-43..BODY-48 | BODY-50 | BODY-52 |
-| a `[[slice]]` title holding a line break or control character | BODY-63 | BODY-64 | BODY-64 |
+| a `[[slice]]` title holding a display control (`specs/next.spec.md`) | BODY-63 | BODY-64 | BODY-64 |
 | `slice = []` | BODY-49 | — | — |
 | `scope` defective | BODY-53..BODY-56 | BODY-50 | BODY-52 |
 | `size` valid or defective | BODY-57..BODY-59 | BODY-50 (defective only) | BODY-52 (defective only) |
@@ -107,7 +107,7 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 - [ ] [BODY-45] An entry whose `index` is missing, zero, negative or not an integer prints `body malformed: slice[0].index: slice[0].index must be a positive integer`, exit `2`.
 - [ ] [BODY-46] A second entry repeating an earlier `index` prints `body malformed: slice[1].index: slice[1].index duplicates slice index 4` on stderr, exit `2`.
 - [ ] [BODY-47] An entry whose `title` is missing, blank or not a string prints `body malformed: slice[0].title: slice[0].title must be a non-empty string`, exit `2`; one line only (BODY-63).
-- [ ] [BODY-63] A title holding U+2028, U+2029 or any control but TAB prints `body malformed: slice[0].title: slice[0].title of row <i> holds U+000B; a slice title stays on one line`, exit `2` (see E-BODY-06).
+- [ ] [BODY-63] A title holding a display control (NEXT-37) prints `body malformed: slice[0].title: slice[0].title of row <i> holds U+000B; a slice title stays on one line`, exit `2` (see E-BODY-06).
 - [ ] [BODY-64] BODY-63 applies wherever a body's shape is judged — `aco body --check`, `aco check <n>`, `aco item new`, `aco item edit`; `board`/`next` keep reading a stored body, `next` naming its row (NEXT-32).
 - [ ] [BODY-48] An entry key outside `index`, `title` and `scope` prints `body malformed: slice[0].<key>: unknown key slice[0].<key>`, exit `2`; per-slice done-when and dependencies stay in the prose.
 - [ ] [BODY-49] A block carrying `slice = []` is valid with nothing left to cut: `aco body --check` prints `body ok`, exit `0`, and the empty table stays present in the body.
