@@ -866,7 +866,7 @@ def test_trunk_landings_read_the_named_remotes_trunk_not_the_work_branch(
         raise AssertionError(arguments)
 
     monkeypatch.setattr(checkout, "_git_output", git_output)
-    landings = _LIVE_TRUNK_LANDINGS("hub", 20)
+    landings = _LIVE_TRUNK_LANDINGS(checkout.trunk_ref("hub"), 20)
 
     assert landings == (
         checkout.TrunkLanding("sha1", datetime(2026, 8, 29, tzinfo=UTC), None, ()),
@@ -899,7 +899,7 @@ def test_trunk_landings_with_fetch_refreshes_the_remote_first(
     _push_repository_trunk(repo, "origin")
     monkeypatch.chdir(clone)
 
-    landings = _LIVE_TRUNK_LANDINGS("origin", 20, fetch=True)
+    landings = _LIVE_TRUNK_LANDINGS(checkout.trunk_ref("origin"), 20, fetch_from="origin")
 
     assert [landing.classification for landing in landings] == [
         None,
@@ -917,7 +917,7 @@ def test_trunk_landings_with_fetch_fails_loud_when_the_fetch_itself_fails(
     )
 
     with pytest.raises(ClaimError, match="could not read from remote"):
-        checkout.trunk_landings("origin", 20, fetch=True)
+        checkout.trunk_landings("refs/remotes/origin/main", 20, fetch_from="origin")
 
 
 def test_trunk_ref_fails_loud_when_no_candidate_branch_resolves(
@@ -932,7 +932,7 @@ def test_trunk_ref_fails_loud_when_no_candidate_branch_resolves(
 
     monkeypatch.setattr(checkout, "_git_output", git_output)
     with pytest.raises(ClaimError, match="cannot determine the trunk: none of "):
-        _LIVE_TRUNK_LANDINGS("hub", 20)
+        checkout.trunk_ref("hub")
 
 
 def test_trunk_ref_falls_back_to_the_local_branch_name_when_remote_head_was_never_recorded(
@@ -951,27 +951,22 @@ def test_trunk_ref_falls_back_to_the_local_branch_name_when_remote_head_was_neve
             raise ClaimError("fatal: no such ref")
         if arguments == ["rev-parse", "--verify", "main"]:
             return "deadbeef"
-        if arguments[0] == "log":
-            assert arguments[-1] == "main"
-            return ""
         raise AssertionError(arguments)
 
     monkeypatch.setattr(checkout, "_git_output", git_output)
-    assert _LIVE_TRUNK_LANDINGS("hub", 20) == ()
+    assert checkout.trunk_ref("hub") == "main"
 
 
 def test_trunk_landings_is_empty_when_trunk_has_no_first_parent_landings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def git_output(arguments: list[str], **_kwargs: object) -> str:
-        if arguments[:3] == ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]:
-            return "refs/remotes/origin/main"
         if arguments[0] == "log":
             return ""
         raise AssertionError(arguments)
 
     monkeypatch.setattr(checkout, "_git_output", git_output)
-    assert _LIVE_TRUNK_LANDINGS("origin", 20) == ()
+    assert _LIVE_TRUNK_LANDINGS("refs/remotes/origin/main", 20) == ()
 
 
 @pytest.mark.parametrize(
@@ -989,15 +984,13 @@ def test_trunk_landings_fails_loud_on_a_malformed_commit_timestamp(
     ruling age; both fail loud with the same diagnostic."""
 
     def git_output(arguments: list[str], **_kwargs: object) -> str:
-        if arguments[:3] == ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]:
-            return "refs/remotes/origin/main"
         if arguments[0] == "log":
             return _fake_trunk_log_record("sha1", raw_commit_time, "", "")
         raise AssertionError(arguments)
 
     monkeypatch.setattr(checkout, "_git_output", git_output)
     with pytest.raises(ClaimError, match="git returned a malformed trunk landing timestamp"):
-        _LIVE_TRUNK_LANDINGS("origin", 20)
+        _LIVE_TRUNK_LANDINGS("refs/remotes/origin/main", 20)
 
 
 def test_trunk_landings_fails_loud_on_a_log_stream_that_is_not_nul_framed_records(
@@ -1009,15 +1002,13 @@ def test_trunk_landings_fails_loud_on_a_log_stream_that_is_not_nul_framed_record
     the fake) misbehaving, not a shape this reads silently."""
 
     def git_output(arguments: list[str], **_kwargs: object) -> str:
-        if arguments[:3] == ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]:
-            return "refs/remotes/origin/main"
         if arguments[0] == "log":
             return "sha1\x00not-nul-terminated"
         raise AssertionError(arguments)
 
     monkeypatch.setattr(checkout, "_git_output", git_output)
     with pytest.raises(ClaimError, match="git returned a malformed trunk landing log"):
-        _LIVE_TRUNK_LANDINGS("origin", 20)
+        _LIVE_TRUNK_LANDINGS("refs/remotes/origin/main", 20)
 
 
 def _minimal_pushed_repository(tmp_path: Path) -> Path:
@@ -1067,7 +1058,7 @@ def test_trunk_landings_classifies_a_control_byte_inside_a_trailer_value_as_one_
     _push_to_hub(repo)
     monkeypatch.chdir(repo)
 
-    [landing] = checkout.trunk_landings("hub", 20)
+    [landing] = checkout.trunk_landings(checkout.trunk_ref("hub"), 20)
 
     assert landing.classification == board.ClassificationDefect(
         f"carries `Work-Item: {value}`; a trunk trailer names #n, aco-xxxxxx, or the bare number n"
@@ -1147,7 +1138,8 @@ def test_trunk_landings_classify_merge_squash_and_rebase_commits_from_their_trai
     repo = _trunk_history_repository(tmp_path)
     monkeypatch.chdir(repo)
 
-    landings = checkout.trunk_landings("hub", 20)
+    trunk = checkout.trunk_ref("hub")
+    landings = checkout.trunk_landings(trunk, 20)
 
     assert [landing.classification for landing in landings] == [
         None,  # the plain initial commit
@@ -1160,7 +1152,7 @@ def test_trunk_landings_classify_merge_squash_and_rebase_commits_from_their_trai
     assert side_sha not in {landing.sha for landing in landings}  # proof 3
 
     # `depth` bounds the walk to the most recent commits, oldest of those first.
-    assert [landing.classification for landing in checkout.trunk_landings("hub", 2)] == [
+    assert [landing.classification for landing in checkout.trunk_landings(trunk, 2)] == [
         board.NoItemClassification(board.NoItemKind.DOCS),
         None,
     ]
@@ -1204,8 +1196,8 @@ def test_trunk_landings_read_the_configured_remote_never_a_hardcoded_origin(
 
     monkeypatch.chdir(repo)
 
-    assert len(checkout.trunk_landings("origin", 20)) == 1
-    assert len(checkout.trunk_landings("hub", 20)) == 2
+    assert len(checkout.trunk_landings(checkout.trunk_ref("origin"), 20)) == 1
+    assert len(checkout.trunk_landings(checkout.trunk_ref("hub"), 20)) == 2
 
 
 @pytest.mark.parametrize(
@@ -1399,8 +1391,9 @@ def _bare_remote_repository_with_one_commit(tmp_path: Path) -> Path:
 
 
 def _build_start_worktree(worktree: Path, branch: str) -> None:
-    checkout.fetched_trunk("origin")
-    checkout.create_linked_worktree(worktree, branch=branch, remote="origin")
+    trunk = checkout.trunk_ref("origin")
+    checkout.fetched_trunk("origin", trunk=trunk)
+    checkout.create_linked_worktree(worktree, branch=branch, trunk=trunk)
 
 
 def test_create_linked_worktree_builds_from_the_fetched_trunk(
@@ -1781,7 +1774,9 @@ def test_create_linked_worktree_fails_loud_when_worktree_add_itself_fails(
     )
 
     with pytest.raises(ClaimError, match="fatal: already exists"):
-        checkout.create_linked_worktree(worktree, branch="codex/issue-9-widget", remote="origin")
+        checkout.create_linked_worktree(
+            worktree, branch="codex/issue-9-widget", trunk="refs/remotes/origin/main"
+        )
 
 
 def test_remove_linked_worktree_fails_loud_when_worktree_remove_itself_fails(
@@ -1827,7 +1822,9 @@ def test_remove_linked_worktree_reports_the_worktree_removed_and_the_branch_kept
 @pytest.mark.parametrize(
     "fetch_trunk",
     [
-        pytest.param(lambda: checkout.fetched_trunk("origin"), id="start"),
+        pytest.param(
+            lambda: checkout.fetched_trunk("origin", trunk="refs/remotes/origin/main"), id="start"
+        ),
         pytest.param(
             lambda: checkout.branch_merged_into_default("feature", remote="origin"),
             id="release-merged",

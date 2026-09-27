@@ -3,8 +3,8 @@
 A `RunContext` answers the questions every store and forge command asks
 about the checkout it runs in -- its toplevel, its tracked board
 configuration, the canonical remote and where that remote points, the forge
-repository it names, the default branch, the forge itself, and its one
-observation of `refs/aco/state` (issue #477). Each fact is
+repository it names, the default branch, the trunk, the forge itself, and
+its one observation of `refs/aco/state` (issue #477). Each fact is
 read the first time a command asks for it and held for the rest of that run,
 never before: a command that refuses early, or never needs a fact, never
 pays the git, filesystem, or `gh` read behind it.
@@ -15,9 +15,9 @@ from its own paths); `fresh` re-reads the same
 directory from scratch (`board --serve` takes one per request, so nothing is
 held across requests); `observed_afresh` drops exactly its state-ref
 observation and the forge built from it, and keeps every other fact it read
--- toplevel, board configuration, remote, forge repository, default branch
--- so the next ask re-reads only the state ref. `protect` never builds one:
-it judges from its own payload's path.
+-- toplevel, board configuration, remote, forge repository, default
+branch, trunk -- so the next ask re-reads only the state ref. `protect`
+never builds one: it judges from its own payload's path.
 """
 
 from __future__ import annotations
@@ -106,6 +106,7 @@ class RunContext:
         self.repo = repo
         self.directory = directory
         self._build_forge = build_forge
+        self._recorded_heads: dict[str, str | None] = {}
 
     def for_directory(self, directory: Path, *, is_toplevel: bool = False) -> RunContext:
         """A context for another checkout of the same run (`start`'s
@@ -207,12 +208,33 @@ class RunContext:
         canonical remote `origin`), the forge's own answer under `github`."""
         if self.config.storage is not body.Storage.STATE_REF:
             return self.forge.default_branch()
-        branch = checkout.default_branch_name(directory=self.directory)
+        branch = checkout.default_branch_of(self._recorded_head(checkout.DEFAULT_BRANCH_REMOTE))
         if branch is None:
             raise protocol.ClaimUnavailableError(
                 "cannot resolve the default branch; run aco from a checkout with origin/HEAD set"
             )
         return branch
+
+    @cached_property
+    def trunk_ref(self) -> str:
+        """The canonical remote's trunk ref in this directory (issue #479):
+        the ref a command fetches, builds a worktree from, or walks for
+        landings."""
+        remote = self.canonical_remote
+        return checkout.trunk_ref_or_guess(
+            remote, self._recorded_head(remote), directory=self.directory
+        )
+
+    def _recorded_head(self, remote: str) -> str | None:
+        """`remote`'s recorded `HEAD` in this directory, read once per remote
+        and held: the default branch (`origin`'s) and the trunk (the
+        canonical remote's) ask git the same question whenever the canonical
+        remote is `origin` (issue #479)."""
+        if remote not in self._recorded_heads:
+            self._recorded_heads[remote] = checkout.recorded_head_ref(
+                remote, directory=self.directory
+            )
+        return self._recorded_heads[remote]
 
     @cached_property
     def forge(self) -> forge.ForgeReader:

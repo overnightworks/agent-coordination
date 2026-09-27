@@ -118,7 +118,7 @@ def lane_changed_paths(tip: str, *, remote: str) -> tuple[str, ...]:
     """The paths `tip` changes since its merge base with `remote`'s trunk
     (issue #468): the lane's own change only. A diff from the claim's base
     would also list every path a trunk pull brought in from other lanes."""
-    trunk = _trunk_ref(remote)
+    trunk = trunk_ref(remote)
     diff = _git_output(["diff", "--name-only", f"{trunk}...{tip}"])
     return tuple(diff.splitlines())
 
@@ -641,31 +641,43 @@ DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 PROTECT_NOT_MAIN_REASON = "not main"
 
 
-def _origin_head_ref(*, directory: Path | None = None) -> str | None:
-    """The `origin/HEAD` symbolic ref (e.g. `refs/remotes/origin/trunk`),
-    read from `directory` via `-C` when given (issue #314: a resolved
-    checkout's own default-branch lookup, never the calling process's cwd)
-    or the process's own checkout otherwise (`claim`'s own precondition) --
-    `None` when a clone or `git remote set-head` never recorded one -- the
-    two-name fallback below is the caller's job (issue #238), since `claim`
-    and `protect` word their refusals differently."""
+# The remote whose recorded `HEAD` names the repository's default branch:
+# GitHub-repository discovery reads `origin`, a separate axis from a
+# repository's configured canonical remote (issue #304).
+DEFAULT_BRANCH_REMOTE = "origin"
+
+
+def recorded_head_ref(remote: str, *, directory: Path | None = None) -> str | None:
+    """`remote`'s recorded `HEAD` symbolic ref (e.g.
+    `refs/remotes/origin/trunk`), read from `directory` via `-C` when given
+    (issue #314: a resolved checkout's own lookup, never the calling
+    process's cwd) or the process's own checkout otherwise -- `None` when a
+    clone or `git remote set-head` never recorded one. The one reader of a
+    remote's `HEAD`: the default branch and the trunk both derive from it,
+    and each caller decides its own fallback (issue #238), since `claim`,
+    `protect`, and the trunk readers word or guess differently."""
     try:
         symbolic = _git_output(
-            ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], directory=directory
+            ["symbolic-ref", "--quiet", f"refs/remotes/{remote}/HEAD"], directory=directory
         )
     except ClaimError:
         return None
     return symbolic or None
 
 
+def default_branch_of(origin_head: str | None) -> str | None:
+    """The default branch name `origin_head` -- `recorded_head_ref`'s answer
+    for `DEFAULT_BRANCH_REMOTE` -- names, or `None` when none was recorded."""
+    if origin_head is None:
+        return None
+    return origin_head.removeprefix(f"refs/remotes/{DEFAULT_BRANCH_REMOTE}/")
+
+
 def default_branch_name(*, directory: Path | None = None) -> str | None:
     """The repository's default branch name, read from `directory`'s own
     `origin/HEAD` when given (issue #314) or the process's own checkout
     otherwise, or `None` when git cannot resolve it."""
-    ref = _origin_head_ref(directory=directory)
-    if ref is None:
-        return None
-    return ref.removeprefix("refs/remotes/origin/")
+    return default_branch_of(recorded_head_ref(DEFAULT_BRANCH_REMOTE, directory=directory))
 
 
 def is_default_branch(branch: str, *, directory: Path | None = None) -> bool:
@@ -706,23 +718,30 @@ def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> 
     return branch
 
 
-def _trunk_ref(remote: str, *, directory: Path | None = None) -> str:
+def trunk_ref(remote: str, *, directory: Path | None = None) -> str:
     """`remote`'s trunk ref, read from `directory` via `-C` when given or
-    the calling process's own cwd otherwise: its recorded `HEAD` symbolic
-    ref, or the historical `{main, master}` guess -- `remote`'s own, then
-    the local branch -- when `remote` never recorded one (issue #304,
-    generalizing `_origin_head_ref`'s `origin`-only read to the caller's
-    own canonical remote -- `default_branch_name`/`is_default_branch` keep reading `origin`
-    specifically, since GitHub-repository discovery is a separate axis from
-    a repository's configured canonical remote)."""
-    try:
-        symbolic = _git_output(
-            ["symbolic-ref", "--quiet", f"refs/remotes/{remote}/HEAD"], directory=directory
-        )
-    except ClaimError:
-        symbolic = ""
-    if symbolic:
-        return symbolic
+    the calling process's own cwd otherwise (issue #304): see
+    `trunk_ref_or_guess`. A `RunContext` holds its own answer instead
+    (issue #479), so a command reads its trunk once per directory."""
+    return trunk_ref_or_guess(
+        remote, recorded_head_ref(remote, directory=directory), directory=directory
+    )
+
+
+def trunk_ref_or_guess(
+    remote: str, recorded_head: str | None, *, directory: Path | None = None
+) -> str:
+    """`remote`'s trunk ref: `recorded_head`, `remote`'s own recorded `HEAD`
+    (`recorded_head_ref`), or the historical `{main, master}` guess --
+    `remote`'s own, then the local branch -- when `remote` never recorded
+    one (issue #304, generalizing the default branch's `origin`-only read
+    to the caller's own canonical remote -- `default_branch_name`/
+    `is_default_branch` keep reading `origin` specifically, since
+    GitHub-repository discovery is a separate axis from a repository's
+    configured canonical remote). The guess reads `directory` via `-C` when
+    given or the calling process's own cwd otherwise."""
+    if recorded_head is not None:
+        return recorded_head
     for candidate in (
         f"refs/remotes/{remote}/main",
         f"refs/remotes/{remote}/master",
@@ -817,27 +836,30 @@ def _parsed_trunk_landing(fields: tuple[str, str, str, str]) -> TrunkLanding:
     return TrunkLanding(sha, committed_at.astimezone(UTC), classification, work_item_values)
 
 
-def trunk_landings(remote: str, depth: int, *, fetch: bool = False) -> tuple[TrunkLanding, ...]:
-    """The most recent `depth` first-parent landings on `remote`'s trunk,
-    oldest first, each classified from its own trailer block alone
-    (issue #304).
+def trunk_landings(
+    trunk: str, depth: int, *, fetch_from: str | None = None
+) -> tuple[TrunkLanding, ...]:
+    """The most recent `depth` first-parent landings on `trunk` -- the
+    caller's canonical remote's trunk ref (`trunk_ref`, or its
+    `RunContext`'s own) -- oldest first, each classified from its own
+    trailer block alone (issue #304).
 
-    A merge counts once. Reading `remote`'s trunk — never the work branch —
+    A merge counts once. Reading the remote's trunk — never the work branch —
     is the contract: a ruling ages with trunk, not with local commits, and
-    `remote` is the caller's own canonical remote, never a hardcoded
-    `origin`, so a repository configured with a different canonical remote
+    the trunk is the caller's own canonical remote's, never a hardcoded
+    `origin`'s, so a repository configured with a different canonical remote
     ages rulings against the trunk it actually lands on.
 
-    `fetch` refreshes `remote`'s own remote-tracking ref first (issue #397):
-    `release --merged <pr>`'s own merge-commit-trailer verification under
-    `storage = "github"` needs this walk to see a commit GitHub just
-    reported merged, which this checkout may never have fetched before --
-    unlike every other caller here, which already runs against a checkout
-    whose remote-tracking refs some earlier step in the same command already
-    refreshed.
+    `fetch_from` refreshes that remote's own remote-tracking refs first
+    (issue #397): `release --merged <pr>`'s own merge-commit-trailer
+    verification under `storage = "github"` needs this walk to see a commit
+    GitHub just reported merged, which this checkout may never have fetched
+    before -- unlike every other caller here, which already runs against a
+    checkout whose remote-tracking refs some earlier step in the same
+    command already refreshed.
     """
-    if fetch:
-        result = _git_run(["fetch", remote])
+    if fetch_from is not None:
+        result = _git_run(["fetch", fetch_from])
         if result.exit_status != 0:
             raise ClaimError(process.git_failure_detail(result))
     raw = _git_output(
@@ -849,7 +871,7 @@ def trunk_landings(remote: str, depth: int, *, fetch: bool = False) -> tuple[Tru
             f"--format={_TRUNK_LANDING_LOG_FORMAT}",
             "-n",
             str(depth),
-            _trunk_ref(remote),
+            trunk,
         ]
     )
     if not raw:
@@ -1002,21 +1024,22 @@ def branch_exists(branch: str) -> bool:
     raise ClaimError(process.git_failure_detail(result))
 
 
-def fetched_trunk(remote: str) -> str:
-    """Fetch `remote` and answer the commit its trunk names now (issue
-    #479): `start` checks its claim against this one commit -- the claim's
-    base and the tree its scope is measured against -- before it builds."""
+def fetched_trunk(remote: str, *, trunk: str) -> str:
+    """Fetch `remote` and answer the commit `trunk` -- its trunk ref, as the
+    caller's `RunContext` holds it -- names now (issue #479): `start` checks
+    its claim against this one commit -- the claim's base and the tree its
+    scope is measured against -- before it builds."""
     fetch = _git_run(["fetch", remote])
     if fetch.exit_status != 0:
         raise ClaimError(process.git_failure_detail(fetch))
-    return _git_output(["rev-parse", "--verify", f"{_trunk_ref(remote)}^{{commit}}"])
+    return _git_output(["rev-parse", "--verify", f"{trunk}^{{commit}}"])
 
 
 def create_linked_worktree(
-    path: Path, *, branch: str, remote: str, directory: Path | None = None
+    path: Path, *, branch: str, trunk: str, directory: Path | None = None
 ) -> None:
-    """Create a linked worktree at `path` on a fresh `branch` from
-    `remote`'s own trunk as the last fetch left it (issue #322;
+    """Create a linked worktree at `path` on a fresh `branch` from `trunk`,
+    the canonical remote's trunk ref as the last fetch left it (issue #322;
     `fetched_trunk`, issue #479): the `git worktree add` step
     `ISOLATED_WORKTREE_RECIPE` used to spell out for a person to type by
     hand, run through this module's own `_git_run` chokepoint so `start`
@@ -1026,10 +1049,7 @@ def create_linked_worktree(
     #394: `protect.judge`'s own direct tests build a worktree fixture from
     an explicit repository path, never the test process's cwd) or the
     calling process's own checkout otherwise."""
-    start_point = _trunk_ref(remote, directory=directory)
-    result = _git_run(
-        ["worktree", "add", str(path), "-b", branch, start_point], directory=directory
-    )
+    result = _git_run(["worktree", "add", str(path), "-b", branch, trunk], directory=directory)
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
 
@@ -1281,7 +1301,7 @@ def branch_merged_into_default(branch: str, *, remote: str) -> bool:
     fetch = _git_run(["fetch", remote])
     if fetch.exit_status != 0:
         raise ClaimError(process.git_failure_detail(fetch))
-    trunk = _trunk_ref(remote)
+    trunk = trunk_ref(remote)
     result = _git_run(["merge-base", "--is-ancestor", branch, trunk])
     if result.exit_status == 0:
         return True

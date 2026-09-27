@@ -1747,7 +1747,7 @@ def _board(
                 client, tuple(issue.number for issue in issues if issue.blocked_by_count > 0)
             ),
         )
-    trunk_landings = checkout.trunk_landings(config.canonical_remote, TRUNK_LANDING_DEPTH)
+    trunk_landings = checkout.trunk_landings(context.trunk_ref, TRUNK_LANDING_DEPTH)
     # One walk of `trunk_landings` feeds three views `board.py` keeps
     # separate (issue #371): `trunk_landing_items` (sha and all) drives the
     # Landungen view itself; `landed_at_by_item`/`trunk_landed_work_items`
@@ -2983,7 +2983,9 @@ def _verify_merged_release(
             f"not the default branch {default_branch!r}"
         )
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
-    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH, fetch=True)
+    landings = checkout.trunk_landings(
+        context.trunk_ref, TRUNK_LANDING_DEPTH, fetch_from=context.canonical_remote
+    )
     if isinstance(identity, protocol.LaneIdentity):
         defect = _trunk_no_item_landing_defect(landings, detail.merge_commit, detail.number)
         if defect is not None:
@@ -4022,7 +4024,7 @@ def _check_trunk_commit(parsed: argparse.Namespace, context: RunContext) -> int:
     `storage = "state-ref"` (LAND-47/LAND-52), reused rather than re-derived
     here. Needs no forge at all: a trunk commit's trailer is local history."""
     sha = cast(str, parsed.number)
-    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
+    landings = checkout.trunk_landings(context.trunk_ref, TRUNK_LANDING_DEPTH)
     landing = next((entry for entry in landings if entry.sha == sha), None)
     return _trunk_commit_outcome(sha, landing, context.config.storage).report(as_json=parsed.json)
 
@@ -5440,14 +5442,12 @@ def _rebuild_and_resume(
     minted. A worktree that stands on another commit -- another fetch moved
     the trunk after the checks -- is removed again, as a fresh build's is
     (START-18)."""
-    trunk = checkout.fetched_trunk(context.canonical_remote)
+    trunk = checkout.fetched_trunk(context.canonical_remote, trunk=context.trunk_ref)
     versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
     checked = _claim_request(
         _start_claim_arguments(parsed, base=trunk, branch=target.branch, claim_id=resumed.claim_id)
     )
-    checkout.create_linked_worktree(
-        target.path, branch=target.branch, remote=context.canonical_remote
-    )
+    checkout.create_linked_worktree(target.path, branch=target.branch, trunk=context.trunk_ref)
     _print_start_target(target)
     try:
         _validate_built_worktree(checked, target)
@@ -5470,7 +5470,7 @@ def _check_build_and_claim(
     knows whether the claim was written, so a failure after it keeps the
     worktree and says the outcome is uncertain (START-25). An interrupt or
     an unexpected error is no refusal."""
-    trunk = checkout.fetched_trunk(context.canonical_remote)
+    trunk = checkout.fetched_trunk(context.canonical_remote, trunk=context.trunk_ref)
     # The main checkout observed afresh, never the observation the
     # item-existence read already holds: the fetch above may take a while,
     # and the claim must read the item as it stands once the fetch is done,
@@ -5482,9 +5482,7 @@ def _check_build_and_claim(
     if plan.refused:
         _refuse_claim(False, plan.target_issue, plan.checks)
         return 2
-    checkout.create_linked_worktree(
-        target.path, branch=target.branch, remote=context.canonical_remote
-    )
+    checkout.create_linked_worktree(target.path, branch=target.branch, trunk=context.trunk_ref)
     _print_start_target(target)
     _print_claim_checks(plan, as_json=False)
     push = _WitnessedPush()
@@ -6049,7 +6047,9 @@ def _land_release_routing(
         if isinstance(classification, board.WorkItemClassification):
             return classification.item.number
         return None
-    landings = checkout.trunk_landings(canonical_remote, TRUNK_LANDING_DEPTH, fetch=True)
+    landings = checkout.trunk_landings(
+        checkout.trunk_ref(canonical_remote), TRUNK_LANDING_DEPTH, fetch_from=canonical_remote
+    )
     landing = next((entry for entry in landings if entry.sha == merge_sha), None)
     trunk_classification = None if landing is None else landing.classification
     if isinstance(trunk_classification, board.TrunkWorkItemClassification):
@@ -6225,7 +6225,7 @@ def _cmd_release_landed(
             "an issue-less lane has no item to close"
         )
     context = session.context
-    landings = checkout.trunk_landings(context.canonical_remote, TRUNK_LANDING_DEPTH)
+    landings = checkout.trunk_landings(context.trunk_ref, TRUNK_LANDING_DEPTH)
     commit = _landed_commit(
         landings, identity.issue, cast(str, parsed.merged), context.config.storage
     )
