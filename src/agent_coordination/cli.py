@@ -3654,16 +3654,11 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
             )
         _refuse_an_unreadable_relative(client, number, with_parent=True)
         closed_at = client.close_item(number)
-        freed_or_hint = _board_read_after_write(lambda: _item_close_freed(client, number))
-        freed, freed_hint = (
-            (None, freed_or_hint) if isinstance(freed_or_hint, str) else (freed_or_hint, None)
-        )
         result = _ItemCloseResult(
             item_id=items.format_item_id(number),
             number=number,
             closed_at=closed_at,
-            freed=freed,
-            freed_hint=freed_hint,
+            freed=_board_read_after_write(lambda: _item_close_freed(client, number)),
             parent_closable=_closable_parent_of_a_closed_item(client, number),
         )
         _print_item_close_result(result, as_json=as_json)
@@ -3725,14 +3720,13 @@ def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]
 class _ItemCloseResult:
     """Everything `_print_item_close_result` needs for one `item close`
     (issue #348), bundled so the printer itself takes one argument instead
-    of PLR0913's five-scalar ceiling. `freed` is `None` exactly when
-    `freed_hint` names why it could not be read (issue #541)."""
+    of PLR0913's five-scalar ceiling. `freed` is the freed numbers, or
+    the hint that replaced them when that read refused (issue #541)."""
 
     item_id: str
     number: int
     closed_at: str
-    freed: tuple[int, ...] | None
-    freed_hint: str | None
+    freed: tuple[int, ...] | str
     parent_closable: int | None
 
 
@@ -3746,12 +3740,12 @@ def _print_item_close_result(result: _ItemCloseResult, *, as_json: bool) -> None
             closed_at=result.closed_at,
             parent_closable=result.parent_closable,
         )
-        if result.freed_hint is not None:
-            print(result.freed_hint, file=sys.stderr)
+        if isinstance(result.freed, str):
+            print(result.freed, file=sys.stderr)
         return
     print(f"CLOSED {result.item_id}")
-    if result.freed is None:
-        print(result.freed_hint)
+    if isinstance(result.freed, str):
+        print(result.freed)
     else:
         # `item close` only ever runs under `storage = "state-ref"`
         # (`_cmd_item_close`'s own refusal otherwise), so `freed:`'s own id
