@@ -49,6 +49,7 @@ sentence.
 | wide scope, neither `--whole` nor the item's own body names one | CLM-22 | CLM-22 | CLM-18 |
 | higher-priority item names neither `scope` nor a `[[slice]]` row | CLM-23 | CLM-23 | — |
 | the identity or claim id is already taken | CLM-25 | CLM-25 | CLM-25 |
+| a `state-ref` item closed or edited after the checks read it | CLM-31 | CLM-31 | — |
 | `--repo` given, `storage = "state-ref"` | CLM-26 | CLM-26 | — |
 | every other refusal | CLM-27 | CLM-27 | CLM-27 |
 
@@ -95,6 +96,7 @@ to the clause each names below.
 - [ ] [CLM-23] A higher-ranked item naming neither `scope` nor a `[[slice]]` row is skipped by CLM-08's own walk (`specs/next.spec.md` NEXT-23); claiming past it costs no `--out-of-order`.
 - [ ] [CLM-24] Deriving scope for a target missing or a pull request refuses by name before any slice-rule check runs, `reason: "target_invalid"` under `--json` (see E-CLM-07).
 - [ ] [CLM-25] The store's own refusal to write -- the identity or claim id already taken, or a resource conflict -- reports `reason: "claim_conflict"` under `--json`.
+- [ ] [CLM-31] A `state-ref` item closed or edited after the checks read it open refuses CAS-20's sentence (CAS-59), `reason: "unavailable"`, and writes no claim (see E-CLM-08).
 - [ ] [CLM-26] Under `storage = "state-ref"`, `aco claim` resolves the state-ref forge like `aco rule`; `--repo` there refuses the same as PIN-04, `reason: "invalid_usage"`.
 - [ ] [CLM-27] Every other refusal the handler raises -- a checkout precondition, scope grammar, an unsafe branch or claim id -- reports `reason: "unavailable"`; a missing identity refuses through OUT-05.
 
@@ -205,5 +207,16 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-72`, issue `#7
 $ aco claim 72 --json
 2> ERROR: #72 does not exist
 {"ok": false, "reason": "target_invalid", "message": "#72 does not exist"}
+exit 2
+```
+
+### E-CLM-08 — a `state-ref` item closed under the claim's rejected push refuses, no claim written
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"`, a linked worktree on `ada/issue-42-lane`, item `aco-00002a` open; another writer closes it after this call's checks read it open and before its push
+
+```console
+$ aco claim 42 --scope src/x.py --json
+2> ERROR: item 'aco-00002a' was written since it was read (expected <oid>, found '<oid>'); re-read and retry
+{"ok": false, "reason": "unavailable", "message": "item 'aco-00002a' was written since it was read (expected <oid>, found '<oid>'); re-read and retry"}
 exit 2
 ```

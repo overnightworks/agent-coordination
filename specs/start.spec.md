@@ -36,6 +36,7 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | the claim is refused after this call built the worktree | START-18 |
 | the trunk moved after the checks, under a build or a gone-worktree rebuild | START-26 |
 | the claim write fails after its push was sent | START-25 |
+| a `state-ref` item closed or edited after the checks read it, before or under the claim's push | START-27 |
 | git will not delete the branch a refused `start` built | START-21 |
 | git will not remove the worktree a refused `start` built | START-23 |
 | run from a linked worktree | START-19 |
@@ -98,6 +99,7 @@ then removes nothing and says the outcome is uncertain (START-25); neither does 
 - [ ] [START-18] A claim refused between build and push, or a moved trunk (START-26), removes both, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
 - [ ] [START-26] A build or gone-worktree rebuild standing on a trunk moved after the checks refuses `the trunk moved after start checked it; run start again`, exit 2, then removes it as START-18 says.
 - [ ] [START-25] A write failing after its push keeps both, adding `the claim's push was sent, its outcome unknown; worktree <path> and branch '<branch>' kept; run start again to resume it`; exit 2.
+- [ ] [START-27] A `state-ref` item closed or edited after the checks read it refuses CAS-20's sentence (CAS-59), no claim; before the claim's push the build goes (START-18), under it stays (START-25); see E-START-16.
 - [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 - [ ] [START-23] When git will not remove that worktree, the refusal and exit 2 stay and the line reads `worktree <path> and branch '<branch>' this start created kept: git failure: <reason>`.
 
@@ -306,5 +308,19 @@ worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
 branch: ada/issue-314-fresh-slug
 2> ERROR: issue #314 is claimed by Grok sess-9 (builder) on issue #314 branch grok/issue-314-other
 2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' this start created
+exit 2
+```
+
+### E-START-16 -- a `state-ref` item closed under the claim's rejected push keeps the build, no claim written
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"`, item `aco-00013a` open as E-START-01's `#314`; another writer
+closes it after this call's claim write read the ref, so that write's push is rejected
+
+```console
+$ aco start 314
+worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
+branch: ada/issue-314-fresh-slug
+2> ERROR: item 'aco-00013a' was written since it was read (expected <oid>, found '<oid>'); re-read and retry
+2> the claim's push was sent, its outcome unknown; worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' kept; run start again to resume it
 exit 2
 ```

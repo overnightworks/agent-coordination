@@ -35,6 +35,7 @@ exit `2`, exactly as `specs/claim-record.spec.md` already documents.
 | a resource file malformed | — | — | CAS-34..36 |
 | an item write's `expected` is stale or `None` | — | CAS-19, CAS-20 | — |
 | a claim lands on the item an `item close` retries | — | CAS-52 | — |
+| a close or edit lands on the item a claim retries | — | CAS-59, CAS-60 | — |
 
 \* `aco bootstrap`'s own push shares CAS-15's exact three-shaped sentence at 8 attempts instead of a transition's 32; see the section preamble below.
 
@@ -107,6 +108,8 @@ transition), and which of the three causes applies.
 - [ ] [CAS-21] Two item writes on distinct ids racing for the same tip both land (except CAS-51): `items/` is rebuilt from the full id -> oid map on every write, never a copy of the parent tree's own `items/` oid.
 - [ ] [CAS-51] An item write holding the whole `items/` it checked (a `board --serve` ruling click) refuses `items/ was written since this write checked it; re-read and retry` once any other item changed.
 - [ ] [CAS-52] `item close` re-checks PIN-26 on every attempt: a claim that lands on the item between a rejected push and its retry refuses the close with PIN-26's sentence, the item left open.
+- [ ] [CAS-59] A `state-ref` claim re-checks on every attempt that its item is the blob its checks read open: a close or edit landed since refuses with CAS-20's sentence and writes no claim.
+- [ ] [CAS-60] Under `storage = "github"` a claim makes no such check: the forge holds the item's state and this ref no fact of it, so a close racing the claim is the forge's to judge.
 
 ## `schema.toml`
 
