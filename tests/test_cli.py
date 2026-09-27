@@ -2358,10 +2358,11 @@ def test_a_claim_refused_after_the_build_removes_what_start_built(
     refusal: str,
     removal: str,
 ) -> None:
-    """Issue #479 (START-18, START-21): a claim refused between the build
-    and its write -- by the ledger, or by the new worktree's own checkout
-    preconditions, a live claim's rebuilt worktree included -- removes
-    exactly the worktree and branch this call built, and says so; when git
+    """Issue #479 (START-18, START-21, START-26): a claim refused between
+    the build and its push -- by the ledger, by the new worktree's own
+    checkout preconditions, or by a trunk that moved after the checks, a
+    live claim's rebuilt worktree included -- removes exactly the worktree
+    and branch this call built, and says so; when git
     will not delete the branch the safe way, it says which branch stays and
     why."""
     repo = _start_scenario(monkeypatch, tmp_path)

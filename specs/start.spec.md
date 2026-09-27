@@ -298,7 +298,7 @@ exit 2
 ### E-START-15 -- a claim that lands after the checks makes the call remove its build
 
 Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` as E-START-01; `Grok sess-9` claims `#314`
-on branch `grok/issue-314-other` after this call's checks passed and before its claim is written
+on branch `grok/issue-314-other` after this call's checks passed and before its claim's push is sent
 
 ```console
 $ aco start 314
