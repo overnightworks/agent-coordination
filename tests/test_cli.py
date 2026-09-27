@@ -18252,6 +18252,7 @@ def _rename_the_local_main(_monkeypatch: pytest.MonkeyPatch, repository: Path) -
     _real_git(repository, "branch", "-m", "main", "trunk")
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize("output_flags", [(), ("--json",)], ids=["text", "json"])
 @pytest.mark.parametrize(
     ("remove_the_trunk", "sentence"),
