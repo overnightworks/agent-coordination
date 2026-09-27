@@ -1605,16 +1605,16 @@ def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
     assert checkout.main_checkout_root(toplevel=caller) == main.resolve()
 
 
-def test_main_checkout_root_from_a_linked_worktree_of_a_separate_git_directory_is_its_parent(
+def test_main_checkout_root_from_a_linked_worktree_of_a_separate_git_directory_is_the_caller(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Issue #479 (START-19): a linked worktree whose git directory records
-    no way back gets the git directory's parent, never a refusal and never
-    the caller's own checkout."""
+    no checkout builds beside its own checkout -- never a refusal, and never
+    beside the git directory, which is no checkout to read or build from."""
     lane = _linked_lane_of(_git_directory_kept_elsewhere(tmp_path), tmp_path)
     monkeypatch.chdir(lane)
 
-    assert checkout.main_checkout_root(toplevel=lane) == tmp_path.resolve()
+    assert checkout.main_checkout_root(toplevel=lane) == lane.resolve()
 
 
 def test_main_checkout_root_refuses_a_linked_worktree_whose_core_worktree_git_cannot_read(

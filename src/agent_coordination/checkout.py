@@ -1049,15 +1049,20 @@ def main_checkout_root(*, toplevel: Path) -> Path:
     context. A main checkout is its own answer, whatever layout its git
     directory has. A linked worktree finds it through the common
     directory's `core.worktree` when that names one (a submodule), else as
-    the common directory's parent: a `--separate-git-dir` repository
-    records no way back, so that parent is the one place it names."""
+    the checkout holding a common directory called `.git`. A bare or
+    `--separate-git-dir` common directory records no checkout at all -- git's
+    own `worktree list` names the git directory itself there -- so the
+    caller's own checkout is the one real checkout left to build beside."""
     caller = _resolve_checkout(toplevel)
     if caller.kind is CheckoutKind.MAIN:
         return caller.toplevel.resolve()
     configured = _configured_worktree(directory=toplevel)
     if configured is not None:
         return (caller.common_directory / configured).resolve()
-    return caller.common_directory.resolve().parent
+    common_directory = caller.common_directory.resolve()
+    if common_directory.name == ".git":
+        return common_directory.parent
+    return caller.toplevel.resolve()
 
 
 def _configured_worktree(*, directory: Path) -> str | None:
