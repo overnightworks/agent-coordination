@@ -2357,7 +2357,7 @@ _REAL_VERSIONED_PATHS = checkout.versioned_paths
 def test_start_refuses_to_rebuild_a_live_claim_whose_scope_the_trunk_no_longer_grounds(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Issue #479 (START-23): the live claim's scope is measured against the
+    """Issue #479 (START-22): the live claim's scope is measured against the
     fetched trunk before its gone worktree is built again, so a comma path
     the trunk has since deleted refuses with nothing built."""
     repo = _start_scenario(monkeypatch, tmp_path)

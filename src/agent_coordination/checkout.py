@@ -1043,34 +1043,27 @@ def _own_common_directory() -> Path:
 
 def main_checkout_root(*, toplevel: Path) -> Path:
     """The repository's main checkout, whichever of its worktrees the
-    calling process runs in (issue #479): `start` places a lane's worktree
-    beside it, so a call from inside a linked worktree never nests the new
-    one under that worktree. `toplevel` is the caller's own, held by its run
-    context. The main checkout is its own toplevel; a linked
-    worktree finds it through `core.worktree` when the common directory
-    names one (a submodule), else as the parent of a common directory
-    called `.git`. Any other layout (`--separate-git-dir`) records no way
-    back from a linked worktree, and git's own `worktree list` guesses the
-    common directory itself there, so this refuses instead of guessing."""
-    common_directory = _own_common_directory()
-    own_directory = Path(_git_output(["rev-parse", "--path-format=absolute", "--git-dir"]))
-    if own_directory.resolve() == common_directory:
-        return toplevel.resolve()
-    configured = _configured_worktree()
+    caller stands in (issue #479): `start` places a lane's worktree beside
+    it, so a call from inside a linked worktree never nests the new one
+    under that worktree. `toplevel` is the caller's own, held by its run
+    context. A main checkout is its own answer, whatever layout its git
+    directory has. A linked worktree finds it through the common
+    directory's `core.worktree` when that names one (a submodule), else as
+    the common directory's parent: a `--separate-git-dir` repository
+    records no way back, so that parent is the one place it names."""
+    caller = _resolve_checkout(toplevel)
+    if caller.kind is CheckoutKind.MAIN:
+        return caller.toplevel.resolve()
+    configured = _configured_worktree(directory=toplevel)
     if configured is not None:
-        return (common_directory / configured).resolve()
-    if common_directory.name == ".git":
-        return common_directory.parent
-    raise ClaimError(
-        f"main checkout unknown: git directory {common_directory} names no checkout; "
-        "run start from the main checkout"
-    )
+        return (caller.common_directory / configured).resolve()
+    return caller.common_directory.resolve().parent
 
 
-def _configured_worktree() -> str | None:
+def _configured_worktree(*, directory: Path) -> str | None:
     """The common directory's own `core.worktree`, or `None` when unset:
     git exits `1` for an unset key and nothing else."""
-    result = _git_run(["config", "--get", "core.worktree"])
+    result = _git_run(["config", "--get", "core.worktree"], directory=directory)
     if result.exit_status == 1:
         return None
     if result.exit_status != 0:

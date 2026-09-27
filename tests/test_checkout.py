@@ -1574,10 +1574,22 @@ def _linked_lane_of(main: Path, tmp_path: Path) -> Path:
     return lane
 
 
+def _git_directory_kept_elsewhere(tmp_path: Path) -> Path:
+    """A `--separate-git-dir` repository with no `core.worktree`: its git
+    directory records no way back to its main checkout."""
+    return _scratch_git_repository(tmp_path, f"--separate-git-dir={tmp_path / 'store'}")
+
+
 @pytest.mark.parametrize(
-    "build_checkout", [_conventional_checkout, _checkout_whose_git_directory_names_it]
+    ("build_checkout", "runs_in_linked_lane"),
+    [
+        pytest.param(_conventional_checkout, False, id="conventional-main"),
+        pytest.param(_conventional_checkout, True, id="conventional-linked"),
+        pytest.param(_checkout_whose_git_directory_names_it, False, id="core-worktree-main"),
+        pytest.param(_checkout_whose_git_directory_names_it, True, id="core-worktree-linked"),
+        pytest.param(_git_directory_kept_elsewhere, False, id="separate-git-dir-main"),
+    ],
 )
-@pytest.mark.parametrize("runs_in_linked_lane", [False, True], ids=["main", "linked"])
 def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1585,7 +1597,7 @@ def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
     runs_in_linked_lane: bool,
 ) -> None:
     """Issue #479 (START-19): `start` builds beside the main checkout, never
-    beside the git directory's parent, whatever layout that directory has."""
+    nested under a linked caller's, whatever layout its git directory has."""
     main = build_checkout(tmp_path)
     caller = _linked_lane_of(main, tmp_path) if runs_in_linked_lane else main
     monkeypatch.chdir(caller)
@@ -1593,48 +1605,33 @@ def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
     assert checkout.main_checkout_root(toplevel=caller) == main.resolve()
 
 
-def _git_directory_kept_elsewhere(tmp_path: Path, _monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A `--separate-git-dir` repository: it records no way back from a
-    linked worktree to its main checkout."""
-    return _scratch_git_repository(tmp_path, f"--separate-git-dir={tmp_path / 'store'}")
+def test_main_checkout_root_from_a_linked_worktree_of_a_separate_git_directory_is_its_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #479 (START-19): a linked worktree whose git directory records
+    no way back gets the git directory's parent, never a refusal and never
+    the caller's own checkout."""
+    lane = _linked_lane_of(_git_directory_kept_elsewhere(tmp_path), tmp_path)
+    monkeypatch.chdir(lane)
+
+    assert checkout.main_checkout_root(toplevel=lane) == tmp_path.resolve()
 
 
-def _core_worktree_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A conventional repository whose `core.worktree` read fails outright."""
+def test_main_checkout_root_refuses_a_linked_worktree_whose_core_worktree_git_cannot_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #479 (START-19): a `core.worktree` read git itself fails is
+    reported, never guessed past."""
     _stub_one_git_call(
         monkeypatch,
         ["config", "--get", "core.worktree"],
         exit_status=128,
         stderr="fatal: bad config line 1",
     )
-    return _conventional_checkout(tmp_path)
-
-
-@pytest.mark.parametrize(
-    ("build_checkout", "refusal"),
-    [
-        pytest.param(
-            _git_directory_kept_elsewhere,
-            r"main checkout unknown: git directory .* names no checkout",
-            id="names-no-checkout",
-        ),
-        pytest.param(_core_worktree_unreadable, "fatal: bad config line 1", id="config-fails"),
-    ],
-)
-def test_main_checkout_root_refuses_a_linked_worktree_it_cannot_trace_back(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    build_checkout: Callable[[Path, pytest.MonkeyPatch], Path],
-    refusal: str,
-) -> None:
-    """Issue #479 (START-19, START-22): from a linked worktree whose git
-    directory records no way back, or whose `core.worktree` git cannot read,
-    `start` refuses rather than guess where to build."""
-    main = build_checkout(tmp_path, monkeypatch)
-    lane = _linked_lane_of(main, tmp_path)
+    lane = _linked_lane_of(_conventional_checkout(tmp_path), tmp_path)
     monkeypatch.chdir(lane)
 
-    with pytest.raises(ClaimError, match=refusal):
+    with pytest.raises(ClaimError, match="fatal: bad config line 1"):
         checkout.main_checkout_root(toplevel=lane)
 
 
