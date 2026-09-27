@@ -1,8 +1,0 @@
-claim_id = "328c94dd13624514b7d3f6cfcce5e718"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "4467532e59e3458ec9cc0be432d57b5f0a33069d"
-branch = "claude/issue-536-narrow-item-writes"
-scope = ["scripts/test_budget_ratchet.txt", "specs/item.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "src/agent_coordination/items.py", "src/agent_coordination/state_board.py", "tests/test_cli.py", "tests/test_items.py", "tests/test_state_board.py"]
-opened_commit = "41d4d3626bd83514ec137c38ec68dd091995f0ba"
-whole_reason = "the two item writes that read the whole store, their narrow read, and the specs that list what still refuses"
