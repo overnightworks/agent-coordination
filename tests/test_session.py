@@ -318,6 +318,33 @@ def test_a_fetched_trunk_is_resolved_after_the_fetch_never_from_a_trunk_held_bef
     assert checkout.trunk_commit(fetched, directory=repository) == remote_tip
 
 
+def test_a_default_branch_held_before_the_fetch_never_names_the_fetched_ref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #492: under `state-ref` the default branch held before the
+    fetch is `main`; once the recorded `HEAD` names `trunk`, the fetched
+    default-branch ref and every later ask name `trunk`, and the trunk asked
+    after it shares that one fetch."""
+    repository = _pushed_repository(tmp_path, 'storage = "state-ref"\n')
+    _real_git(repository, "push", "-q", "origin", "main:trunk")
+    _real_git(repository, "remote", "set-head", "origin", "main")
+    context = _context().for_directory(repository)
+    held = context.default_branch
+    _real_git(repository, "remote", "set-head", "origin", "trunk")
+    trunk_calls = trunk_git_calls(monkeypatch, "origin")
+
+    fetched = context.fetched_default_branch_ref()
+    trunk = context.fetched_trunk_ref()
+
+    assert (held, fetched, context.default_branch, trunk) == (
+        "main",
+        "refs/remotes/origin/trunk",
+        "trunk",
+        "refs/remotes/origin/trunk",
+    )
+    assert fetched_once_then_read(trunk_calls) == {repository.resolve(): True}
+
+
 @pytest.mark.skipif(
     _git_version() < (2, 48), reason="git records a fetched remote's HEAD from 2.48 on"
 )

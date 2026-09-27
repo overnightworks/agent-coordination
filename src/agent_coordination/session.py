@@ -214,13 +214,15 @@ class RunContext:
         refuse_canonical_remote_mismatch(target, self.remote_location)
         return target
 
-    @cached_property
+    @property
     def default_branch(self) -> str:
         """The default branch by provider: the canonical remote's recorded
         default branch under `state-ref`, where that remote is the forge,
-        the forge's own answer under `github` (issue #484 rulings)."""
+        the forge's own answer under `github` (issue #484 rulings). Under
+        `state-ref` it holds nothing of its own, so the fetch that drops the
+        recorded default branch drops this answer with it (issue #492)."""
         if self.config.storage is not body.Storage.STATE_REF:
-            return self.forge.default_branch()
+            return self._forge_default_branch
         branch = self.recorded_default_branch
         if branch is None:
             raise protocol.ClaimUnavailableError(
@@ -228,6 +230,10 @@ class RunContext:
                 f"run aco from a checkout with {self.canonical_remote}/HEAD set"
             )
         return branch
+
+    @cached_property
+    def _forge_default_branch(self) -> str:
+        return self.forge.default_branch()
 
     @cached_property
     def recorded_default_branch(self) -> str | None:
@@ -252,12 +258,26 @@ class RunContext:
         before it, since a fetch may record or move it: the held trunk and
         recorded default branch are dropped before the resolution, so one
         that fails is asked again."""
-        if self._fetched_trunk_remote != self.canonical_remote:
-            checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
-            self._fetched_trunk_remote = self.canonical_remote
-            for fact in _RECORDED_HEAD_FACTS:
-                self.__dict__.pop(fact, None)
+        self._fetch_canonical_remote_once()
         return self.trunk_ref
+
+    def fetched_default_branch_ref(self) -> str:
+        """The default branch's tracking ref of the canonical remote once
+        this checkout fetched that remote, sharing `fetched_trunk_ref`'s one
+        fetch per run and remote (issue #492): the ref `land` fast-forwards
+        to and `release --merged` walks under `github`, named by the same
+        `default_branch` their pull request checks compare against, so the
+        forge's default branch counts even where the remote records no `HEAD`."""
+        self._fetch_canonical_remote_once()
+        return f"refs/remotes/{self.canonical_remote}/{self.default_branch}"
+
+    def _fetch_canonical_remote_once(self) -> None:
+        if self._fetched_trunk_remote == self.canonical_remote:
+            return
+        checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
+        self._fetched_trunk_remote = self.canonical_remote
+        for fact in _RECORDED_HEAD_FACTS:
+            self.__dict__.pop(fact, None)
 
     def _resolved_trunk_ref(self) -> str:
         remote = self.canonical_remote

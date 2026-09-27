@@ -137,6 +137,20 @@ def _live_store_claim() -> protocol.ActiveClaim:
     return next(iter(state.claims.values()))
 
 
+def _merge_on_the_forge(remote: Path, default_branch: str, source_branch: str, message: str) -> str:
+    """The merge commit a forge's own merge of `source_branch` into
+    `default_branch` pushes to the bare `remote`, built in a clone of it
+    beside `remote` so no landing checkout moves with it."""
+    clone = remote.parent / "forge-merge"
+    _real_git(remote.parent, "clone", "-q", "-b", default_branch, str(remote), str(clone))
+    _real_git(clone, "config", "user.name", "Forge")
+    _real_git(clone, "config", "user.email", "forge@example.com")
+    _real_git(clone, "config", "commit.gpgsign", "false")
+    _real_git(clone, "merge", "-q", "--no-ff", "-m", message, f"origin/{source_branch}")
+    _real_git(clone, "push", "-q", "origin", f"HEAD:{default_branch}")
+    return _real_git(clone, "rev-parse", "HEAD").stdout.strip()
+
+
 @dataclass
 class FakeForge:
     board_issues: tuple[board.Issue, ...] = ()
@@ -166,7 +180,7 @@ class FakeForge:
     readiness_by_number: dict[int, forge.LandingReadiness] = field(default_factory=dict)
     merge_calls: list[tuple[int, str, str, str]] = field(default_factory=list)
     merge_sha: str = MERGE_COMMIT_SHA
-    merge_repository: Path | None = None
+    merge_remote: Path | None = None
     fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
     requests: int = field(default=0, init=False)
@@ -271,26 +285,23 @@ class FakeForge:
     def merge_landing(self, number: int, *, head_sha: str, title: str, body: str) -> str:
         """This fake's mirror of `GitHubForge.merge_landing` (issue #405):
         records every call for an adapter-shaped assertion, and, when
-        `merge_repository` names a real checkout (`land`'s own end-to-end
-        tests), performs a real merge there so a later real fast-forward has
-        a fresh trunk tip to advance to."""
+        `merge_remote` names a real bare repository (`land`'s own end-to-end
+        tests), merges there into its default branch, as the forge does on
+        its own side, so the landing checkout stands behind until its own
+        real fast-forward."""
         self._run()
         self.merge_calls.append((number, head_sha, title, body))
         if self.fail_merge is not None:
             raise self.fail_merge
         sha = self.merge_sha
         landing = self.landings[number]
-        if self.merge_repository is not None:
-            _real_git(
-                self.merge_repository,
-                "merge",
-                "--no-ff",
-                "-m",
-                f"{title}\n\n{body}",
+        if self.merge_remote is not None:
+            sha = _merge_on_the_forge(
+                self.merge_remote,
+                self.default_branch_name,
                 landing.source_branch,
+                f"{title}\n\n{body}",
             )
-            sha = _real_git(self.merge_repository, "rev-parse", "HEAD").stdout.strip()
-            _real_git(self.merge_repository, "push", "-q", "origin", "main")
         self.landings[number] = replace(landing, merged=True, merge_commit=sha)
         return sha
 
@@ -14034,6 +14045,81 @@ def test_a_command_resolves_origin_main_past_a_dangling_origin_head(
     assert (status, capsys.readouterr().err) == (0, "")
 
 
+def _rename_master_to_trunk(repo: Path, remote: Path, *, keep_recorded_head: bool) -> None:
+    """The remote renames `master` to `trunk` after `repo` recorded
+    `origin/HEAD` naming it: `fetch --prune` leaves that record dangling,
+    or it is deleted when `keep_recorded_head` is false."""
+    _real_git(repo, "push", "-q", "origin", "master")
+    _real_git(repo, "remote", "set-head", "origin", "master")
+    _real_git(remote, "branch", "-m", "master", "trunk")
+    _real_git(repo, "fetch", "-q", "--prune", "origin")
+    if not keep_recorded_head:
+        _real_git(repo, "remote", "set-head", "origin", "--delete")
+
+
+def _push_nothing(_repo: Path, _remote: Path) -> None:
+    """A fresh remote: it has no branch at all yet."""
+
+
+_UNRECORDED_TRUNK = (
+    "ERROR: cannot determine the trunk: origin has branches but none of origin/HEAD, "
+    "origin/main or origin/master resolves; run git remote set-head origin -a\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("arrange_remote", "expected_status", "expected_out", "expected_err"),
+    [
+        pytest.param(
+            lambda repo, remote: _rename_master_to_trunk(repo, remote, keep_recorded_head=True),
+            2,
+            "",
+            _UNRECORDED_TRUNK,
+            id="renamed-head-dangling",
+        ),
+        pytest.param(
+            lambda repo, remote: _rename_master_to_trunk(repo, remote, keep_recorded_head=False),
+            2,
+            "",
+            _UNRECORDED_TRUNK,
+            id="renamed-head-missing",
+        ),
+        pytest.param(_push_nothing, 0, "{sha} declares No-Item: docs\n", "", id="fresh-remote"),
+    ],
+)
+def test_check_never_takes_a_local_branch_for_the_trunk_of_a_remote_with_branches(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange_remote: Callable[[Path, Path], None],
+    expected_status: int,
+    expected_out: str,
+    expected_err: str,
+) -> None:
+    """Issue #492 proof 2, against real git: the remote renamed `master` to
+    `trunk` and no resolvable `origin/HEAD` is left, so `check` refuses with
+    the set-head repair instead of reporting an unpushed local `master`
+    commit as landed; a remote with no branch at all still guesses `master`."""
+    monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
+    repo, remote = _real_repository_with_bare_remote(tmp_path)
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
+    _real_git(repo, "branch", "-m", "main", "master")
+    arrange_remote(repo, remote)
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "unpushed", "-m", "No-Item: docs")
+    sha = _real_git(repo, "rev-parse", "HEAD").stdout.strip()
+    _redirect_toplevel(monkeypatch, repo)
+    monkeypatch.chdir(repo)
+
+    status = issue_claim.main(["check", sha])
+
+    printed = capsys.readouterr()
+    assert (status, printed.out, printed.err) == (
+        expected_status,
+        expected_out.format(sha=sha),
+        expected_err,
+    )
+
+
 def test_release_merged_json_carries_the_worktree_cleanup_outcome(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -14284,8 +14370,8 @@ def _land_repository(
     diverged from `main` by one pushed commit and `main` itself checked out
     clean -- `aco land`'s own merge, branch deletion, and fast-forward run
     against real git here, the one proof a fake checkout cannot give.
-    `set_head=False` skips recording `origin/HEAD`, the one precondition a
-    test of the "default branch unknown" refusal needs missing. `branch`,
+    `set_head=False` skips recording `origin/HEAD`, a checkout where only
+    the forge names the default branch (issue #492). `branch`,
     when it names a lane branch instead of the default `LANDING_BRANCH`,
     stands the real checkout an issue-less (`No-Item:`) land proves against
     (issue #405 CI coverage follow-up)."""
@@ -14334,7 +14420,7 @@ def _land_scenario(
         head_ref_name=branch,
     )
     client.readiness_by_number[12] = _land_readiness()
-    client.merge_repository = repo
+    client.merge_remote = tmp_path / "remote.git"
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     _patch_store_write(monkeypatch, _store_claim_from_request(standing))
@@ -14831,18 +14917,77 @@ def test_land_refuses_a_dirty_checkout_before_any_write(
     assert client.merge_calls == []
 
 
-def test_land_refuses_when_the_default_branch_is_unknown(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+def _land_on_the_forges_trunk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, canonical: str, checked_out: str
+) -> tuple[Path, FakeForge]:
+    """`_land_scenario` with no recorded `HEAD`, where the forge alone
+    names the default branch `trunk` (issue #492): `canonical` carries
+    `trunk`, the lane branch, and the `main` the switch to `trunk` left
+    behind, and the checkout stands on `checked_out`. A canonical remote
+    other than `origin` is a fresh bare `<canonical>.git` the tracked board
+    configuration names."""
+    repo, client = _land_scenario(monkeypatch, tmp_path, set_head=False)
+    client.default_branch_name = "trunk"
+    client.landings[12] = replace(client.landings[12], target_branch="trunk")
+    _real_git(repo, "branch", "-m", "main", "trunk")
+    if canonical != "origin":
+        client.merge_remote = tmp_path / f"{canonical}.git"
+        _real_git(tmp_path, "init", "-q", "--bare", str(client.merge_remote))
+        _real_git(repo, "remote", "add", canonical, str(client.merge_remote))
+        (repo / ".agent-claim").mkdir()
+        (repo / ".agent-claim" / "board.toml").write_text(f'canonical_remote = "{canonical}"\n')
+        _real_git(repo, "add", "-f", ".agent-claim/board.toml")
+        _real_git(repo, "commit", "-q", "-m", "canonical remote")
+        _real_git(repo, "push", "-q", canonical, LANDING_BRANCH)
+    _real_git(repo, "push", "-q", canonical, "trunk", "trunk:main")
+    _real_git(repo, "checkout", "-q", "-B", checked_out)
+    return repo, client
+
+
+@pytest.mark.parametrize(
+    ("canonical", "checked_out", "expected_status", "expected_error", "expected_fetches"),
+    [
+        pytest.param("origin", "trunk", 0, "", 1, id="origin-trunk-fast-forwards"),
+        pytest.param("hub", "trunk", 0, "", 1, id="hub-trunk-fast-forwards"),
+        pytest.param(
+            "origin",
+            "main",
+            2,
+            "ERROR: land must run from a clean checkout of the default branch 'trunk'\n",
+            0,
+            id="checkout-on-main-names-trunk",
+        ),
+    ],
+)
+def test_land_takes_the_forges_default_branch_where_the_remote_records_no_head(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    canonical: str,
+    checked_out: str,
+    expected_status: int,
+    expected_error: str,
+    expected_fetches: int,
 ) -> None:
-    """Issue #405: a checkout whose `origin/HEAD` was never recorded denies
-    outright rather than guessing, the same risk `rescope`'s own resolved
-    checkout precondition refuses (issue #314 gate G4)."""
-    _repo, client = _land_scenario(monkeypatch, tmp_path, set_head=False)
+    """Issue #492 proof 1, against real git: the forge's default branch is
+    `trunk` and no `<canonical>/HEAD` is recorded. `land` runs from a clean
+    `trunk`, fast-forwards it from `<canonical>/trunk` after fetching that
+    remote once, and a checkout on `main` refuses LANDCMD-11 naming `trunk`."""
+    repo, client = _land_on_the_forges_trunk(
+        monkeypatch, tmp_path, canonical=canonical, checked_out=checked_out
+    )
+    trunk_calls = trunk_git_calls(monkeypatch, canonical)
 
-    assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
 
-    assert capsys.readouterr().err == f"ERROR: {checkout.DEFAULT_BRANCH_UNKNOWN_REASON}\n"
-    assert client.merge_calls == []
+    fetches = [call for call in trunk_calls if call[0] == "fetch"]
+    local_trunk = _real_git(repo, "rev-parse", "trunk").stdout.strip()
+    assert (status, capsys.readouterr().err, fetches) == (
+        expected_status,
+        expected_error,
+        [("fetch", repo.resolve())] * expected_fetches,
+    )
+    assert (local_trunk == client.landings[12].merge_commit) is (expected_status == 0)
 
 
 def test_land_trunk_trailer_renders_the_trunk_grammar_for_both_classifications() -> None:

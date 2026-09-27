@@ -533,6 +533,7 @@ _ISOLATED_NON_MAIN_BRANCH_SENTENCE = (
     ],
 )
 def test_refuse_shared_checkout_matrix(
+    tmp_path: Path,
     branch: str,
     kind: checkout.CheckoutKind,
     default_branch: str | None,
@@ -553,18 +554,19 @@ def test_refuse_shared_checkout_matrix(
     known -- it is the same branch the caller resolved its identity from --
     so `RETURN_TO_CLAIM` names it instead of leaving the sentence
     branch-less."""
+    repository, _remote = _real_repository_with_bare_remote(tmp_path)
     path_checkout = checkout.PathCheckout(
-        toplevel=Path("/repo"),
+        toplevel=repository,
         branch=branch,
         kind=kind,
-        common_directory=Path("/repo/.git"),
+        common_directory=repository / ".git",
         has_commit=True,
     )
     repair = checkout.WorktreeRepair.RETURN_TO_CLAIM
 
     with pytest.raises(ClaimError) as error:
         checkout._refuse_shared_checkout(
-            path_checkout, default_branch=default_branch, repair=repair
+            path_checkout, default_branch=default_branch, canonical_remote="origin", repair=repair
         )
 
     assert str(error.value) == expected
@@ -805,13 +807,24 @@ def test_trunk_landings_walk_the_trunk_ref_they_are_given_not_the_work_branch(
     )
 
 
-def test_trunk_ref_after_fails_loud_when_no_candidate_branch_resolves(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("is_repository", "failure"),
+    [
+        pytest.param(True, "cannot determine the trunk: none of ", id="no-candidate"),
+        pytest.param(False, "^fatal: ", id="no-repository"),
+    ],
+)
+def test_trunk_ref_after_fails_loud_when_no_candidate_branch_resolves(
+    tmp_path: Path, is_repository: bool, failure: str
+) -> None:
     """Neither a recorded `HEAD` nor any of the default-branch-name
     candidates resolving must fail loud rather than silently ruling every
-    candidate's age as unknown (BRIEF-20)."""
-    _real_git(tmp_path, "init", "-q", "-b", "trunk")
+    candidate's age as unknown (BRIEF-20); a git failure other than a
+    missing ref is git's own, never read as one (issue #492)."""
+    if is_repository:
+        _real_git(tmp_path, "init", "-q", "-b", "trunk")
 
-    with pytest.raises(ClaimError, match="cannot determine the trunk: none of "):
+    with pytest.raises(ClaimError, match=failure):
         checkout.trunk_ref_after("hub", None, directory=tmp_path)
 
 

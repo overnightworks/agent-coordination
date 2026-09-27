@@ -2991,7 +2991,7 @@ def _verify_merged_release(
         )
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
     landings = checkout.trunk_landings(
-        context.fetched_trunk_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
+        context.fetched_default_branch_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
     )
     if isinstance(identity, protocol.LaneIdentity):
         defect = _trunk_no_item_landing_defect(landings, detail.merge_commit, detail.number)
@@ -3904,6 +3904,7 @@ def _rescope_command(
     checkout._refuse_shared_checkout(
         path_checkout,
         default_branch=checkout_context.recorded_default_branch,
+        canonical_remote=checkout_context.canonical_remote,
         repair=checkout.WorktreeRepair.RETURN_TO_CLAIM,
     )
     identity = _resolved_identity(_optional_issue_number(parsed.issue), branch)
@@ -6092,7 +6093,7 @@ def _land_release_routing(
             return classification.item.number
         return None
     landings = checkout.trunk_landings(
-        context.fetched_trunk_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
+        context.fetched_default_branch_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
     )
     landing = next((entry for entry in landings if entry.sha == merge_sha), None)
     trunk_classification = None if landing is None else landing.classification
@@ -6185,7 +6186,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
     if detail.merged:
         assert detail.merge_commit is not None  # `merged` is true; github.py guarantees this.
         merge_sha = detail.merge_commit
-        checkout.refuse_unclean_default_branch_checkout()
+        checkout.refuse_unclean_default_branch_checkout(context.default_branch, directory=toplevel)
         # A rerun: this run's own preflight never ran, so it never verified a
         # classification -- `_land_release_routing` reads the merge commit's
         # own trailer instead (issue #405 point 4).
@@ -6206,7 +6207,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         detail, classification, readiness = _land_preflight(
             client, claims_provider, check_context, number, parsed
         )
-        checkout.refuse_unclean_default_branch_checkout()
+        checkout.refuse_unclean_default_branch_checkout(context.default_branch, directory=toplevel)
         merge_sha = _land_merge(client, detail, readiness, classification)
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)
@@ -6216,7 +6217,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         merge_sha,
         "fast-forward",
         lambda: checkout.fast_forward_default_branch(
-            context.fetched_trunk_ref(), directory=toplevel
+            context.fetched_default_branch_ref(), directory=toplevel
         ),
     )
     _land_step(
