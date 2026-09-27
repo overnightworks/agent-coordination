@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import tomllib
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -6845,11 +6846,14 @@ def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_
 
 def _raw_terminal_controls(text: str) -> set[str]:
     """Every character in printed `text` a terminal would act on rather than
-    show, apart from the newlines that end its own lines."""
+    show, apart from the newlines that end its own lines and TAB: every
+    control and format character and the line and paragraph separators --
+    stated here rather than asked of `protocol.is_display_control`, so a
+    narrowed predicate cannot narrow this check with it."""
     return {
         character
         for character in text
-        if character != "\n" and protocol.is_display_control(character)
+        if character not in "\n\t" and unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}
     }
 
 
@@ -11016,8 +11020,9 @@ def test_cli_lane_claim_refuses_a_missing_or_display_control_scope_by_name(
     """Issue #337 proof 3: lane mode has no item to derive a scope from, so
     omitting `--scope` still refuses, by name, and forge-free like every
     other lane claim. Issue #538 line 3: a `--scope` path holding a
-    character `next` would escape refuses with the scope grammar's own
-    sentence before any write."""
+    character `next` would escape, or a TAB, which `next` keeps but a path
+    refuses (CLAIM-20), refuses with the scope grammar's own sentence before
+    any write."""
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     git_values = {("branch", "--show-current"): "docs/lane-cleanup"}

@@ -17,8 +17,10 @@ owns the `--json` envelope itself (OUT-nn: key order, `ok`, `message`)
 that wraps NEXT-11..13's own action fields. `<n>` is an
 item number, `<label>` an item as `specs/landing-grammar.spec.md` prints
 it, `<s>` an integer score. A *display control* -- the one set this file
-owns for every command that shows or accepts foreign text (NEXT-37) -- is
-every control character but TAB (C0, DEL and C1), the line and paragraph
+owns, which `next` escapes (NEXT-37), `aco land`'s refusal escapes
+(`specs/land.spec.md`), a slice title refuses (`specs/body-block.spec.md`,
+BODY-63) and a scope path refuses (`specs/claim-record.spec.md`, CLAIM-20)
+-- is every control character but TAB (C0, DEL and C1), the line and paragraph
 separators U+2028/U+2029, the bidi controls U+200E, U+200F, U+202A..U+202E
 and U+2066..U+2069, and the zero-width characters U+200B..U+200D and
 U+FEFF; NBSP and every other printable space are text.
