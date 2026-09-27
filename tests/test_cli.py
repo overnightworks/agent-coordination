@@ -10,6 +10,7 @@ import runpy
 import shlex
 import sys
 import threading
+import tomllib
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -185,6 +186,7 @@ class FakeForge:
     fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
     head_board_config: str | None = ""
+    file_reads: list[tuple[Path, str]] = field(default_factory=list)
     requests: int = field(default=0, init=False)
     _requests_lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False, compare=False
@@ -315,8 +317,10 @@ class FakeForge:
         """This fake's mirror of `GitHubForge.file_at_commit` (issue #505):
         every pull request head carries `head_board_config` as its board
         configuration -- by default an empty one, which pins exactly what an
-        unconfigured checkout does -- and `None` removes it."""
+        unconfigured checkout does -- and `None` removes it. Each read's
+        path and commit land in `file_reads`."""
         self._run()
+        self.file_reads.append((path, sha))
         return self.head_board_config
 
     def list_open_board_issues(self) -> tuple[board.Issue, ...]:
@@ -14904,6 +14908,17 @@ def test_land_refuses_a_classification_defect_reusing_checks_own_rules(
     assert client.merge_calls == []
 
 
+def _toml_syntax_error(text: str) -> str:
+    """Python's own `tomllib` wording for `text`'s syntax error -- the
+    parser's text, not this tool's, so each Python version may word it
+    differently."""
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        return str(error)
+    raise AssertionError(f"{text!r} parses as TOML")
+
+
 @pytest.mark.parametrize(
     ("head_board_config", "item_closed", "reason"),
     [
@@ -14941,6 +14956,13 @@ def test_land_refuses_a_classification_defect_reusing_checks_own_rules(
             "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
             ".agent-claim/board.toml storage must be 'github' or 'state-ref'",
             id="invalid",
+        ),
+        pytest.param(
+            "not toml =",
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: cannot read board "
+            f"configuration .agent-claim/board.toml: {_toml_syntax_error('not toml =')}",
+            id="invalid-syntax",
         ),
         pytest.param(
             f'{"x" * 300} = "y"\n',
@@ -15115,7 +15137,8 @@ def test_land_merges_a_green_pull_request_and_runs_the_release_path(
     checkout's own `main` fast-forwards to the fresh merge commit, and the
     existing `release --merged` path closes the item and frees the claim.
     Issue #505 proof 4: a head changing only settings that never decide
-    where the release writes (LANDCMD-24) lands the same way."""
+    where the release writes (LANDCMD-23) lands the same way, its board
+    configuration read at the very head sha the merge is pinned to."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.head_board_config = head_board_config
     trunk_before = _real_git(repo, "rev-parse", "main").stdout.strip()
@@ -15124,6 +15147,7 @@ def test_land_merges_a_green_pull_request_and_runs_the_release_path(
 
     [(number, head_sha, _title, body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
+    assert client.file_reads == [(board.CONFIG_PATH, head_sha)]
     paragraphs = body.strip().split("\n\n")
     assert paragraphs[-1] == f"Work-Item: #{WORK_ITEM_ISSUE}"
     assert client.deleted_branches == [LANDING_BRANCH]

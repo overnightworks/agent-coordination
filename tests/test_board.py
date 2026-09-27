@@ -2107,6 +2107,9 @@ def test_board_configuration_requires_unique_ordered_labels(tmp_path: Path) -> N
     [
         pytest.param(lambda path: path.write_text("this is not valid toml =\n"), id="unparsable"),
         pytest.param(lambda path: path.write_bytes(b"\xff\n"), id="not-utf-8"),
+        pytest.param(
+            lambda path: path.write_bytes(b'storage = "github"\r'), id="bare-carriage-return"
+        ),
         pytest.param(lambda path: path.mkdir(), id="a-directory"),
     ],
 )

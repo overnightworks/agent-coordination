@@ -639,7 +639,7 @@ def load_config(path: Path = CONFIG_PATH) -> BoardConfig:
     if not path.exists():
         return BoardConfig()
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise _unreadable_config(path, error) from error
     return parse_config(text, path)

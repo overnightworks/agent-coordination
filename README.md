@@ -52,9 +52,9 @@ aco claim 42 --agent "Ada" --scope src/widget.py
 aco release 42 --merged 57
 ```
 
-Adoption is the one step outside the claim protocol: until the default
-branch carries `.agent-claim/board.toml`, every command that reads the
-state ref refuses and names this step (`specs/storage-pin.spec.md`, PIN-32),
+Adoption is the one step outside the claim protocol: until this checkout
+carries `.agent-claim/board.toml`, every store command refuses and names
+this step (`specs/storage-pin.spec.md`, PIN-32),
 so the commit adding it -- that file alone -- lands without a claim.
 `bootstrap` creates the state ref once per repository; every other command
 here reads or writes it. `specs/bootstrap.spec.md` owns `bootstrap`;

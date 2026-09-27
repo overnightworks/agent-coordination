@@ -13,7 +13,10 @@ ID) or what a successful release prints (`freed:`/`next:`, LAND-49). `<n>`
 is the pull request number as given, `<sha>` its merge commit, `<state>`
 GitHub's own `mergeable_state`, `<name>`/`<conclusion>` one check's own name
 and conclusion, `<path>` the board configuration `.agent-claim/board.toml`,
-and a "head" the pull request's own head commit read during preflight. "Checks" is every check run GitHub reports for the head sha
+`<setting>` one of the two settings in it a head may not change, `storage`
+and `canonical_remote` (`priority_labels`, `idea_label`, and `body_contract`
+may change), and a "head" the pull request's own head commit read during
+preflight. "Checks" is every check run GitHub reports for the head sha
 (every page of `check-runs`) plus every combined-status context
 (`commits/<sha>/status`; an external context such as SonarCloud counts);
 "no checks" means both are empty. GitHub owns a check's own name -- no
@@ -70,7 +73,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-07] This pull request's own shape decides its classification, exactly as `check <pr>` reads it (LAND-06..13, 32): a shape defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
 - [ ] [LANDCMD-22] After LANDCMD-07, a head without `<path>` refuses `pull request #<n> removes <path>; aco land cannot release its claim across that change`, exit `2` (E-LANDCMD-22).
 - [ ] [LANDCMD-23] A head changing `storage` or `canonical_remote` in `<path>` refuses `pull request #<n> changes <setting> in <path>; aco land cannot release its claim across that change`, exit `2`.
-- [ ] [LANDCMD-24] A head `<path>` the pin's own validator refuses prints `pull request #<n> carries an invalid <path>: <detail>`, exit `2`; any other setting may change.
+- [ ] [LANDCMD-24] A head `<path>` the pin's own validator refuses prints `pull request #<n> carries an invalid <path>: <detail>`, exit `2`.
 - [ ] [LANDCMD-08] A classified work item that is not open refuses `work item #<n> is not open; it cannot be landed`, exit `2`; an issue-less pull request skips this check.
 - [ ] [LANDCMD-09] The classification's own claim, parent, and closing rules then apply (LAND-14..28): a defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
 - [ ] [LANDCMD-10] A claim held by another agent or role, with no explicit coordinator override, refuses (REL-12's sentence), exit `2`, before the merge.
