@@ -184,6 +184,7 @@ class FakeForge:
     merge_remote: Path | None = None
     fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
+    head_board_config: str | None = ""
     requests: int = field(default=0, init=False)
     _requests_lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False, compare=False
@@ -309,6 +310,14 @@ class FakeForge:
     def delete_branch(self, branch: str) -> None:
         self._run()
         self.deleted_branches.append(branch)
+
+    def file_at_commit(self, path: Path, sha: str) -> str | None:
+        """This fake's mirror of `GitHubForge.file_at_commit` (issue #505):
+        every pull request head carries `head_board_config` as its board
+        configuration -- by default an empty one, which pins exactly what an
+        unconfigured checkout does -- and `None` removes it."""
+        self._run()
+        return self.head_board_config
 
     def list_open_board_issues(self) -> tuple[board.Issue, ...]:
         self._run()
@@ -14895,6 +14904,79 @@ def test_land_refuses_a_classification_defect_reusing_checks_own_rules(
     assert client.merge_calls == []
 
 
+@pytest.mark.parametrize(
+    ("head_board_config", "item_closed", "reason"),
+    [
+        pytest.param(
+            None,
+            False,
+            "pull request #12 removes .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="removed",
+        ),
+        pytest.param(
+            None,
+            True,
+            "pull request #12 removes .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="removed-ahead-of-a-closed-item",
+        ),
+        pytest.param(
+            'storage = "state-ref"\n',
+            False,
+            "pull request #12 changes storage in .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="storage-changed",
+        ),
+        pytest.param(
+            'canonical_remote = "upstream"\n',
+            False,
+            "pull request #12 changes canonical_remote in .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="canonical-remote-changed",
+        ),
+        pytest.param(
+            'storage = "gitlab"\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml storage must be 'github' or 'state-ref'",
+            id="invalid",
+        ),
+        pytest.param(
+            f'{"x" * 300} = "y"\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml has unknown top-level key " + "x" * 61 + "…",
+            id="invalid-bounded",
+        ),
+    ],
+)
+def test_land_refuses_a_head_that_changes_its_governing_board_config_before_any_write(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    head_board_config: str | None,
+    item_closed: bool,
+    reason: str,
+) -> None:
+    """Issue #505 proofs 2 and 3 (LANDCMD-22..24): a pull request head that
+    removes the board configuration, changes `storage` or `canonical_remote`
+    in it, or carries one the validator refuses would strand `land`'s own
+    release half, so it refuses before any write -- ahead of LANDCMD-08's
+    item check, and within the 200-character refusal line."""
+    monkeypatch.setattr(issue_claim, "_fetch_issue_reference", _LIVE_FETCH_ISSUE_REFERENCE)
+    client = _land_preflight_client(
+        monkeypatch, readiness=_land_readiness(), item_closed=item_closed
+    )
+    client.head_board_config = head_board_config
+
+    assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
+
+    error_line = capsys.readouterr().err
+    assert error_line == f"ERROR: {reason}\n"
+    assert len(error_line.rstrip("\n")) <= issue_claim.LAND_REFUSAL_LINE_LENGTH_LIMIT
+    assert (client.merge_calls, client.deleted_branches) == ([], [])
+
+
 def test_land_refuses_a_closed_work_item(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -15004,15 +15086,31 @@ def test_land_refuses_a_coordinator_override_with_the_wrong_role_before_the_merg
     assert client.merge_calls == []
 
 
+@pytest.mark.parametrize(
+    "head_board_config",
+    [
+        pytest.param("", id="config-unchanged"),
+        pytest.param(
+            'priority_labels = ["ux"]\nidea_label = "idea"\nbody_contract = "block"\n',
+            id="only-non-governing-settings-changed",
+        ),
+    ],
+)
 def test_land_merges_a_green_pull_request_and_runs_the_release_path(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    head_board_config: str,
 ) -> None:
     """Issue #405 Beweis 1: a green pull request merges with a pinned head
     sha and a self-composed commit message whose classification trailer is
     its own last paragraph, the remote branch delete request is made, this
     checkout's own `main` fast-forwards to the fresh merge commit, and the
-    existing `release --merged` path closes the item and frees the claim."""
+    existing `release --merged` path closes the item and frees the claim.
+    Issue #505 proof 4: a head changing only settings that never decide
+    where the release writes (LANDCMD-24) lands the same way."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.head_board_config = head_board_config
     trunk_before = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
@@ -15314,8 +15412,9 @@ def _land_on_the_forges_trunk(
         client.merge_remote = tmp_path / f"{canonical}.git"
         _real_git(tmp_path, "init", "-q", "--bare", str(client.merge_remote))
         _real_git(repo, "remote", "add", canonical, str(client.merge_remote))
+        client.head_board_config = f'canonical_remote = "{canonical}"\n'
         (repo / ".agent-claim").mkdir()
-        (repo / ".agent-claim" / "board.toml").write_text(f'canonical_remote = "{canonical}"\n')
+        (repo / ".agent-claim" / "board.toml").write_text(client.head_board_config)
         _real_git(repo, "add", "-f", ".agent-claim/board.toml")
         _real_git(repo, "commit", "-q", "-m", "canonical remote")
         _real_git(repo, "push", "-q", canonical, LANDING_BRANCH)

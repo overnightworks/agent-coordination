@@ -648,7 +648,7 @@ def load_config(path: Path = CONFIG_PATH) -> BoardConfig:
 def parse_config(text: str, path: Path) -> BoardConfig:
     """`text` validated as the board configuration at `path` -- the one
     validator both this checkout's own file (`load_config`) and a pull
-    request head's copy of it (`aco land`'s LANDCMD-22, issue #505) pass
+    request head's copy of it (`aco land`'s LANDCMD-24, issue #505) pass
     through, so the two can never disagree about what a valid pin is."""
     try:
         raw = tomllib.loads(text)

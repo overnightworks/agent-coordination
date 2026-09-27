@@ -12,7 +12,8 @@ classification, claim, parent, closing, or claimant rules require (cited by
 ID) or what a successful release prints (`freed:`/`next:`, LAND-49). `<n>`
 is the pull request number as given, `<sha>` its merge commit, `<state>`
 GitHub's own `mergeable_state`, `<name>`/`<conclusion>` one check's own name
-and conclusion. "Checks" is every check run GitHub reports for the head sha
+and conclusion, `<path>` the board configuration `.agent-claim/board.toml`,
+and a "head" the pull request's own head commit read during preflight. "Checks" is every check run GitHub reports for the head sha
 (every page of `check-runs`) plus every combined-status context
 (`commits/<sha>/status`; an external context such as SonarCloud counts);
 "no checks" means both are empty. GitHub owns a check's own name -- no
@@ -29,6 +30,8 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 
 | state \ trigger | `aco land <n>` |
 |---|---|
+| `<path>` absent from this checkout | PIN-32 (cited) |
+| `<path>` present but untracked or ignored | PIN-01 (cited) |
 | `storage = "state-ref"` | LANDCMD-01 |
 | `--coordinator-override` without `--role coordinator` | LANDCMD-19 |
 | pull request not open | LANDCMD-02 |
@@ -37,6 +40,7 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | a check still running | LANDCMD-05 |
 | a check finished without success | LANDCMD-06 |
 | pull request's own shape (classification line, cross-repository head, target branch) invalid | LANDCMD-07 (LAND-06..13, 32, cited) |
+| the head removes `<path>`, changes `storage` or `canonical_remote` in it, or carries an invalid one | LANDCMD-22, LANDCMD-23, LANDCMD-24 |
 | named work item not open | LANDCMD-08 |
 | classification's own claim/parent/closing defect | LANDCMD-09 (LAND-14..28, cited) |
 | claim held by another agent or role | LANDCMD-10 |
@@ -62,6 +66,9 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-05] A pull request with one or more checks not yet completed refuses `pull request #<n> has checks still running: <name>, <name>; wait for every check to succeed`, exit `2`.
 - [ ] [LANDCMD-06] A pull request whose checks all completed, at least one without success, refuses `pull request #<n> has non-successful checks: <name> (<conclusion>); land only after every check succeeds`, exit `2`.
 - [ ] [LANDCMD-07] This pull request's own shape decides its classification, exactly as `check <pr>` reads it (LAND-06..13, 32): a shape defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
+- [ ] [LANDCMD-22] After LANDCMD-07, a head without `<path>` refuses `pull request #<n> removes <path>; aco land cannot release its claim across that change`, exit `2` (E-LANDCMD-22).
+- [ ] [LANDCMD-23] A head changing `storage` or `canonical_remote` in `<path>` refuses `pull request #<n> changes <setting> in <path>; aco land cannot release its claim across that change`, exit `2`.
+- [ ] [LANDCMD-24] A head `<path>` the pin's own validator refuses prints `pull request #<n> carries an invalid <path>: <detail>`, exit `2`; any other setting may change.
 - [ ] [LANDCMD-08] A classified work item that is not open refuses `work item #<n> is not open; it cannot be landed`, exit `2`; an issue-less pull request skips this check.
 - [ ] [LANDCMD-09] The classification's own claim, parent, and closing rules then apply (LAND-14..28): a defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
 - [ ] [LANDCMD-10] A claim held by another agent or role, with no explicit coordinator override, refuses (REL-12's sentence), exit `2`, before the merge.
@@ -88,7 +95,8 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - `aco land` never runs `release`'s own close, store transition, `freed`/`next` report, or worktree cleanup a second time; it delegates to the one existing `release --merged` path (`specs/release.spec.md`).
 - A step after the merge never re-merges: recovery always resumes from the pull request's own already-merged state, read fresh on every rerun.
 - Once merged, the delegated release never reads the pull request's own mutable body for routing: a fixer editing it away afterward changes nothing this pull request already landed (LAND-64).
-- `aco land` never writes when any preflight check (LANDCMD-01..11) refuses.
+- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..24) refuses.
+- `aco land` never takes its storage, canonical remote, forge, or claim store from a head's `<path>`: this checkout's own tracked copy governs, and the head's copy is only checked (LANDCMD-22..24).
 
 ## Examples
 
@@ -124,6 +132,36 @@ Setup: bare-remote, fake `gh`, pull request `#57` open, `mergeable_state` `clean
 ```console
 $ aco land 57
 2> ERROR: pull request #57 has checks still running: check-0, check-1, check-2, and 2 more; wait for every check to succeed
+exit 2
+```
+
+### E-LANDCMD-22 — a head that removes the board configuration refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head deleting `.agent-claim/board.toml`
+
+```console
+$ aco land 57
+2> ERROR: pull request #57 removes .agent-claim/board.toml; aco land cannot release its claim across that change
+exit 2
+```
+
+### E-LANDCMD-23 — a head that re-pins the storage refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head setting `storage = "state-ref"` in `.agent-claim/board.toml`
+
+```console
+$ aco land 57
+2> ERROR: pull request #57 changes storage in .agent-claim/board.toml; aco land cannot release its claim across that change
+exit 2
+```
+
+### E-LANDCMD-24 — a head carrying an invalid board configuration refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head setting `storage = "gitlab"` in `.agent-claim/board.toml`
+
+```console
+$ aco land 57
+2> ERROR: pull request #57 carries an invalid .agent-claim/board.toml: board configuration .agent-claim/board.toml storage must be 'github' or 'state-ref'
 exit 2
 ```
 
