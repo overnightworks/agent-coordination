@@ -106,7 +106,7 @@ GitHubForge = github.GitHubForge
 _LIVE_TRUNK_LANDINGS = checkout.trunk_landings
 _LIVE_TRUNK_REF_AFTER = checkout.trunk_ref_after
 _LIVE_FETCH_REMOTE = checkout.fetch_remote
-_LIVE_REMOTE_IS_CONFIGURED = checkout.remote_is_configured
+_LIVE_UNCONFIGURED_REMOTE_REFUSAL = checkout.unconfigured_remote_refusal
 
 LANDED = protocol.MergedRelease(12)
 
@@ -14910,7 +14910,7 @@ def test_a_command_resolves_origin_main_past_a_dangling_origin_head(
 def _ask_git_which_remotes_are_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     """Real git answers whether the checkout configures a remote, never
     `stub_every_remote_configured`'s fake, which says yes to any remote."""
-    monkeypatch.setattr(checkout, "remote_is_configured", _LIVE_REMOTE_IS_CONFIGURED)
+    monkeypatch.setattr(checkout, "unconfigured_remote_refusal", _LIVE_UNCONFIGURED_REMOTE_REFUSAL)
 
 
 def _name_hub_as_the_canonical_remote(repo: Path) -> None:
@@ -14935,16 +14935,25 @@ def _leave_hub_refs_without_a_url(monkeypatch: pytest.MonkeyPatch, repo: Path) -
     _real_git(repo, "config", "--remove-section", "remote.hub")
 
 
-def _leave_hub_a_global_prune_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+def _leave_hub_never_added(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, _isolated_global_config: Path
+) -> None:
+    _leave_hub_unconfigured(monkeypatch, repo)
+
+
+def _leave_hub_a_global_prune_line(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, isolated_global_config: Path
+) -> None:
     """A global `[remote "hub"] prune = true` makes git list `hub` though
-    no configuration gives it a URL."""
+    no configuration gives it a URL, written only into the file
+    `isolated_global_git_config` returned -- never the operator's own."""
     _leave_hub_refs_without_a_url(monkeypatch, repo)
-    global_config = repo.parent / "global.gitconfig"
-    global_config.write_text('[remote "hub"]\n\tprune = true\n')
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    isolated_global_config.write_text('[remote "hub"]\n\tprune = true\n')
 
 
-def _leave_hub_a_local_fetch_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+def _leave_hub_a_local_fetch_line(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, _isolated_global_config: Path
+) -> None:
     """A local `remote.hub.fetch` without `remote.hub.url`."""
     _leave_hub_refs_without_a_url(monkeypatch, repo)
     _real_git(repo, "config", "remote.hub.fetch", "+refs/heads/*:refs/remotes/hub/*")
@@ -14977,9 +14986,31 @@ def _claim_in_a_linked_worktree_on_main(
     return ["--repo", REPOSITORY, "claim", "314", "--scope", "src/x.py"]
 
 
+def _bootstrap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    """`bootstrap` against the real store, which writes `refs/aco/state`
+    once it reaches its remote (issue #516)."""
+    _start_scenario(monkeypatch, tmp_path)
+    return ["bootstrap"]
+
+
+def _reset_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    """`reset` against the real store, which reads its remote's state ref
+    first (issue #516)."""
+    _start_scenario(monkeypatch, tmp_path)
+    return ["reset", "--export-dir", str(tmp_path)]
+
+
+def _reset_confirmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    """`reset --confirm`, which would also export, delete and bootstrap."""
+    return [*_reset_dry_run(monkeypatch, tmp_path), "--confirm"]
+
+
 @pytest.mark.parametrize(
     ("arrange", "expected_out"),
     [
+        pytest.param(_bootstrap, "", id="bootstrap"),
+        pytest.param(_reset_dry_run, "", id="reset"),
+        pytest.param(_reset_confirmed, "", id="reset-confirm"),
         pytest.param(_start_on_github, "", id="start"),
         pytest.param(_release_merged_of_an_open_item, "", id="release-merged"),
         pytest.param(
@@ -14997,31 +15028,35 @@ def _claim_in_a_linked_worktree_on_main(
 @pytest.mark.parametrize(
     "unconfigure_hub",
     [
-        pytest.param(_leave_hub_unconfigured, id="never-added"),
+        pytest.param(_leave_hub_never_added, id="never-added"),
         pytest.param(_leave_hub_a_global_prune_line, id="global-prune-without-url"),
         pytest.param(_leave_hub_a_local_fetch_line, id="local-fetch-without-url"),
     ],
 )
-def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
+def test_every_command_names_a_canonical_remote_with_no_url_configured(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    isolated_global_git_config: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
     expected_out: str,
-    unconfigure_hub: Callable[[pytest.MonkeyPatch, Path], None],
+    unconfigure_hub: Callable[[pytest.MonkeyPatch, Path, Path], None],
 ) -> None:
     """Issue #508 proof 1, against real git: the board names `hub`, which
     this clone never added, so `start`, `release --merged`, `board`,
     `check` and `claim` refuse by naming it rather than fetching nothing or
-    reading the local `main` as its trunk -- before any write: `start`
-    builds nothing, the claim still stands and the forge closed nothing
-    (START-28, REL-39). A `hub` git lists only through a URL-less config
-    line, its refs left behind, is not configured either (issue #512), and
-    `claim` names it before its checkout check (CHECK-15, BOARD-53, CLM-32)."""
+    reading the local `main` as its trunk -- before any write: no ref
+    moves, the claim still stands and the forge closed nothing (START-28,
+    REL-39). A `hub` git lists only through a URL-less config line, its
+    refs left behind, is not configured either (issue #512), and `claim`
+    names it before its checkout check (CHECK-15, BOARD-53, CLM-32).
+    `bootstrap` and `reset`, confirmed or not, refuse in that same sentence rather
+    than in git's own transport detail, writing no state ref (issue #516,
+    BOOT-04, RESET-18)."""
     argv = arrange(monkeypatch, tmp_path)
     repo = tmp_path / "repo"
-    unconfigure_hub(monkeypatch, repo)
-    branches_before = _real_git(repo, "branch", "--list").stdout
+    unconfigure_hub(monkeypatch, repo, isolated_global_git_config)
+    refs_before = _real_git(repo, "for-each-ref").stdout
     claims_before = store.fetch_state(worktree=repo, remote="hub").claims
     client = github.GitHubForge(github.repository_id(REPOSITORY))
     assert isinstance(client, FakeForge)
@@ -15031,7 +15066,7 @@ def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
 
     printed = capsys.readouterr()
     assert (status, printed.out, printed.err) == (2, expected_out, _UNCONFIGURED_HUB)
-    assert _real_git(repo, "branch", "--list").stdout == branches_before
+    assert _real_git(repo, "for-each-ref").stdout == refs_before
     assert store.fetch_state(worktree=repo, remote="hub").claims == claims_before
     assert (client.landing_comments, client.closed_issues) == ({}, closed_before)
 
@@ -15058,6 +15093,7 @@ _UNRECORDED_TRUNK = (
 )
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize(
     ("arrange_remote", "expected_status", "expected_out", "expected_err"),
     [
@@ -18237,6 +18273,7 @@ def _rename_the_local_main(_monkeypatch: pytest.MonkeyPatch, repository: Path) -
     _real_git(repository, "branch", "-m", "main", "trunk")
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize("output_flags", [(), ("--json",)], ids=["text", "json"])
 @pytest.mark.parametrize(
     ("remove_the_trunk", "sentence"),

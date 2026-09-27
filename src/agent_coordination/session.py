@@ -192,17 +192,15 @@ class RunContext:
         return checkout.parse_remote_location(self.canonical_remote_url)
 
     @cached_property
-    def canonical_remote_is_configured(self) -> bool:
-        """Whether the checkout configures the canonical remote with a URL,
-        answered once per context (issues #508, #512) -- the one answer to
-        that question. `configured_canonical_remote` refuses on it before
-        the remote's URL, state ref, trunk, fetch, `default_branch` and
-        `claim`'s checkout check; `recorded_default_branch`, the offline
+    def _unconfigured_canonical_remote_refusal(self) -> str | None:
+        """`checkout.unconfigured_remote_refusal`'s answer for the canonical
+        remote, asked once per context (issues #508, #512, #516).
+        `configured_canonical_remote` refuses on it before the remote's URL,
+        state ref, trunk, fetch, `default_branch`, `claim`'s checkout check,
+        `bootstrap` and `reset`; `recorded_default_branch`, the offline
         checks' read, answers `None` on it instead and leaves `None` to
-        each check's own rule. Neither a remote-tracking ref a removed
-        remote left behind, a URL-less `remote.<name>` line, nor a local
-        branch ever answers for a remote that is not there."""
-        return checkout.remote_is_configured(self.canonical_remote, directory=self.directory)
+        each check's own rule."""
+        return checkout.unconfigured_remote_refusal(self.canonical_remote, directory=self.directory)
 
     @property
     def configured_canonical_remote(self) -> str:
@@ -214,10 +212,9 @@ class RunContext:
     def refuse_unconfigured_canonical_remote(self) -> None:
         """Refuse by name when the checkout does not configure the
         canonical remote (issues #508, #512)."""
-        if not self.canonical_remote_is_configured:
-            raise protocol.ClaimError(
-                checkout.unconfigured_trunk_remote_refusal(self.canonical_remote)
-            )
+        refusal = self._unconfigured_canonical_remote_refusal
+        if refusal is not None:
+            raise protocol.ClaimError(refusal)
 
     @cached_property
     def canonical_remote_url(self) -> str:
@@ -279,7 +276,7 @@ class RunContext:
         records nothing (issue #508): the offline checks' default branch,
         each check keeping its own rule for `None` -- `rescope`'s names the
         unconfigured remote itself (PROT-45)."""
-        if not self.canonical_remote_is_configured:
+        if self._unconfigured_canonical_remote_refusal is not None:
             return None
         return checkout.recorded_default_branch(self.canonical_remote, directory=self.toplevel)
 

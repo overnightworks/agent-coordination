@@ -131,16 +131,6 @@ def remote_url(remote: str, *, directory: Path | None = None) -> str:
     return _git_output(["config", "--get", f"remote.{remote}.url"], directory=directory)
 
 
-def remote_is_configured(remote: str, *, directory: Path | None) -> bool:
-    """Whether the checkout at `directory` configures a remote named
-    `remote` with a URL (issues #492, #512): a board configuration may name
-    a canonical remote this clone never added, and a `remote.<name>` line
-    without a URL -- a global `prune`, a local `fetch` -- lets git list a
-    remote there is nothing to fetch from."""
-    url_read = ["config", "--get", "--default", "", f"remote.{remote}.url"]
-    return bool(_git_output(url_read, directory=directory))
-
-
 @dataclass(frozen=True)
 class RemoteLocation:
     """A git remote URL's host and repository path, independent of any forge
@@ -720,18 +710,19 @@ DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 TRUNK_UNKNOWN_REASON = "cannot determine the trunk"
 
 
-def _unconfigured_remote_detail(remote: str) -> str:
-    """The one spelling of a canonical `remote` this checkout never
-    configured (PROT-45), shared by every refusal that names it."""
-    return f"canonical remote {remote!r} is not configured"
-
-
-def unconfigured_trunk_remote_refusal(remote: str) -> str:
-    """Every trunk reader's refusal for a canonical `remote` its checkout
-    never configured (issue #508): such a remote has no branches because it
-    is not there, not because it is fresh, so neither a fetch nor a local
-    branch may stand in for its trunk."""
-    return f"{TRUNK_UNKNOWN_REASON}: {_unconfigured_remote_detail(remote)}"
+def unconfigured_remote_refusal(remote: str, *, directory: Path | None) -> str | None:
+    """The one answer to whether the checkout at `directory` configures the
+    canonical `remote` with a URL (issues #492, #508, #512, #516): `None`
+    when it does, otherwise the one sentence every command refuses with. A
+    board configuration may name a canonical remote this clone never added,
+    and a `remote.<name>` line without a URL -- a global `prune`, a local
+    `fetch` -- lets git list a remote there is nothing to fetch from. Such a
+    remote has no trunk because it is not there, not because it is fresh,
+    so neither a fetch nor a local branch may stand in for it."""
+    url_read = ["config", "--get", "--default", "", f"remote.{remote}.url"]
+    if _git_output(url_read, directory=directory):
+        return None
+    return f"{TRUNK_UNKNOWN_REASON}: canonical remote {remote!r} is not configured"
 
 
 def default_branch_unknown_reason(
@@ -739,13 +730,14 @@ def default_branch_unknown_reason(
 ) -> str | None:
     """`protect`'s and `rescope`'s denial when the checkout at `directory`
     has no default branch of its canonical `remote` to judge by, or `None`
-    once `default_branch`, `remote`'s recorded one, stands. A remote this
-    checkout never configured is named first (issue #492): its
-    remote-tracking refs, a recorded `HEAD` among them, can outlive the
-    remote itself, so no such record answers for a remote that is not
-    there."""
-    if not remote_is_configured(remote, directory=directory):
-        return f"{DEFAULT_BRANCH_UNKNOWN_REASON}: {_unconfigured_remote_detail(remote)}"
+    once `default_branch`, `remote`'s recorded one, stands. A remote with no
+    URL configured is named first, in every command's own sentence (issues
+    #492, #516): its remote-tracking refs, a recorded `HEAD` among them, can
+    outlive the remote itself, so no such record answers for a remote that
+    is not there."""
+    unconfigured = unconfigured_remote_refusal(remote, directory=directory)
+    if unconfigured is not None:
+        return unconfigured
     if default_branch is None:
         return DEFAULT_BRANCH_UNKNOWN_REASON
     return None
