@@ -3080,7 +3080,7 @@ def _close_real_item(
 
 
 def _close_under_the_claims_push(
-    monkeypatch: pytest.MonkeyPatch, close: Callable[[], None]
+    monkeypatch: pytest.MonkeyPatch, close: Callable[[], object]
 ) -> None:
     """The close lands after the claim's write read the ref, so its first
     push is rejected and only the retry sees the closed item."""
@@ -3103,7 +3103,7 @@ def _close_under_the_claims_push(
     monkeypatch.setattr(store.GitPushTransport, "push", close_lands_first)
 
 
-def _close_after_starts_build(monkeypatch: pytest.MonkeyPatch, close: Callable[[], None]) -> None:
+def _close_after_starts_build(monkeypatch: pytest.MonkeyPatch, close: Callable[[], object]) -> None:
     """The close lands while `start` builds, before the claim's write reads
     the ref from the new worktree, so no push is ever sent."""
     real_build = checkout.create_linked_worktree
@@ -3151,7 +3151,7 @@ def test_a_claim_whose_item_closes_after_its_checks_refuses_and_writes_nothing(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path, Path], list[str]],
-    close_at: Callable[[pytest.MonkeyPatch, Callable[[], None]], None],
+    close_at: Callable[[pytest.MonkeyPatch, Callable[[], object]], None],
     build_line: str | None,
 ) -> None:
     """Issue #496 proof 2: the item is closed after the claim's checks judged
