@@ -5234,30 +5234,43 @@ def _refuse_resume_scope_mismatch(live: protocol.ActiveClaim, parsed: argparse.N
         raise protocol.ClaimUnavailableError(RESUME_SCOPE_MISMATCH)
 
 
+def _checked_start_resume(
+    live: protocol.ActiveClaim,
+    parsed: argparse.Namespace,
+    *,
+    context: RunContext,
+    revision: str | None = None,
+) -> ScopeVersioning:
+    """Every refusal `start`'s resume of `live` can meet, run before anything
+    is printed or built (issue #479): an explicit `--scope` that disagrees
+    with the live claim's own stored scope (review/gate finding: resume must
+    not silently ignore it), then the stored scope's own shape and width
+    against `context`'s checkout -- or `revision`, the fetched trunk a gone
+    worktree is rebuilt from. `--whole` is never required here even when the
+    live scope is wide, since the stored claim's own `whole_reason` already
+    justified it once."""
+    _refuse_resume_scope_mismatch(live, parsed)
+    versioning, _effective_whole = _scope_versioning(
+        live.scope,
+        parsed.whole if parsed.whole is not None else live.whole_reason,
+        context=context,
+        revision=revision,
+    )
+    return versioning
+
+
 def _print_start_resume(
     live: protocol.ActiveClaim,
     observed: protocol.ClaimState,
     storage: body.Storage,
-    parsed: argparse.Namespace,
-    *,
-    context: RunContext,
+    versioning: ScopeVersioning,
 ) -> None:
     """`start`'s own resume path (issue #322 review finding 1): prints the
     same `CLAIMED ...`/cost-line grammar a fresh claim prints, for the live
     claim `_cmd_start` already found in the store -- the same
     `observed.claims` lookup `status`/`release` use -- rather than minting a
-    second, fresh id for an item that already has one. An explicit `--scope`
-    that disagrees with the live claim's own stored scope is refused
-    (review/gate finding: resume must not silently ignore it); `--whole` is
-    never required here even when the live scope is wide, since the stored
-    claim's own `whole_reason` already justified it once."""
-    _refuse_resume_scope_mismatch(live, parsed)
+    second, fresh id for an item that already has one."""
     print(f"CLAIMED {_claim_subject(live, storage)}: {live.claim_id}")
-    versioning, _effective_whole = _scope_versioning(
-        live.scope,
-        parsed.whole if parsed.whole is not None else live.whole_reason,
-        context=context,
-    )
     touches = protocol.conflicting_claims(tuple(observed.claims.values()), live)
     print(
         _claim_cost_line(
@@ -5354,8 +5367,8 @@ def _claim_in_start_worktree(
     worktree_context = context.for_directory(target.path)
     resumed = _resumable_start_claim(live, target.branch)
     if resumed is not None:
-        storage = worktree_context.config.storage
-        _print_start_resume(resumed, observed, storage, parsed, context=worktree_context)
+        versioning = _checked_start_resume(resumed, parsed, context=worktree_context)
+        _print_start_resume(resumed, observed, worktree_context.config.storage, versioning)
         return 0
     # The worktree's own context (issue #322 review finding 2, issue #457),
     # never `session.forge` itself: that forge is held by the caller
@@ -5375,17 +5388,17 @@ def _rebuild_and_resume(
     resumed: protocol.ActiveClaim,
 ) -> int:
     """A live claim of this session's whose worktree is gone: its scope is
-    checked first, then the worktree is built again from the fetched trunk
-    and the claim reprinted, never a second one minted."""
-    _refuse_resume_scope_mismatch(resumed, parsed)
-    checkout.fetched_trunk(context.canonical_remote)
+    checked against the fetched trunk first, then the worktree is built
+    again from that trunk and the claim reprinted, never a second one
+    minted."""
+    trunk = checkout.fetched_trunk(context.canonical_remote)
+    versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
     checkout.create_linked_worktree(
         target.path, branch=target.branch, remote=context.canonical_remote
     )
     _print_start_target(target)
-    worktree_context = context.for_directory(target.path)
-    storage = worktree_context.config.storage
-    _print_start_resume(resumed, observed, storage, parsed, context=worktree_context)
+    storage = context.for_directory(target.path).config.storage
+    _print_start_resume(resumed, observed, storage, versioning)
     return 0
 
 

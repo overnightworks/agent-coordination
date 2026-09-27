@@ -2328,6 +2328,38 @@ def test_start_rebuilds_the_gone_worktree_of_its_live_claim_and_reprints_that_cl
     assert resolved.branch == _START_BRANCH
 
 
+_REAL_VERSIONED_PATHS = checkout.versioned_paths
+
+
+def test_start_refuses_to_rebuild_a_live_claim_whose_scope_the_trunk_no_longer_grounds(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 (START-23): the live claim's scope is measured against the
+    fetched trunk before its gone worktree is built again, so a comma path
+    the trunk has since deleted refuses with nothing built."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.setattr(checkout, "versioned_paths", _REAL_VERSIONED_PATHS)
+    (repo / "a,b.py").write_text("x\n")
+    _real_git(repo, "add", "a,b.py")
+    _real_git(repo, "commit", "-q", "-m", "comma path")
+    _push_repository_trunk(repo, "origin")
+    _serve_start_board(monkeypatch, _start_item(complete_contract("Build it.", scope=["a,b.py"])))
+    monkeypatch.chdir(repo)
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    _remove_the_lane_pair(repo)
+    _real_git(repo, "rm", "-q", "a,b.py")
+    _real_git(repo, "commit", "-q", "-m", "comma path gone")
+    _push_repository_trunk(repo, "origin")
+    capsys.readouterr()
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    captured = capsys.readouterr()
+    assert (status, captured.out, _worktrees_and_branches(repo)) == (2, "", before)
+    assert captured.err.startswith("ERROR: 'a,b.py' matches no versioned file")
+
+
 @pytest.mark.parametrize(
     "arrange",
     [
