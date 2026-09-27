@@ -401,7 +401,11 @@ def _resolved_path_checkout(
     own_checkout = checkout.resolve_named_path_checkout(path)
     if own_checkout is None:
         return _landing_checkout_outside_every_repository(path, operation=operation)
-    if not _unguarded_setting() or not path.is_symlink() or not operation.writes_through(path):
+    if (
+        not _names_unguarded_directories()
+        or not path.is_symlink()
+        or not operation.writes_through(path)
+    ):
         return own_checkout
     target_checkout = checkout.resolve_named_path_checkout(Path(os.path.realpath(path)))
     if _leaves_unguarded_for_guarded(own_checkout, target_checkout):
@@ -434,7 +438,7 @@ def _landing_checkout_outside_every_repository(
 def _leaves_unguarded_for_guarded(
     own_checkout: checkout.PathCheckout, target_checkout: checkout.PathCheckout | None
 ) -> bool:
-    """Whether a file symlink in `own_checkout` points into another,
+    """Whether a symlink in `own_checkout` points into another,
     guarded checkout while its own is unguarded (PROT-40) -- the one case
     the link's own checkout cannot answer for its write. Only a link that
     crosses into another checkout reads `ACO_PROTECT_UNGUARDED`, so a
@@ -480,6 +484,12 @@ def _unguarded_setting() -> str:
     return os.environ.get(PROTECT_UNGUARDED_ENV, "")
 
 
+def _names_unguarded_directories() -> bool:
+    """Whether the session set `ACO_PROTECT_UNGUARDED` to anything at all;
+    unset or empty, every repository is guarded."""
+    return bool(_unguarded_setting())
+
+
 def _unguarded_directories() -> tuple[Path, ...]:
     """The directories `ACO_PROTECT_UNGUARDED` names (`os.pathsep`-separated,
     issue #483), symlink-resolved; unset or empty names none. Any other
@@ -487,10 +497,9 @@ def _unguarded_directories() -> tuple[Path, ...]:
     between separators included -- fails closed (PROT-41), raised for
     `cli`'s deny frame like a missing identity: a typo must never silently
     guard nothing, nor exempt whatever a relative entry happens to meet."""
-    value = _unguarded_setting()
-    if not value:
+    if not _names_unguarded_directories():
         return ()
-    entries = value.split(os.pathsep)
+    entries = _unguarded_setting().split(os.pathsep)
     for entry in entries:
         if not (os.path.isabs(entry) and os.path.isdir(entry)):
             raise protocol.ClaimError(
@@ -514,7 +523,7 @@ def _is_exempt(relative: str | None, path_checkout: checkout.PathCheckout) -> bo
     """Whether a path inside a checkout allows unjudged: an ignored session
     setting (PROT-38) or a path in an unguarded repository (PROT-40) --
     `path_checkout` already being the target's own for a write through a
-    file symlink out of one (`_resolved_path_checkout`). The session
+    symlink out of one (`_resolved_path_checkout`). The session
     setting is weighed first, so a malformed `ACO_PROTECT_UNGUARDED`
     (PROT-41) never locks the session out of the file that repairs it."""
     if relative is not None and _is_ignored_session_setting(relative, path_checkout):
