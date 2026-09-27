@@ -1378,7 +1378,7 @@ def _container_progress(
         for child in children.get(issue.number, ())
         if child.state is ChildState.OPEN
     )
-    if bool(open_children) == (issue.children_closed == issue.children_total):
+    if bool(open_children) != issue.has_open_child:
         raise protocol.ClaimError(f"GitHub returned a malformed board container #{issue.number}")
     return ContainerProgress(issue.children_closed, issue.children_total, open_children)
 
