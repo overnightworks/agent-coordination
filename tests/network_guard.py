@@ -21,9 +21,11 @@ LOCAL_PROTOCOLS_ONLY = "file"
 _guard = pytest.MonkeyPatch()
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    # Configure runs before collection, so module imports and fixtures of every
-    # scope already see the guard, as do xdist workers started from this process.
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
+    # The first hook a `-p` plugin receives: the initial conftests, collection,
+    # every fixture scope and the xdist workers started from this process all
+    # see the guard, whereas `pytest_configure` runs after those conftests.
     _guard.setenv(GIT_ALLOW_PROTOCOL_ENV, LOCAL_PROTOCOLS_ONLY)
 
 

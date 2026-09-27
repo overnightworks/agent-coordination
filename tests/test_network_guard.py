@@ -8,7 +8,6 @@ loopback port, so a push the guard failed to stop still ends on this machine.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -16,10 +15,35 @@ from pathlib import Path
 
 import pytest
 from cli_fixtures import _real_git, _real_repository_with_bare_remote
-from network_guard import GIT_ALLOW_PROTOCOL_ENV, LOCAL_PROTOCOLS_ONLY
+from network_guard import GIT_ALLOW_PROTOCOL_ENV
 
 _PROJECT_CONFIGURATION = Path(__file__).parent.parent / "pyproject.toml"
-_ALLOWED_PROTOCOLS_WHILE_COLLECTING = os.environ.get(GIT_ALLOW_PROTOCOL_ENV)
+
+_ASSERT_GIT_REFUSES_HTTPS = """
+import subprocess
+
+
+def assert_git_refuses_https():
+    ls_remote = subprocess.run(
+        ["git", "ls-remote", "https://127.0.0.1:9/x.git"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "transport 'https' not allowed" in ls_remote.stderr, ls_remote.stderr
+"""
+_SCRATCH_CONFTEST = _ASSERT_GIT_REFUSES_HTTPS + "\n\nassert_git_refuses_https()\n"
+_SCRATCH_TEST_MODULE = (
+    _ASSERT_GIT_REFUSES_HTTPS
+    + """
+
+assert_git_refuses_https()
+
+
+def test_git_refuses_https_while_the_test_runs():
+    assert_git_refuses_https()
+"""
+)
 
 
 _OPERATOR_GIT_ROUTES = ("GIT_PROXY_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT")
@@ -57,10 +81,6 @@ def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.Co
         text=True,
         check=False,
     )
-
-
-def test_the_guard_already_holds_while_test_modules_are_collected() -> None:
-    assert _ALLOWED_PROTOCOLS_WHILE_COLLECTING == LOCAL_PROTOCOLS_ONLY
 
 
 @pytest.mark.parametrize(
@@ -113,16 +133,20 @@ def test_a_refused_remote_probe_ignores_operator_proxies_when_the_guard_is_gone(
 def test_a_module_outside_tests_run_with_the_project_configuration_is_guarded(
     tmp_path: Path,
 ) -> None:
-    """The same https refusal, copied into a scratch directory and run by a
-    pytest whose environment carries no guard of its own and whose git reads
-    no global or system configuration: only the plugin the project
-    configuration loads can make it pass (#530 line 2)."""
+    """A scratch directory whose initial conftest, module import and test
+    each ask git for an https remote, run by a pytest whose environment
+    carries no guard of its own and whose git reads no global or system
+    configuration: only the plugin the project configuration loads can
+    make it pass, and only if it guards before the initial conftests
+    load (#530 lines 1 and 2)."""
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    probe = shutil.copy(__file__, scratch / "test_scratch_probe.py")
+    (scratch / "conftest.py").write_text(_SCRATCH_CONFTEST)
+    probe = scratch / "test_scratch_probe.py"
+    probe.write_text(_SCRATCH_TEST_MODULE)
     unguarded_environment = {
         name: value for name, value in os.environ.items() if name != GIT_ALLOW_PROTOCOL_ENV
-    } | {"GIT_CONFIG_NOSYSTEM": "1"}
+    } | {"GIT_CONFIG_NOSYSTEM": "1", "LC_ALL": "C"}
     command = [
         sys.executable,
         "-m",
@@ -134,8 +158,6 @@ def test_a_module_outside_tests_run_with_the_project_configuration_is_guarded(
         str(scratch),
         "-p",
         "no:cacheprovider",
-        "-k",
-        "test_push_to_a_non_local_remote_is_refused and https",
         str(probe),
     ]
 
