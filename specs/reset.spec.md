@@ -65,7 +65,7 @@ documents. `<repo>`/`<sha>`/`<tip>`/`<remote>` are the runner's own values;
 
 ## The command's own argument shape
 
-- [ ] [RESET-10] `aco reset` followed by any argument outside `--confirm`/`--no-export`/`--export-dir`/`--force-unreadable` is refused by the parser before any read, as `aco bootstrap` does (BOOT-02).
+- [ ] [RESET-10] `aco reset` followed by any argument outside `--confirm`/`--no-export`/`--export-dir`/`--force-unreadable`, abbreviations included (OUT-09), is refused by the parser before any read, as BOOT-02.
 - [ ] [RESET-11] `aco --repo OWNER/REPO reset` behaves exactly as with no `--repo`, forge-free like `aco bootstrap` (`specs/bootstrap.spec.md` BOOT-03): a non-GitHub canonical remote is no error either.
 - [ ] [RESET-12] `--export-dir` omitted writes the bundle under the repository's own parent directory, the default its own `--export-dir DIR` help text names.
 

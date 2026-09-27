@@ -1013,7 +1013,14 @@ class _UsageErrorParser(argparse.ArgumentParser):
     """Every `aco` parser and subparser -- argparse hands this class down to
     each subparser it builds. Its own refusal path prints usage and exits
     inside the parse, before `--json` was ever read off a namespace, so this
-    raises instead and lets one place decide the refusal's shape."""
+    raises instead and lets one place decide the refusal's shape.
+
+    No parser reads an abbreviated long option (issue #502, OUT-09): a
+    prefix unique today targets another option once one is added, and
+    `reset --conf --f` must never stand for a destructive flag pair."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, allow_abbrev=False, **kwargs)
 
     def error(self, message: str) -> NoReturn:
         raise _UsageError(self, message)
@@ -7840,16 +7847,10 @@ def _subcommands(parser: argparse.ArgumentParser) -> _RecordingSubParsersAction 
 
 def _spells_json_flag(token: str, parser: argparse.ArgumentParser) -> bool:
     """Whether `parser` itself would read `token` as its own `--json`: the
-    exact spelling, or the abbreviation argparse accepts for it -- a prefix
-    no other option of that parser shares, since a prefix two options share
-    is ambiguous and argparse refuses it rather than choosing."""
-    if not token.startswith(LONG_OPTION_PREFIX):
-        return False
+    exact spelling on a parser that declares it, never an abbreviation, since
+    no `aco` parser reads one (OUT-09)."""
     spelling = token.split("=", 1)[0]
-    declared = [option for action in parser._actions for option in action.option_strings]
-    if spelling in declared:
-        return spelling == JSON_FLAG
-    return [option for option in declared if option.startswith(spelling)] == [JSON_FLAG]
+    return spelling == JSON_FLAG and JSON_FLAG in parser._option_string_actions
 
 
 def _level_options(tokens: tuple[str, ...]) -> tuple[str, ...]:
@@ -7864,8 +7865,8 @@ def _asked_for_json(root: argparse.ArgumentParser, given: list[str]) -> bool:
     """Whether this invocation asked for JSON, answered by the parsers it
     reached rather than by the raw tokens alone (issue #432): only a command
     declaring `--json` can answer in the envelope, so `aco bootstrap --json`
-    stays argparse's own text, while `aco release --jso` -- an abbreviation
-    argparse accepts -- is JSON. Each level is asked about its own tokens,
+    stays argparse's own text, and so does `aco release --jso`, an
+    abbreviation no parser reads (OUT-09). Each level is asked about its own tokens,
     the ones argparse handed it, so a `--` cuts that level alone."""
     return any(
         _spells_json_flag(token, parser)

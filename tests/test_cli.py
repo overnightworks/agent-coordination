@@ -11,7 +11,7 @@ import shlex
 import sys
 import threading
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
@@ -3752,13 +3752,25 @@ def test_help_lists_commands_in_their_stable_registration_order() -> None:
     ]
 
 
-def _all_parser_help_texts(parser: argparse.ArgumentParser) -> tuple[str, ...]:
-    texts = [parser.format_help()]
+def _every_parser(parser: argparse.ArgumentParser) -> Iterator[argparse.ArgumentParser]:
+    yield parser
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             for sub_parser in action.choices.values():
-                texts.extend(_all_parser_help_texts(sub_parser))
-    return tuple(texts)
+                yield from _every_parser(sub_parser)
+
+
+def _all_parser_help_texts(parser: argparse.ArgumentParser) -> tuple[str, ...]:
+    return tuple(each.format_help() for each in _every_parser(parser))
+
+
+def test_no_registered_parser_reads_an_abbreviated_option() -> None:
+    """OUT-09 (issue #502): the root and every subcommand level refuse an
+    abbreviated long option, so a command registered later cannot forget it
+    and a prefix never comes to stand for a destructive flag."""
+    readers = [each.prog for each in _every_parser(issue_claim._parser()) if each.allow_abbrev]
+
+    assert readers == []
 
 
 def test_readme_and_help_texts_carry_no_stale_state_ref_read_only_sentence() -> None:
@@ -15652,7 +15664,28 @@ ARGPARSE_USAGE_REFUSALS = [
         "the following arguments are required: --title",
         id="item-new-missing-its-own-required-flag",
     ),
+    pytest.param(
+        ["release", "42", "--abandon"],
+        "one of the arguments --merged --abandoned is required",
+        id="release-abbreviating-its-outcome",
+    ),
+    pytest.param(["status", "--js"], "unrecognized arguments: --js", id="status-abbreviating-json"),
+    pytest.param(
+        ["release", "42", "--merged", "--jso"],
+        "unrecognized arguments: --jso",
+        id="release-abbreviating-json",
+    ),
+    pytest.param(
+        ["item", "new", "--tit", "X"],
+        "the following arguments are required: --title",
+        id="item-new-abbreviating-its-title",
+    ),
 ]
+ABBREVIATED_RESET_FLAGS_REFUSAL = pytest.param(
+    ["reset", "--conf", "--f"],
+    "unrecognized arguments: --conf --f",
+    id="reset-abbreviating-its-destructive-flags",
+)
 UNREADABLE_ITEM_REFERENCE_REFUSAL = pytest.param(
     ["status", "notanumber"],
     "'notanumber' is not an item reference; use aco-xxxxxx, #n, or the bare number n",
@@ -15682,13 +15715,17 @@ def test_a_refused_parse_under_json_prints_the_invalid_usage_envelope(
     assert captured.err == f"ERROR: {message}\n"
 
 
-@pytest.mark.parametrize(("arguments", "message"), ARGPARSE_USAGE_REFUSALS)
+@pytest.mark.parametrize(
+    ("arguments", "message"), [*ARGPARSE_USAGE_REFUSALS, ABBREVIATED_RESET_FLAGS_REFUSAL]
+)
 def test_a_refused_parse_without_json_keeps_the_usage_text(
     arguments: list[str], message: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """OUT-06's own Never clause: without `--json` the parser's refusal is
     still argparse's own usage block and sentence on stderr, exit `2`, with
-    stdout untouched."""
+    stdout untouched. An abbreviated option is one such refusal (OUT-09):
+    `reset --conf --f` never stands for `--confirm --force-unreadable`, and
+    `--jso` never asks for the envelope."""
     with pytest.raises(SystemExit) as exited:
         issue_claim.main(arguments)
 
@@ -15712,19 +15749,6 @@ def test_a_bad_choice_on_a_json_command_prints_the_invalid_usage_envelope(
     captured = capsys.readouterr()
     assert status == 2
     assert "argument --step: invalid choice:" in captured.err
-    _assert_json_refusal_object(captured.err, captured.out, reason="invalid_usage")
-
-
-def test_an_abbreviated_json_flag_asks_for_the_envelope_too(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`--jso` is `--json` wherever no other option of that command shares
-    the prefix, so argparse accepts it and the refusal answers in the shape
-    that caller asked for (issue #432)."""
-    status = issue_claim.main(["release", "42", "--jso"])
-
-    captured = capsys.readouterr()
-    assert status == 2
     _assert_json_refusal_object(captured.err, captured.out, reason="invalid_usage")
 
 
