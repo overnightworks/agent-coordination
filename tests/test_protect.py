@@ -2720,9 +2720,10 @@ def test_protect_unguarded_directories_exempt_only_the_repositories_they_hold(
     file symlink, from the throwaway checkout or its worktree -- is still
     judged by that guarded checkout; and an entry that is not an existing
     absolute directory denies every path in a checkout except the session's
-    own ignored settings."""
+    own ignored settings. The session has an identity only where the verdict
+    reads the store, so every other row proves it decides without one."""
     scratch = _unguarded_scratchpad(tmp_path)
-    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"} if store_reads else None)
     if unguarded is not None:
         monkeypatch.setenv(protect.PROTECT_UNGUARDED_ENV, unguarded.format(scratch=scratch))
     fetches: list[Path] = []
