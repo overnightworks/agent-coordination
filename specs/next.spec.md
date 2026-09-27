@@ -257,4 +257,4 @@ $ aco cut 299 --title "Scheibe Z"
 exit 2
 ```
 
-With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
+With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. Under `storage = "state-ref"` one row reads that move repair too, the parent named by its item id: a state-ref item keeps the kind `item new` gave it (ITEM-13), so no command there could follow a retype. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.

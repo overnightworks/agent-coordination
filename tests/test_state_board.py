@@ -257,16 +257,21 @@ def _item_files() -> dict[str, bytes]:
 
 
 def _container_body_with_slices(
-    slice_rows: tuple[tuple[int, str], ...], blocked_by: tuple[str, ...] = ()
+    slice_rows: tuple[tuple[int, str], ...],
+    blocked_by: tuple[str, ...] = (),
+    parent: str | None = None,
 ) -> str:
-    """`CONTAINER_ID`'s own body, its `[[slice]]` table set to `slice_rows`
-    and its stored `blocked_by` to `blocked_by` -- the one shape issue
-    #291's `cut` proofs need and the flat `_CONTAINER_PROJECTION`/`_record`
-    pair above cannot express (neither carries a `slice` array)."""
+    """`CONTAINER_ID`'s own body, its `[[slice]]` table set to `slice_rows`,
+    its stored `blocked_by` to `blocked_by` and its `parent` to `parent` --
+    the one shape issue #291's `cut` proofs need and the flat
+    `_CONTAINER_PROJECTION`/`_record` pair above cannot express (neither
+    carries a `slice` array)."""
     data = {
         **_CONTAINER_PROJECTION.block_data(),
         "slice": [{"index": index, "title": title} for index, title in slice_rows],
-        "record": _record(title="Epic", state="open", kind="container", blocked_by=blocked_by),
+        "record": _record(
+            title="Epic", state="open", kind="container", blocked_by=blocked_by, parent=parent
+        ),
     }
     return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
 
@@ -2065,6 +2070,49 @@ class TestCliStateRefForge:
         assert capsys.readouterr().err == f"ERROR: {refusal}\n"
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
+
+    @pytest.mark.parametrize(
+        "slice_rows",
+        [
+            pytest.param(((1, "Slice Z"),), id="one-row"),
+            pytest.param(((1, "Slice Y"), (2, "Slice Z")), id="two-rows"),
+        ],
+    )
+    def test_next_names_the_move_to_the_parent_for_a_nested_container_under_state_ref(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        slice_rows: tuple[tuple[int, str], ...],
+    ) -> None:
+        """Issue #503 (#506 end-to-end finding 1): a state-ref item keeps
+        the kind `item new` gave it (ITEM-13), so `next` never advises a
+        nested container's retype there -- even with one uncut row it names
+        the move of its rows to the parent, and `cut` keeps its refusal."""
+        outer_id = "aco-0000aa"
+        item_files = {
+            f"{outer_id}.md": _state_ref_body(
+                _CONTAINER_PROJECTION, _record(title="Outer", state="open", kind="container")
+            ).encode(),
+            f"{CONTAINER_ID}.md": _container_body_with_slices(slice_rows, parent=outer_id).encode(),
+        }
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        next_status = issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        cut_status = issue_claim.main(["cut", CONTAINER_ID, "--title", slice_rows[0][1]])
+
+        assert (next_status, cut_status) == (3, 2)
+        assert (
+            f"\n{CONTAINER_ID}: nested container, which cut refuses; "
+            f"move its slice rows to {outer_id}\n"
+        ) in next_out
+        assert capsys.readouterr().err == (
+            f"ERROR: {CONTAINER_ID} is itself a child of {outer_id}; "
+            "nested containers are not supported\n"
+        )
 
     def _cut_child_scope(
         self, worktree: Path, bare_remote: Path, capsys: pytest.CaptureFixture[str]

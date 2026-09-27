@@ -2405,9 +2405,11 @@ def _nested_container_repair(
     `nesting_parent` needs before its uncut `[[slice]]` rows can become work
     (issue #503): `cut` refuses it, so `next` never proposes one and names
     this instead -- its one row as its own scope and type `Task`, the shape
-    `start` accepts, or its several rows moved up to that parent, named the
-    way `cut`'s own refusal names it."""
-    if len(slices) == 1:
+    `start` accepts, or its rows moved up to that parent, named the way
+    `cut`'s own refusal names it. Under `state-ref` the move is the repair
+    for one row too: a state-ref item keeps the kind `item new` gave it
+    (ITEM-13), so a retype is advice nothing there can follow."""
+    if len(slices) == 1 and storage is Storage.GITHUB:
         return (
             "nested container, which cut refuses; set its type Task and take "
             f'slice "{slices[0].title}"\'s scope as its own'
