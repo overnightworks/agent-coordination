@@ -3335,14 +3335,19 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)
 
 
-def test_protect_names_a_canonical_remote_that_has_config_lines_but_no_url(
+@pytest.mark.parametrize(
+    "refusal_of", [_protect_refusal, _rescope_refusal], ids=["protect", "rescope"]
+)
+def test_protect_and_rescope_name_a_canonical_remote_that_has_config_lines_but_no_url(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    refusal_of: Callable[[pytest.MonkeyPatch, pytest.CaptureFixture[str], Path], tuple[int, str]],
 ) -> None:
-    """Issue #512 line 1 (PROT-45): a `remote.upstream.fetch` line without a
-    URL, beside a `HEAD` the remote left behind, is still no configured
-    canonical remote -- `protect` names it rather than judging its branch."""
+    """Issue #512 line 1 (PROT-45, RESC-20): a `remote.upstream.fetch` line
+    without a URL, beside a `HEAD` the remote left behind, is still no
+    configured canonical remote -- `protect` and `rescope` name it rather
+    than judging its branch."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -3356,4 +3361,4 @@ def test_protect_names_a_canonical_remote_that_has_config_lines_but_no_url(
     )
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
 
-    assert _protect_refusal(monkeypatch, capsys, path) == (2, _UNCONFIGURED_UPSTREAM)
+    assert refusal_of(monkeypatch, capsys, path) == (2, _UNCONFIGURED_UPSTREAM)
