@@ -1422,12 +1422,11 @@ def _board_item(
     )
     open_blockers = context.blockers[issue.number]
     container_progress = context.container_progress.get(issue.number)
-    nesting_parent = context.nesting_parents.get(issue.number)
     childless_verdict = (
         None
         if container_progress is None or container_progress.open_children
         else _childless_container_verdict(
-            parsed.slices, contract.next, nested=nesting_parent is not None
+            parsed.slices, contract.next, context.nesting_parents.get(issue.number)
         )
     )
     actionable_reason = _actionable_reason(
@@ -1446,7 +1445,7 @@ def _board_item(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
             ),
             childless_container_reason=_childless_container_reason(
-                childless_verdict, nesting_parent, parsed.slices, config.storage
+                childless_verdict, parsed.slices, config.storage
             ),
         )
     )
@@ -2052,10 +2051,10 @@ def closable_container_number(
     parsed = parse_body(parent.body, storage=storage)
     if parsed.read_state is not BodyReadState.VALID:
         return None
-    # Nesting only ever splits CUT from NESTED_REPAIR and never reaches
-    # CLOSE, so this close test needs no read of `parent`'s own parent.
-    verdict = _childless_container_verdict(parsed.slices, parsed.contract.next, nested=False)
-    return parent.reference.number if verdict is ChildlessContainerVerdict.CLOSE else None
+    # Nesting only ever splits a cut from a nested repair and never reaches
+    # a close, so this close test needs no read of `parent`'s own parent.
+    verdict = _childless_container_verdict(parsed.slices, parsed.contract.next, nesting_parent=None)
+    return parent.reference.number if isinstance(verdict, CloseVerdict) else None
 
 
 def _container_next_action(
@@ -2064,20 +2063,19 @@ def _container_next_action(
     """The action a childless container qualifies for, read off its one
     `childless_verdict`, or `None` to skip it: a non-`VALID` body names its
     own finding elsewhere and is never guessed through, and a
-    `NESTED_REPAIR` names its repair under `SKIPPED` instead of a `cut` that
-    `cut` refuses (issue #503)."""
+    `NestedRepairVerdict` names its repair under `SKIPPED` instead of a `cut`
+    that `cut` refuses (issue #503)."""
     if item.read_state is not BodyReadState.VALID:
         return None
-    next_line = item.contract.next
     match item.childless_verdict:
-        case ChildlessContainerVerdict.CUT:
+        case CutVerdict():
+            next_line = item.contract.next
             cut_title = uncut_by_container[item.number].rows[0].title
             next_step = next_line if has_further_work(next_line) else cut_title
             return CutSliceAction(item, container, next_step, cut_title)
-        case ChildlessContainerVerdict.CHECK:
-            # CHECK is only ever decided from a `Next` line naming work.
-            return CheckContainerAction(item, container, cast(str, next_line))
-        case ChildlessContainerVerdict.CLOSE:
+        case CheckVerdict(next_step=next_step):
+            return CheckContainerAction(item, container, next_step)
+        case CloseVerdict():
             return CloseContainerAction(item, container)
         case _:
             return None
@@ -2337,17 +2335,40 @@ class _ActionabilityFacts:
 CHECK_DONE_WHEN = "no open children; check done_when"
 
 
-class ChildlessContainerVerdict(StrEnum):
-    """What a container with no open child is up for (issue #503)."""
+@dataclass(frozen=True)
+class CutVerdict:
+    """A container with no open child whose uncut row `cut` accepts."""
 
-    CUT = "cut"
-    NESTED_REPAIR = "nested_repair"
-    CHECK = "check"
-    CLOSE = "close"
+
+@dataclass(frozen=True)
+class NestedRepairVerdict:
+    """An uncut row `cut` refuses (CUT-03): the container is a child of
+    `nesting_parent`, so only a repair naming that parent helps."""
+
+    nesting_parent: IssueReference
+
+
+@dataclass(frozen=True)
+class CheckVerdict:
+    """No uncut row, but the container's own `Next` line, `next_step`, still
+    names work: a `done_when` check, never a close."""
+
+    next_step: str
+
+
+@dataclass(frozen=True)
+class CloseVerdict:
+    """No uncut row and no further `Next` work: nothing speaks against
+    closing the container."""
+
+
+# What a container with no open child is up for (issue #503), each verdict
+# carrying the data its own answer needs.
+ChildlessContainerVerdict = CutVerdict | NestedRepairVerdict | CheckVerdict | CloseVerdict
 
 
 def _childless_container_verdict(
-    slices: tuple[SliceRow, ...], next_line: str | None, *, nested: bool
+    slices: tuple[SliceRow, ...], next_line: str | None, nesting_parent: IssueReference | None
 ) -> ChildlessContainerVerdict:
     """The one decider for a container with no open child (issue #503):
     `next`'s action, its `SKIPPED` reason, and `release --merged`'s
@@ -2357,10 +2378,10 @@ def _childless_container_verdict(
     repair helps; with no row left, a `Next` line still naming work asks
     for a `done_when` check, and only one naming none is closable."""
     if slices:
-        return ChildlessContainerVerdict.NESTED_REPAIR if nested else ChildlessContainerVerdict.CUT
+        return CutVerdict() if nesting_parent is None else NestedRepairVerdict(nesting_parent)
     if has_further_work(next_line):
-        return ChildlessContainerVerdict.CHECK
-    return ChildlessContainerVerdict.CLOSE
+        return CheckVerdict(next_line)
+    return CloseVerdict()
 
 
 def childless_containers_with_uncut_rows(
@@ -2368,8 +2389,9 @@ def childless_containers_with_uncut_rows(
 ) -> tuple[int, ...]:
     """The containers whose forge parent can change their verdict (issue
     #503): no open child and an uncut `[[slice]]` row, the only shape
-    `_childless_container_verdict` reads `nested` for. The caller reads just
-    these parents and hands them back as `BoardBuildInputs.nesting_parents`."""
+    `_childless_container_verdict` reads `nesting_parent` for. The caller
+    reads just these parents and hands them back as
+    `BoardBuildInputs.nesting_parents`."""
     return tuple(
         issue.number
         for issue in issues
@@ -2381,19 +2403,15 @@ def childless_containers_with_uncut_rows(
 
 
 def _childless_container_reason(
-    verdict: ChildlessContainerVerdict | None,
-    nesting_parent: IssueReference | None,
-    slices: tuple[SliceRow, ...],
-    storage: Storage,
+    verdict: ChildlessContainerVerdict | None, slices: tuple[SliceRow, ...], storage: Storage
 ) -> str | None:
     """Why a container with no open child is neither cut nor closed (issue
     #503), or `None` for every verdict `next` already names otherwise."""
     match verdict:
-        case ChildlessContainerVerdict.CHECK:
+        case CheckVerdict():
             return CHECK_DONE_WHEN
-        case ChildlessContainerVerdict.NESTED_REPAIR:
-            # NESTED_REPAIR is only ever decided from a present nesting parent.
-            return _nested_container_repair(cast(IssueReference, nesting_parent), slices, storage)
+        case NestedRepairVerdict(nesting_parent=nesting_parent):
+            return _nested_container_repair(nesting_parent, slices, storage)
         case _:
             return None
 
