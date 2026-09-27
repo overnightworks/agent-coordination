@@ -50,18 +50,46 @@ def board_config(toplevel: Path) -> board.BoardConfig:
     `protect` and `rescope` pass their payload's own resolved checkout, so a
     foreign cwd can never wrongly deny a valid config or bless an untracked
     one. A file absent altogether is no repair `git add -f` could make
-    (issue #505): its own sentence names the one-time adoption instead."""
+    (issue #505): `_absent_board_config_refusal` names the repair instead."""
     if not checkout.path_is_tracked(board.CONFIG_PATH.as_posix(), directory=toplevel):
         if not (toplevel / board.CONFIG_PATH).exists():
-            raise protocol.ClaimUnavailableError(
-                f"{board.CONFIG_PATH} does not exist in this checkout; merge a pull request "
-                f"adding only {board.CONFIG_PATH} into the default branch first, without aco"
-            )
+            raise protocol.ClaimUnavailableError(_absent_board_config_refusal(toplevel))
         raise protocol.ClaimUnavailableError(
             f"{board.CONFIG_PATH} is not tracked in this checkout, so its "
             f"storage pin cannot be trusted: git add -f {board.CONFIG_PATH}"
         )
     return board.load_config(toplevel / board.CONFIG_PATH)
+
+
+def _absent_board_config_refusal(toplevel: Path) -> str:
+    """The repair for a checkout at `toplevel` with no board configuration
+    at all. With none to name it, the canonical remote is the default one:
+    unconfigured, it refuses by name (issue #516); when its trunk already
+    tracks the configuration, this branch was cut before the adoption and
+    only needs the trunk merged in (issue #520); otherwise -- including a
+    trunk that does not resolve, which tracks nothing -- the repository was
+    never adopted (issue #505). The trunk is the last fetch's, read without
+    fetching."""
+    remote = store.DEFAULT_CANONICAL_REMOTE
+    unconfigured = checkout.unconfigured_remote_refusal(remote, directory=toplevel)
+    if unconfigured is not None:
+        return unconfigured
+    try:
+        trunk: str | None = checkout.trunk_ref(remote, directory=toplevel)
+    except checkout.TrunkUnknownError:
+        trunk = None
+    if trunk is not None and checkout.path_is_tracked(
+        board.CONFIG_PATH.as_posix(), directory=toplevel, revision=trunk
+    ):
+        trunk_name = trunk.removeprefix("refs/remotes/")
+        return (
+            f"{board.CONFIG_PATH} does not exist in this checkout, but {trunk_name} "
+            f"tracks it; merge {trunk_name} into this branch"
+        )
+    return (
+        f"{board.CONFIG_PATH} does not exist in this checkout; merge a pull request "
+        f"adding only {board.CONFIG_PATH} into the default branch first, without aco"
+    )
 
 
 def refuse_unsupported_forge_host(location: checkout.RemoteLocation) -> None:
@@ -318,12 +346,7 @@ class RunContext:
             self.__dict__.pop(fact, None)
 
     def _resolved_trunk_ref(self) -> str:
-        remote = self.configured_canonical_remote
-        return checkout.trunk_ref_after(
-            remote,
-            checkout.recorded_head_ref(remote, directory=self.toplevel),
-            directory=self.toplevel,
-        )
+        return checkout.trunk_ref(self.configured_canonical_remote, directory=self.toplevel)
 
     @cached_property
     def forge(self) -> forge.ForgeReader:

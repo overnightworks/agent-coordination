@@ -206,9 +206,14 @@ def versioned_paths(
     return tuple(dict.fromkeys(path for path in result.stdout.decode().split("\0") if path))
 
 
-def path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
+def path_is_tracked(
+    path: str, *, directory: Path | None = None, revision: str | None = None
+) -> bool:
     """Whether `path` (repo-relative, forward slashes) is tracked in git's
-    index right now, read from `directory` via `-C` when given (issue #314:
+    index right now -- or, given `revision`, in that commit's tree (issue
+    #520: whether the trunk already holds a pin this checkout lacks), where
+    an unresolvable `revision` is a git failure, never a plain "no" --
+    read from `directory` via `-C` when given (issue #314:
     `session.board_config`'s own resolved checkout, never the calling process's
     cwd) or the process's own checkout otherwise (issue #315) -- absent,
     untracked, and ignored all read as `False`, since
@@ -217,6 +222,10 @@ def path_is_tracked(path: str, *, directory: Path | None = None) -> bool:
     listing's exact membership and count are a different concern
     (scope-width math over every tracked file), so a test fixing one axis
     never has to carry the other."""
+    if revision is not None:
+        return bool(
+            _git_output(["ls-tree", "--name-only", revision, "--", path], directory=directory)
+        )
     return _git_yes_or_no(["ls-files", "--error-unmatch", "--", path], directory=directory)
 
 
@@ -710,6 +719,13 @@ DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 TRUNK_UNKNOWN_REASON = "cannot determine the trunk"
 
 
+class TrunkUnknownError(ClaimError):
+    """`trunk_ref_after`'s refusal when no candidate trunk ref resolves,
+    typed so a caller for which an unresolvable trunk tracks nothing -- an
+    absent board configuration's repair (issue #520) -- tells it apart from
+    every other git failure."""
+
+
 def unconfigured_remote_refusal(remote: str, *, directory: Path | None) -> str | None:
     """The one answer to whether the checkout at `directory` configures the
     canonical `remote` with a URL (issues #492, #508, #512, #516): `None`
@@ -816,6 +832,17 @@ def refuse_unclean_default_branch_checkout(default_branch: str, *, directory: Pa
         )
 
 
+def trunk_ref(remote: str, *, directory: Path) -> str:
+    """`remote`'s trunk ref in `directory` as the last fetch left it,
+    without fetching: its recorded `HEAD` read now, resolved by
+    `trunk_ref_after` -- a `RunContext`'s trunk, and the trunk an absent
+    board configuration is judged against before any configuration names
+    the canonical remote (issue #520)."""
+    return trunk_ref_after(
+        remote, recorded_head_ref(remote, directory=directory), directory=directory
+    )
+
+
 def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) -> str:
     """`remote`'s trunk ref in `directory`: `recorded_head` -- `remote`'s
     recorded `HEAD` as `recorded_head_ref` read it -- or, when `remote`
@@ -840,14 +867,14 @@ def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) 
     if remote_trunk is not None:
         return remote_trunk
     if _has_remote_tracking_branch(remote, directory=directory):
-        raise ClaimError(
+        raise TrunkUnknownError(
             f"{TRUNK_UNKNOWN_REASON}: no {remote}/HEAD, {remote}/main or "
             f"{remote}/master resolves; run git remote set-head {remote} -a"
         )
     local_trunk = _first_resolving_ref(("main", "master"), directory=directory)
     if local_trunk is not None:
         return local_trunk
-    raise ClaimError(
+    raise TrunkUnknownError(
         f"{TRUNK_UNKNOWN_REASON}: none of {remote}/HEAD, {remote}/main, "
         f"{remote}/master, main or master resolves"
     )
