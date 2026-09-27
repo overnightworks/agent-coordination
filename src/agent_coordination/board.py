@@ -1824,9 +1824,13 @@ def highest_scored_actionable(board: Board) -> BoardItem | None:
 
 @dataclass(frozen=True)
 class WorkItemAction:
-    """Claim `item` -- today's `next` target, unchanged."""
+    """Claim `item` -- today's `next` target. `scope` is the paths that
+    claim occupies: the item's own top-level `scope`, else its one
+    `[[slice]]` row's -- the row a retyped nested container keeps (issue
+    #510) -- else `None`, unknown."""
 
     item: BoardItem
+    scope: tuple[str, ...] | None
 
 
 @dataclass(frozen=True)
@@ -1879,6 +1883,12 @@ def _uncut_by_container(board: Board) -> dict[int, UncutSlices]:
     return {finding.item: finding for finding in board.uncut}
 
 
+def _work_item_scope(item: BoardItem, uncut: UncutSlices | None) -> tuple[str, ...] | None:
+    if item.scope is not None:
+        return item.scope
+    return uncut.rows[0].scope if uncut is not None and len(uncut.rows) == 1 else None
+
+
 def _qualifying_actions(board: Board) -> Iterator[NextAction]:
     """Every row `next`'s family of readers can ever act on, in `board_rank`
     order (issue #348) -- not only the first: `next_action`, `parallel_set`,
@@ -1913,7 +1923,7 @@ def _qualifying_actions(board: Board) -> Iterator[NextAction]:
     uncut_by_container = _uncut_by_container(board)
     for item in board.items:
         if item.actionable:
-            yield WorkItemAction(item)
+            yield WorkItemAction(item, _work_item_scope(item, uncut_by_container.get(item.number)))
             continue
         container = item.container
         if item.kind is not ItemKind.CONTAINER or container is None or container.open_children:
@@ -1946,7 +1956,7 @@ def _action_scope(
     `parallel_set` has to guard against. `None` means unknown -- the action
     names no scope of its own to check disjointness against."""
     if isinstance(action, WorkItemAction):
-        return action.item.scope
+        return action.scope
     if isinstance(action, CutSliceAction):
         return uncut_by_container[action.container.number].rows[0].scope
     return ()

@@ -1951,14 +1951,15 @@ def _next_action_command(
 
     A `WorkItemAction` whose item carries its own top-level `scope` (issue
     #348, #337's own derivation) drops `--scope` entirely -- `claim`
-    derives it from the same body this command already names -- and only an
-    item with no scope of its own still prints the placeholder, alongside
+    derives it from the same body this command already names; an item
+    whose one `[[slice]]` row names paths claims exactly those; only an
+    item naming neither still prints the placeholder, alongside
     `SCOPE_UNKNOWN_NOTE`. Both render through `board.advice_command`, so
     the line runs as printed (issue #510).
     """
     if isinstance(action, board.WorkItemAction):
-        body_scope = () if action.item.scope is not None else None
-        return board.claim_command(action.item.number, storage, body_scope)
+        claim_scope = () if action.item.scope is not None else action.scope
+        return board.claim_command(action.item.number, storage, claim_scope)
     container_argument = board.item_argument(action.container.number, storage)
     return board.advice_command("cut", container_argument, "--title", action.cut_title)
 
@@ -2136,7 +2137,7 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
             f"Next: {item.next_step}",
             f"Run: {_next_action_command(action, storage)}",
         ]
-        if item.scope is None:
+        if action.scope is None:
             lines.append(SCOPE_UNKNOWN_NOTE)
         hint = _ruling_pull_hint(item)
         if hint is not None:

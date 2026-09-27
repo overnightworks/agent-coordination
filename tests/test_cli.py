@@ -6550,9 +6550,10 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     """Issue #510 line 3: a nested container's one row carrying a scope gets
-    a claim on exactly those paths, and once retyped that claim line runs
-    unchanged in a real shell and claims the row's paths."""
-    row_scope = ("docs/nested.md",)
+    a claim on exactly those paths, and once retyped `next`'s own `Run:` line
+    names that same claim, which runs unchanged in a real shell and claims
+    the row's paths (#310 finding 168)."""
+    row_scope = ("docs/nested.md", "src/it's here.py")
     nested_contract = complete_contract(
         "keiner", slice=[{"index": 1, "title": "Scheibe Z", "scope": list(row_scope)}]
     )
@@ -6578,17 +6579,28 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     claim_advice = repair.split(" and claim it with ", 1)[1]
     retyped = replace(nested, kind=body.ItemKind.TASK, children_closed=None, children_total=None)
     _configured_board_client(monkeypatch, tmp_path, open_issues=(retyped,))
+    retyped_exit_code = issue_claim.main(["--repo", REPOSITORY, "next"])
+    run_line = capsys.readouterr().out.split("\nRun: ", 1)[1].splitlines()[0]
     monkeypatch.setattr(
         issue_claim,
         "_request",
         lambda arguments, **_kwargs: request(issue=299, scope=tuple(arguments.scope)),
     )
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
-    bash_exit_code, claim_arguments = _arguments_bash_hands_aco(claim_advice, tmp_path)
+    bash_exit_code, claim_arguments = _arguments_bash_hands_aco(run_line, tmp_path)
     claim_exit_code = issue_claim.main(["--repo", REPOSITORY, *claim_arguments])
 
-    assert claim_advice == "aco claim 299 --scope docs/nested.md"
-    assert (next_exit_code, bash_exit_code, claim_exit_code) == (3, 0, 0), capsys.readouterr().err
+    assert (
+        claim_advice
+        == run_line
+        == ("aco claim 299 --scope docs/nested.md --scope 'src/it'\"'\"'s here.py'")
+    )
+    assert (next_exit_code, retyped_exit_code, bash_exit_code, claim_exit_code) == (
+        3,
+        0,
+        0,
+        0,
+    ), capsys.readouterr().err
     claimed = store.fetch_state(worktree=Path("."), remote="origin").claims
     assert tuple(claim.scope for claim in claimed.values()) == (row_scope,)
 

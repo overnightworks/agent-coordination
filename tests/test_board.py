@@ -3090,7 +3090,7 @@ def test_highest_scored_actionable_skips_a_scopeless_sliceless_item() -> None:
     )
 
     assert [item.number for item in projected.items] == [unscoped_epic.number, scoped_work.number]
-    assert board.next_action(projected) == board.WorkItemAction(projected.items[0])
+    assert board.next_action(projected) == board.WorkItemAction(projected.items[0], None)
     recommended = board.highest_scored_actionable(projected)
     assert recommended is not None
     assert recommended.number == scoped_work.number
