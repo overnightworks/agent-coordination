@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import tomllib
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
@@ -1465,7 +1466,7 @@ def _board_item(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
             ),
             childless_container_reason=_childless_container_reason(
-                issue.number, childless_verdict, parsed.slices, config.storage
+                issue.number, childless_verdict, parsed.scope, parsed.slices, config.storage
             ),
         )
     )
@@ -1823,9 +1824,13 @@ def highest_scored_actionable(board: Board) -> BoardItem | None:
 
 @dataclass(frozen=True)
 class WorkItemAction:
-    """Claim `item` -- today's `next` target, unchanged."""
+    """Claim `item` -- today's `next` target. `scope` is the paths that
+    claim occupies: the item's own top-level `scope`, else its one
+    `[[slice]]` row's -- the row a retyped nested container keeps (issue
+    #510) -- else `None`, unknown."""
 
     item: BoardItem
+    scope: tuple[str, ...] | None
 
 
 @dataclass(frozen=True)
@@ -1878,6 +1883,31 @@ def _uncut_by_container(board: Board) -> dict[int, UncutSlices]:
     return {finding.item: finding for finding in board.uncut}
 
 
+def _work_item_scope(
+    own_scope: tuple[str, ...] | None, rows: tuple[SliceRow, ...]
+) -> tuple[str, ...] | None:
+    """The paths a claim on a work item occupies (issue #510): its own
+    top-level `scope`, else its one `[[slice]]` row's -- the row a retyped
+    nested container keeps -- else `None`, unknown."""
+    if own_scope is not None:
+        return own_scope
+    return rows[0].scope if len(rows) == 1 else None
+
+
+def work_item_claim_command(
+    number: int,
+    storage: Storage,
+    own_scope: tuple[str, ...] | None,
+    occupied_scope: tuple[str, ...] | None,
+) -> str:
+    """The one `claim` advice for work item `number` (NEXT-03, issue #510):
+    no `--scope` when it names its own top-level `scope`, which `claim`
+    derives itself, else the `occupied_scope` `_work_item_scope` named --
+    so a nested container's pre-retype advice and `next`'s `Run:` line
+    after the retype name the same claim."""
+    return claim_command(number, storage, () if own_scope is not None else occupied_scope)
+
+
 def _qualifying_actions(board: Board) -> Iterator[NextAction]:
     """Every row `next`'s family of readers can ever act on, in `board_rank`
     order (issue #348) -- not only the first: `next_action`, `parallel_set`,
@@ -1912,7 +1942,9 @@ def _qualifying_actions(board: Board) -> Iterator[NextAction]:
     uncut_by_container = _uncut_by_container(board)
     for item in board.items:
         if item.actionable:
-            yield WorkItemAction(item)
+            uncut = uncut_by_container.get(item.number)
+            rows = () if uncut is None else uncut.rows
+            yield WorkItemAction(item, _work_item_scope(item.scope, rows))
             continue
         container = item.container
         if item.kind is not ItemKind.CONTAINER or container is None or container.open_children:
@@ -1945,7 +1977,7 @@ def _action_scope(
     `parallel_set` has to guard against. `None` means unknown -- the action
     names no scope of its own to check disjointness against."""
     if isinstance(action, WorkItemAction):
-        return action.item.scope
+        return action.scope
     if isinstance(action, CutSliceAction):
         return uncut_by_container[action.container.number].rows[0].scope
     return ()
@@ -2322,6 +2354,30 @@ def item_argument(number: int, storage: Storage) -> str:
     return _storage_item_name(number, storage, str(number))
 
 
+# What an advice line names where it knows no paths to claim: an agent reads
+# it as "fill these in", which is why it stays outside `advice_command`'s
+# quoting rather than becoming one quoted `'<paths>'` argument.
+SCOPE_PLACEHOLDER = "--scope <paths>"
+
+
+def advice_command(*arguments: str) -> str:
+    """The one rendering of an `aco` command a piece of advice names (issue
+    #510): every argument quoted for a POSIX shell, so the line runs
+    unchanged in the agent's real shell -- a title such as `Say "hi" to $HOME`
+    reaches the command as written, never split or expanded."""
+    return shlex.join(("aco", *arguments))
+
+
+def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
+    """The `claim` advice for item `number` (issue #510): one `--scope` per
+    path of `scope`, none at all for `()` -- the item's own body scope, which
+    `claim` derives itself -- and `SCOPE_PLACEHOLDER` when no paths are
+    known (`None`)."""
+    scope_arguments = (argument for path in scope or () for argument in ("--scope", path))
+    command = advice_command("claim", item_argument(number, storage), *scope_arguments)
+    return command if scope is not None else f"{command} {SCOPE_PLACEHOLDER}"
+
+
 # git's own default abbreviation length -- a Landungen row's sha is evidence
 # to look up, not a full identity, so the short form is enough (issue #371).
 # The one owner: `board_html` renders the same evidence and imports this
@@ -2425,6 +2481,7 @@ def childless_containers_with_uncut_rows(
 def _childless_container_reason(
     number: int,
     verdict: ChildlessContainerVerdict | None,
+    own_scope: tuple[str, ...] | None,
     slices: tuple[SliceRow, ...],
     storage: Storage,
 ) -> str | None:
@@ -2434,27 +2491,31 @@ def _childless_container_reason(
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):
-            return _nested_container_repair(number, nesting_parent, slices, storage)
+            return _nested_container_repair(number, nesting_parent, own_scope, slices, storage)
         case _:
             return None
 
 
 def _nested_container_repair(
-    number: int, nesting_parent: IssueReference, slices: tuple[SliceRow, ...], storage: Storage
+    number: int,
+    nesting_parent: IssueReference,
+    own_scope: tuple[str, ...] | None,
+    slices: tuple[SliceRow, ...],
+    storage: Storage,
 ) -> str:
     """The repair container `number` needs when it is itself a child of
     `nesting_parent` and still carries uncut `[[slice]]` rows (issue #503):
     `cut` refuses it, so `next` never proposes one and names this instead --
     for its one row, the `item edit --kind task` both storages run (ITEM-47)
-    and a claim on that row's scope, the shape `claim`/`start` accept; for
-    more rows, their move up to that parent, named the way `cut`'s own
-    refusal names it."""
+    and the claim `work_item_claim_command` names for the task it becomes
+    (issue #510); for more rows, their move up to that
+    parent, named the way `cut`'s own refusal names it."""
     if len(slices) == 1:
-        return (
-            "nested container, which cut refuses; run aco item edit "
-            f"{item_argument(number, storage)} --kind task and claim it with "
-            f'slice "{slices[0].title}"\'s scope'
+        retype = advice_command("item", "edit", item_argument(number, storage), "--kind", "task")
+        claim = work_item_claim_command(
+            number, storage, own_scope, _work_item_scope(own_scope, slices)
         )
+        return f"nested container, which cut refuses; run {retype} and claim it with {claim}"
     return (
         "nested container, which cut refuses; move its slice rows to "
         f"{relation_label(nesting_parent, storage)}"
