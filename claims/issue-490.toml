@@ -1,0 +1,8 @@
+claim_id = "edf88db5b9554d8abd385303cd79dda6"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "cdc33911ad49187f655cfb15147d220c999bc8c2"
+branch = "claude/issue-490-default-branch-owner"
+scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/claim.spec.md", "specs/protect.spec.md", "specs/rescope.spec.md", "specs/start.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/github.py", "src/agent_coordination/protect.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_protect.py", "tests/test_session.py", "tests/test_state_board.py"]
+opened_commit = "81c73e5198a7333d6d765ad272b1c46de8a47661"
+whole_reason = "ein Default-Branch-Owner für die Offline-Prüfungen und das kanonische Remote überall statt origin"
