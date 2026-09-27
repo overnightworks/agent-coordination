@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
@@ -84,6 +86,7 @@ ITEM_KIND_TYPE_NAMES: dict[ItemKind, str] = {
 # snapshot a concurrent open/close cannot have shifted an issue across.
 ISSUES_PER_PAGE = 100
 MALFORMED_PULL_REQUEST = "GitHub returned a malformed pull request"
+MALFORMED_FILE_CONTENTS = "GitHub returned malformed file contents"
 MALFORMED_CLOSED_ISSUE = "GitHub returned a malformed closed issue"
 # The combined-status endpoint's own aggregate `state` can be `pending`,
 # `failure`, or `error` with a `statuses` page that, this instant, names no
@@ -1016,6 +1019,34 @@ class GitHubForge:
         ):
             raise forge.ForgeMalformedResponseError("GitHub returned a malformed merge result")
         return sha
+
+    def file_at_commit(self, path: Path, sha: str) -> str | None:
+        """The text of `path` (repository-relative) at commit `sha`, or
+        `None` when that commit carries no such file (issue #505): `aco
+        land` reads a pull request head's board configuration here, through
+        the contents API, never through this run's one fetch of the
+        canonical remote. A 404 is that answer, not a failure; anything but
+        one base64-encoded UTF-8 file fails loud."""
+        try:
+            raw = self._run(
+                [
+                    "api",
+                    f"repos/{self.repository}/contents/{path.as_posix()}?ref={sha}",
+                    "--jq",
+                    "{encoding,content}",
+                ]
+            )
+        except forge.ForgeNotFoundError:
+            return None
+        values = self._json_lines(raw, "file contents")
+        value = values[0] if len(values) == 1 and isinstance(values[0], dict) else {}
+        content = value.get("content")
+        if value.get("encoding") != "base64" or not isinstance(content, str):
+            raise forge.ForgeMalformedResponseError(MALFORMED_FILE_CONTENTS)
+        try:
+            return base64.b64decode(content).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError) as error:
+            raise forge.ForgeMalformedResponseError(MALFORMED_FILE_CONTENTS) from error
 
     def delete_branch(self, branch: str) -> None:
         """Delete `branch` from this repository once its pull request has
