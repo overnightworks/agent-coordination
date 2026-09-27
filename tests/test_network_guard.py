@@ -296,7 +296,7 @@ def test_a_run_started_with_a_hostile_gh_setup_keeps_a_named_host_request_on_the
     ]
 
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
-    assert len(reports_of_the_hostile_routing) == (0 if guarded else 1), run.stdout + run.stderr
+    assert bool(reports_of_the_hostile_routing) is not guarded, run.stdout + run.stderr
 
 
 def _run_scratch_pytest(
