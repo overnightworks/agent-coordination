@@ -1562,14 +1562,19 @@ class TestCliStateRefForge:
     it (`test_lazy_forge_builds_a_state_ref_board_under_the_state_ref_pin`
     in `test_cli.py`)."""
 
-    def _enter_pinned_checkout(self, monkeypatch: pytest.MonkeyPatch, worktree: Path) -> None:
-        """Writes the state-ref pin into `worktree`, makes it this run's
-        checkout root and cwd, and stubs `path_is_tracked` to report the pin
-        tracked (#315): its `board.toml` is never actually `git add`ed, so a
-        real `git ls-files` check would otherwise never see it."""
+    def _enter_pinned_checkout(
+        self, monkeypatch: pytest.MonkeyPatch, worktree: Path, *, canonical_remote: str = "origin"
+    ) -> None:
+        """Writes the state-ref pin naming `canonical_remote` into `worktree`,
+        makes it this run's checkout root and cwd, and stubs
+        `path_is_tracked` to report the pin tracked (#315): its `board.toml`
+        is never actually `git add`ed, so a real `git ls-files` check would
+        otherwise never see it."""
         config_dir = worktree / ".agent-claim"
         config_dir.mkdir()
-        (config_dir / "board.toml").write_text('storage = "state-ref"\n')
+        (config_dir / "board.toml").write_text(
+            f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
+        )
         monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: True)
         _redirect_toplevel(monkeypatch, worktree)
         monkeypatch.chdir(worktree)
@@ -2453,22 +2458,24 @@ class TestCliStateRefForge:
         assert f"<li>{first_id} {first_date} <code>{first_sha[:7]}</code></li>" in rendered_html
         assert f"<li>{second_id} {second_date} <code>{second_sha[:7]}</code></li>" in rendered_html
 
-    def test_board_refuses_without_an_origin_head(
+    @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
+    def test_board_refuses_without_the_canonical_remotes_head(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        canonical_remote: str,
     ) -> None:
-        """No `git remote set-head` ever ran here, so `origin/HEAD` stays
-        unresolved -- the refusal `_state_ref_forge` owns, worded exactly as
-        the run tells the operator to fix it."""
+        """PIN-05: no `git remote set-head` ever ran here, so the canonical
+        remote's `HEAD` stays unresolved -- the refusal names that remote,
+        worded exactly as the run tells the operator to fix it."""
         remote_url = f"file://{bare_remote}"
-        _git("remote", "add", "origin", remote_url, cwd=worktree)
-        _git("push", "origin", "main", cwd=worktree)
+        _git("remote", "add", canonical_remote, remote_url, cwd=worktree)
+        _git("push", canonical_remote, "main", cwd=worktree)
         store.bootstrap(worktree=worktree, remote=remote_url)
-        self._enter_pinned_checkout(monkeypatch, worktree)
+        self._enter_pinned_checkout(monkeypatch, worktree, canonical_remote=canonical_remote)
         monkeypatch.setenv("PATH", _path_without_gh(tmp_path))
 
         status = issue_claim.main(["board", "--json"])
@@ -2476,7 +2483,7 @@ class TestCliStateRefForge:
         assert status == 2
         assert capsys.readouterr().err == (
             "ERROR: cannot resolve the default branch; "
-            "run aco from a checkout with origin/HEAD set\n"
+            f"run aco from a checkout with {canonical_remote}/HEAD set\n"
         )
 
     def test_item_new_creates_a_task_and_a_fresh_board_shows_it_open(

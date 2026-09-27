@@ -641,9 +641,11 @@ DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 PROTECT_NOT_MAIN_REASON = "not main"
 
 
-# The remote whose recorded `HEAD` names the repository's default branch:
-# GitHub-repository discovery reads `origin`, a separate axis from a
-# repository's configured canonical remote (issue #304).
+# The remote whose recorded `HEAD` names the default branch for the claim,
+# protect, rescope and land checkout checks (`default_branch_name`): `origin`,
+# the remote GitHub discovery reads too, a separate axis from a repository's
+# configured canonical remote (issue #304). A run context under `state-ref`
+# reads the canonical remote's `HEAD` instead (issue #479, PIN-05).
 DEFAULT_BRANCH_REMOTE = "origin"
 
 
@@ -737,12 +739,12 @@ def trunk_ref_or_guess(
     """`remote`'s trunk ref: `recorded_head`, `remote`'s own recorded `HEAD`
     (`recorded_head_ref`), or the historical `{main, master}` guess --
     `remote`'s own, then the local branch -- when `remote` never recorded
-    one (issue #304, generalizing the default branch's `origin`-only read
-    to the caller's own canonical remote -- `default_branch_name`/
-    `is_default_branch` keep reading `origin` specifically, since
-    GitHub-repository discovery is a separate axis from a repository's
-    configured canonical remote). The guess reads `directory` via `-C` when
-    given or the calling process's own cwd otherwise."""
+    one (issue #304). Only `default_branch_name`/`is_default_branch` keep
+    reading `origin` specifically -- for the claim, protect, rescope and
+    land checkout checks; a run context under `state-ref` takes its default
+    branch from the same canonical-remote `HEAD` this reads (issue #479).
+    The guess reads `directory` via `-C` when given or the calling
+    process's own cwd otherwise."""
     if recorded_head is not None:
         return recorded_head
     for candidate in (
