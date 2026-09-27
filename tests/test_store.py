@@ -2408,8 +2408,8 @@ def test_commit_transition_a_local_two_racer_claim_on_different_keys_both_land(
 def test_commit_transition_same_key_second_racer_names_the_holder(
     bare_remote: Path, worktree: Path
 ) -> None:
-    """A refusal met before any push was sent stays a plain conflict, never a
-    sent write: `start` removes what it built on that type alone (START-18)."""
+    """A refusal met before any push was sent is a plain conflict, never an
+    uncertain write: `start` removes what it built (START-18)."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
         observed=fresh_observation(worktree, bare_remote),
@@ -2618,10 +2618,12 @@ def _another_writer_claims_issue_1(
             protocol.UncertainWriteError,
             id="lineage-stamp-fails",
         ),
-        pytest.param(_every_push_is_rejected, protocol.SentWriteError, id="every-push-rejected"),
+        pytest.param(
+            _every_push_is_rejected, protocol.ClaimUnavailableError, id="every-push-rejected"
+        ),
         pytest.param(
             _another_writer_claims_issue_1,
-            protocol.SentClaimConflictError,
+            protocol.ClaimConflictError,
             id="rejected-then-refused",
         ),
     ],
@@ -2631,15 +2633,15 @@ def test_commit_transition_says_whether_a_failed_write_may_have_landed(
     worktree: Path,
     monkeypatch: pytest.MonkeyPatch,
     arrange: Callable[..., store.PushTransport | None],
-    raised_kind: type[protocol.SentWriteError],
+    raised_kind: type[protocol.ClaimError],
 ) -> None:
-    """Issues #479, #494 (CAS-56, CAS-57): every write that fails after its
-    push was sent says so by type. One whose outcome the store cannot tell
-    -- no answer, an answer and the re-read after it lost, a landed push
-    whose bookkeeping failed -- is an `UncertainWriteError`; one the store
-    saw rejected and re-read without its own `operation_id`, then refused
-    or retried until exhausted, is a plain `SentWriteError`, a conflict
-    still a claim conflict."""
+    """Issues #479, #494, #498 (CAS-56, CAS-57): a write that fails after
+    its push was sent says by type whether it may have landed. One whose
+    outcome the store cannot tell -- no answer, an answer and the re-read
+    after it lost, a landed push whose bookkeeping failed -- is an
+    `UncertainWriteError`; one the store saw rejected and re-read without
+    its own `operation_id`, then refused or retried until exhausted, is the
+    plain refusal, nothing written, a conflict still a claim conflict."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     observed = fresh_observation(worktree, bare_remote)
     transport = arrange(monkeypatch, bare_remote, worktree)
