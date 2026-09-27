@@ -364,49 +364,20 @@ def _resolved_path_checkout(
     outside every repository (PROT-32: not aco's to judge, issue #448) --
     resolved from the path itself (issue #314), never from the hook
     process's cwd, so the same absolute path yields the same verdict from
-    any cwd. A file path -- existing or not yet written -- is resolved from
-    its nearest existing ancestor directory: an Edit's new file may sit in a
-    directory that does not exist yet either, and resolving that missing
-    directory would read as "outside every repository" and allow a write
-    into a checkout unjudged (issue #448 drive finding). A directory is
-    resolved as itself first when it is itself a checkout root -- a
-    nested checkout's own root, whose parent directory happens to sit inside
-    an outer repository, would otherwise have the outer checkout answer for
-    it (PROT-36) -- then from its parent, and from itself only as a
-    fallback: a path that names a checkout root exactly (its parent sits
-    outside every repository) is still judged by that checkout (issue #380
-    delta, gate finding: `rm -rf ../<repo>-worktrees/issue-1-x` must not
-    bypass the gate this way); PROT-14 then denies it as the checkout root
-    itself. `absolute_path` is normalized lexically first
-    (`os.path.normpath`, no symlink resolution): a lexically equivalent
-    payload like `nested/../nested` or `nested/.` must reach this comparison
-    the same way `nested` does (issue #380 delta, gate finding).
-    `writes_through_file_symlink` is `_file_checkout`'s own."""
-    path = Path(os.path.normpath(absolute_path))
-    if not path.is_dir():
-        return _file_checkout(path, writes_through_file_symlink=writes_through_file_symlink)
-    self_checkout = checkout.resolve_path_checkout(path)
-    if self_checkout is not None and self_checkout.toplevel == path:
-        return self_checkout
-    return checkout.resolve_path_checkout(path.parent) or self_checkout
+    any cwd, through the resolver `rescope` shares (issue #483).
 
-
-def _file_checkout(
-    path: Path, *, writes_through_file_symlink: bool
-) -> checkout.PathCheckout | None:
-    """The checkout a file path belongs to: its own directory's first, and
-    -- only when that sits outside every repository and the operation
-    `writes_through_file_symlink` -- its symlink-resolved target's. A write
-    through a file symlink outside every repository still lands in whichever
-    checkout its target lies in, so it is judged by that checkout rather
-    than allowed as outside (issue #448 review finding: a
+    A file path whose own directory sits outside every repository is
+    judged by its symlink-resolved target's checkout when the operation
+    `writes_through_file_symlink`: a write through such a link still lands
+    in whichever checkout its target lies in (issue #448 review finding: a
     `~/.claude/CLAUDE.md` link into a main checkout); an operation on the
     link itself -- `rm` or `mv` of it -- never touches the target, so it
     stays outside (issue #448 review finding). The link's own directory
     wins whenever it is in a checkout, so no link can move a write out of
     the gate that directory already imposes."""
-    own_checkout = checkout.resolve_nearest_existing_checkout(path.parent)
-    if own_checkout is not None or not writes_through_file_symlink:
+    path = Path(os.path.normpath(absolute_path))
+    own_checkout = checkout.resolve_named_path_checkout(path)
+    if own_checkout is not None or path.is_dir() or not writes_through_file_symlink:
         return own_checkout
     target = Path(os.path.realpath(path))
     if target == path:
@@ -441,6 +412,72 @@ def _is_ignored_session_setting(relative: str, path_checkout: checkout.PathCheck
     )
 
 
+PROTECT_UNGUARDED_ENV = "ACO_PROTECT_UNGUARDED"
+
+
+def _unguarded_directories() -> tuple[Path, ...]:
+    """The directories `ACO_PROTECT_UNGUARDED` names (`os.pathsep`-separated,
+    issue #483), symlink-resolved; unset or empty names none. An entry that
+    is not an existing absolute directory fails closed (PROT-41), raised for
+    `cli`'s deny frame like a missing identity: a typo must never silently
+    guard nothing, nor exempt whatever a relative entry happens to meet."""
+    entries = [
+        entry for entry in os.environ.get(PROTECT_UNGUARDED_ENV, "").split(os.pathsep) if entry
+    ]
+    for entry in entries:
+        if not (os.path.isabs(entry) and os.path.isdir(entry)):
+            raise protocol.ClaimError(
+                f"{PROTECT_UNGUARDED_ENV}: {entry} is not an absolute directory"
+            )
+    return tuple(Path(entry).resolve() for entry in entries)
+
+
+def _is_unguarded(path_checkout: checkout.PathCheckout) -> bool:
+    """Whether the repository `path_checkout` belongs to sits at or below an
+    `ACO_PROTECT_UNGUARDED` directory (PROT-40) -- a tester's throwaway
+    repository in its scratchpad. Matched on the repository's common git
+    directory, never the checkout's own path: a linked worktree of a
+    guarded repository is never exempted by where the worktree itself
+    lies."""
+    common_directory = path_checkout.common_directory.resolve()
+    return any(common_directory.is_relative_to(directory) for directory in _unguarded_directories())
+
+
+def _is_unguarded_write(
+    raw_path: str, path_checkout: checkout.PathCheckout, *, writes_through_file_symlink: bool
+) -> bool:
+    """Whether a write to `raw_path` stays inside unguarded repositories
+    (PROT-40). A write through a file symlink lands where the link points,
+    so it is exempt only when that target sits outside every repository or
+    in an unguarded one too: a link in a throwaway repository never opens
+    a guarded checkout."""
+    if not _is_unguarded(path_checkout):
+        return False
+    if not writes_through_file_symlink:
+        return True
+    target_checkout = checkout.resolve_named_path_checkout(Path(os.path.realpath(raw_path)))
+    return target_checkout is None or _is_unguarded(target_checkout)
+
+
+def _is_exempt(
+    raw_path: str,
+    relative: str | None,
+    path_checkout: checkout.PathCheckout,
+    *,
+    writes_through_file_symlink: bool,
+) -> bool:
+    """Whether a path inside a checkout allows unjudged: an ignored session
+    setting (PROT-38) or a write inside unguarded repositories (PROT-40).
+    The session setting is weighed first, so a malformed
+    `ACO_PROTECT_UNGUARDED` (PROT-41) never locks the session out of the
+    file that repairs it."""
+    if relative is not None and _is_ignored_session_setting(relative, path_checkout):
+        return True
+    return _is_unguarded_write(
+        raw_path, path_checkout, writes_through_file_symlink=writes_through_file_symlink
+    )
+
+
 _ProtectMissDenialBuilder = Callable[[protocol.ClaimState, checkout.PathCheckout, str, str], str]
 
 
@@ -471,7 +508,10 @@ def _protect_checkout_scope_denial(
     A path outside every repository allows before anything else is read
     (PROT-32, issue #448): the session's memory, scratchpad, and `/tmp` are
     not aco's to judge; so does an ignored session setting under `.claude/`
-    (PROT-38), in any checkout, the main one included. Agent identity
+    (PROT-38), in any checkout, the main one included, and any path in a
+    repository `ACO_PROTECT_UNGUARDED` exempts (PROT-40). A path no claim
+    could ever cover denies with `rescope`'s own sentence for it before the
+    store is read (PROT-14, PROT-42, PROT-43). Agent identity
     resolves last, only once a checkout, a relative scope entry, and a live
     state are in hand (PROT-08, issue #448): a write that never gets that
     far never needed an identity, so a session without one is gated only
@@ -484,9 +524,13 @@ def _protect_checkout_scope_denial(
     if path_checkout is None:
         return None
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
-    if relative is not None and _is_ignored_session_setting(relative, path_checkout):
+    if _is_exempt(
+        raw_path, relative, path_checkout, writes_through_file_symlink=writes_through_file_symlink
+    ):
         return None
-    denial = _protect_checkout_denial(path_checkout)
+    denial = _protect_checkout_denial(path_checkout) or checkout.unscopable_path_reason(
+        raw_path, toplevel=path_checkout.toplevel
+    )
     if denial is not None:
         return denial
     if relative is None:

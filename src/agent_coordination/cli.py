@@ -3812,7 +3812,7 @@ class _WriteSession:
 
 
 def _rescope_location(add: list[str] | None, drop: list[str] | None) -> Path:
-    """The directory `rescope`'s checkout is resolved from (issue #314
+    """The path `rescope`'s checkout is resolved from (issue #314
     repeat gate, finding R1): every `--add`/`--drop` entry must itself be an
     absolute path -- the one location signal a dispatcher running in a
     foreign cwd (the head's own shared environment, editing a linked
@@ -3831,7 +3831,7 @@ def _rescope_location(add: list[str] | None, drop: list[str] | None) -> Path:
     if any(not Path(raw_path).is_absolute() for raw_path in entries):
         raise _RescopeInvalidUsageError(checkout.RELATIVE_PAYLOAD_PATH_DENIAL)
     if entries:
-        return Path(entries[0]).parent
+        return Path(entries[0])
     return Path.cwd()
 
 
@@ -3842,11 +3842,16 @@ def _rescope_scope_entries(
     entries against `toplevel`. Every entry here is already absolute:
     `_rescope_location` (issue #314 repeat gate, finding R1) denies outright
     before this ever runs if any entry in either list is relative, so there
-    is no repository-relative form left to accept as-is."""
+    is no repository-relative form left to accept as-is. A path no claim
+    could ever cover refuses with the sentence `protect` denies it with
+    (issue #483)."""
     if not raw_paths:
         return ()
     canonical: list[str] = []
     for raw_path in raw_paths:
+        unscopable = checkout.unscopable_path_reason(raw_path, toplevel=toplevel)
+        if unscopable is not None:
+            raise _RescopeInvalidUsageError(unscopable)
         relative = checkout.relative_scope_entry(raw_path, toplevel=toplevel)
         if relative is None:
             raise _RescopeInvalidUsageError(
@@ -3863,12 +3868,11 @@ def _rescope_checkout(parsed: argparse.Namespace) -> checkout.PathCheckout:
     `git branch --show-current` this replaces, so it fails the same way
     regardless of where else in the tree a bare cwd fallback might have
     looked. A checkout with no commit yet denies here too (gate G3), the
-    same precondition `protect` enforces on its own resolved checkout. A
-    path in a directory not created yet resolves from its nearest existing
-    ancestor, as `protect` judges it (issue #474)."""
-    path_checkout = checkout.resolve_nearest_existing_checkout(
-        _rescope_location(parsed.add, parsed.drop)
-    )
+    same precondition `protect` enforces on its own resolved checkout. The
+    path resolves exactly as `protect` resolves a payload path -- a
+    checkout root as its own checkout, a file in a directory not created
+    yet from its nearest existing ancestor (issues #474, #483)."""
+    path_checkout = checkout.resolve_named_path_checkout(_rescope_location(parsed.add, parsed.drop))
     if path_checkout is None:
         raise protocol.ClaimUnavailableError(checkout.NOT_IN_A_REPOSITORY_REASON)
     if not path_checkout.has_commit:

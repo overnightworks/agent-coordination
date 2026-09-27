@@ -1,7 +1,7 @@
 """Shared test isolation.
 
-Only the autouse `_isolate_git_toplevel` fixture lives here; everything else
-stays local to its test module.
+Only the autouse isolation fixtures live here; everything else stays local to
+its test module.
 """
 
 from __future__ import annotations
@@ -10,7 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from agent_coordination import checkout
+from agent_coordination import checkout, protect
+
+
+@pytest.fixture(autouse=True)
+def _isolate_protect_unguarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test inherits the session's own `ACO_PROTECT_UNGUARDED`: a
+    developer's scratchpad exemption would otherwise let a protect test
+    allow what it means to prove denied."""
+    monkeypatch.delenv(protect.PROTECT_UNGUARDED_ENV, raising=False)
+
 
 _SHOW_TOPLEVEL_ARGUMENTS = ["rev-parse", "--show-toplevel"]
 
