@@ -3341,13 +3341,15 @@ def _retype_task_parent(
 
 def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item new` under `storage = "state-ref"` (issues #285, #316): the one
-    write path for a fresh state-ref item -- `StateRefBoard.create_item`,
-    the same CAS write `cut`'s own `create_child` performs, generalized to
-    an optional parent and origin -- so this module never grows a second
-    way to create one. `--origin` binds the fresh item to a foreign forge
-    issue (`items.parse_origin`'s own grammar, refused by `argparse` before
-    this ever runs) without aco governing that forge at all. An open Task
-    parent turns Container first (`_retype_task_parent`). Narrows the
+    write path for a fresh state-ref item -- `StateRefBoard.compose_item`
+    then `create_item`, the same CAS write `cut`'s own `create_child`
+    performs, generalized to an optional parent and origin -- so this
+    module never grows a second way to create one. `--origin` binds the
+    fresh item to a foreign forge issue (`items.parse_origin`'s own grammar,
+    refused by `argparse` before this ever runs) without aco governing that
+    forge at all. An open Task parent turns Container
+    (`_retype_task_parent`) once the item is composed and before it is
+    written, so an item the read would refuse retypes nothing. Narrows the
     context's forge to the state-ref board (`_state_ref_board`), since
     `create_item` is not part of the generic `ForgeWriter` port every other
     write command narrows to."""
@@ -3360,21 +3362,22 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
         _refuse_possible_twin(
             client, parsed.title, client.open_item_titles(), parent=parsed.parent, storage=storage
         )
-    if parent is not None:
-        _retype_task_parent(client, client.open_issue(parent), storage)
     kind = body.ItemKind(parsed.kind)
     skeleton = (
         body.BLOCK_CONTAINER_SKELETON
         if kind is body.ItemKind.CONTAINER
         else body.BLOCK_CHILD_SKELETON
     )
-    item_id = client.create_item(
+    new_item = client.compose_item(
         title=parsed.title,
         body=_item_new_body(parsed, skeleton),
         kind=kind,
         parent=parsed.parent,
         origin=parsed.origin,
     )
+    if parent is not None:
+        _retype_task_parent(client, client.open_issue(parent), storage)
+    item_id = client.create_item(new_item)
     _print_item_new_result(item_id, items.item_number(item_id), as_json=parsed.json)
     return 0
 

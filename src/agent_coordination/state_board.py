@@ -67,8 +67,8 @@ STATE_REF_CAPABILITIES: Mapping[forge.ForgeOperation, forge.Capability] = Mappin
         forge.ForgeOperation.LIST_RECENT_MERGED_BOARD_PULL_REQUESTS: forge.Capability.UNSUPPORTED,
         forge.ForgeOperation.LIST_RECENTLY_CLOSED_ISSUES: forge.Capability.READ_ONLY,
         forge.ForgeOperation.LINK_CHILD: forge.Capability.READ_WRITE,
-        # `item new` creates a state-ref item through `create_item`, which
-        # mints its id and records its parent and origin in one write.
+        # `item new` creates a state-ref item through `compose_item` and `create_item`, which
+        # mint its id and record its parent and origin in one write.
         forge.ForgeOperation.CREATE_ISSUE: forge.Capability.UNSUPPORTED,
         forge.ForgeOperation.CREATE_CHILD: forge.Capability.READ_WRITE,
         forge.ForgeOperation.UPDATE_ITEM_BODY: forge.Capability.READ_WRITE,
@@ -175,6 +175,17 @@ class LandingWrite:
     expected: ObjectId
     content: bytes
     record: items.ItemRecord
+
+
+@dataclass(frozen=True)
+class NewItemWrite:
+    """A fresh item's write, composed and checked readable but not yet
+    applied (issue #517): `compose_item` builds it, `create_item` writes
+    it."""
+
+    item_id: str
+    record: items.ItemRecord
+    body: str
 
 
 def _valid_record(text: str) -> Mapping[str, object] | None:
@@ -609,21 +620,23 @@ class StateRefBoard:
         to link."""
         del parent, child
 
-    def _write_new_item(
+    def compose_item(
         self,
         *,
-        parent_id: str | None,
         title: str,
         body: str,
         kind: ItemKind,
+        parent: int | None,
         origin: str | None = None,
-    ) -> str:
-        """The one write every fresh state-ref item goes through (issues
-        #283, #285, #316): mint an id, compose its `[record]`, one CAS
-        write, then fold the result into this instance's own view -- shared
-        by `create_item` (`aco item new`, an optional parent and origin) and
-        `create_child` (`cut`, always one, never an origin -- a cut child is
-        always this repository's own item)."""
+    ) -> NewItemWrite:
+        """A fresh state-ref item's one write (issues #283, #285, #316),
+        composed -- its id minted, its `[record]` filled -- and refused
+        before any write when the read would set it aside (issue #517), but
+        not yet applied. `origin` binds the item to a foreign forge issue
+        (`--origin FORGE#N`, already grammar-checked by `items.parse_origin`)
+        without aco governing that forge at all -- #230's own concept, "the
+        forge is pulled, never governed." `item new` composes before it
+        retypes a Task parent, so a refused item leaves the store untouched."""
         new_id = items.mint_item_id(self._by_number.values())
         now = items.format_record_timestamp(datetime.now(UTC))
         record = items.ItemRecord(
@@ -633,44 +646,28 @@ class StateRefBoard:
             kind=kind.value,
             labels=(),
             blocked_by=(),
-            parent=parent_id,
+            parent=None if parent is None else self._by_number[parent],
             origin=origin,
             created_at=now,
             updated_at=now,
             closed_at=None,
         )
         new_body = _with_record(body, record)
-        new_oid = self._write_item(new_id, expected=None, body=new_body)
-        self._items[new_id] = _DecodedItem(record=record, body=new_body, oid=new_oid)
-        self._by_number[record.number] = new_id
-        return new_id
+        _readable_content(new_body)
+        return NewItemWrite(item_id=new_id, record=record, body=new_body)
 
-    def create_item(
-        self,
-        *,
-        title: str,
-        body: str,
-        kind: ItemKind,
-        parent: int | None,
-        origin: str | None = None,
-    ) -> str:
-        """`aco item new`'s own write path (issues #285, #316): the same one
-        write `create_child` performs, generalized to an optional parent and
-        origin -- so `cli.py` never grows a second way to create a state-ref
-        item. `origin` binds this item to a foreign forge issue
-        (`--origin FORGE#N`, already grammar-checked by `items.parse_origin`
-        before this is ever called) without aco governing that forge at all
-        -- #230's own concept, "the forge is pulled, never governed."
-        Returns the freshly minted item id rather than `create_child`'s
-        `.number`: called only from `cli.py`'s own state-ref-only `item new`
-        path, which prints the id itself."""
-        parent_id = None if parent is None else self._by_number[parent]
-        return self._write_new_item(
-            parent_id=parent_id, title=title, body=body, kind=kind, origin=origin
-        )
+    def create_item(self, write: NewItemWrite) -> str:
+        """`write` applied in one CAS write, then folded into this
+        instance's own view -- the one write every fresh state-ref item goes
+        through, `item new`'s and `cut`'s alike, so `cli.py` never grows a
+        second way to create one. Returns the freshly minted item id."""
+        new_oid = self._write_item(write.item_id, expected=None, body=write.body)
+        self._items[write.item_id] = _DecodedItem(record=write.record, body=write.body, oid=new_oid)
+        self._by_number[write.record.number] = write.item_id
+        return write.item_id
 
     def create_issue(self, *, title: str, body: str, kind: ItemKind) -> int:
-        """Unsupported (`STATE_REF_CAPABILITIES`): `create_item` mints a
+        """Unsupported (`STATE_REF_CAPABILITIES`): `compose_item` mints a
         state-ref item's id and records its parent and origin in one write."""
         raise forge.ForgeUnsupportedError(NO_BARE_ISSUE)
 
@@ -692,8 +689,10 @@ class StateRefBoard:
         self._items[item_id] = _DecodedItem(record=updated_record, body=new_body, oid=new_oid)
 
     def create_child(self, *, parent: int, title: str, body: str, kind: ItemKind) -> int:
-        item_id = self.create_item(title=title, body=body, kind=kind, parent=parent)
-        return self._items[item_id].record.number
+        item_id = self.create_item(
+            self.compose_item(title=title, body=body, kind=kind, parent=parent)
+        )
+        return items.item_number(item_id)
 
     def update_item_body(self, number: int, body: str) -> None:
         """`body`, written back to `number`'s item file (issues #283, #287):

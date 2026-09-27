@@ -3649,6 +3649,12 @@ class TestCliStateRefForge:
                 "stored, that body would not read back, so nothing was written",
                 id="item-new-title-that-would-not-read-back",
             ),
+            pytest.param(
+                ["item", "new", "--title", "Fresh\vtwo", "--parent", EDIT_TARGET_ID],
+                "",
+                "stored, that body would not read back, so nothing was written",
+                id="item-new-under-a-task-parent-that-would-not-read-back",
+            ),
         ],
     )
     def test_a_write_the_read_would_refuse_refuses_before_any_write_and_the_board_still_reads(

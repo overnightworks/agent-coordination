@@ -19113,7 +19113,8 @@ def test_item_new_json_reports_ok_reason_created(
     _write_state_ref_pin(tmp_path)
     client = FakeForge(repository=forge.RepositoryId("file", (), str(tmp_path)))
     item_id = items.format_item_id(42)
-    monkeypatch.setattr(client, "create_item", lambda **_kwargs: item_id, raising=False)
+    monkeypatch.setattr(client, "compose_item", lambda **_kwargs: None, raising=False)
+    monkeypatch.setattr(client, "create_item", lambda _write: item_id, raising=False)
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
     monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: client)
 
@@ -19510,8 +19511,9 @@ def _state_ref_item_new(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> tuple[FakeForge, list[str]]:
     client = _state_ref_item_client(tmp_path)
+    monkeypatch.setattr(client, "compose_item", lambda **_kwargs: None, raising=False)
     monkeypatch.setattr(
-        client, "create_item", lambda **_kwargs: items.format_item_id(43), raising=False
+        client, "create_item", lambda _write: items.format_item_id(43), raising=False
     )
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
     return client, ["item", "new", "--title", "Fresh Item"]
