@@ -1,0 +1,8 @@
+claim_id = "320ee186d96a459a9c1a43f4c190c036"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "6215b11166bf73cff5bb021b80f8a46841dbadd0"
+branch = "claude/issue-522-pin-sentences"
+scope = ["README.md", "specs/storage-pin.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/checkout.py", "src/agent_coordination/session.py", "src/agent_coordination/store.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_session.py"]
+opened_commit = "7f9ed1623f848a184ed5951a705e62f7314c7090"
+whole_reason = "PIN-32's sentences, the one default-remote owner, and the README paragraph that cites them"
