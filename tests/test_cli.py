@@ -9,6 +9,7 @@ import os
 import re
 import runpy
 import shlex
+import socket
 import sys
 import threading
 import tomllib
@@ -19,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
+from typing import TextIO
 
 import pytest
 from board_fixtures import (
@@ -18208,13 +18210,36 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
     assert (client.retyped_items, client.created_issues) == (retyped, created)
 
 
+@contextlib.contextmanager
+def _devnull_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    with Path(os.devnull).open() as stdin:
+        yield stdin
+
+
+@contextlib.contextmanager
+def _body_file_on_stdin(tmp_path: Path) -> Iterator[TextIO]:
+    body_file = tmp_path / "body.md"
+    body_file.write_text(_ITEM_NEW_BODY)
+    with body_file.open() as stdin:
+        yield stdin
+
+
+@contextlib.contextmanager
+def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    """The stdin an agent harness such as Claude Code's Bash tool hands a
+    command: one end of a socket that never delivers a body."""
+    harness_end, other_end = socket.socketpair()
+    with harness_end, other_end, harness_end.makefile("r") as stdin:
+        yield stdin
+
+
 @pytest.mark.parametrize(
-    ("number", "flags", "stdin_body", "retype_dropped", "status", "out", "err", "retyped"),
+    ("number", "flags", "stdin_source", "retype_dropped", "status", "out", "err", "retyped"),
     [
         pytest.param(
             "484",
             (),
-            None,
+            _devnull_on_stdin,
             False,
             0,
             "EDITED #484 kind=container\n",
@@ -18224,8 +18249,19 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         ),
         pytest.param(
             "484",
+            (),
+            _empty_harness_socket_on_stdin,
+            False,
+            0,
+            "EDITED #484 kind=container\n",
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="empty_harness_socket_retypes",
+        ),
+        pytest.param(
+            "484",
             ("--json",),
-            None,
+            _devnull_on_stdin,
             False,
             0,
             '{"ok": true, "reason": "edited", "item": "#484", "number": 484, '
@@ -18237,7 +18273,7 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         pytest.param(
             "484",
             (),
-            None,
+            _devnull_on_stdin,
             True,
             2,
             "",
@@ -18248,7 +18284,7 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         pytest.param(
             "485",
             (),
-            None,
+            _devnull_on_stdin,
             False,
             2,
             "",
@@ -18259,18 +18295,18 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         pytest.param(
             "484",
             (),
-            _ITEM_NEW_BODY,
+            _body_file_on_stdin,
             False,
             2,
             "",
             "ERROR: item edit --kind reads no stdin; drop the redirect\n",
             [],
-            id="piped_body_refuses",
+            id="body_file_refuses",
         ),
         pytest.param(
             "484",
             ("--size", "S", "--json"),
-            None,
+            _devnull_on_stdin,
             False,
             2,
             '{"ok": false, "reason": "invalid_usage", '
@@ -18282,7 +18318,7 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         pytest.param(
             "484",
             ("--whole", "one PR", "--json"),
-            None,
+            _devnull_on_stdin,
             False,
             2,
             '{"ok": false, "reason": "invalid_usage", '
@@ -18299,7 +18335,7 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     tmp_path: Path,
     number: str,
     flags: tuple[str, ...],
-    stdin_body: str | None,
+    stdin_source: Callable[[Path], contextlib.AbstractContextManager[TextIO]],
     retype_dropped: bool,
     status: int,
     out: str,
@@ -18311,20 +18347,17 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     --parent` uses, so `next`'s nested-container repair runs under both
     storages; a retype the forge drops, an item that is not open, a body
     redirected onto stdin (which `--kind` never reads), or `--size`/`--whole`
-    beside it (ITEM-50) refuses exit 2 before any retype; `--json` reports
-    the `item` label, its `number` and new `kind`. stdin is a real descriptor, `/dev/null`
-    unless the case pipes a body."""
+    beside it (ITEM-50) refuses exit 2 before any retype, while the empty
+    socket an agent harness hands as stdin passes (ITEM-49); `--json` reports
+    the `item` label, its `number` and new `kind`. stdin is a real descriptor
+    each case opens."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
     )
     client.fail_set_item_kind = retype_dropped
-    stdin_path = Path(os.devnull)
-    if stdin_body is not None:
-        stdin_path = tmp_path / "body.md"
-        stdin_path.write_text(stdin_body)
 
-    with stdin_path.open() as stdin:
+    with stdin_source(tmp_path) as stdin:
         monkeypatch.setattr(sys, "stdin", stdin)
         exit_code = issue_claim.main(["item", "edit", number, "--kind", "container", *flags])
 
