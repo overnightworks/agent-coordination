@@ -43,22 +43,32 @@ def test_git_refuses_https_while_the_test_runs():
     assert_git_refuses_https()
 """
 )
-_SCRATCH_GH_MODULE = f"""
+_GH_FOUND_A_LOGIN = "gh found a login"
+_UNSAFE_ROUTING = "the routing reaches past the loopback proxy"
+_SCRATCH_GH_PREAMBLE = """
 import os
 import subprocess
 
 import pytest
 
-_LOOPBACK_ONLY_PROXY = "http://{UNREACHABLE_GH_HOST}"
-
 
 def run_gh(*arguments):
     return subprocess.run(["gh", *arguments], capture_output=True, text=True, check=False)
-
+"""
+_SCRATCH_GH_LOGIN_MODULE = (
+    _SCRATCH_GH_PREAMBLE
+    + f"""
 
 @pytest.mark.parametrize("host_arguments", [(), ("--hostname", "github.com")])
 def test_gh_finds_no_login(host_arguments):
-    assert run_gh("auth", "token", *host_arguments).returncode != 0, "gh found a login"
+    assert run_gh("auth", "token", *host_arguments).returncode != 0, "{_GH_FOUND_A_LOGIN}"
+"""
+)
+_SCRATCH_GH_ROUTING_MODULE = (
+    _SCRATCH_GH_PREAMBLE
+    + f"""
+
+_LOOPBACK_ONLY_PROXY = "http://{UNREACHABLE_GH_HOST}"
 
 
 def test_a_request_naming_its_own_host_ends_at_the_loopback_proxy():
@@ -73,12 +83,13 @@ def test_a_request_naming_its_own_host_ends_at_the_loopback_proxy():
         "GH_REPO": None,
     }}
     routing = {{name: os.environ.get(name) for name in safe_routing}}
-    assert routing == safe_routing, routing
+    assert routing == safe_routing, "{_UNSAFE_ROUTING}"
 
     request = run_gh("api", "--hostname", "example.invalid", "user")
 
     assert "proxyconnect tcp: dial tcp {UNREACHABLE_GH_HOST}" in request.stderr, request.stderr
 """
+)
 
 _PLUGIN_CASES = [
     pytest.param([], True, id="plugin-loaded"),
@@ -201,18 +212,11 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
 
 
-@pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
-def test_a_run_started_with_a_hostile_gh_setup_finds_no_login_and_stays_on_the_machine(
-    tmp_path: Path, plugin_arguments: list[str], guarded: bool
-) -> None:
-    """A pytest run started with the operator's gh configuration, every gh
-    token variable, a repository on a host of its own, a proxy of its own
-    and a proxy exemption for every host asks gh for a login, and for a
-    host it names, from its module: it finds none and its request ends at
-    the closed loopback port only while the plugin displaces them before
-    the run begins (#534 line 1). The blocked run proves the seeded login
-    is one gh would use; its request is never sent, because the module
-    checks the routing first."""
+@pytest.fixture
+def hostile_gh_environment(tmp_path: Path) -> dict[str, str]:
+    """A start environment carrying the operator's gh configuration, every
+    gh token variable, a repository on a host of its own, a proxy of its own
+    and a proxy exemption for every host."""
     hostile_config = tmp_path / "operator-gh-config"
     hostile_config.mkdir()
     (hostile_config / "hosts.yml").write_text(
@@ -221,9 +225,7 @@ def test_a_run_started_with_a_hostile_gh_setup_finds_no_login_and_stays_on_the_m
             for host in ("github.com", UNREACHABLE_GH_HOST)
         )
     )
-    scratch = tmp_path / "scratch"
-    scratch.mkdir()
-    hostile_environment = sealed_git_environment() | {
+    return sealed_git_environment() | {
         "GH_CONFIG_DIR": str(hostile_config),
         "GH_HOST": "github.com",
         "GH_TOKEN": "operator-token",
@@ -236,9 +238,45 @@ def test_a_run_started_with_a_hostile_gh_setup_finds_no_login_and_stays_on_the_m
         "GH_REPO": "example.invalid/o/r",
     }
 
-    run = _run_scratch_pytest(scratch, _SCRATCH_GH_MODULE, plugin_arguments, hostile_environment)
+
+@pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
+def test_a_run_started_with_a_hostile_gh_setup_finds_no_login(
+    tmp_path: Path,
+    hostile_gh_environment: dict[str, str],
+    plugin_arguments: list[str],
+    guarded: bool,
+) -> None:
+    """A pytest run started with the hostile gh setup asks gh for a login
+    from its module and finds none only while the plugin displaces the
+    setup before the run begins (#534 line 1); the blocked run proves the
+    seeded login is one gh would use."""
+    run = _run_scratch_pytest(
+        tmp_path, _SCRATCH_GH_LOGIN_MODULE, plugin_arguments, hostile_gh_environment
+    )
 
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
+    assert (_GH_FOUND_A_LOGIN in run.stdout) is not guarded, run.stdout + run.stderr
+
+
+@pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
+def test_a_run_started_with_a_hostile_gh_setup_keeps_a_named_host_request_on_the_machine(
+    tmp_path: Path,
+    hostile_gh_environment: dict[str, str],
+    plugin_arguments: list[str],
+    guarded: bool,
+) -> None:
+    """A pytest run started with the hostile gh setup sends a request for a
+    host it names only to the closed loopback port, and only while the
+    plugin displaces the setup's proxy, exemption and repository before the
+    run begins (#534 line 1); the blocked run proves its module would see
+    that routing, and never sends the request, because the module checks
+    the routing first."""
+    run = _run_scratch_pytest(
+        tmp_path, _SCRATCH_GH_ROUTING_MODULE, plugin_arguments, hostile_gh_environment
+    )
+
+    assert (run.returncode == 0) is guarded, run.stdout + run.stderr
+    assert (_UNSAFE_ROUTING in run.stdout) is not guarded, run.stdout + run.stderr
 
 
 def _run_scratch_pytest(
