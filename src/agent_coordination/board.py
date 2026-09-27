@@ -1977,7 +1977,7 @@ def _qualifying_actions(board: Board) -> Iterator[NextAction]:
         container = item.container
         if item.kind is not ItemKind.CONTAINER or container is None or container.open_children:
             continue
-        action = _container_next_action(item, container, uncut_by_container)
+        action = _container_next_action(item, container)
         if action is not None:
             yield action
 
@@ -2137,9 +2137,7 @@ def closable_container_number(
     return parent.reference.number if isinstance(verdict, CloseVerdict) else None
 
 
-def _container_next_action(
-    item: BoardItem, container: ContainerProgress, uncut_by_container: dict[int, UncutSlices]
-) -> NextAction | None:
+def _container_next_action(item: BoardItem, container: ContainerProgress) -> NextAction | None:
     """The action a childless container qualifies for, read off its one
     `childless_verdict`, or `None` to skip it: a non-`VALID` body names its
     own finding elsewhere and is never guessed through, and a
@@ -2148,9 +2146,8 @@ def _container_next_action(
     if item.read_state is not BodyReadState.VALID:
         return None
     match item.childless_verdict:
-        case CutVerdict():
+        case CutVerdict(title=cut_title):
             next_line = item.contract.next
-            cut_title = uncut_by_container[item.number].rows[0].title
             next_step = next_line if has_further_work(next_line) else cut_title
             return CutSliceAction(item, container, next_step, cut_title)
         case CheckVerdict(next_step=next_step):
