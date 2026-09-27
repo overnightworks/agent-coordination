@@ -3089,6 +3089,7 @@ def test_start_removes_only_its_own_build_when_the_store_refuses_its_sent_push_f
     assert err.startswith(f"ERROR: {refusal.format(item=items.format_item_id(314))}")
     removal = _REMOVED_BOTH.format(worktree=worktree, branch=_START_BRANCH)
     assert (removal in err) is not worktree_stood
+    assert "outcome unknown" not in err
     assert worktree.exists() is worktree_stood
     assert (_START_BRANCH in _real_git(repo, "branch", "--list").stdout) is worktree_stood
     live = store.fetch_state(worktree=repo, remote="origin").claims.values()
@@ -3717,7 +3718,7 @@ def test_help_lists_commands_in_their_stable_registration_order() -> None:
     """`aco --help`'s command order is part of the CLI's own contract (issue
     #372 R3): `_COMMAND_TABLE`'s dispatch-backed commands keep the table's
     own order, and `status`/`body` -- which dispatch outside that table,
-    ahead of `_dispatch`'s own `_LazyForge` -- keep their original,
+    ahead of `_dispatch` -- keep their original,
     interleaved positions rather than trailing behind every table entry."""
     parser = issue_claim._parser()
     subparsers_action = next(
@@ -5330,7 +5331,7 @@ def test_rule_refuses_when_the_forge_cannot_update_item_body(
 def test_rule_refuses_a_non_github_canonical_remote_by_host(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`rule` resolves its forge (`session.forge.writer()`) before its own
+    """`rule` resolves its forge (`context.forge_writer`) before its own
     typed-refusal handlers (issue #396 review finding): a resolution
     failure -- here a canonical remote on a host no adapter serves -- must
     still reach `rule`'s own `_refuse`, not `main`'s legacy `error` object."""
@@ -5604,7 +5605,7 @@ def test_ask_refuses_when_the_forge_cannot_update_item_body(
 def test_ask_refuses_a_non_github_canonical_remote_by_host(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`ask` resolves its forge (`session.forge.writer()`) before its own
+    """`ask` resolves its forge (`context.forge_writer`) before its own
     typed-refusal handlers (issue #396 review finding): a resolution
     failure -- here a canonical remote on a host no adapter serves -- must
     still reach `ask`'s own `_refuse`, not `main`'s legacy `error` object."""
@@ -7248,7 +7249,7 @@ def _write_state_ref_pin(toplevel: Path) -> None:
 def test_lazy_forge_builds_a_state_ref_board_under_the_state_ref_pin(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`_LazyForge` chooses its adapter by the repository's own `storage`
+    """The `RunContext`'s forge chooses its adapter by the repository's own `storage`
     pin (issue #248), never by the canonical remote's host: a state-ref
     pin must never build a `github.GitHubForge`, even when nothing else
     about the checkout looks unusual."""
@@ -7297,7 +7298,7 @@ def test_cli_board_family_reports_invalid_usage_when_repo_is_given_under_state_r
     command: list[str],
 ) -> None:
     """PIN-04, cited by BOARD-01/02 (`specs/board.spec.md`) and reused by
-    `rulings`/`next` (issue #412): all three resolve the same `_LazyForge`
+    `rulings`/`next` (issue #412): all three resolve the same `RunContext.forge`
     `board` does, so `--repo` under `storage = state-ref` reports the same
     `invalid_usage` `ask`/`rule`/`brief` already do, never their broad
     `unavailable` catch-all."""
@@ -16751,7 +16752,7 @@ def test_body_check_never_touches_a_forge_the_store_or_gh(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`body --check` is forge-free like `status` (issue #245): it never
-    resolves a `_LazyForge`, reads the state ref, or shells out to `gh`."""
+    resolves a forge, reads the state ref, or shells out to `gh`."""
 
     def unused(*args: object, **kwargs: object) -> None:
         pytest.fail("body --check must not touch a forge, the store, or gh")
@@ -17120,7 +17121,7 @@ def test_untracked_board_config_refuses_every_store_command_by_name(
     """Issue #315: an absent, untracked, or ignored `.agent-claim/board.toml`
     no longer reads as `storage = "github"`'s silent default -- `bootstrap`
     (which never resolves a forge) and `board` (which does, through
-    `_LazyForge`) both refuse by the same sentence, naming the repair,
+    `RunContext.forge`) both refuse by the same sentence, naming the repair,
     before either does any other work. `claim` in the main checkout on
     `main` refuses it ahead of CLM-01, since only the configuration names
     the canonical remote whose recorded default branch CLM-01 judges
@@ -17490,7 +17491,7 @@ def _write_repository_agent_claim_configs(
     the scratch lane repository at `toplevel` (`_scratch_lane_repository`),
     the resolved checkout toplevel. `board.toml` is always tracked for real,
     the same proof `test_checkout.py`'s `_tracked_board_config` gives its own
-    tracked-file gate: `_LazyForge` reads it (`_board_config`) on every
+    tracked-file gate: `RunContext.config` reads it (`board_config`) on every
     happy-path `--step` scenario below, so it must genuinely exist in the
     index rather than lean on the module's blanket `stub_board_config_tracked`
     (issue #324 review). Staged, never committed, so the lane's own change
@@ -17514,7 +17515,7 @@ def _brief_step_scenario(
     toplevel, and issue #258's own live claim -- the one arrangement
     `--step`'s text, `--json`, and no-`--step` cases all share (issue #324).
     Reads both configs' real tracked status instead of the file's blanket
-    autouse stub, since `_LazyForge` reads `board.toml`'s own tracked-file
+    autouse stub, since `RunContext.config` reads `board.toml`'s own tracked-file
     gate once the brief.toml check passes (issue #324 review). Returns
     `(base, tip)`; the repository itself is only `monkeypatch.chdir`-ed into,
     never asserted on."""
@@ -17694,7 +17695,7 @@ def test_cli_brief_step_refuses_with_no_usable_brief_config(
 def test_cli_brief_refuses_a_non_github_canonical_remote_by_host(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`brief` is a forge command through the same `_LazyForge` gate `board`
+    """`brief` is a forge command through the same `RunContext.forge` gate `board`
     uses (issue #245): a canonical remote on any host but GitHub refuses by
     that host's own name, before ever calling `discover_repository`/`gh` --
     the same refusal `board` gives for the same remote."""

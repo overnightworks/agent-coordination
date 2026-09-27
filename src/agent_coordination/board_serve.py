@@ -188,7 +188,7 @@ class _BoardRequestHandler(BaseHTTPRequestHandler):
         # `start` below is this handler's only constructor (through
         # `_BoardHTTPServer.__init__`'s own `RequestHandlerClass` argument), so
         # the narrowing is honest, not a suppression -- the same "cast after a
-        # capability/construction check" doctrine `_LazyForge.writer()` follows.
+        # capability/construction check" doctrine `RunContext.forge_writer` follows.
         return cast(_BoardHTTPServer, self.server)
 
     def _respond(

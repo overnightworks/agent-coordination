@@ -208,10 +208,7 @@ def _bound_server(repo: forge.RepositoryId | None) -> Iterator[ServedServer]:
     """A real `board --serve` of `repo` (`None`: the checkout's own, as a
     state-ref run names it), running on its own thread until the block ends."""
     parsed = issue_claim._parser().parse_args(["board", "--serve"])
-    session = issue_claim._WriteSession(
-        forge=issue_claim._LazyForge(issue_claim._run_context(repo)), release_branch=None
-    )
-    server = issue_claim._board_server(parsed, session)
+    server = issue_claim._board_server(parsed, issue_claim._run_context(repo))
     thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
     thread.start()
     try:
@@ -794,7 +791,7 @@ def test_post_rule_refuses_a_malformed_item_introduced_after_startup_and_writes_
     served_board.get(token=token)
     refusal = _malformed_item_refusal()
     clicked = _state_ref_board(_item_files_with_a_malformed_item(_blank_title_item()))
-    monkeypatch.setattr(issue_claim._LazyForge, "writer", lambda _self: clicked)
+    monkeypatch.setattr(RunContext, "forge_writer", property(lambda _self: clicked))
     current_store = _ConsistentForge()
     current_store.board_issues = served_board.client.board_issues
     current_store.issue_references = dict(served_board.client.issue_references)
@@ -922,11 +919,11 @@ def test_serve_refuses_together_with_json_before_binding_a_port(
     _assert_json_refusal_object(captured.err, captured.out, reason="invalid_usage")
 
 
-def test_board_serve_dispatches_through_the_write_session_and_prints_the_url(
+def test_board_serve_dispatches_to_its_writer_handler_and_prints_the_url(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`board --serve` is a write command (issue #280): `_dispatch` must
-    reach it through `_WriteSession` -- `session.forge.writer()` inside
+    reach its writer handler -- `context.forge_writer` inside
     `_board_server` is what would refuse a state-ref repository, exactly
     like `aco rule` does -- never through the read-only `board` path.
     `serve_forever` is stubbed to return immediately so this test proves the
