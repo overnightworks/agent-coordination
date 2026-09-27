@@ -18236,6 +18236,12 @@ def _piped_body_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
 
 
 @contextlib.contextmanager
+def _closed_stdin(_tmp_path: Path) -> Iterator[None]:
+    """`aco ... <&-`: Python leaves `sys.stdin` as `None`."""
+    yield None
+
+
+@contextlib.contextmanager
 def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
     """The stdin an agent harness such as Claude Code's Bash tool hands a
     command: one end of a socket that never delivers a body."""
@@ -18319,11 +18325,22 @@ def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
             (),
             _piped_body_on_stdin,
             False,
-            2,
+            0,
+            "EDITED #484 kind=container\n",
             "",
-            "ERROR: item edit --kind reads no stdin; drop the redirect\n",
-            [],
-            id="piped_body_refuses",
+            [(484, body.ItemKind.CONTAINER)],
+            id="piped_body_passes_unread",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _closed_stdin,
+            False,
+            0,
+            "EDITED #484 kind=container\n",
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="closed_stdin_retypes",
         ),
         pytest.param(
             "484",
@@ -18357,7 +18374,7 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     tmp_path: Path,
     number: str,
     flags: tuple[str, ...],
-    stdin_source: Callable[[Path], contextlib.AbstractContextManager[TextIO]],
+    stdin_source: Callable[[Path], contextlib.AbstractContextManager[TextIO | None]],
     retype_dropped: bool,
     status: int,
     out: str,
@@ -18368,9 +18385,10 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     `storage = "github"` too, through the same forge retype `item new
     --parent` uses, so `next`'s nested-container repair runs under both
     storages; a retype the forge drops, an item that is not open, a body
-    redirected onto stdin (which `--kind` never reads), or `--size`/`--whole`
-    beside it (ITEM-50) refuses exit 2 before any retype, while the empty
-    socket an agent harness hands as stdin passes (ITEM-49); `--json` reports
+    file redirected onto stdin (which `--kind` never reads), or
+    `--size`/`--whole` beside it (ITEM-50) refuses exit 2 before any retype,
+    while a pipe, the empty socket an agent harness hands as stdin, or a
+    closed stdin passes (ITEM-49); `--json` reports
     the `item` label, its `number` and new `kind`. stdin is a real descriptor
     each case opens."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")

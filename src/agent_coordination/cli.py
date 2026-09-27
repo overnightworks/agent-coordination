@@ -2891,18 +2891,17 @@ def _read_body_check_input() -> str:
 
 
 def _stdin_is_redirected() -> bool:
-    """Whether a file or a pipe stands on stdin rather than a terminal,
-    `/dev/null` or a socket -- told from the descriptor's type, never by
-    reading, since an idle pipe a harness holds open would block a read
-    forever. A shell redirect or pipe yields a file or a FIFO, while a socket
-    is what an agent harness (Claude Code's Bash tool) hands a command that
-    redirected nothing, so a socket counts as no redirect. A stdin without a
-    descriptor carries nothing a caller redirected."""
+    """Whether a file a shell redirected (`< body.md`) stands on stdin --
+    told from the descriptor's type, never by reading, since an idle pipe or
+    socket a harness holds open would block a read forever. Only a regular
+    file counts: an agent harness hands a command a pipe or a socket even
+    when it redirected nothing, so a pipe, socket, terminal, `/dev/null` or a
+    closed stdin passes, and a body piped in (`cat body.md |`) goes unread."""
     try:
         mode = os.fstat(sys.stdin.fileno()).st_mode
     except (AttributeError, OSError, ValueError):
         return False
-    return stat.S_ISREG(mode) or stat.S_ISFIFO(mode)
+    return stat.S_ISREG(mode)
 
 
 class BodyCheckReason(StrEnum):
@@ -3527,8 +3526,8 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM --kind task|container` (issue #503): the one
     retype a person runs, over the `ForgeWriter.set_item_kind` both storages
     implement -- the repair `next` names for a nested container with one
-    uncut row. Reads no stdin, and refuses a file or pipe standing there
-    before any write, so a piped body is never dropped. A container with an
+    uncut row. Reads no stdin, and refuses a file redirected there before
+    any write, so a body redirected from a file is never silently dropped. A container with an
     open child stays one, since a Task never has children to claim through.
     Every refusal reports through the shared envelope as
     `precondition_failed`."""
