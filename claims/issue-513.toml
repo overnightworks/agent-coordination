@@ -1,8 +1,0 @@
-claim_id = "11bc6495e16d43cd84a9559ff415edb5"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "0702b7ff6d61dd87c926f8c0cfa80f5120f358b2"
-branch = "claude/issue-513-next-advice-edges"
-scope = ["specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
-opened_commit = "27827acc3f8f64e430821ad31d5a56f9bb276467"
-whole_reason = "one advice renderer and its spec, with the tests that pin it"
