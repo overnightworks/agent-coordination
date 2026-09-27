@@ -2209,8 +2209,8 @@ def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) ->
     so the worktree it builds stands on a commit it never checked."""
     real_fetched_trunk = checkout.fetched_trunk
 
-    def fetch_then_the_trunk_moves(remote: str, **kwargs: Path | None) -> str:
-        trunk = real_fetched_trunk(remote, **kwargs)
+    def fetch_then_the_trunk_moves(remote: str) -> str:
+        trunk = real_fetched_trunk(remote)
         _real_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
         _real_git(repo, "push", "-q", "origin", "HEAD:main")
         return trunk
@@ -2411,8 +2411,9 @@ def test_start_resume_refuses_a_scope_that_differs_from_the_live_claim(
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314", "--scope", "src/other.py"])
 
-    assert status == 2
-    assert capsys.readouterr().err == f"ERROR: {issue_claim.RESUME_SCOPE_MISMATCH}\n"
+    captured = capsys.readouterr()
+    assert (status, captured.out) == (2, "")
+    assert captured.err == f"ERROR: {issue_claim.RESUME_SCOPE_MISMATCH}\n"
     assert _worktrees_and_branches(repo) == before
 
 
@@ -2701,8 +2702,8 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     item_id = items.format_item_id(314)
     real_fetched_trunk = checkout.fetched_trunk
 
-    def fetch_trunk_then_advance_item(remote: str, **kwargs: Path | None) -> str:
-        trunk = real_fetched_trunk(remote, **kwargs)
+    def fetch_trunk_then_advance_item(remote: str) -> str:
+        trunk = real_fetched_trunk(remote)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(

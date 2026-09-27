@@ -5363,13 +5363,14 @@ def _claim_in_start_worktree(
 ) -> int:
     """Claim, or resume, in a worktree that already stands: nothing is
     built, so a refusal has nothing to undo."""
-    _print_start_target(target)
     worktree_context = context.for_directory(target.path)
     resumed = _resumable_start_claim(live, target.branch)
     if resumed is not None:
         versioning = _checked_start_resume(resumed, parsed, context=worktree_context)
+        _print_start_target(target)
         _print_start_resume(resumed, observed, worktree_context.config.storage, versioning)
         return 0
+    _print_start_target(target)
     # The worktree's own context (issue #322 review finding 2, issue #457),
     # never `session.forge` itself: that forge is held by the caller
     # checkout's context since the item-existence read above, and reusing it

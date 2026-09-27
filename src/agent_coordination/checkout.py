@@ -996,17 +996,14 @@ def branch_exists(branch: str) -> bool:
     raise ClaimError(process.git_failure_detail(result))
 
 
-def fetched_trunk(remote: str, *, directory: Path | None = None) -> str:
+def fetched_trunk(remote: str) -> str:
     """Fetch `remote` and answer the commit its trunk names now (issue
     #479): `start` checks its claim against this one commit -- the claim's
-    base and the tree its scope is measured against -- before it builds.
-    Reads `directory`'s own checkout via `-C` when given or the calling
-    process's own checkout otherwise."""
-    fetch = _git_run(["fetch", remote], directory=directory)
+    base and the tree its scope is measured against -- before it builds."""
+    fetch = _git_run(["fetch", remote])
     if fetch.exit_status != 0:
         raise ClaimError(process.git_failure_detail(fetch))
-    trunk = _trunk_ref(remote, directory=directory)
-    return _git_output(["rev-parse", "--verify", f"{trunk}^{{commit}}"], directory=directory)
+    return _git_output(["rev-parse", "--verify", f"{_trunk_ref(remote)}^{{commit}}"])
 
 
 def create_linked_worktree(
