@@ -3089,6 +3089,7 @@ def test_start_removes_only_its_own_build_when_the_store_refuses_its_sent_push_f
     assert err.startswith(f"ERROR: {refusal.format(item=items.format_item_id(314))}")
     removal = _REMOVED_BOTH.format(worktree=worktree, branch=_START_BRANCH)
     assert (removal in err) is not worktree_stood
+    assert "outcome unknown" not in err
     assert worktree.exists() is worktree_stood
     assert (_START_BRANCH in _real_git(repo, "branch", "--list").stdout) is worktree_stood
     live = store.fetch_state(worktree=repo, remote="origin").claims.values()
