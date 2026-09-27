@@ -17,7 +17,7 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 |---|---|---|---|---|---|
 | `.agent-claim/board.toml` absent, `origin` unconfigured | PIN-34 | PIN-34 | PIN-34 | PIN-34 | — |
 | `.agent-claim/board.toml` absent, the trunk tracks it | PIN-33 | PIN-33 | PIN-33 | PIN-33 | — |
-| `.agent-claim/board.toml` absent, the trunk too | PIN-32 | PIN-32 | PIN-32 | PIN-32 | — |
+| `.agent-claim/board.toml` absent, the trunk too or no trunk resolves | PIN-32 | PIN-32 | PIN-32 | PIN-32 | — |
 | `.agent-claim/board.toml` present but untracked or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
@@ -37,14 +37,16 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 ## The pin and its precondition
 
-- [ ] [PIN-32] With no `<path>` here or in `<trunk>`, a store command refuses `<path> does not exist in this checkout; merge a pull request adding only <path> into the default branch first, without aco` (E-PIN-32).
+- [ ] [PIN-32] With no `<path>` here or in `<trunk>`, or no `<trunk>` that resolves, a store command refuses `<path> does not exist in this checkout; merge a pull request adding only <path> into the default branch first, without aco` (E-PIN-32).
 - [ ] [PIN-33] A store command with no `<path>`, which `<trunk>` tracks, refuses `<path> does not exist in this checkout, but <trunk> tracks it; merge <trunk> into this branch` (E-PIN-33).
 - [ ] [PIN-34] With no `<path>`, an `origin` with no URL configured refuses `cannot determine the trunk: canonical remote 'origin' is not configured`, never PIN-32's sentence (E-PIN-34).
 
 With no `<path>`, no configuration names another canonical remote, so
 `<trunk>` is `origin`'s trunk as the last fetch left it, read without a
 fetch of its own -- `origin/main`, or the local `main` while `origin` has no
-remote-tracking branch at all.
+remote-tracking branch at all. A `<trunk>` that does not resolve -- `origin`
+tracking only a branch such as `trunk` with no `origin/HEAD`, or no commit
+at all -- tracks nothing, so PIN-32 answers, never the trunk's own refusal.
 
 - [ ] [PIN-01] Any store command with a present but untracked or ignored `<path>` refuses `<path> is not tracked in this checkout, so its storage pin cannot be trusted: git add -f <path>` (E-PIN-01).
 - [ ] [PIN-02] A tracked `.agent-claim/board.toml` naming no `storage` key pins `storage = "github"`, the default every existing repository already reads.

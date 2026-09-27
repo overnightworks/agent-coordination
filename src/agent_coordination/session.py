@@ -66,15 +66,21 @@ def _absent_board_config_refusal(toplevel: Path) -> str:
     at all. With none to name it, the canonical remote is the default one:
     unconfigured, it refuses by name (issue #516); when its trunk already
     tracks the configuration, this branch was cut before the adoption and
-    only needs the trunk merged in (issue #520); otherwise the repository
-    was never adopted (issue #505). The trunk is the last fetch's, read
-    without fetching."""
+    only needs the trunk merged in (issue #520); otherwise -- including a
+    trunk that does not resolve, which tracks nothing -- the repository was
+    never adopted (issue #505). The trunk is the last fetch's, read without
+    fetching."""
     remote = store.DEFAULT_CANONICAL_REMOTE
     unconfigured = checkout.unconfigured_remote_refusal(remote, directory=toplevel)
     if unconfigured is not None:
         return unconfigured
-    trunk = checkout.trunk_ref(remote, directory=toplevel)
-    if checkout.path_is_tracked(board.CONFIG_PATH.as_posix(), directory=toplevel, revision=trunk):
+    try:
+        trunk: str | None = checkout.trunk_ref(remote, directory=toplevel)
+    except checkout.TrunkUnknownError:
+        trunk = None
+    if trunk is not None and checkout.path_is_tracked(
+        board.CONFIG_PATH.as_posix(), directory=toplevel, revision=trunk
+    ):
         trunk_name = trunk.removeprefix("refs/remotes/")
         return (
             f"{board.CONFIG_PATH} does not exist in this checkout, but {trunk_name} "

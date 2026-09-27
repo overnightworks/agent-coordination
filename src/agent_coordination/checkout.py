@@ -719,6 +719,13 @@ DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 TRUNK_UNKNOWN_REASON = "cannot determine the trunk"
 
 
+class TrunkUnknownError(ClaimError):
+    """`trunk_ref_after`'s refusal when no candidate trunk ref resolves,
+    typed so a caller for which an unresolvable trunk tracks nothing -- an
+    absent board configuration's repair (issue #520) -- tells it apart from
+    every other git failure."""
+
+
 def unconfigured_remote_refusal(remote: str, *, directory: Path | None) -> str | None:
     """The one answer to whether the checkout at `directory` configures the
     canonical `remote` with a URL (issues #492, #508, #512, #516): `None`
@@ -860,14 +867,14 @@ def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) 
     if remote_trunk is not None:
         return remote_trunk
     if _has_remote_tracking_branch(remote, directory=directory):
-        raise ClaimError(
+        raise TrunkUnknownError(
             f"{TRUNK_UNKNOWN_REASON}: no {remote}/HEAD, {remote}/main or "
             f"{remote}/master resolves; run git remote set-head {remote} -a"
         )
     local_trunk = _first_resolving_ref(("main", "master"), directory=directory)
     if local_trunk is not None:
         return local_trunk
-    raise ClaimError(
+    raise TrunkUnknownError(
         f"{TRUNK_UNKNOWN_REASON}: none of {remote}/HEAD, {remote}/main, "
         f"{remote}/master, main or master resolves"
     )

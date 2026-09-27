@@ -17957,21 +17957,26 @@ def test_an_untrusted_board_config_refuses_every_store_command_by_name(
 
 
 @pytest.mark.parametrize(
-    ("adopted", "origin_kept", "refusal"),
+    ("adopted", "origin_kept", "trunk_resolves", "refusal"),
     [
         pytest.param(
+            True,
             True,
             True,
             "ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main "
             "tracks it; merge origin/main into this branch\n",
             id="trunk-adopted-after-the-cut",
         ),
-        pytest.param(False, True, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"),
+        pytest.param(False, True, True, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"),
         pytest.param(
             True,
             False,
+            True,
             "ERROR: cannot determine the trunk: canonical remote 'origin' is not configured\n",
             id="origin-unconfigured",
+        ),
+        pytest.param(
+            False, True, False, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted-trunk-unresolved"
         ),
     ],
 )
@@ -17982,13 +17987,16 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
     isolated_global_git_config: Path,
     adopted: bool,
     origin_kept: bool,
+    trunk_resolves: bool,
     refusal: str,
 ) -> None:
     """Issue #520: a lane worktree whose branch was cut before the adoption
     commit lacks `.agent-claim/board.toml` although the trunk tracks it, so
     the refusal names the trunk merge (PIN-33), never the adoption PIN-32
-    names; with no ref tracking it PIN-32 stands, and an unconfigured
-    canonical remote keeps its own sentence. Nothing is written."""
+    names; with no ref tracking it PIN-32 stands -- also when the trunk does
+    not resolve, a `trunk` branch pushed without `origin/HEAD` -- and an
+    unconfigured canonical remote keeps its own sentence. Nothing is
+    written."""
     repository, remote = _real_repository_with_bare_remote(tmp_path)
     (repository / "README.md").write_text("hello\n")
     _real_git(repository, "add", "README.md")
@@ -17998,7 +18006,10 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
         _write_untracked_board_config(repository)
         _real_git(repository, "add", ".agent-claim/board.toml")
         _real_git(repository, "commit", "-q", "-m", "adopt aco")
-    _push_repository_trunk(repository, "origin")
+    if trunk_resolves:
+        _push_repository_trunk(repository, "origin")
+    else:
+        _real_git(repository, "push", "-q", "origin", "main:trunk")
     if not origin_kept:
         _real_git(repository, "remote", "remove", "origin")
     lane = tmp_path / "lane"
