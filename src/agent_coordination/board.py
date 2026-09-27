@@ -643,11 +643,12 @@ def _refuse_unknown_config_keys(raw: dict[str, object], path: Path) -> None:
 
     Silence here is expensive: `priorty_labels = [...]` would leave the
     board ordered by the defaults, with nothing in any output saying the
-    repository's own ladder was never read.
+    repository's own ladder was never read. A key is foreign text, so it is
+    named as `terminal_text` shows it (issue #540).
     """
     unknown = sorted(set(raw) - CONFIG_KEYS)
     if unknown:
-        named = ", ".join(unknown)
+        named = terminal_text(", ".join(unknown))
         raise protocol.ClaimError(f"board configuration {path} has unknown top-level key {named}")
 
 

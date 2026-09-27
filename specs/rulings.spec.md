@@ -23,11 +23,13 @@ it, `<k>` an expectation line's 1-based index.
 | a ruled line | RUL-02 | RUL-05, RUL-10 |
 | a line's `question`/`example`/`picture` | — | RUL-06 |
 | no item on the whole board carries an expectation line | RUL-07 | RUL-08 |
+| a title or line holds a display control | RUL-11 | RUL-10, RUL-11 |
 
 ## Rows and lines
 
 - [ ] [RUL-01] Each listed item prints one header, `<label> <open>/<total>: <title>`, then one line per expectation entry -- ruled ones too -- in block order (see E-RUL-01, E-RUL-05).
 - [ ] [RUL-02] A still-open line prints `  <k> open: <summary>`; a ruled one prints `  <k> ruled <outcome> <date>: <summary>`, `<summary>` capped at 100 characters total, its last char `…` when cut (see E-RUL-01).
+- [ ] [RUL-11] Text shows `<title>` and `<summary>` with each display control escaped (NEXT-37), `<summary>` after its cap; `--json` carries both as stored.
 - [ ] [RUL-03] Rows rank by priority category, score, fewer open lines, ascending `<n>` (never `board --json`'s raw order); open-line items precede fully ruled ones, each group in that order (see E-RUL-02).
 - [ ] [RUL-04] An item whose every expectation line is already ruled is listed, in both text and `--json`, in the fully-ruled group RUL-03 orders last (see E-RUL-02, E-RUL-05).
 

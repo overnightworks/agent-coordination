@@ -20,6 +20,7 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 | `.agent-claim/board.toml` present but untracked or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
+| a key the configuration does not define | PIN-33 | PIN-33 | PIN-33 | PIN-33 | — |
 | `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08, PIN-31 |
 | a state-ref item file itself is malformed | PIN-13..17, PIN-29 | ITEM-37 | ITEM-39, PIN-29 | BOARD-54 | — |
 | a fresh item id, minted | PIN-06, PIN-07 | PIN-06, PIN-07 | — | — | — |
@@ -63,6 +64,7 @@ parenthesis names that fetch, since no fetch runs here (see E-PIN-35).
 - [ ] [PIN-01] Any store command with a present but untracked or ignored `<path>` refuses `<path> is not tracked in this checkout, so its storage pin cannot be trusted: git add -f <path>` (E-PIN-01).
 - [ ] [PIN-02] A tracked `.agent-claim/board.toml` naming no `storage` key pins `storage = "github"`, the default every existing repository already reads.
 - [ ] [PIN-03] A tracked `.agent-claim/board.toml` naming a `storage` value outside `github`/`state-ref` refuses `board configuration <path> storage must be 'github' or 'state-ref'` (see E-PIN-02).
+- [ ] [PIN-33] A tracked `.agent-claim/board.toml` naming a key it does not define refuses `board configuration <path> has unknown top-level key <keys>`, each display control escaped (NEXT-37) (see E-PIN-11).
 
 ## `storage = "state-ref"` is forge-free
 
@@ -214,6 +216,16 @@ Setup: bare-remote, `.agent-claim/board.toml` tracked with `storage = "gitlab"`
 ```console
 $ aco status
 2> ERROR: board configuration .agent-claim/board.toml storage must be 'github' or 'state-ref'
+exit 2
+```
+
+### E-PIN-11 — an unknown key carrying a bidi override
+
+Setup: bare-remote checkout at `/repo`, `.agent-claim/board.toml` tracked with the one line `"a\u202eb" = 1`
+
+```console
+$ aco next
+2> ERROR: board configuration /repo/.agent-claim/board.toml has unknown top-level key a\u202eb
 exit 2
 ```
 

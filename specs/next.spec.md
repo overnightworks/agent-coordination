@@ -18,12 +18,15 @@ that wraps NEXT-11..13's own action fields. `<n>` is an
 item number, `<label>` an item as `specs/landing-grammar.spec.md` prints
 it, `<s>` an integer score. A *display control* -- the one set this file
 owns, which `next` escapes (NEXT-37), `aco land`'s refusal escapes
-(`specs/land.spec.md`), a slice title refuses (`specs/body-block.spec.md`,
+(`specs/land.spec.md`), `release`'s `next:` line, `rulings` text, `claim`'s
+out-of-order warning and the board configuration's unknown-key refusal
+escape as NEXT-37 does, a slice title refuses (`specs/body-block.spec.md`,
 BODY-63) and a scope path refuses (`specs/claim-record.spec.md`, CLAIM-20)
 -- is every control character but TAB (C0, DEL and C1), the line and paragraph
-separators U+2028/U+2029, the bidi controls U+200E, U+200F, U+202A..U+202E
-and U+2066..U+2069, and the zero-width characters U+200B..U+200D and
-U+FEFF; NBSP and every other printable space are text.
+separators U+2028/U+2029, the bidi controls U+200E, U+200F, U+061C,
+U+202A..U+202E and U+2066..U+2069, the zero-width characters U+200B..U+200D,
+U+2060 and U+FEFF, and the tag characters U+E0000..U+E007F; NBSP and every
+other printable space are text.
 
 ## Behavior table
 

@@ -36,6 +36,7 @@ sentence.
 | target unreachable while deriving scope | — | CLM-24 | — |
 | higher-priority actionable item is free | CLM-08 | CLM-08 | — |
 | `--out-of-order REASON` given | CLM-09 | CLM-09 | — |
+| that item's title holds a display control | CLM-34 | CLM-34 | — |
 | target is blocked | CLM-10 | CLM-10 | — |
 | target is a container | CLM-11 | CLM-11 | — |
 | target is closed or missing | CLM-12 | CLM-12 | — |
@@ -81,6 +82,7 @@ to the clause each names below.
 
 - [ ] [CLM-08] A higher-ranked actionable item free elsewhere refuses `higher-priority actionable item #<n> (score <n>) is free: <title>; use --out-of-order REASON to proceed`, exit `2` (see E-CLM-02).
 - [ ] [CLM-09] `--out-of-order <reason>` turns CLM-08's/CLM-10's refusal into `WARNING: <same sentence>` beside `CLAIMED`, exit `0`; the reason is never stored, only downgrading the check (see E-CLM-03).
+- [ ] [CLM-34] Text shows CLM-08's `<title>` with each display control escaped (NEXT-37), in the refusal and in CLM-09's `WARNING`; `--json`'s check `text` keeps it as stored.
 - [ ] [CLM-10] A target with an open blocker refuses `#<n> is blocked by <blockers> (open); pass --out-of-order REASON to claim it anyway`, exit `2`; `--out-of-order` downgrades this to a warning too.
 - [ ] [CLM-11] A target that is a container refuses `#<n> is a container; claim a child`, exit `2`, unaffected by `--out-of-order`.
 - [ ] [CLM-12] A closed or missing target refuses `issue #<n> is closed` or `issue #<n> does not exist here`, exit `2`.
