@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import re
 import runpy
 import shlex
@@ -18208,11 +18209,12 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
 
 
 @pytest.mark.parametrize(
-    ("number", "flags", "retype_dropped", "status", "out", "err", "retyped"),
+    ("number", "flags", "stdin_body", "retype_dropped", "status", "out", "err", "retyped"),
     [
         pytest.param(
             "484",
             (),
+            None,
             False,
             0,
             "EDITED #484 kind=container\n",
@@ -18223,6 +18225,7 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         pytest.param(
             "484",
             ("--json",),
+            None,
             False,
             0,
             '{"ok": true, "reason": "edited", "item": 484, "kind": "container"}\n',
@@ -18233,6 +18236,7 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         pytest.param(
             "484",
             (),
+            None,
             True,
             2,
             "",
@@ -18241,7 +18245,26 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
             id="dropped_retype_refuses",
         ),
         pytest.param(
-            "485", (), False, 2, "", "ERROR: #485 is not an open item\n", [], id="no_open_item"
+            "485",
+            (),
+            None,
+            False,
+            2,
+            "",
+            "ERROR: #485 is not an open item\n",
+            [],
+            id="no_open_item",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _ITEM_NEW_BODY,
+            False,
+            2,
+            "",
+            "ERROR: item edit --kind reads no stdin; drop the redirect\n",
+            [],
+            id="piped_body_refuses",
         ),
     ],
 )
@@ -18251,6 +18274,7 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     tmp_path: Path,
     number: str,
     flags: tuple[str, ...],
+    stdin_body: str | None,
     retype_dropped: bool,
     status: int,
     out: str,
@@ -18260,15 +18284,23 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     """Issue #503 (ITEM-47): `item edit --kind` runs under
     `storage = "github"` too, through the same forge retype `item new
     --parent` uses, so `next`'s nested-container repair runs under both
-    storages; a retype the forge drops, or an item that is not open,
-    refuses exit 2; `--json` reports the `item` and its new `kind`."""
+    storages; a retype the forge drops, an item that is not open, or a body
+    redirected onto stdin (which `--kind` never reads) refuses exit 2
+    before any retype; `--json` reports the `item` and its new `kind`.
+    stdin is a real descriptor, `/dev/null` unless the case pipes a body."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
     )
     client.fail_set_item_kind = retype_dropped
+    stdin_path = Path(os.devnull)
+    if stdin_body is not None:
+        stdin_path = tmp_path / "body.md"
+        stdin_path.write_text(stdin_body)
 
-    exit_code = issue_claim.main(["item", "edit", number, "--kind", "container", *flags])
+    with stdin_path.open() as stdin:
+        monkeypatch.setattr(sys, "stdin", stdin)
+        exit_code = issue_claim.main(["item", "edit", number, "--kind", "container", *flags])
 
     captured = capsys.readouterr()
     assert (exit_code, captured.out, captured.err) == (status, out, err)

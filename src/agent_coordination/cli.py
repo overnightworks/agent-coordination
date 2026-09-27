@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 import threading
 import tomllib
@@ -2888,6 +2889,18 @@ def _read_body_check_input() -> str:
         ) from error
 
 
+def _stdin_is_redirected() -> bool:
+    """Whether a file or a pipe stands on stdin rather than a terminal or
+    `/dev/null` -- told from the descriptor's type, never by reading, since
+    an idle pipe a harness holds open would block a read forever. A stdin
+    without a descriptor carries nothing a caller redirected."""
+    try:
+        mode = os.fstat(sys.stdin.fileno()).st_mode
+    except (AttributeError, OSError, ValueError):
+        return False
+    return stat.S_ISREG(mode) or stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)
+
+
 class BodyCheckReason(StrEnum):
     """`aco body --check`'s own `--json` `reason` vocabulary
     (`specs/body.spec.md`, issue #404): `valid`/`malformed`/`incomplete`
@@ -3503,15 +3516,22 @@ def _print_item_edit_whole_result(
         print(f"EDITED {board.item_label(number, storage)} whole={reason}")
 
 
+ITEM_EDIT_KIND_STDIN_REFUSAL = "item edit --kind reads no stdin; drop the redirect"
+
+
 def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM --kind task|container` (issue #503): the one
     retype a person runs, over the `ForgeWriter.set_item_kind` both storages
     implement -- the repair `next` names for a nested container with one
-    uncut row. Reads no stdin. A container with an open child stays one,
-    since a Task never has children to claim through. Every refusal reports
-    through the shared envelope as `precondition_failed`."""
+    uncut row. Reads no stdin, and refuses a file or pipe standing there
+    before any write, so a piped body is never dropped. A container with an
+    open child stays one, since a Task never has children to claim through.
+    Every refusal reports through the shared envelope as
+    `precondition_failed`."""
     as_json = parsed.json
     try:
+        if _stdin_is_redirected():
+            raise protocol.ClaimUnavailableError(ITEM_EDIT_KIND_STDIN_REFUSAL)
         client = context.forge_writer
         storage = context.config.storage
         number = parsed.item
