@@ -1042,9 +1042,10 @@ class GitHubForge:
         content = value.get("content")
         if value.get("encoding") != "base64" or not isinstance(content, str):
             raise forge.ForgeMalformedResponseError(MALFORMED_FILE_CONTENTS)
-        # GitHub wraps the base64 text across lines; strict decoding refuses
-        # anything else outside the alphabet instead of silently dropping it.
-        unwrapped = "".join(content.split())
+        # GitHub wraps the base64 text with newlines; strict decoding refuses
+        # anything else outside the alphabet -- other whitespace included --
+        # instead of silently dropping it.
+        unwrapped = content.replace("\n", "")
         try:
             return base64.b64decode(unwrapped, validate=True).decode("utf-8")
         except ValueError as error:
