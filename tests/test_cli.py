@@ -17961,13 +17961,15 @@ def test_an_untrusted_board_config_refuses_every_store_command_by_name(
 class _AbsentPinLane:
     """How a lane worktree without `.agent-claim/board.toml` came to be
     (PIN-32): whether `main` gained the adoption commit after `lane` was
-    cut, how `origin` carries `main`, and whether this clone's fetch of it
-    predates the adoption."""
+    cut, how `origin` carries `main`, whether this clone's fetch of it
+    predates the adoption, and whether `lane` merged `origin/main` and then
+    ran `git rm` on the file."""
 
     adopted: bool = True
     trunk_resolves: bool = True
     origin_kept: bool = True
     fetch_is_stale: bool = False
+    merged_then_removed: bool = False
 
 
 @pytest.mark.parametrize(
@@ -17978,6 +17980,12 @@ class _AbsentPinLane:
             "ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main "
             "tracks it; merge origin/main into this branch\n",
             id="trunk-adopted-after-the-cut",
+        ),
+        pytest.param(
+            _AbsentPinLane(merged_then_removed=True),
+            "ERROR: .agent-claim/board.toml was removed on this branch; restore it with "
+            "git checkout origin/main -- .agent-claim/board.toml\n",
+            id="removed-after-merging-the-trunk",
         ),
         pytest.param(
             _AbsentPinLane(adopted=False), _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"
@@ -18009,7 +18017,9 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
 ) -> None:
     """Issue #520: a lane worktree whose branch was cut before the adoption
     commit lacks `.agent-claim/board.toml` although the trunk tracks it, so
-    PIN-32 refuses its merge sentence, never its adoption sentence; with no
+    PIN-32 refuses its merge sentence, never its adoption sentence; a lane
+    that merged the trunk and then removed the file is told to restore it
+    instead (issue #522). With no
     ref tracking it the adoption sentence stands -- also when the trunk does
     not resolve, a `trunk` branch pushed without `origin/HEAD`, or when this
     clone's fetch predates the adoption, which the sentence's parenthesis
@@ -18034,6 +18044,10 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
         _real_git(repository, "remote", "remove", "origin")
     lane = tmp_path / "lane"
     _real_git(repository, "worktree", "add", "-q", str(lane), "lane")
+    if lane_history.merged_then_removed:
+        _real_git(lane, "merge", "-q", "origin/main")
+        _real_git(lane, "rm", "-q", ".agent-claim/board.toml")
+        _real_git(lane, "commit", "-q", "-m", "drop the pin")
     _redirect_toplevel(monkeypatch, lane)
     monkeypatch.chdir(lane)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})

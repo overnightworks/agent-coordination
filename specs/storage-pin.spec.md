@@ -36,14 +36,16 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 ## The pin and its precondition
 
-- [ ] [PIN-32] A store command with no `<path>` refuses the merge sentence below while `<trunk>` tracks `<path>`, else the adoption sentence, and writes nothing (see E-PIN-32, E-PIN-33).
+- [ ] [PIN-32] With no `<path>`, a store command refuses the removal sentence while this branch contains a `<trunk>` tracking `<path>`, the merge sentence while `<trunk>` alone tracks it, else the adoption one.
 
-The merge sentence is `<path> does not exist in this checkout, but <trunk>
+It writes nothing (see E-PIN-32, E-PIN-33, E-PIN-36). The removal sentence
+is `<path> was removed on this branch; restore it with git checkout <trunk>
+-- <path>`. The merge sentence is `<path> does not exist in this checkout, but <trunk>
 tracks it; merge <trunk> into this branch`. The adoption sentence is `<path>
 does not exist in this checkout; merge a pull request adding only <path> into
 the default branch first, without aco (fetch first if the default branch may
 already carry it)`. An `origin` with no URL configured
-refuses CHECK-15's sentence instead, never either of these (see E-PIN-34).
+refuses CHECK-15's sentence instead, never any of these (see E-PIN-34).
 
 With no `<path>`, no configuration names another canonical remote, so
 `<trunk>` is `origin`'s trunk as the last fetch left it, read without a
@@ -173,6 +175,17 @@ Setup: E-PIN-33's, then `refs/remotes/origin/main` reset to `main`'s first commi
 $ cd <tmp>/lane
 $ aco claim 1 --scope README.md
 2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco (fetch first if the default branch may already carry it)
+exit 2
+```
+
+### E-PIN-36 — a branch that removed the pin itself restores it
+
+Setup: E-PIN-33's, then in `<tmp>/lane` `git merge origin/main`, `git rm .agent-claim/board.toml` and a commit
+
+```console
+$ cd <tmp>/lane
+$ aco claim 1 --scope README.md
+2> ERROR: .agent-claim/board.toml was removed on this branch; restore it with git checkout origin/main -- .agent-claim/board.toml
 exit 2
 ```
 

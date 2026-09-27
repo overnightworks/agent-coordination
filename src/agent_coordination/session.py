@@ -64,33 +64,46 @@ def board_config(toplevel: Path) -> board.BoardConfig:
 def _absent_board_config_refusal(toplevel: Path) -> str:
     """The repair for a checkout at `toplevel` with no board configuration
     at all. With none to name it, the canonical remote is the default one:
-    unconfigured, it refuses by name (issue #516); when its trunk already
-    tracks the configuration, this branch was cut before the adoption and
-    only needs the trunk merged in (issue #520); otherwise -- including a
-    trunk that does not resolve, which tracks nothing -- the repository was
-    never adopted (issue #505). The trunk is the last fetch's, read without
-    fetching."""
+    unconfigured, it refuses by name (issue #516). When its trunk tracks the
+    configuration, a branch already containing that trunk removed the file
+    itself and restores it (issue #522); any other branch was cut before the
+    adoption and only needs the trunk merged in (issue #520). Otherwise --
+    including a trunk that does not resolve, which tracks nothing -- the
+    repository was never adopted (issue #505)."""
     remote = store.DEFAULT_CANONICAL_REMOTE
     unconfigured = checkout.unconfigured_remote_refusal(remote, directory=toplevel)
     if unconfigured is not None:
         return unconfigured
-    try:
-        trunk: str | None = checkout.trunk_ref(remote, directory=toplevel)
-    except checkout.TrunkUnknownError:
-        trunk = None
-    if trunk is not None and checkout.path_is_tracked(
-        board.CONFIG_PATH.as_posix(), directory=toplevel, revision=trunk
-    ):
-        trunk_name = trunk.removeprefix("refs/remotes/")
+    trunk = _trunk_tracking_board_config(remote, toplevel)
+    if trunk is None:
         return (
-            f"{board.CONFIG_PATH} does not exist in this checkout, but {trunk_name} "
-            f"tracks it; merge {trunk_name} into this branch"
+            f"{board.CONFIG_PATH} does not exist in this checkout; merge a pull request "
+            f"adding only {board.CONFIG_PATH} into the default branch first, without aco "
+            "(fetch first if the default branch may already carry it)"
+        )
+    trunk_name = trunk.removeprefix("refs/remotes/")
+    if checkout.branch_merged_into_default(trunk, trunk="HEAD", directory=toplevel):
+        return (
+            f"{board.CONFIG_PATH} was removed on this branch; restore it with "
+            f"git checkout {trunk_name} -- {board.CONFIG_PATH}"
         )
     return (
-        f"{board.CONFIG_PATH} does not exist in this checkout; merge a pull request "
-        f"adding only {board.CONFIG_PATH} into the default branch first, without aco "
-        "(fetch first if the default branch may already carry it)"
+        f"{board.CONFIG_PATH} does not exist in this checkout, but {trunk_name} "
+        f"tracks it; merge {trunk_name} into this branch"
     )
+
+
+def _trunk_tracking_board_config(remote: str, toplevel: Path) -> str | None:
+    """`remote`'s trunk as the last fetch left it, read without fetching,
+    when it tracks the board configuration; `None` when it does not, or
+    does not resolve and so tracks nothing."""
+    try:
+        trunk = checkout.trunk_ref(remote, directory=toplevel)
+    except checkout.TrunkUnknownError:
+        return None
+    if checkout.path_is_tracked(board.CONFIG_PATH.as_posix(), directory=toplevel, revision=trunk):
+        return trunk
+    return None
 
 
 def refuse_unsupported_forge_host(location: checkout.RemoteLocation) -> None:
