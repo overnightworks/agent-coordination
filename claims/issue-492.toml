@@ -1,0 +1,8 @@
+claim_id = "9ddec11039f4439ca16a1c6f38483eb4"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "a216533ccfae47707a7beee3cdee6f5292a0c2ee"
+branch = "claude/issue-492-land-default-branch"
+scope = ["README.md", "scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/brief.spec.md", "specs/check.spec.md", "specs/land.spec.md", "specs/protect.spec.md", "specs/release.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/protect.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_protect.py", "tests/test_session.py", "tests/test_state_board.py"]
+opened_commit = "9e1415364be6c7d491a057d7d41874474a0c56b2"
+whole_reason = "land fragt denselben Default-Branch wie der Rest, und kein lokaler Zweig wird je als Trunk geraten, wenn das Remote Zweige hat"
