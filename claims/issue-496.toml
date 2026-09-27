@@ -1,0 +1,8 @@
+claim_id = "1ea6d826f8dd4388b3a16a5a8c3ecf2f"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "e3929509cccf6b19b8c659c13b5ebb3b65ba2e3a"
+branch = "claude/issue-496-claim-pins-item"
+scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/claim.spec.md", "specs/ref-store-cas.spec.md", "specs/start.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "src/agent_coordination/store.py", "tests/cli_fixtures.py", "tests/test_cli.py", "tests/test_protocol.py", "tests/test_state_board.py", "tests/test_store.py"]
+opened_commit = "8787db431368893b6c98db29db7b000b07d98e00"
+whole_reason = "ein Claim prüft bei jedem Versuch, dass sein Item noch das ist, das offen geprüft wurde, plus die Reste aus B2"
