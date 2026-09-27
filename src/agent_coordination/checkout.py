@@ -732,8 +732,7 @@ def recorded_head_ref(remote: str, *, directory: Path | None = None) -> str | No
 def recorded_default_branch(remote: str, *, directory: Path | None = None) -> str | None:
     """The default branch name `remote`'s recorded `HEAD` names in
     `directory` (issue #490), or `None` when `recorded_head_ref` finds none
-    -- the offline checks' default branch: `claim`, `rescope`, `protect`,
-    and `land` ask it of the canonical remote."""
+    -- the offline checks' default branch, asked of the canonical remote."""
     recorded_head = recorded_head_ref(remote, directory=directory)
     if recorded_head is None:
         return None

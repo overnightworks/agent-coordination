@@ -233,8 +233,8 @@ class RunContext:
     def recorded_default_branch(self) -> str | None:
         """The canonical remote's recorded default branch in this checkout,
         or `None` when none is recorded or it dangles (issue #490): the
-        offline checks' default branch -- `claim`, `start`, `rescope` --
-        each keeping its own rule for `None`."""
+        offline checks' default branch, each check keeping its own rule for
+        `None`."""
         return checkout.recorded_default_branch(self.canonical_remote, directory=self.toplevel)
 
     @cached_property
