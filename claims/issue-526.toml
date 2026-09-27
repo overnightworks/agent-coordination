@@ -1,0 +1,8 @@
+claim_id = "2e63c7c40aa5496cb7f12555915a1043"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "dfbe7f84fffb6179ce5f49bec30febe3c97ae92e"
+branch = "claude/issue-526-pin-root-detached"
+scope = ["specs/claim.spec.md", "specs/start.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py"]
+opened_commit = "3559d20f8d22ff1fc23ecdc003a1d149c8a71240"
+whole_reason = "three refusal sentences an agent reads first, their specs and proofs"
