@@ -1686,17 +1686,54 @@ def test_remove_linked_worktree_reports_the_worktree_removed_and_the_branch_kept
     assert "not fully merged" in outcome.branch.reason
 
 
-def test_branch_merged_into_default_fails_loud_on_an_unexpected_merge_base_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("git_arguments", "read"),
+    [
+        pytest.param(
+            ["merge-base", "--is-ancestor", "no-such-branch", "refs/remotes/origin/main"],
+            lambda repo: checkout.branch_merged_into_default(
+                "no-such-branch", trunk="refs/remotes/origin/main", directory=repo
+            ),
+            id="is-ancestor",
+        ),
+        pytest.param(
+            ["merge-base", "no-such-branch", "refs/remotes/origin/main"],
+            lambda repo: checkout.merge_base(
+                "no-such-branch", "refs/remotes/origin/main", directory=repo
+            ),
+            id="merge-base",
+        ),
+    ],
+)
+def test_a_merge_base_read_fails_loud_on_an_unexpected_git_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_arguments: list[str],
+    read: Callable[[Path], object],
 ) -> None:
     repo = _bare_remote_repository_with_one_commit(tmp_path)
-    trunk = "refs/remotes/origin/main"
     _stub_one_git_call(
         monkeypatch,
-        ["merge-base", "--is-ancestor", "no-such-branch", "refs/remotes/origin/main"],
+        git_arguments,
         exit_status=128,
         stderr="fatal: not a valid object name no-such-branch",
     )
 
     with pytest.raises(ClaimError, match="not a valid object name"):
-        checkout.branch_merged_into_default("no-such-branch", trunk=trunk, directory=repo)
+        read(repo)
+
+
+def test_merge_base_names_the_shared_commit_and_none_for_unrelated_histories(
+    tmp_path: Path,
+) -> None:
+    repo = _bare_remote_repository_with_one_commit(tmp_path)
+    shared = _real_git(repo, "rev-parse", "HEAD").stdout.strip()
+    _real_git(repo, "checkout", "-q", "-b", "feature")
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "feature work")
+    _real_git(repo, "checkout", "-q", "--orphan", "unrelated")
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "unrelated root")
+
+    related = checkout.merge_base("feature", "main", directory=repo)
+    unrelated = checkout.merge_base("unrelated", "main", directory=repo)
+
+    assert (related, unrelated) == (shared, None)
