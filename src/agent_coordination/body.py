@@ -19,7 +19,7 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import TypeGuard, cast
 
 from . import metrics, protocol
@@ -1006,30 +1006,43 @@ def _block_data(body: str) -> dict[str, object] | ParsedBody:
     return data
 
 
+class UnreadParent(Enum):
+    """The parent of an item whose `[record]`, or its `parent`, does not
+    read: it may name any item, so no container can rule it out as its
+    child (issue #536, ITEM-54)."""
+
+    UNREAD = "unread"
+
+
 def readable_record_title(body: str) -> str | None:
     """`body`'s `[record]` title when it alone still reads -- even when
     another field leaves the block malformed (issue #447), so `item new`'s
     twin search still compares a malformed state-ref item's title; `None`
     when no valid title can be read at all."""
-    title = _readable_record(body).get("title")
+    record = _readable_record(body)
+    title = None if record is None else record.get("title")
     return title.strip() if is_valid_title(title) else None
 
 
-def readable_record_parent(body: str) -> str | None:
+def readable_record_parent(body: str) -> str | UnreadParent | None:
     """`body`'s `[record]` parent when it alone still reads -- even when
     another field leaves the block malformed (issue #517), so a container
-    still counts a malformed state-ref child as its own; `None` when no
-    parent can be read at all."""
-    parent = _readable_record(body).get("parent")
-    return parent if isinstance(parent, str) else None
+    still counts a malformed state-ref child as its own; `None` when the
+    record reads without a parent, a top-level item; `UnreadParent.UNREAD`
+    when the record or its parent does not read (issue #536)."""
+    record = _readable_record(body)
+    if record is None:
+        return UnreadParent.UNREAD
+    parent = record.get("parent")
+    return parent if parent is None or isinstance(parent, str) else UnreadParent.UNREAD
 
 
-def _readable_record(body: str) -> Mapping[str, object]:
+def _readable_record(body: str) -> Mapping[str, object] | None:
     """`body`'s `[record]` table as far as its block still decodes as TOML,
-    empty when it does not."""
+    `None` when it does not."""
     data = _block_data(body)
     record = data.get(RECORD_KEY) if isinstance(data, dict) else None
-    return record if isinstance(record, dict) else {}
+    return record if isinstance(record, dict) else None
 
 
 @dataclass(frozen=True)

@@ -43,6 +43,7 @@ from .body import (
     ContractDefect,
     ItemKind,
     Storage,
+    UnreadParent,
     body_defect_text,
     locate_agent_claim_block,
     parse_body,
@@ -144,14 +145,15 @@ class _MalformedItem:
     decodes; `title` is the record's title when it alone still reads, for
     the twin search and the board's row; `parent` is the record's parent
     when it alone still reads, so that container counts this item as an
-    open child."""
+    open child, `None` for a top-level record, and `UnreadParent.UNREAD`
+    when the record or its parent does not read."""
 
     problem: str
     defect: ContractDefect
     oid: ObjectId
     text: str = ""
     title: str | None = None
-    parent: str | None = None
+    parent: str | UnreadParent | None = UnreadParent.UNREAD
 
 
 # The defects an item file the block grammar never reached is named by
@@ -497,7 +499,7 @@ class StateRefBoard:
 
     def unplaced_child_numbers(self, number: int) -> tuple[int, ...]:
         """While `number`'s decoded item is a container, every malformed item
-        whose record names no parent that still reads: `_children` cannot
+        whose record or its parent does not read: `_children` cannot
         place it, yet it may be this container's open child (issue #536,
         ITEM-54), so a close or retype deciding with the children refuses by
         it rather than guessing past it. No other kind takes a child
@@ -508,7 +510,7 @@ class StateRefBoard:
         return tuple(
             items.item_number(malformed_id)
             for malformed_id, malformed in self._malformed.items()
-            if malformed.parent is None
+            if malformed.parent is UnreadParent.UNREAD
         )
 
     def default_branch(self) -> str:

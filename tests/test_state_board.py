@@ -365,6 +365,11 @@ def _malformed_item_refusal_case(
     )
 
 
+def _container_alone() -> dict[str, bytes]:
+    """`_item_files()`'s container without its children."""
+    return {f"{CONTAINER_ID}.md": _item_files()[f"{CONTAINER_ID}.md"]}
+
+
 def _unplaced_malformed_child_cases() -> list[object]:
     """`item close` and `item edit --kind task` of `CONTAINER_ID`, which has
     no readable child, beside an item whose record does not read at all:
@@ -381,12 +386,11 @@ def _unplaced_malformed_child_cases() -> list[object]:
             "is not valid UTF-8",
         ),
     }
-    container_alone = {f"{CONTAINER_ID}.md": _item_files()[f"{CONTAINER_ID}.md"]}
     return [
         pytest.param(
             arguments,
             None,
-            {**container_alone, f"{MALFORMED_ID}.md": content},
+            {**_container_alone(), f"{MALFORMED_ID}.md": content},
             _malformed_item_refusal(problem),
             id=f"{command}-of-a-container-over-a-{name}-item",
         )
@@ -3134,21 +3138,46 @@ class TestCliStateRefForge:
         assert out == f"{header_line}\n{closed_body}"
 
     @pytest.mark.parametrize(
-        ("arguments", "planted"),
+        ("arguments", "planted", "neighbours"),
         [
-            pytest.param(["item", "new", "--title", "Fresh Item"], MALFORMED_ID, id="item-new"),
-            pytest.param(["item", "show", CHILD_B_ID], MALFORMED_ID, id="item-show-of-another"),
-            pytest.param(["item", "show", CHILD_A_ID], CONTAINER_ID, id="item-show-of-a-child"),
-            pytest.param(["item", "close", CHILD_B_ID], MALFORMED_ID, id="item-close-of-another"),
+            pytest.param(
+                ["item", "new", "--title", "Fresh Item"], MALFORMED_ID, _item_files(), id="item-new"
+            ),
+            pytest.param(
+                ["item", "show", CHILD_B_ID], MALFORMED_ID, _item_files(), id="item-show-of-another"
+            ),
+            pytest.param(
+                ["item", "show", CHILD_A_ID], CONTAINER_ID, _item_files(), id="item-show-of-a-child"
+            ),
+            pytest.param(
+                ["item", "close", CHILD_B_ID],
+                MALFORMED_ID,
+                _item_files(),
+                id="item-close-of-another",
+            ),
+            pytest.param(
+                ["item", "close", CONTAINER_ID],
+                MALFORMED_ID,
+                _item_files(),
+                id="item-close-of-a-container-beside-a-top-level-malformed-item",
+            ),
             pytest.param(
                 ["item", "edit", CHILD_B_ID, "--kind", "container"],
                 MALFORMED_ID,
+                _item_files(),
                 id="edit-kind-of-another",
             ),
             pytest.param(
                 ["item", "edit", CHILD_A_ID, "--kind", "container"],
                 CONTAINER_ID,
+                _item_files(),
                 id="edit-kind-of-a-child-under-a-malformed-parent",
+            ),
+            pytest.param(
+                ["item", "edit", CONTAINER_ID, "--kind", "task"],
+                MALFORMED_ID,
+                _container_alone(),
+                id="edit-kind-of-a-childless-container-beside-a-top-level-malformed-item",
             ),
         ],
     )
@@ -3160,14 +3189,17 @@ class TestCliStateRefForge:
         worktree: Path,
         arguments: list[str],
         planted: str,
+        neighbours: dict[str, bytes],
     ) -> None:
         """Issue #447 proof 1: an item `item new --title ""` once wrote,
-        planted by hand, no longer stops `item new` or `item show` of any
-        other item -- its own child included, whose header needs only the
-        parent's id -- nor, issue #536 (ITEM-53, PIN-29), `item close` of
-        an item it is neither, nor the parent or a child of, nor `item edit
-        --kind` of any item it is not a child of."""
-        item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
+        planted by hand beside `neighbours`, no longer stops `item new` or
+        `item show` of any other item -- its own child included, whose
+        header needs only the parent's id -- nor, issue #536 (ITEM-53,
+        ITEM-54, PIN-29), `item close` of an item it is neither, nor the
+        parent or a child of, nor `item edit --kind` of any item it is not a
+        child of: its readable record names no parent, so no Container
+        counts it as a child."""
+        item_files = {**neighbours, f"{planted}.md": _blank_title_item()}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
         assert issue_claim.main(arguments) == 0
