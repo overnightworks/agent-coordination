@@ -5129,14 +5129,28 @@ class _WitnessedPush:
     #479): the remote may have accepted it even when its answer never came
     back -- a lost response the store's own search then fails to settle, a
     timeout -- or `store.commit_transition` may fail after it landed, writing
-    its lineage stamp. Either way the claim may be written, so `start` never
-    undoes the worktree that claim names."""
+    its lineage stamp. Such a claim may be written, so `start` never undoes
+    the worktree that claim names."""
 
     sent: bool = False
 
     def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
         self.sent = True
         store.GitPushTransport().push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+
+    def may_have_written(self, claim_id: protocol.ClaimId, context: RunContext) -> bool:
+        """Whether the failed write may have left `claim_id` in the store:
+        never before a push was sent, nor once a fresh read shows the store
+        never recorded that id -- every push rejected and found absent, the
+        exhaustion a stale lock or missing push rights cause. A read that
+        fails settles nothing."""
+        if not self.sent:
+            return False
+        try:
+            observed = context.fresh().observation
+        except protocol.ClaimError:
+            return True
+        return claim_id in observed.consumed_ids
 
 
 def _committed_claim(
@@ -5466,9 +5480,10 @@ def _check_build_and_claim(
     again: the new worktree failing `claim`'s own checkout preconditions
     (the trunk moved under another fetch meanwhile), or the ledger refusing
     the write -- a claim that landed after the checks, a store it cannot
-    reach before its push. An interrupt or an unexpected error is no
-    refusal, and a failure once the claim's push was sent leaves the
-    worktree standing with the claim that may name it."""
+    reach or that rejected every push unwritten. An interrupt or an
+    unexpected error is no refusal, and a failure once the claim may have
+    been written leaves the worktree standing with the claim that may name
+    it."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
     # A second context of the main checkout, never the one whose observation
     # the item-existence read already holds: the fetch above may take a
@@ -5498,7 +5513,7 @@ def _check_build_and_claim(
         # showed every push of this call absent from: nothing was written.
         return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     except protocol.ClaimError as error:
-        if push.sent:
+        if push.may_have_written(plan.intent.claim_id, check_context):
             raise
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)

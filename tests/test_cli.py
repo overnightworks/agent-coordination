@@ -2907,6 +2907,30 @@ def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_cla
     assert checkout.resolve_path_checkout(worktree) is not None
 
 
+def test_start_under_state_ref_removes_its_build_when_the_store_rejects_every_push_unwritten(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 review (START-18): a store that rejects every push of the
+    claim without the ref ever moving -- missing push rights, a stale lock --
+    wrote nothing, so `start` refuses and removes the worktree and branch it
+    built."""
+    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+
+    def rejected(_transport: store.GitPushTransport, **_arguments: object) -> None:
+        raise protocol.PushRejectedError("! [remote rejected] (failed to lock)")
+
+    monkeypatch.setattr(store.GitPushTransport, "push", rejected)
+
+    status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
+
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    err = capsys.readouterr().err
+    assert (status, worktree.exists()) == (2, False)
+    assert err.startswith(f"ERROR: {store.STATE_REF} rejected ")
+    assert err.endswith(_REMOVED_BOTH.format(worktree=worktree, branch=_START_BRANCH) + "\n")
+    assert store.fetch_state(worktree=repo, remote="origin").claims == {}
+
+
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
