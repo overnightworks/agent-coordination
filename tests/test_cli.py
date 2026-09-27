@@ -2350,8 +2350,11 @@ def test_start_names_a_runnable_command_for_a_detached_worktree(
     """Issues #526 (START-29), #528: `start` run from main names the
     detached worktree at its computed path and the git command that
     attaches it to the lane branch, writes nothing, and that command runs
-    as printed in bash."""
-    repo, worktree, fake = _detached_start_worktree(monkeypatch, tmp_path)
+    as printed in bash -- its path shell-quoted even under a parent
+    directory holding a space."""
+    parent_with_space = tmp_path / "with space"
+    parent_with_space.mkdir()
+    repo, worktree, fake = _detached_start_worktree(monkeypatch, parent_with_space)
     if branch_exists:
         _real_git(repo, "branch", _START_BRANCH)
     _redirect_toplevel(monkeypatch, repo)
