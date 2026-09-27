@@ -20,6 +20,7 @@ documents. `<repo>`/`<sha>`/`<tip>`/`<remote>` are the runner's own values;
 
 | state \ trigger | `aco reset` | `aco reset --confirm` |
 |---|---|---|
+| the canonical remote has no URL configured | RESET-18 | RESET-18 |
 | `refs/aco/state` never existed on the remote | RESET-01, RESET-02 | RESET-03 |
 | a live claim exists | CAS-40 | CAS-40 |
 | ref present, no live claim | CAS-39 | CAS-41, CAS-43, CAS-44 |
@@ -39,6 +40,10 @@ documents. `<repo>`/`<sha>`/`<tip>`/`<remote>` are the runner's own values;
 | `--repo OWNER/REPO`, or a non-GitHub canonical remote | RESET-11 | RESET-11 |
 | a `--repo` that names no OWNER/REPO | OUT-08 | OUT-08 |
 | `--export-dir` omitted | RESET-12 | RESET-12 |
+
+## A canonical remote with no URL configured
+
+- [ ] [RESET-18] A canonical `<remote>` with no URL configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, before any read, export or write (see E-RESET-07).
 
 ## Before any ref exists
 
@@ -171,4 +176,17 @@ no local refs/aco/state to delete
 cleared lineage stamps and fetch anchors in 1 worktree
 bootstrapped a fresh empty state at <sha>
 exit 0
+```
+
+### E-RESET-07 -- a canonical remote with no URL configured is named
+
+Setup: bare-remote, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, which this clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
+
+```console
+$ aco reset --export-dir <tmp>
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
+exit 2
+$ aco reset --confirm --export-dir <tmp>
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
+exit 2
 ```

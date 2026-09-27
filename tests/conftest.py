@@ -1,7 +1,8 @@
 """Shared test isolation.
 
-Only the autouse isolation fixtures live here; everything else stays local to
-its test module.
+Only isolation fixtures live here -- the autouse ones and the isolation more
+than one module asks for by name; everything else stays local to its test
+module.
 """
 
 from __future__ import annotations
@@ -42,3 +43,16 @@ def _isolate_git_toplevel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
         return real_git_output(arguments, directory=directory)
 
     monkeypatch.setattr(checkout, "_git_output", fake_git_output)
+
+
+@pytest.fixture
+def isolated_global_git_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Real git reads an empty global configuration, never the operator's
+    own (#310 finding 184): an operator's `remote.hub.url` or
+    `[remote "hub"]` line would otherwise answer whether a test's checkout
+    configures its canonical remote. A test that needs a global line
+    writes it into the returned file."""
+    global_config = tmp_path / "global.gitconfig"
+    global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    return global_config

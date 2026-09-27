@@ -500,6 +500,7 @@ _UNCONFIGURED_HUBS = (
 )
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize("unconfigure_hub", _UNCONFIGURED_HUBS)
 @pytest.mark.parametrize(
     "read",
@@ -533,6 +534,7 @@ def test_every_read_of_a_canonical_remote_the_checkout_does_not_configure_refuse
     )
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize("unconfigure_hub", _UNCONFIGURED_HUBS)
 def test_a_canonical_remote_the_checkout_does_not_configure_records_no_default_branch(
     tmp_path: Path, unconfigure_hub: Callable[[Path], None]
@@ -546,6 +548,7 @@ def test_a_canonical_remote_the_checkout_does_not_configure_records_no_default_b
     assert _context().for_directory(repository).recorded_default_branch is None
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 def test_a_canonical_remote_found_unconfigured_stays_refused_for_the_whole_context(
     tmp_path: Path,
 ) -> None:
@@ -562,6 +565,7 @@ def test_a_canonical_remote_found_unconfigured_stays_refused_for_the_whole_conte
         _ = context.default_branch
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 def test_a_configured_canonical_remote_without_branches_still_guesses_the_local_trunk(
     tmp_path: Path,
 ) -> None:
