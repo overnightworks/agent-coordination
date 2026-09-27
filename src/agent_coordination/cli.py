@@ -861,6 +861,11 @@ def _add_item_parser(commands: argparse._SubParsersAction) -> None:
         metavar="REASON",
         help="set only this item's whole reason (any storage); skips the stdin body read",
     )
+    edit.add_argument(
+        "--kind",
+        choices=ITEM_EDIT_KINDS,
+        help="set only this item's kind (any storage); skips the stdin body read",
+    )
     _add_json_flag(edit)
     close = item_commands.add_parser(
         "close", help="close a state-ref item; the file stays, next and board let it go"
@@ -2865,6 +2870,9 @@ def _issue_check(
 
 
 BODY_TEMPLATE_KINDS = ("task", "feature", "container")
+# `item edit --kind`'s targets: an item turns container with its first
+# child and back to task once none is open (issue #503).
+ITEM_EDIT_KINDS = (body.ItemKind.TASK.value, body.ItemKind.CONTAINER.value)
 DEFAULT_BODY_TEMPLATE_KIND = "task"
 
 
@@ -3293,9 +3301,10 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
 def _retype_task_parent(
     client: forge.ForgeWriter, parent: board.Issue | None, storage: body.Storage
 ) -> None:
-    """Retype a Task `--parent` to Container before it gets its first child
-    (issue #503) and say so on stderr, leaving stdout and `--json` the
-    created item's alone; any other parent is already a container."""
+    """Retype an open Task `--parent` to Container before it gets its first
+    child (issue #503), under either storage, and say so on stderr, leaving
+    stdout and `--json` the created item's alone; any other parent keeps
+    its kind."""
     if parent is None or parent.kind is not body.ItemKind.TASK:
         return
     client.set_item_kind(parent.number, body.ItemKind.CONTAINER)
@@ -3310,7 +3319,8 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
     an optional parent and origin -- so this module never grows a second
     way to create one. `--origin` binds the fresh item to a foreign forge
     issue (`items.parse_origin`'s own grammar, refused by `argparse` before
-    this ever runs) without aco governing that forge at all. Narrows the
+    this ever runs) without aco governing that forge at all. An open Task
+    parent turns Container first (`_retype_task_parent`). Narrows the
     context's forge to the state-ref board (`_state_ref_board`), since
     `create_item` is not part of the generic `ForgeWriter` port every other
     write command narrows to."""
@@ -3323,6 +3333,8 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
         _refuse_possible_twin(
             client, parsed.title, client.open_item_titles(), parent=parsed.parent, storage=storage
         )
+    if parent is not None:
+        _retype_task_parent(client, client.open_issue(parent), storage)
     kind = body.ItemKind(parsed.kind)
     skeleton = (
         body.BLOCK_CONTAINER_SKELETON
@@ -3352,9 +3364,10 @@ ITEM_EDIT_GITHUB_REFUSAL = "forge issues are edited on the forge; aco never gove
 
 def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM` (issue #287; `--size`, issue #357; `--whole`,
-    issue #399): with `--size` or `--whole`, a narrow write of only that one
-    top-level field (`_cmd_item_edit_size`/`_cmd_item_edit_whole`, both
-    storages); with neither, the state-ref item's own body, replaced from
+    issue #399; `--kind`, issue #503): with `--size`, `--whole`, or `--kind`,
+    a narrow write of only that one field (`_cmd_item_edit_size`/
+    `_cmd_item_edit_whole`/`_cmd_item_edit_kind`, both storages); with none,
+    the state-ref item's own body, replaced from
     stdin only -- refused before any write when the piped body carries no
     valid `agent-claim` block (`body --check`'s own sentences,
     `_body_shape_defects`). The CAS `expected` oid is this process's own
@@ -3380,6 +3393,8 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
         return _cmd_item_edit_size(parsed, context)
     if parsed.whole is not None:
         return _cmd_item_edit_whole(parsed, context)
+    if parsed.kind is not None:
+        return _cmd_item_edit_kind(parsed, context)
     as_json = parsed.json
     try:
         if context.config.storage is not body.Storage.STATE_REF:
@@ -3486,6 +3501,45 @@ def _print_item_edit_whole_result(
         _emit_json(True, ItemReason.EDITED, item=number, whole=reason)
     else:
         print(f"EDITED {board.item_label(number, storage)} whole={reason}")
+
+
+def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
+    """`aco item edit ITEM --kind task|container` (issue #503): the one
+    retype a person runs, over the `ForgeWriter.set_item_kind` both storages
+    implement -- the repair `next` names for a nested container with one
+    uncut row. Reads no stdin. A container with an open child stays one,
+    since a Task never has children to claim through. Every refusal reports
+    through the shared envelope as `precondition_failed`."""
+    as_json = parsed.json
+    try:
+        client = context.forge_writer
+        storage = context.config.storage
+        number = parsed.item
+        kind = body.ItemKind(parsed.kind)
+        target = next(
+            (issue for issue in client.list_open_board_issues() if issue.number == number), None
+        )
+        label = board.item_label(number, storage)
+        if target is None:
+            raise protocol.ClaimUnavailableError(f"{label} is not an open item")
+        if kind is body.ItemKind.TASK and target.has_open_child:
+            raise protocol.ClaimUnavailableError(
+                f"{label} has an open child; a container with open children stays a container"
+            )
+        client.set_item_kind(number, kind)
+        _print_item_edit_kind_result(number, kind, storage, as_json=as_json)
+        return 0
+    except protocol.ClaimError as error:
+        return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
+
+
+def _print_item_edit_kind_result(
+    number: int, kind: body.ItemKind, storage: body.Storage, *, as_json: bool
+) -> None:
+    if as_json:
+        _emit_json(True, ItemReason.EDITED, item=number, kind=kind.value)
+    else:
+        print(f"EDITED {board.item_label(number, storage)} kind={kind.value}")
 
 
 def _print_item_edit_result(

@@ -6398,8 +6398,8 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
             True,
             REPOSITORY,
             ("Scheibe Z",),
-            "nested container, which cut refuses; set its type Task and take "
-            'slice "Scheibe Z"\'s scope as its own',
+            "nested container, which cut refuses; run aco item edit 299 --kind task and "
+            'claim it with slice "Scheibe Z"\'s scope',
             id="open_container_parent_one_row_names_the_task_repair",
         ),
         pytest.param(
@@ -18050,6 +18050,61 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
     captured = capsys.readouterr()
     assert (exit_code, captured.out, captured.err) == (status, out, err)
     assert (client.retyped_items, client.created_issues) == (retyped, created)
+
+
+@pytest.mark.parametrize(
+    ("number", "retype_dropped", "status", "out", "err", "retyped"),
+    [
+        pytest.param(
+            "484",
+            False,
+            0,
+            "EDITED #484 kind=container\n",
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="retypes_through_the_forge",
+        ),
+        pytest.param(
+            "484",
+            True,
+            2,
+            "",
+            "ERROR: retype dropped (simulated)\n",
+            [],
+            id="dropped_retype_refuses",
+        ),
+        pytest.param(
+            "485", False, 2, "", "ERROR: #485 is not an open item\n", [], id="no_open_item"
+        ),
+    ],
+)
+def test_item_edit_kind_retypes_a_github_issue_or_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    number: str,
+    retype_dropped: bool,
+    status: int,
+    out: str,
+    err: str,
+    retyped: list[tuple[int, body.ItemKind]],
+) -> None:
+    """Issue #503 (ITEM-47): `item edit --kind` runs under
+    `storage = "github"` too, through the same forge retype `item new
+    --parent` uses, so `next`'s nested-container repair runs under both
+    storages; a retype the forge drops, or an item that is not open,
+    refuses exit 2."""
+    client = _item_new_github_client(monkeypatch, tmp_path, "")
+    client.board_issues = (
+        board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
+    )
+    client.fail_set_item_kind = retype_dropped
+
+    exit_code = issue_claim.main(["item", "edit", number, "--kind", "container"])
+
+    captured = capsys.readouterr()
+    assert (exit_code, captured.out, captured.err) == (status, out, err)
+    assert client.retyped_items == retyped
 
 
 @pytest.mark.parametrize(

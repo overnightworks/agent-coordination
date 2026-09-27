@@ -250,11 +250,11 @@ close: none
 
 SKIPPED
 #298: container; claim a child
-#299: nested container, which cut refuses; set its type Task and take slice "Scheibe Z"'s scope as its own
+#299: nested container, which cut refuses; run aco item edit 299 --kind task and claim it with slice "Scheibe Z"'s scope
 exit 3
 $ aco cut 299 --title "Scheibe Z"
 2> ERROR: #299 is itself a child of example/agent-coordination#298; nested containers are not supported
 exit 2
 ```
 
-With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. Under `storage = "state-ref"` one row reads that move repair too, the parent named by its item id: a state-ref item keeps the kind `item new` gave it (ITEM-13), so no command there could follow a retype. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
+The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; `aco claim 299 --scope <that row's paths>` then claims it. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.

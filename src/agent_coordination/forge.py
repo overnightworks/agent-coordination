@@ -360,6 +360,7 @@ class ForgeWriter(ForgeReader, Protocol):
 
     def set_item_kind(self, number: int, kind: ItemKind) -> None:
         """Retype existing item `number` to `kind` -- `item new --parent`
-        turning the Task it is about to give a first child into a Container
-        (issue #503); raises when the forge did not take the type."""
+        turning the Task it is about to give a first child into a Container,
+        and `item edit --kind` (issue #503); raises when the forge did not
+        take the type."""
         ...

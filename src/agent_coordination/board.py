@@ -118,6 +118,11 @@ class Issue:
     children_total: int | None = None
     blocked_by_count: int = 0
 
+    @property
+    def has_open_child(self) -> bool:
+        """Whether the forge's own child summary counts an open child."""
+        return self.children_total is not None and self.children_closed != self.children_total
+
 
 class BlockerState(StrEnum):
     """The state of one `blocked_by` dependency GitHub returns for an item."""
@@ -1445,7 +1450,7 @@ def _board_item(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
             ),
             childless_container_reason=_childless_container_reason(
-                childless_verdict, parsed.slices, config.storage
+                issue.number, childless_verdict, parsed.slices, config.storage
             ),
         )
     )
@@ -2403,34 +2408,37 @@ def childless_containers_with_uncut_rows(
 
 
 def _childless_container_reason(
-    verdict: ChildlessContainerVerdict | None, slices: tuple[SliceRow, ...], storage: Storage
+    number: int,
+    verdict: ChildlessContainerVerdict | None,
+    slices: tuple[SliceRow, ...],
+    storage: Storage,
 ) -> str | None:
-    """Why a container with no open child is neither cut nor closed (issue
-    #503), or `None` for every verdict `next` already names otherwise."""
+    """Why container `number`, with no open child, is neither cut nor closed
+    (issue #503), or `None` for every verdict `next` already names otherwise."""
     match verdict:
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):
-            return _nested_container_repair(nesting_parent, slices, storage)
+            return _nested_container_repair(number, nesting_parent, slices, storage)
         case _:
             return None
 
 
 def _nested_container_repair(
-    nesting_parent: IssueReference, slices: tuple[SliceRow, ...], storage: Storage
+    number: int, nesting_parent: IssueReference, slices: tuple[SliceRow, ...], storage: Storage
 ) -> str:
-    """The repair a childless container that is itself a child of
-    `nesting_parent` needs before its uncut `[[slice]]` rows can become work
-    (issue #503): `cut` refuses it, so `next` never proposes one and names
-    this instead -- its one row as its own scope and type `Task`, the shape
-    `start` accepts, or its rows moved up to that parent, named the way
-    `cut`'s own refusal names it. Under `state-ref` the move is the repair
-    for one row too: a state-ref item keeps the kind `item new` gave it
-    (ITEM-13), so a retype is advice nothing there can follow."""
-    if len(slices) == 1 and storage is Storage.GITHUB:
+    """The repair container `number` needs when it is itself a child of
+    `nesting_parent` and still carries uncut `[[slice]]` rows (issue #503):
+    `cut` refuses it, so `next` never proposes one and names this instead --
+    for its one row, the `item edit --kind task` both storages run (ITEM-47)
+    and a claim on that row's scope, the shape `claim`/`start` accept; for
+    more rows, their move up to that parent, named the way `cut`'s own
+    refusal names it."""
+    if len(slices) == 1:
         return (
-            "nested container, which cut refuses; set its type Task and take "
-            f'slice "{slices[0].title}"\'s scope as its own'
+            "nested container, which cut refuses; run aco item edit "
+            f"{item_argument(number, storage)} --kind task and claim it with "
+            f'slice "{slices[0].title}"\'s scope'
         )
     return (
         "nested container, which cut refuses; move its slice rows to "
