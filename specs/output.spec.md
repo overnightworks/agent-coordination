@@ -26,6 +26,7 @@ issue #432).
 | a refusal before the named command starts | OUT-01, OUT-05 |
 | a refusal the argument parser itself raises | OUT-01, OUT-06 |
 | `--repo` given a value not shaped OWNER/REPO | OUT-08 |
+| a long option spelled short of its full name | OUT-09 |
 
 ## The envelope
 
@@ -36,6 +37,7 @@ issue #432).
 - [ ] [OUT-06] A parser refusal on a command declaring `--json` -- an unknown flag, a missing required one, an unreadable positional -- prints this envelope, `invalid_usage`, exit `2` (see E-OUT-04).
 - [ ] [OUT-07] The exit code answers before the object does: a refusal is never exit `0`, so a caller reads the code, then `ok` and `reason`, then the payload keys.
 - [ ] [OUT-08] On every command, `--repo` not shaped OWNER/REPO refuses `repository must be OWNER/REPO, not '<value>'`, exit `2`, before any git or forge call; with `--json` as OUT-06 (see E-OUT-05).
+- [ ] [OUT-09] On every command, a long option spelled short of its full name is never read as that option: it is a parser refusal, exit `2`, with `--json` as OUT-06 (see E-OUT-06).
 - OUT-04 (retired 20.09.2026, issue #425): the `{"ok": false, "error": "<sentence>"}` fallback it kept for a command whose own spec cited no `OUT-nn` no longer exists; every `--json` command cites this file now.
 
 ## Never
@@ -45,7 +47,8 @@ issue #432).
 - `message` never carries structured data: every structured detail (`item`, `index`, `claim`, `checks`, and the like) is its own sibling key, never packed into the prose.
 - `message` never promises a stderr line beside the object: `ask`'s refusal prints `ERROR: <sentence>` there (E-OUT-02), `check <sha> --json` prints the object alone (`specs/check.spec.md`).
 - A parser refusal without `--json` never changes shape (issue #432): stdout stays empty and stderr carries argparse's own usage block and sentence, exactly as it did before the envelope reached this refusal at all.
-- A command that declares no `--json` never answers in this envelope (issue #432): `aco bootstrap --json` stays argparse's own text; an abbreviation of a declared `--json` does ask for it.
+- A command that declares no `--json` never answers in this envelope (issue #432): `aco bootstrap --json` stays argparse's own text, and so does `aco release 42 --merged --jso`, an abbreviation OUT-09 refuses.
+- An abbreviation never stands for a destructive flag (issue #502): `aco reset --conf --f` refuses before any read, never acting as `--confirm --force-unreadable`.
 - A `--repo` path, bare owner, third segment, or `.`/`..` name is never dropped for the checkout's own remote: it refuses by name (OUT-08, issue #465).
 - A non-zero exit never means a refusal on its own: a command may name a further code for an answer it did give, and its own spec owns that code.
 - `protect` never joins this envelope, migrated or not: its hook protocol (a silent exit `0`, or the deny object on exit `2`; PROT-01/PROT-02) is a permanent exception (`specs/protect.spec.md`).
@@ -121,3 +124,20 @@ exit 2
 ```
 
 Neither call reaches git: `origin` still carries no `refs/aco/state`.
+
+### E-OUT-06 -- an abbreviated option
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked
+
+```console
+$ aco reset --conf --f
+2> usage: aco [-h] [--version] [--repo REPO] ...
+2> aco: error: unrecognized arguments: --conf --f
+exit 2
+$ aco status --js --json
+2> ERROR: unrecognized arguments: --js
+{"ok": false, "reason": "invalid_usage", "message": "unrecognized arguments: --js"}
+exit 2
+```
+
+`refs/aco/state` is unchanged after the first call: no export, no delete.
