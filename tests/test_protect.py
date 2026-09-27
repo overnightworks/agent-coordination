@@ -2531,6 +2531,8 @@ def _real_main_checkout_with_session_settings(tmp_path: Path) -> Path:
     _real_git(repo, "add", "README.md", ".claude/settings.json")
     _real_git(repo, "commit", "-q", "-m", "initial")
     _push_repository_trunk(repo, "origin")
+    # The sealed helper initializes from an empty template, which carries no `.git/info/`.
+    (repo / ".git" / "info").mkdir(exist_ok=True)
     (repo / ".git" / "info" / "exclude").write_text("/.claude/settings.local.json\n")
     return repo
 

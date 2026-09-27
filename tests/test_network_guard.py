@@ -7,15 +7,13 @@ loopback port, so a push the guard failed to stop still ends on this machine.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
-from functools import cache
 from pathlib import Path
 
 import pytest
+from cli_fixtures import _real_git, _real_repository_with_bare_remote, sealed_git_environment
 from network_guard import GIT_ALLOW_PROTOCOL_ENV, UNREACHABLE_GH_HOST
 
 _PROJECT_CONFIGURATION = Path(__file__).parent.parent / "pyproject.toml"
@@ -47,41 +45,6 @@ def test_git_refuses_https_while_the_test_runs():
 )
 
 
-_OPERATOR_GIT_ROUTES = ("GIT_PROXY_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT")
-
-
-@cache
-def _repository_selecting_git_variables() -> frozenset[str]:
-    """Git's own list of the variables that select a repository (`GIT_DIR`,
-    `GIT_WORK_TREE`, ...), whose local configuration could rewrite a URL or
-    set a proxy."""
-    local_variables = subprocess.run(
-        ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
-    )
-    return frozenset(local_variables.stdout.split())
-
-
-def _machine_local_git_environment() -> dict[str, str]:
-    """The inherited environment without any route the operator configured:
-    no proxy, no operator repository or git configuration beyond the probed
-    repository's own, and an ssh that reads no config file, so a probe the
-    guard failed to stop still dials the loopback address it names."""
-    operator_git_variables = _repository_selecting_git_variables() | set(_OPERATOR_GIT_ROUTES)
-    inherited = {
-        name: value
-        for name, value in os.environ.items()
-        if not name.lower().endswith("_proxy")
-        and not name.startswith("GIT_CONFIG")
-        and name not in operator_git_variables
-    }
-    return inherited | {
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_SSH_COMMAND": f"ssh -F {os.devnull} -o BatchMode=yes",
-        "LC_ALL": "C",
-    }
-
-
 @pytest.fixture
 def hostile_operator_git_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An operator git template whose config would reroute a `file://` remote
@@ -96,41 +59,14 @@ def hostile_operator_git_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("GIT_TEMPLATE_DIR", str(template))
 
 
-def _machine_local_git(
-    directory: Path, *arguments: str, check: bool = True
+def _push_a_commit(
+    tmp_path: Path, remote_url: Callable[[Path], str]
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *arguments],
-        cwd=directory,
-        env=_machine_local_git_environment(),
-        capture_output=True,
-        text=True,
-        check=check,
-    )
-
-
-def _init_machine_local_repository(directory: Path, *arguments: str) -> None:
-    """`git init` from a known-empty template, so no operator template
-    (`GIT_TEMPLATE_DIR`, `init.templateDir`) seeds a URL rewrite or protocol
-    rule into the repository a proof then runs git in."""
-    with tempfile.TemporaryDirectory() as empty_template:
-        _machine_local_git(directory, "init", "-q", f"--template={empty_template}", *arguments)
-
-
-def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.CompletedProcess[str]:
-    bare_remote = tmp_path / "remote.git"
-    repository = tmp_path / "repository"
-    bare_remote.mkdir()
-    repository.mkdir()
-    _init_machine_local_repository(bare_remote, "--bare", "-b", "main")
-    _init_machine_local_repository(repository, "-b", "main")
-    _machine_local_git(
-        repository,
-        *("-c", "user.name=Test", "-c", "user.email=test@example.com"),
-        *("commit", "-q", "--allow-empty", "-m", "first"),
-    )
-    _machine_local_git(repository, "remote", "add", "origin", remote_url(bare_remote))
-    return _machine_local_git(repository, "push", "-q", "origin", "main", check=False)
+    """A first commit of the shared real-git repository pushed to
+    `remote_url` of its bare remote, the push allowed to fail."""
+    repository, bare_remote = _real_repository_with_bare_remote(tmp_path)
+    _real_git(repository, "commit", "-q", "--allow-empty", "-m", "first")
+    return _real_git(repository, "push", "-q", remote_url(bare_remote), "main", check=False)
 
 
 @pytest.mark.parametrize(
@@ -141,10 +77,13 @@ def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.Co
     ],
 )
 @pytest.mark.usefixtures("hostile_operator_git_template")
-def test_push_to_a_local_remote_still_works(
+def test_the_shared_helper_pushes_to_a_local_remote_despite_a_hostile_template(
     tmp_path: Path, remote_url: Callable[[Path], str]
 ) -> None:
-    push = _push_to(tmp_path, remote_url)
+    """The guard lets local remotes through, and the shared real-git helper
+    seeds nothing from the operator's template, whose rewrite would send the
+    `file://` push to a refused https port (#534 line 2)."""
+    push = _push_a_commit(tmp_path, remote_url)
 
     assert push.returncode == 0, push.stderr
 
@@ -157,7 +96,7 @@ def test_push_to_a_local_remote_still_works(
     ],
 )
 def test_push_to_a_non_local_remote_is_refused(tmp_path: Path, transport: str, url: str) -> None:
-    push = _push_to(tmp_path, lambda _bare_remote: url)
+    push = _push_a_commit(tmp_path, lambda _bare_remote: url)
 
     assert push.returncode != 0
     assert f"transport '{transport}' not allowed" in push.stderr
@@ -175,7 +114,7 @@ def test_a_refused_remote_probe_ignores_operator_proxies_when_the_guard_is_gone(
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.proxy")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", operator_proxy)
 
-    push = _push_to(tmp_path, lambda _bare_remote: "https://127.0.0.1:9/x.git")
+    push = _push_a_commit(tmp_path, lambda _bare_remote: "https://127.0.0.1:9/x.git")
 
     assert "127.0.0.1 port 9" in push.stderr
 
@@ -205,10 +144,10 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     operator_repository = tmp_path / "operator:temp"
     scratch = operator_repository / "scratch"
     scratch.mkdir(parents=True)
-    _init_machine_local_repository(operator_repository)
-    _machine_local_git(operator_repository, "config", "protocol.https.allow", "never")
+    _real_git(operator_repository, "init", "-q")
+    _real_git(operator_repository, "config", "protocol.https.allow", "never")
     # Its own repository ends discovery at the scratch directory, whatever encloses it.
-    _init_machine_local_repository(scratch)
+    _real_git(scratch, "init", "-q")
     monkeypatch.setenv("GIT_DIR", str(operator_repository / ".git"))
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.https.allow")
@@ -218,7 +157,7 @@ def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     probe.write_text(_SCRATCH_TEST_MODULE)
     unguarded_environment = {
         name: value
-        for name, value in _machine_local_git_environment().items()
+        for name, value in sealed_git_environment().items()
         if name != GIT_ALLOW_PROTOCOL_ENV
     }
     command = [
