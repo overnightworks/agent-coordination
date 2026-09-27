@@ -778,7 +778,7 @@ def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) 
     recorded `HEAD` as `recorded_head_ref` read it -- or, when `remote`
     never recorded one, the historical `{main, master}` guess, `remote`'s
     own before the local branch (issues #238, #304). A `RunContext` asks
-    this once per directory, and again only after its own fetch (issue
+    this once per directory, and again only after its run's fetch (issue
     #488), so a trunk is never resolved from a `HEAD` read before it."""
     if recorded_head is not None:
         return recorded_head
