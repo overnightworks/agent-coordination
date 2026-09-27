@@ -3084,6 +3084,11 @@ class TestCliStateRefForge:
                 MALFORMED_ID,
                 id="edit-kind-of-another",
             ),
+            pytest.param(
+                ["item", "edit", CHILD_A_ID, "--kind", "container"],
+                CONTAINER_ID,
+                id="edit-kind-of-a-child-under-a-malformed-parent",
+            ),
         ],
     )
     def test_a_malformed_item_leaves_every_other_item_working(
@@ -3098,9 +3103,9 @@ class TestCliStateRefForge:
         """Issue #447 proof 1: an item `item new --title ""` once wrote,
         planted by hand, no longer stops `item new` or `item show` of any
         other item -- its own child included, whose header needs only the
-        parent's id -- nor, issue #536 (ITEM-53, PIN-29), `item close` or
-        `item edit --kind` of an item it is neither, nor the parent or a
-        child of."""
+        parent's id -- nor, issue #536 (ITEM-53, PIN-29), `item close` of
+        an item it is neither, nor the parent or a child of, nor `item edit
+        --kind` of any item it is not a child of."""
         item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
