@@ -1600,7 +1600,9 @@ def test_main_checkout_root_refuses_a_linked_worktree_whose_git_directory_names_
     lane = _linked_lane_of(main, tmp_path)
     monkeypatch.chdir(lane)
 
-    with pytest.raises(ClaimError, match="cannot tell this repository's main checkout"):
+    with pytest.raises(
+        ClaimError, match=r"main checkout unknown: git directory .* names no checkout"
+    ):
         checkout.main_checkout_root(toplevel=lane)
 
 

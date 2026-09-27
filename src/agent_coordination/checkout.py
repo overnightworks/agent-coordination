@@ -1036,8 +1036,8 @@ def main_checkout_root(*, toplevel: Path) -> Path:
     if common_directory.name == ".git":
         return common_directory.parent
     raise ClaimError(
-        f"cannot tell this repository's main checkout from a linked worktree: its git "
-        f"directory {common_directory} names none; run start from the main checkout"
+        f"main checkout unknown: git directory {common_directory} names no checkout; "
+        "run start from the main checkout"
     )
 
 
