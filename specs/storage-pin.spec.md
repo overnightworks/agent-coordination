@@ -15,7 +15,9 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 
 | pin state \ trigger | any store command | `item new` | `item edit` / `item close` | `release --merged` | an id argument |
 |---|---|---|---|---|---|
-| `.agent-claim/board.toml` absent | PIN-32 | PIN-32 | PIN-32 | PIN-32 | — |
+| `.agent-claim/board.toml` absent, `origin` unconfigured | PIN-34 | PIN-34 | PIN-34 | PIN-34 | — |
+| `.agent-claim/board.toml` absent, the trunk tracks it | PIN-33 | PIN-33 | PIN-33 | PIN-33 | — |
+| `.agent-claim/board.toml` absent, the trunk too | PIN-32 | PIN-32 | PIN-32 | PIN-32 | — |
 | `.agent-claim/board.toml` present but untracked or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
@@ -35,7 +37,15 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 ## The pin and its precondition
 
-- [ ] [PIN-32] A store command with no `<path>` at all refuses `<path> does not exist in this checkout; merge a pull request adding only <path> into the default branch first, without aco` (E-PIN-32).
+- [ ] [PIN-32] With no `<path>` here or in `<trunk>`, a store command refuses `<path> does not exist in this checkout; merge a pull request adding only <path> into the default branch first, without aco` (E-PIN-32).
+- [ ] [PIN-33] A store command with no `<path>`, which `<trunk>` tracks, refuses `<path> does not exist in this checkout, but <trunk> tracks it; merge <trunk> into this branch` (E-PIN-33).
+- [ ] [PIN-34] With no `<path>`, an `origin` with no URL configured refuses `cannot determine the trunk: canonical remote 'origin' is not configured`, never PIN-32's sentence (E-PIN-34).
+
+With no `<path>`, no configuration names another canonical remote, so
+`<trunk>` is `origin`'s trunk as the last fetch left it, read without a
+fetch of its own -- `origin/main`, or the local `main` while `origin` has no
+remote-tracking branch at all.
+
 - [ ] [PIN-01] Any store command with a present but untracked or ignored `<path>` refuses `<path> is not tracked in this checkout, so its storage pin cannot be trusted: git add -f <path>` (E-PIN-01).
 - [ ] [PIN-02] A tracked `.agent-claim/board.toml` naming no `storage` key pins `storage = "github"`, the default every existing repository already reads.
 - [ ] [PIN-03] A tracked `.agent-claim/board.toml` naming a `storage` value outside `github`/`state-ref` refuses `board configuration <path> storage must be 'github' or 'state-ref'` (see E-PIN-02).
@@ -122,6 +132,28 @@ Setup: bare-remote, no `.agent-claim/board.toml` in the checkout at all
 ```console
 $ aco claim 1 --scope README.md
 2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco
+exit 2
+```
+
+### E-PIN-33 — a lane cut before the adoption merges the trunk
+
+Setup: bare-remote, branch `lane` cut at `main`'s first commit, then a commit adding `.agent-claim/board.toml` pushed to `origin/main`, and a worktree `<tmp>/lane` on `lane`
+
+```console
+$ cd <tmp>/lane
+$ aco claim 1 --scope README.md
+2> ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main tracks it; merge origin/main into this branch
+exit 2
+```
+
+### E-PIN-34 — without a pin, an unconfigured origin names itself
+
+Setup: E-PIN-33's, then `git remote remove origin`
+
+```console
+$ cd <tmp>/lane
+$ aco claim 1 --scope README.md
+2> ERROR: cannot determine the trunk: canonical remote 'origin' is not configured
 exit 2
 ```
 
