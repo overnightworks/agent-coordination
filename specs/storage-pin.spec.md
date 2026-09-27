@@ -36,11 +36,15 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 ## The pin and its precondition
 
-- [ ] [PIN-32] With no `<path>`, a store command refuses the removal sentence while this branch contains a `<trunk>` tracking `<path>`, the merge sentence while `<trunk>` alone tracks it, else the adoption one.
+- [ ] [PIN-32] Without `<path>`, a store command refuses removal while this branch's merge base with `<trunk>` and `<trunk>` itself track `<path>`, merge while `<trunk>` alone does, else adoption (sentences below).
 
-It writes nothing (see E-PIN-32, E-PIN-33, E-PIN-36). The removal sentence
+It writes nothing (see E-PIN-32, E-PIN-33, E-PIN-36, E-PIN-37). The merge
+base decides, so a branch that removed `<path>` itself is still told to
+restore it after a newer `<trunk>` is fetched, where a merge would keep the
+removal. The removal sentence
 is `<path> was removed on this branch; restore it with git checkout <trunk>
--- <path>`. The merge sentence is `<path> does not exist in this checkout, but <trunk>
+-- :/<path>`; its root-relative pathspec restores the file from any directory
+of the checkout. The merge sentence is `<path> does not exist in this checkout, but <trunk>
 tracks it; merge <trunk> into this branch`. The adoption sentence is `<path>
 does not exist in this checkout; merge a pull request adding only <path> into
 the default branch first, without aco (fetch first if the default branch may
@@ -185,8 +189,22 @@ Setup: E-PIN-33's, then in `<tmp>/lane` `git merge origin/main`, `git rm .agent-
 ```console
 $ cd <tmp>/lane
 $ aco claim 1 --scope README.md
-2> ERROR: .agent-claim/board.toml was removed on this branch; restore it with git checkout origin/main -- .agent-claim/board.toml
+2> ERROR: .agent-claim/board.toml was removed on this branch; restore it with git checkout origin/main -- :/.agent-claim/board.toml
 exit 2
+```
+
+### E-PIN-37 — a newer trunk still restores the pin the branch removed
+
+Setup: E-PIN-36's, then a further commit pushed to `origin/main` and fetched, and a directory `<tmp>/lane/docs`
+
+```console
+$ cd <tmp>/lane
+$ aco claim 1 --scope README.md
+2> ERROR: .agent-claim/board.toml was removed on this branch; restore it with git checkout origin/main -- :/.agent-claim/board.toml
+exit 2
+$ cd docs
+$ git checkout origin/main -- :/.agent-claim/board.toml
+exit 0
 ```
 
 ### E-PIN-02 — an unrecognized storage value

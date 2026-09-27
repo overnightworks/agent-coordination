@@ -91,6 +91,18 @@ def current_branch(*, directory: Path | None = None) -> str:
     return _git_output(["branch", "--show-current"], directory=directory)
 
 
+DETACHED_HEAD_REFUSAL = "HEAD is detached; check out the lane branch first"
+
+
+def attached_branch(checked_out: str) -> str:
+    """`checked_out`, a checkout's `current_branch`, as the lane branch a
+    claim is made on; a detached HEAD, which has none, refuses by name
+    before any claim field is built from it (issue #526)."""
+    if not checked_out:
+        raise ClaimError(DETACHED_HEAD_REFUSAL)
+    return checked_out
+
+
 # `git rev-parse --verify --quiet <ref>` (git(1)): exit 1 is the one
 # documented "does not resolve to a single object" outcome under `--quiet`
 # -- the same single-defined-exit contract `path_is_tracked` already reads
@@ -372,11 +384,11 @@ def _validate_worktree_branch(
     `_refuse_shared_checkout` below, so a rescope invoked from a foreign cwd
     is not silently judged by the wrong checkout.
     """
+    current = attached_branch(current_branch(directory=directory))
     if is_default_branch(branch, default_branch):
         raise ClaimError(
             f"{ISOLATED_NON_MAIN_BRANCH_REFUSAL}{_worktree_repair_instruction(repair, branch=None)}"
         )
-    current = current_branch(directory=directory)
     git_directory = Path(_git_output(["rev-parse", "--git-dir"], directory=directory)).resolve()
     common_directory = Path(
         _git_output(["rev-parse", "--git-common-dir"], directory=directory)
@@ -1037,6 +1049,19 @@ def fast_forward_default_branch(trunk: str, *, directory: Path) -> None:
         raise ClaimError(process.git_failure_detail(result))
 
 
+def merge_base(first: str, second: str, *, directory: Path) -> str | None:
+    """The best common ancestor commit of `first` and `second` in
+    `directory` (issue #524: the trunk commit a branch last merged or was
+    cut from), or `None` for unrelated histories, which `git merge-base`
+    alone answers with exit 1."""
+    result = _git_run(["merge-base", first, second], directory=directory)
+    if result.exit_status == 1:
+        return None
+    if result.exit_status != 0:
+        raise ClaimError(process.git_failure_detail(result))
+    return result.stdout.decode().strip()
+
+
 def resolved_agent(explicit: str | None) -> str:
     if explicit is not None:
         return _outbound_text(explicit, "agent", maximum=128)
@@ -1291,7 +1316,7 @@ def existing_start_worktree(path: Path, branch: str) -> bool:
     if existing is None:
         raise ClaimError(NOT_A_WORKTREE_REFUSAL)
     _refuse_foreign_worktree(path, existing)
-    if existing.branch != branch:
+    if attached_branch(existing.branch) != branch:
         raise ClaimError(
             f"worktree {path} exists on branch {existing.branch!r}, not {branch!r}; "
             f"{_CHOOSE_A_DIFFERENT_WORKTREE_REPAIR}"

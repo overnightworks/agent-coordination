@@ -276,7 +276,7 @@ def _resolved_claim_branch(arguments: argparse.Namespace, *, directory: Path | N
     request) both bind to, so it stays a single owner rather than two copies
     of the same git call and validation."""
     branch = (
-        checkout.current_branch(directory=directory)
+        checkout.attached_branch(checkout.current_branch(directory=directory))
         if arguments.branch is None
         else arguments.branch
     )

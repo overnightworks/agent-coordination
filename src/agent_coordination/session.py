@@ -65,9 +65,11 @@ def _absent_board_config_refusal(toplevel: Path) -> str:
     """The repair for a checkout at `toplevel` with no board configuration
     at all. With none to name it, the canonical remote is the default one:
     unconfigured, it refuses by name (issue #516). When its trunk tracks the
-    configuration, a branch already containing that trunk removed the file
-    itself and restores it (issue #522); any other branch was cut before the
-    adoption and only needs the trunk merged in (issue #520). Otherwise --
+    configuration, a branch whose merge base with that trunk tracks it too
+    removed the file itself and restores it (issue #522) -- also after a
+    newer trunk was fetched, which a merge could not restore, since the
+    branch's own removal wins (issue #524); any other branch was cut before
+    the adoption and only needs the trunk merged in (issue #520). Otherwise --
     including a trunk that does not resolve, which tracks nothing -- the
     repository was never adopted (issue #505)."""
     remote = board.BoardConfig().canonical_remote
@@ -82,14 +84,23 @@ def _absent_board_config_refusal(toplevel: Path) -> str:
             "(fetch first if the default branch may already carry it)"
         )
     trunk_name = trunk.removeprefix("refs/remotes/")
-    if checkout.branch_merged_into_default(trunk, trunk="HEAD", directory=toplevel):
+    if _branch_removed_board_config(trunk, toplevel):
         return (
             f"{board.CONFIG_PATH} was removed on this branch; restore it with "
-            f"git checkout {trunk_name} -- {board.CONFIG_PATH}"
+            f"git checkout {trunk_name} -- :/{board.CONFIG_PATH}"
         )
     return (
         f"{board.CONFIG_PATH} does not exist in this checkout, but {trunk_name} "
         f"tracks it; merge {trunk_name} into this branch"
+    )
+
+
+def _branch_removed_board_config(trunk: str, toplevel: Path) -> bool:
+    """Whether the checkout's branch once held the board configuration from
+    `trunk`: their merge base tracks it (issue #524)."""
+    base = checkout.merge_base("HEAD", trunk, directory=toplevel)
+    return base is not None and checkout.path_is_tracked(
+        board.CONFIG_PATH.as_posix(), directory=toplevel, revision=base
     )
 
 

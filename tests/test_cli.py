@@ -2280,6 +2280,52 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
     assert "removed worktree" not in err
 
 
+@pytest.mark.parametrize(
+    ("run_inside_the_worktree", "arguments"),
+    [
+        pytest.param(True, ["claim", "314", "--scope", "base.txt"], id="claim"),
+        pytest.param(
+            True,
+            ["claim", "314", "--scope", "base.txt", "--branch", "claude/issue-314-detached"],
+            id="claim-with-branch",
+        ),
+        pytest.param(
+            True,
+            ["claim", "314", "--scope", "base.txt", "--branch", "main"],
+            id="claim-with-trunk-branch",
+        ),
+        pytest.param(False, ["start", "314"], id="start"),
+    ],
+)
+def test_a_detached_head_is_named_and_nothing_is_written(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    run_inside_the_worktree: bool,
+    arguments: list[str],
+) -> None:
+    """Issue #526 (CLM-33, START-29): `claim` in a linked worktree on a
+    detached HEAD, and `start` finding one at its computed path, refuse by
+    naming the detached HEAD -- never a claim marker field -- and write no
+    claim, worktree, or branch."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    fake = _patch_store_write(monkeypatch)
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _real_git(repo, "worktree", "add", "-q", "--detach", str(worktree))
+    caller = worktree if run_inside_the_worktree else repo
+    _redirect_toplevel(monkeypatch, caller)
+    monkeypatch.chdir(caller)
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, *arguments])
+
+    assert (status, capsys.readouterr().err) == (
+        2,
+        "ERROR: HEAD is detached; check out the lane branch first\n",
+    )
+    assert (_worktrees_and_branches(repo), fake.transitions) == (before, [])
+
+
 def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
     """Another agent's claim on #314 lands between `start`'s check phase and
     its one ledger write."""
@@ -17998,14 +18044,39 @@ class _AbsentPinLane:
     """How a lane worktree without `.agent-claim/board.toml` came to be
     (PIN-32): whether `main` gained the adoption commit after `lane` was
     cut, how `origin` carries `main`, whether this clone's fetch of it
-    predates the adoption, and whether `lane` merged `origin/main` and then
-    ran `git rm` on the file."""
+    predates the adoption, whether `lane` merged `origin/main` and then
+    ran `git rm` on the file, and whether a newer `main` was fetched after
+    that."""
 
     adopted: bool = True
     trunk_resolves: bool = True
     origin_kept: bool = True
     fetch_is_stale: bool = False
     merged_then_removed: bool = False
+    trunk_moved_on: bool = False
+
+
+_RESTORE_BOARD_CONFIG_ERROR = (
+    "ERROR: .agent-claim/board.toml was removed on this branch; restore it with "
+    "git checkout origin/main -- :/.agent-claim/board.toml\n"
+)
+
+
+def _run_printed_restore_from_a_subdirectory(refusal: str, lane: Path) -> None:
+    """Runs the command PIN-32's removal sentence prints, verbatim, from a
+    directory below the checkout's root (issue #526)."""
+    subdirectory = lane / "docs"
+    subdirectory.mkdir()
+    printed_command = refusal.split("restore it with ", 1)[1]
+    _real_git(subdirectory, *shlex.split(printed_command)[1:])
+
+
+def _advance_origin_main(repository: Path, lane: Path) -> None:
+    (repository / "later.txt").write_text("later\n")
+    _real_git(repository, "add", "later.txt")
+    _real_git(repository, "commit", "-q", "-m", "later trunk work")
+    _push_repository_trunk(repository, "origin")
+    _real_git(lane, "fetch", "-q", "origin")
 
 
 @pytest.mark.parametrize(
@@ -18019,9 +18090,13 @@ class _AbsentPinLane:
         ),
         pytest.param(
             _AbsentPinLane(merged_then_removed=True),
-            "ERROR: .agent-claim/board.toml was removed on this branch; restore it with "
-            "git checkout origin/main -- .agent-claim/board.toml\n",
+            _RESTORE_BOARD_CONFIG_ERROR,
             id="removed-after-merging-the-trunk",
+        ),
+        pytest.param(
+            _AbsentPinLane(merged_then_removed=True, trunk_moved_on=True),
+            _RESTORE_BOARD_CONFIG_ERROR,
+            id="removed-after-merging-then-a-newer-trunk-fetched",
         ),
         pytest.param(
             _AbsentPinLane(adopted=False), _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"
@@ -18043,7 +18118,7 @@ class _AbsentPinLane:
         ),
     ],
 )
-def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
+def test_a_checkout_without_the_pin_is_told_its_pin_32_repair(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
@@ -18055,7 +18130,9 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
     commit lacks `.agent-claim/board.toml` although the trunk tracks it, so
     PIN-32 refuses its merge sentence, never its adoption sentence; a lane
     that merged the trunk and then removed the file is told to restore it
-    instead (issue #522). With no
+    instead (issue #522), also once a newer trunk is fetched, since the merge
+    base still tracks the file (issue #524), and following that sentence
+    brings the file back, run from a subdirectory (issue #526). With no
     ref tracking it the adoption sentence stands -- also when the trunk does
     not resolve, a `trunk` branch pushed without `origin/HEAD`, or when this
     clone's fetch predates the adoption, which the sentence's parenthesis
@@ -18084,6 +18161,8 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
         _real_git(lane, "merge", "-q", "origin/main")
         _real_git(lane, "rm", "-q", ".agent-claim/board.toml")
         _real_git(lane, "commit", "-q", "-m", "drop the pin")
+    if lane_history.trunk_moved_on:
+        _advance_origin_main(repository, lane)
     _redirect_toplevel(monkeypatch, lane)
     monkeypatch.chdir(lane)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
@@ -18094,6 +18173,10 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
 
     assert (status, capsys.readouterr().err) == (2, refusal)
     assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
+    if refusal == _RESTORE_BOARD_CONFIG_ERROR:
+        _run_printed_restore_from_a_subdirectory(refusal, lane)
+        tracked = _real_git(lane, "ls-files", ".agent-claim/board.toml").stdout
+        assert tracked == ".agent-claim/board.toml\n"
 
 
 @pytest.mark.parametrize("item", ["5", "16777216"], ids=["in-the-id-space", "past-the-id-space"])
