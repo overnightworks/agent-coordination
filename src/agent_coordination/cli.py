@@ -3741,11 +3741,11 @@ def _print_item_close_result(result: _ItemCloseResult, *, as_json: bool) -> None
             parent_closable=result.parent_closable,
         )
         if isinstance(result.freed, str):
-            print(result.freed, file=sys.stderr)
+            _print_board_read_hint(result.freed, as_json=True)
         return
     print(f"CLOSED {result.item_id}")
     if isinstance(result.freed, str):
-        print(result.freed)
+        _print_board_read_hint(result.freed, as_json=False)
     else:
         # `item close` only ever runs under `storage = "state-ref"`
         # (`_cmd_item_close`'s own refusal otherwise), so `freed:`'s own id
@@ -6555,6 +6555,14 @@ def _board_read_after_write(read: Callable[[], _BoardRead]) -> _BoardRead | str:
         )
 
 
+def _print_board_read_hint(hint: str, *, as_json: bool) -> None:
+    """Print `_board_read_after_write`'s hint on the channel both of its
+    callers share: stderr under `--json`, so stdout stays one JSON document,
+    and stdout in text mode, in place of the lines the read would have
+    printed."""
+    print(hint, file=sys.stderr if as_json else sys.stdout)
+
+
 def _landing_report(
     context: RunContext,
     identity: protocol.ClaimIdentity,
@@ -6606,12 +6614,12 @@ def _print_release_result(report: ReleaseReport, *, as_json: bool) -> None:
     if as_json:
         _release_json(report, landing)
         if hint is not None:
-            print(hint, file=sys.stderr)
+            _print_board_read_hint(hint, as_json=True)
         return
     print(f"RELEASED {_claim_subject(selected, report.storage)}: {selected.claim_id}")
     if report.client is not None:
         if hint is not None:
-            print(hint)
+            _print_board_read_hint(hint, as_json=False)
         else:
             assert landing is not None
             print(_release_freed_line(landing.freed, report.storage))
