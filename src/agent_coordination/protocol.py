@@ -366,8 +366,8 @@ def valid_scope(scope: object) -> tuple[str, ...]:
         if (
             len(path) > MAX_SCOPE_PATH_LENGTH
             or "\\" in path
-            or _has_control_character(path)
-            or any(map(is_display_control, path))
+            # A path also refuses TAB, which a display keeps (CLAIM-20).
+            or any(character == "\t" or is_display_control(character) for character in path)
         ):
             raise InvalidClaimMarkerError(SCOPE_ENTRIES_MUST_BE_CANONICAL)
         parsed = PurePosixPath(path)
