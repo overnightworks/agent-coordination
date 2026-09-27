@@ -2408,6 +2408,8 @@ def test_commit_transition_a_local_two_racer_claim_on_different_keys_both_land(
 def test_commit_transition_same_key_second_racer_names_the_holder(
     bare_remote: Path, worktree: Path
 ) -> None:
+    """A refusal met before any push was sent stays a plain conflict, never a
+    sent write: `start` removes what it built on that type alone (START-18)."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
         observed=fresh_observation(worktree, bare_remote),
@@ -2418,12 +2420,14 @@ def test_commit_transition_same_key_second_racer_names_the_holder(
     intent = _issue_claim_intent(42, agent="Grace", claim_id="a2", operation_id="op-2")
     subject = store.ClaimTransitionSubject("claim issue 42", item="42")
     observed = fresh_observation(worktree, bare_remote)
-    with pytest.raises(protocol.ClaimUnavailableError, match="is claimed by Ada"):
+    with pytest.raises(protocol.ClaimUnavailableError, match="is claimed by Ada") as raised:
         store.commit_transition(
             observed=observed,
             subject=subject,
             intent=intent,
         )
+
+    assert type(raised.value) is protocol.ClaimConflictError
 
 
 def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_stuck_lock(
