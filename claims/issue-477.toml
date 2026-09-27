@@ -1,8 +1,0 @@
-claim_id = "8d203b1b4a39401685afe728e0478a1a"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "3440caf986fa11eb3a3c47d895297282be11358e"
-branch = "claude/issue-477-runcontext-b1-observation"
-scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/ref-store-cas.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board_serve.py", "tests/test_cli.py", "tests/test_session.py", "tests/test_state_board.py", "tests/test_store.py"]
-opened_commit = "ce2b3e6314a4faa1a06ca059e0c00b8753d43d65"
-whole_reason = "eine Beobachtung je Verzeichnis im RunContext, aus der Board und CLI-Prüfungen lesen"
