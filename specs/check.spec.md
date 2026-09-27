@@ -93,7 +93,7 @@ LAND-58, LAND-60, LAND-68).
 
 - [ ] [CHECK-12] `<sha>` naming a trunk commit whose own trailer classifies prints `<sha> declares <declaration>` on stdout, exit `0` (see E-CHECK-08).
 - [ ] [CHECK-13] A `<sha>` the trunk grammar refuses prints `REFUSED: <sha> <trunk defect sentence>` on stderr, exit `2`, and reads no forge at all (see E-CHECK-08).
-- [ ] [CHECK-15] A canonical `<remote>` never configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, never a local branch (see E-CHECK-09).
+- [ ] [CHECK-15] A canonical `<remote>` with no URL configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, never a local branch (see E-CHECK-09).
 
 ## No checkout, no read
 
@@ -247,7 +247,7 @@ exit 2
 
 ### E-CHECK-09 — a canonical remote the checkout never configured
 
-Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, `<sha>` an unpushed local commit carrying `No-Item: docs`
+Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, `<sha>` an unpushed local commit carrying `No-Item: docs`; the same holds when `hub` has only a URL-less line such as a global `prune = true`, and `refs/remotes/hub/*` left behind
 
 ```console
 $ aco check <sha>

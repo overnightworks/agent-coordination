@@ -71,7 +71,7 @@ included.
 does, before either reads a single issue -- cited there, not restated.
 
 - [ ] [BOARD-02] A canonical remote whose host is not GitHub refuses `ERROR: no forge adapter for host <host>`, exit `2`, before any GitHub read is made (see E-BOARD-01).
-- [ ] [BOARD-53] A canonical `<remote>` never configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-BOARD-20).
+- [ ] [BOARD-53] A canonical `<remote>` with no URL configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-BOARD-20).
 - [ ] [BOARD-01] `board` reaches the same absent- or untracked-`.agent-claim/board.toml` refusal `specs/storage-pin.spec.md` owns (PIN-01/PIN-32), exit `2`, before the host check above ever runs.
 - [ ] [BOARD-42] Under `storage = "state-ref"`, `board`/`next`/`rulings` resolve the state-ref forge like `item show`/`edit`/`close`; `--repo` there refuses the same as those (PIN-04, PIN-05).
 
@@ -170,7 +170,7 @@ exit 2
 
 ### E-BOARD-20 — a canonical remote the checkout never configured
 
-Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`
+Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`, and `refs/remotes/hub/*` left behind
 
 ```console
 $ aco board --json

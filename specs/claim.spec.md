@@ -26,6 +26,7 @@ sentence.
 | state \ trigger | `aco claim <n> --scope P` | `aco claim <n>` (no `--scope`) | `aco claim` (lane) |
 |---|---|---|---|
 | shared main checkout, or trunk branch | CLM-01, CLM-02 | CLM-01, CLM-02 | CLM-01, CLM-02 |
+| canonical remote with no URL configured | CLM-32 | CLM-32 | CLM-32 |
 | claim branch/base mismatch the checkout | CLM-03, CLM-04, CLM-20 | CLM-03, CLM-04, CLM-20 | CLM-03, CLM-04, CLM-20 |
 | dirty working tree | CLM-05 | CLM-05 | CLM-05 |
 | no `--scope` given | — | CLAIM-53, CLAIM-55 | CLM-06 |
@@ -60,7 +61,8 @@ CLM-01 and CLM-02 both end with the same fix pointer, `; run git worktree add
 to the clause each names below.
 
 - [ ] [CLM-01] Off an isolated worktree, claim refuses `build claims require an isolated non-main worktree branch` plus the fix pointer above, exit `2`.
-- [ ] [CLM-29] CLM-01's default branch is the one the canonical remote's `HEAD` records; with none recorded, or one naming no branch that resolves, `main` and `master` count as default.
+- [ ] [CLM-29] CLM-01's default branch is the one the canonical remote's `HEAD` records; with none recorded, or one naming no branch that resolves, `main` and `master` count as default; see CLM-32 first.
+- [ ] [CLM-32] A canonical `<remote>` with no URL configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, before CLM-01 (see E-CLM-09).
 - [ ] [CLM-30] CLM-01, CLM-02, CLM-03 and CLM-05 are judged after the board configuration is read, so its PIN-01/PIN-32 refusal comes first; CLM-04 and CLM-20 come before it.
 - [ ] [CLM-02] Sharing main's git dir, claim refuses `build claims require a linked isolated worktree checkout` plus the fix pointer above, exit `2`.
 - [ ] [CLM-03] A `--branch` differing from the checkout's own current branch refuses `claim branch '<branch>' does not match checkout branch '<current>'`, exit `2`.
@@ -218,5 +220,19 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"`, a linked worktree on 
 $ aco claim 42 --scope src/x.py --json
 2> ERROR: item 'aco-00002a' was written since it was read (expected <oid>, found '<oid>'); re-read and retry
 {"ok": false, "reason": "unavailable", "message": "item 'aco-00002a' was written since it was read (expected <oid>, found '<oid>'); re-read and retry"}
+exit 2
+```
+
+### E-CLM-09 — a canonical remote with no URL is named before the checkout check
+
+Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, a global `[remote "hub"] prune = true`, `refs/remotes/hub/HEAD` left behind naming `main`, a linked worktree on `main`
+
+```console
+$ aco claim 42 --scope src/x.py
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
+exit 2
+$ aco claim 42 --scope src/x.py --json
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
+{"ok": false, "reason": "unavailable", "message": "cannot determine the trunk: canonical remote 'hub' is not configured"}
 exit 2
 ```

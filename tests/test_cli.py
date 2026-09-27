@@ -14697,7 +14697,7 @@ def test_a_trunk_reader_names_a_canonical_remote_the_clone_never_configured(
     builds nothing, the claim still stands and the forge closed nothing
     (START-28, REL-39). A `hub` git lists only through a URL-less config
     line, its refs left behind, is not configured either (issue #512), and
-    `claim` names it before its checkout check (CLM-29)."""
+    `claim` names it before its checkout check (CHECK-15, BOARD-53, CLM-32)."""
     argv = arrange(monkeypatch, tmp_path)
     repo = tmp_path / "repo"
     unconfigure_hub(monkeypatch, repo)
