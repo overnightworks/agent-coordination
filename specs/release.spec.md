@@ -48,6 +48,7 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | successful release, text output | REL-18 | REL-18 | REL-18 |
 | successful release, `--json` | REL-19, REL-36 | REL-19, REL-35, REL-36 | REL-19, REL-36 |
 | landing board read resolves | — | REL-20 | — |
+| the `next:` item's title holds a display control | — | REL-40 | — |
 | landing board read hits an unreachable forge | — | REL-22 | — |
 | no landing to report | — | — | REL-21 |
 | any refusal past the parser, with `--json` | REL-24 | REL-24 | REL-24 |
@@ -100,6 +101,7 @@ this file owns only when they appear at all.
 - [ ] [REL-36] `outcome` is this release's own prose: `"merged #<n>"`, `"abandoned: <explanation>"`, or `"landed <sha>"` (`storage = "state-ref"`) -- `reason` still reads `merged` for that last one too.
 - [ ] [REL-35] A `--merged` release's `--json` object also carries `worktree`, the identical text its printed `worktree:` line shows (REL-25..REL-34), present only for `--merged` (see E-REL-17).
 - [ ] [REL-20] A resolved `--merged` landing adds LAND-49's `freed:`/`next:` lines after `RELEASED` in text, or its keys to `--json`, present only then (see E-REL-02).
+- [ ] [REL-40] The text `next:` line shows `<title>` with each display control escaped (NEXT-37): `a‮b` prints as typed, `Größe` and TAB as they are.
 - [ ] [REL-21] `--abandoned` never resolves the forge, reads the board, or prints `freed`/`next`/`hint` (LAND-39); its `--json` object carries neither key.
 - [ ] [REL-22] A `--merged` release whose post-commit board read fails prints LAND-38's `hint:` line, on stdout in text or stderr with `--json`; `freed`/`next` omitted (LAND-50) (see E-REL-06).
 - [ ] [REL-24] A release refusal past the parser (every ID but REL-01) prints `specs/output.spec.md`'s envelope, `reason` `precondition_failed`, exit `2`; REL-06..08 through OUT-05 (see E-REL-07).

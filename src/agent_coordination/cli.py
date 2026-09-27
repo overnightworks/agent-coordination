@@ -1547,7 +1547,8 @@ def _parent_closable_line(number: int | None, storage: body.Storage) -> str | No
 def _release_next_line(item: board.BoardItem | None, storage: body.Storage) -> str:
     if item is None:
         return "next: none"
-    return f"next: {board.item_label(item.number, storage)} score {item.score}: {item.title}"
+    label = board.item_label(item.number, storage)
+    return f"next: {label} score {item.score}: {board.terminal_text(item.title)}"
 
 
 def _merged_pull_request_floor(issues: tuple[board.Issue, ...], now: datetime) -> datetime:
@@ -1903,12 +1904,14 @@ def _rulings_line_json(line: body.ExpectationLine) -> dict[str, object]:
 
 def _rulings_line_text(line: body.ExpectationLine) -> str:
     state = body.expectation_line_state(line)
-    return f"  {line.index} {state}: {body.expectation_line_summary(line)}"
+    summary = board.terminal_text(body.expectation_line_summary(line))
+    return f"  {line.index} {state}: {summary}"
 
 
 def _rulings_row_text(row: _RulingsRow, storage: body.Storage) -> str:
     label = board.item_label(row.item.number, storage)
-    header = f"{label} {row.progress.open}/{row.progress.total}: {row.item.title}"
+    title = board.terminal_text(row.item.title)
+    header = f"{label} {row.progress.open}/{row.progress.total}: {title}"
     return "\n".join((header, *(_rulings_line_text(line) for line in row.lines)))
 
 
@@ -2232,7 +2235,7 @@ class SliceCheck:
 
     def render(self) -> str:
         prefix = "ERROR" if self.level == "error" else "WARNING"
-        return f"{prefix}: {self.text}"
+        return f"{prefix}: {board.terminal_text(self.text)}"
 
     def as_json(self) -> dict[str, object]:
         return {

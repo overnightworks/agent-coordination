@@ -7046,6 +7046,118 @@ def test_state_ref_next_shows_foreign_title_and_next_line_as_its_format_carries_
     assert read_title_and_next(capsys.readouterr().out) == shown
 
 
+def _release_freeing_titled(
+    monkeypatch: pytest.MonkeyPatch, _tmp_path: Path, title: str
+) -> list[str]:
+    """A `--merged` release that frees one item titled `title`, its `next:`."""
+    client = merged_release_client(monkeypatch, body="Work-Item: #72\n\nCloses #72")
+    client.closed_issues.add(WORK_ITEM_ISSUE)
+    monkeypatch.setattr(issue_claim, "_fetch_issue_reference", _LIVE_FETCH_ISSUE_REFERENCE)
+    freed, client.board_dependencies = blocked_issue(81, title, _landed_dependency())
+    client.board_issues = (freed,)
+    return ["--repo", REPOSITORY, "release", str(WORK_ITEM_ISSUE), "--merged", "12"]
+
+
+def _rulings_of_titled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, title: str) -> list[str]:
+    """One item titled `title` whose one open expectation line says `title`."""
+    contract = complete_contract("Rule it.", expectation=[proposed_expectation(title)])
+    _configured_board_client(monkeypatch, tmp_path, open_issues=(board_issue(10, title, contract),))
+    _write_block_pin(tmp_path)
+    return ["--repo", REPOSITORY, "rulings"]
+
+
+def _claim_past_titled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, title: str) -> list[str]:
+    """A claim of #10 past a higher-ranked #11 titled `title`, out of order."""
+    lower = board_issue(10, "Lower work", complete_contract("Claim #10."))
+    top = board_issue(11, title, complete_contract("Claim #11.", scope=["src/top.py"]))
+    dependent, dependent_blockers = blocked_issue(
+        12, "Depends on top", block_dependency(11), next_step="Claim #12."
+    )
+    _configured_board_client(
+        monkeypatch, tmp_path, open_issues=(lower, top, dependent), dependencies=dependent_blockers
+    )
+    reason = "hotfix first"
+    monkeypatch.setattr(
+        issue_claim,
+        "_request",
+        lambda _arguments, **_kwargs: replace(
+            request(issue=10, scope=("src/lower.py",)), out_of_order_reason=reason
+        ),
+    )
+    return [
+        "--repo",
+        REPOSITORY,
+        "claim",
+        "10",
+        "--agent",
+        "Codex Sol",
+        "--scope",
+        "src/lower.py",
+        "--out-of-order",
+        reason,
+    ]
+
+
+def _next_under_board_config_keyed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, key: str
+) -> list[str]:
+    """`next` against a board configuration carrying the unknown key `key`."""
+    _configured_board_client(monkeypatch, tmp_path)
+    (tmp_path / ".agent-claim").mkdir()
+    (tmp_path / ".agent-claim" / "board.toml").write_text(
+        f"{json.dumps(key, ensure_ascii=False)} = 1\n", encoding="utf-8"
+    )
+    return ["--repo", REPOSITORY, "next"]
+
+
+@pytest.mark.parametrize(
+    ("arrange", "shown_as"),
+    [
+        pytest.param(_release_freeing_titled, "next: #81 score {score}: {escaped}\n", id="release"),
+        pytest.param(_rulings_of_titled, "#10 1/1: {escaped}\n", id="rulings"),
+        pytest.param(
+            _claim_past_titled,
+            "WARNING: higher-priority actionable item #11 (score {score}) is free: {escaped};",
+            id="claim-out-of-order-warning",
+        ),
+        pytest.param(
+            _next_under_board_config_keyed,
+            "ERROR: board configuration {config} has unknown top-level key {escaped}\n",
+            id="board-config-unknown-key",
+        ),
+    ],
+)
+def test_one_line_printers_show_foreign_text_as_next_escapes_it(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path, str], list[str]],
+    shown_as: str,
+) -> None:
+    """Issue #540 lines 1 and 2: `release`'s `next:` line, the `rulings`
+    text, `claim`'s out-of-order warning and the board configuration's
+    unknown-key refusal show RLO, U+061C, U+2060 and a tag character as
+    their printable escapes, while TAB and the Umlaut stay as they are."""
+    foreign = (
+        "Über\N{RIGHT-TO-LEFT OVERRIDE}RLO\N{ARABIC LETTER MARK}ALM"
+        "\N{WORD JOINER}WJ\N{TAG LATIN CAPITAL LETTER A}TAG\tGröße"
+    )
+    escaped = (
+        "Über\N{REVERSE SOLIDUS}u202eRLO\N{REVERSE SOLIDUS}u061cALM"
+        "\N{REVERSE SOLIDUS}u2060WJ\N{REVERSE SOLIDUS}U000e0041TAG\tGröße"
+    )
+    arguments = arrange(monkeypatch, tmp_path, foreign)
+
+    issue_claim.main(arguments)
+    captured = capsys.readouterr()
+    printed = captured.out + captured.err
+
+    assert _raw_terminal_controls(printed) == set()
+    expected = re.escape(shown_as).replace(r"\{escaped\}", re.escape(escaped))
+    expected = expected.replace(r"\{score\}", r"-?\d+").replace(r"\{config\}", r"\S+")
+    assert re.search(expected, printed), printed
+
+
 def test_state_ref_next_claim_in_a_skipped_reason_runs_past_a_higher_ranked_item(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
