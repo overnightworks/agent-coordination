@@ -2495,7 +2495,7 @@ ChildlessContainerVerdict = (
 
 
 def _carries_line_break(title: str) -> bool:
-    return "\n" in title or "\r" in title
+    return len(title.splitlines()) > 1
 
 
 def _childless_container_verdict(

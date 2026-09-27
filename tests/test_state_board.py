@@ -371,6 +371,29 @@ _EDIT_TARGET_PROJECTION = _Projection("Ship the target.", "Land it.", "Target is
 _EDIT_BLOCKER_PROJECTION = _Projection("Ship the blocker.", "Land it.", "Blocker is done.")
 
 
+def _edit_target_body(
+    *,
+    blocked_by: tuple[str, ...] = (),
+    record_title: str = "Target",
+    slice_title: str | None = None,
+) -> str:
+    """A body piped to `item edit` of the target, its titles written as TOML
+    `\\uXXXX` escapes (JSON's, which TOML shares) so a control character
+    reaches the reader decoded, as an operator's escaped TOML delivers it."""
+    data: dict[str, object] = {
+        **_EDIT_TARGET_PROJECTION.block_data(),
+        "record": _record(title="RECORD-TITLE", state="open", kind="task", blocked_by=blocked_by),
+    }
+    if slice_title is not None:
+        data["slice"] = [{"index": 1, "title": "SLICE-TITLE"}]
+    block = (
+        render_block(data)
+        .replace('"RECORD-TITLE"', json.dumps(record_title))
+        .replace('"SLICE-TITLE"', json.dumps(slice_title))
+    )
+    return f"Prose.\n\n```agent-claim\n{block}```\n"
+
+
 def _edit_target_item_files() -> dict[str, bytes]:
     target_body = _state_ref_body(
         _EDIT_TARGET_PROJECTION, _record(title="Target", state="open", kind="task")
@@ -3492,54 +3515,111 @@ class TestCliStateRefForge:
         assert f"{EDIT_TARGET_ID}: blocked by" not in freed_out
 
     @pytest.mark.parametrize(
-        ("blocked_by", "refusal"),
+        ("command", "piped_body", "refusal"),
         [
             pytest.param(
-                ("aco-ffffff",),
+                ["item", "edit", EDIT_TARGET_ID],
+                _edit_target_body(blocked_by=("aco-ffffff",)),
                 "item aco-ffffff is listed as a blocker but does not exist",
                 id="unknown-blocker",
             ),
             pytest.param(
-                (EDIT_TARGET_ID,),
+                ["item", "edit", EDIT_TARGET_ID],
+                _edit_target_body(blocked_by=(EDIT_TARGET_ID,)),
                 f"item {EDIT_TARGET_ID} is listed as its own blocker",
                 id="itself",
             ),
             pytest.param(
-                (EDIT_BLOCKER_ID, EDIT_BLOCKER_ID),
+                ["item", "edit", EDIT_TARGET_ID],
+                _edit_target_body(blocked_by=(EDIT_BLOCKER_ID, EDIT_BLOCKER_ID)),
                 f"item {EDIT_TARGET_ID} lists blocker {EDIT_BLOCKER_ID} more than once",
                 id="repeated-blocker",
             ),
+            *(
+                pytest.param(
+                    ["item", "edit", EDIT_TARGET_ID],
+                    _edit_target_body(slice_title=f"Line one{character}Line two"),
+                    f"body malformed: slice[0].title: slice[0].title of row 1 holds {codepoint}; "
+                    "a slice title stays on one line",
+                    id=f"slice-title-{codepoint}",
+                )
+                for character, codepoint in (
+                    ("\v", "U+000B"),
+                    ("\n", "U+000A"),
+                    ("\r", "U+000D"),
+                    ("\f", "U+000C"),
+                    ("\x00", "U+0000"),
+                    ("\u0085", "U+0085"),
+                    ("\u2028", "U+2028"),
+                    ("\u2029", "U+2029"),
+                )
+            ),
+            pytest.param(
+                ["item", "edit", EDIT_TARGET_ID],
+                _edit_target_body(record_title="Target\vtwo"),
+                "stored, that body would not read back, so nothing was written",
+                id="record-title-that-would-not-read-back",
+            ),
+            pytest.param(
+                ["item", "new", "--title", "Fresh\vtwo"],
+                "",
+                "stored, that body would not read back, so nothing was written",
+                id="item-new-title-that-would-not-read-back",
+            ),
         ],
     )
-    def test_item_edit_refuses_an_unresolved_blocker_and_the_board_still_reads(
+    def test_a_write_the_read_would_refuse_refuses_before_any_write_and_the_board_still_reads(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
-        blocked_by: tuple[str, ...],
+        command: list[str],
+        piped_body: str,
         refusal: str,
     ) -> None:
-        """Issue #450 proof 1: a piped `blocked_by` naming no item, the
-        edited item itself, or one item twice refuses before any write, so
-        `board --json` keeps reading instead of refusing from then on."""
+        """Issues #450 proof 1 and #517 lines 1-2: a piped `blocked_by`
+        naming no item, the edited item itself, or one item twice, a slice
+        title holding a line break or control character, or any body whose
+        stored bytes the read would set aside refuses before any write, so
+        `board --json` and `next` keep reading instead of refusing from then
+        on."""
         self._live_state_ref_checkout(
             monkeypatch, tmp_path, bare_remote, worktree, _edit_target_item_files()
         )
-        unresolved_body = _state_ref_body(
-            _EDIT_TARGET_PROJECTION,
-            _record(title="Target", state="open", kind="task", blocked_by=blocked_by),
-        )
-        monkeypatch.setattr(sys, "stdin", io.StringIO(unresolved_body))
+        monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body))
         remote_url = f"file://{bare_remote}"
         before = store.fetch_state(worktree=worktree, remote=remote_url)
 
-        status = issue_claim.main(["item", "edit", EDIT_TARGET_ID])
+        status = issue_claim.main(command)
+        err = capsys.readouterr().err
 
-        assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+        assert (status, err.startswith("ERROR: "), err.endswith(f"{refusal}\n")) == (2, True, True)
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
-        assert issue_claim.main(["board", "--json"]) == 0
+        assert (issue_claim.main(["board", "--json"]), issue_claim.main(["next"])) == (0, 0)
+
+    def test_item_edit_writes_a_slice_title_holding_a_tab(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #517 line 2: TAB is the one control character a slice
+        title keeps; the edit lands and `item show` reads it back."""
+        self._live_state_ref_checkout(
+            monkeypatch, tmp_path, bare_remote, worktree, _edit_target_item_files()
+        )
+        monkeypatch.setattr(sys, "stdin", io.StringIO(_edit_target_body(slice_title="Left\tright")))
+
+        edited = issue_claim.main(["item", "edit", EDIT_TARGET_ID])
+        capsys.readouterr()
+        shown = issue_claim.main(["item", "show", EDIT_TARGET_ID])
+
+        assert (edited, shown) == (0, 0)
+        assert 'title = "Left\\tright"' in capsys.readouterr().out
 
     def test_item_edit_two_processes_from_the_same_snapshot_the_second_refuses(
         self,

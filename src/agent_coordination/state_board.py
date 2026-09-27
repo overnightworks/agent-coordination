@@ -42,6 +42,7 @@ from .body import (
     BodyReadState,
     ItemKind,
     Storage,
+    body_defect_text,
     locate_agent_claim_block,
     parse_body,
     readable_record_title,
@@ -164,9 +165,25 @@ class LandingWrite:
 def _valid_record(text: str) -> Mapping[str, object] | None:
     """`text`'s own `[record]` table when its `agent-claim` block is VALID
     under `Storage.STATE_REF` -- the same block grammar `body.py` already
-    reads, gated open to `record` only there -- else `None`."""
+    reads, gated open to `record` only there -- else `None`. The one rule
+    an item file is read with, which every write also asks of the bytes it
+    is about to store (issue #517, `_readable_content`)."""
     parsed = parse_body(text, storage=Storage.STATE_REF)
     return parsed.record if parsed.read_state is BodyReadState.VALID else None
+
+
+def _readable_content(text: str) -> bytes:
+    """`text`, a body `_with_record` composed for a write, as the bytes to
+    store -- refused before any write when the read would set it aside
+    (issue #517): the composed `[record]` is always present, so the parse's
+    own first defect is the whole reason."""
+    defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
+    if defects:
+        raise ClaimUnavailableError(
+            f"{body_defect_text(defects[0])}; stored, that body would not read back, "
+            "so nothing was written"
+        )
+    return text.encode("utf-8")
 
 
 def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | _MalformedItem:
@@ -309,9 +326,12 @@ class StateRefBoard:
         self.require_well_formed()
         self._holds_well_formed = True
 
-    def _write_item(self, item_id: str, *, expected: ObjectId | None, content: bytes) -> ObjectId:
+    def _write_item(self, item_id: str, *, expected: ObjectId | None, body: str) -> ObjectId:
         return self._writer.write_item(
-            item_id, expected=expected, content=content, store_expected=self._store_expected()
+            item_id,
+            expected=expected,
+            content=_readable_content(body),
+            store_expected=self._store_expected(),
         )
 
     def _store_expected(self) -> Mapping[str, ObjectId] | None:
@@ -554,7 +574,7 @@ class StateRefBoard:
             closed_at=None,
         )
         new_body = _with_record(body, record)
-        new_oid = self._write_item(new_id, expected=None, content=new_body.encode("utf-8"))
+        new_oid = self._write_item(new_id, expected=None, body=new_body)
         self._items[new_id] = _DecodedItem(record=record, body=new_body, oid=new_oid)
         self._by_number[record.number] = new_id
         return new_id
@@ -602,7 +622,7 @@ class StateRefBoard:
             updated_at=items.format_record_timestamp(datetime.now(UTC)),
         )
         new_body = _with_record(current.body, updated_record)
-        new_oid = self._write_item(item_id, expected=current.oid, content=new_body.encode("utf-8"))
+        new_oid = self._write_item(item_id, expected=current.oid, body=new_body)
         self._items[item_id] = _DecodedItem(record=updated_record, body=new_body, oid=new_oid)
 
     def create_child(self, *, parent: int, title: str, body: str, kind: ItemKind) -> int:
@@ -646,7 +666,7 @@ class StateRefBoard:
             self._refuse_unresolved_repair(updated_record)
             expected = malformed.oid
         new_body = _with_record(body, updated_record)
-        new_oid = self._write_item(item_id, expected=expected, content=new_body.encode("utf-8"))
+        new_oid = self._write_item(item_id, expected=expected, body=new_body)
         self._malformed.pop(item_id, None)
         self._items[item_id] = _DecodedItem(record=updated_record, body=new_body, oid=new_oid)
 
@@ -715,7 +735,7 @@ class StateRefBoard:
         return LandingWrite(
             item_id=item_id,
             expected=current.oid,
-            content=new_body.encode("utf-8"),
+            content=_readable_content(new_body),
             record=updated_record,
         )
 

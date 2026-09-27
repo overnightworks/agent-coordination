@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -1414,6 +1415,38 @@ def missing_or_empty_sections(contract: Contract) -> tuple[str, ...]:
     return tuple(name for name, value in contract_fields(contract) if not value)
 
 
+# Characters that end a line although `unicodedata` files them as separators
+# rather than controls (category Zl/Zp).
+_LINE_SEPARATORS = frozenset({"\u2028", "\u2029"})
+
+
+def _breaks_a_line(character: str) -> bool:
+    return character != "\t" and (
+        unicodedata.category(character) == "Cc" or character in _LINE_SEPARATORS
+    )
+
+
+def _slice_title_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, ...]:
+    """The write-side rule a read never applies (issue #517 line 2): a slice
+    title is one line, since `next` prints it inside a runnable `cut`, so a
+    body handed in for writing refuses every control character but TAB and
+    every line or paragraph separator. A body stored before this rule still
+    reads, and `next` names such a row instead of printing its `cut`."""
+    defects: list[ContractDefect] = []
+    for position, row in enumerate(slices):
+        breaking = next((character for character in row.title if _breaks_a_line(character)), None)
+        if breaking is not None:
+            field = f"slice[{position}].title"
+            defects.append(
+                ContractDefect(
+                    field,
+                    f"{field} of row {row.index} holds U+{ord(breaking):04X}; "
+                    "a slice title stays on one line",
+                )
+            )
+    return tuple(defects)
+
+
 class BodyShapeVerdict(StrEnum):
     """Whether a body's own shape is one a builder can start from (issue
     #404): the third state beyond `BodyReadState.VALID`/`MALFORMED` -- a
@@ -1445,8 +1478,13 @@ def body_shape_check(body: str, *, storage: Storage = Storage.GITHUB) -> BodySha
     `reason` reads. `storage` gates the one storage-specific extension,
     `[record]` (issue #248)."""
     parsed = parse_body(body, storage=storage)
-    if parsed.read_state is BodyReadState.MALFORMED:
-        defects = tuple(body_defect_text(defect) for defect in parsed.contract.defects)
+    malformed = (
+        parsed.contract.defects
+        if parsed.read_state is BodyReadState.MALFORMED
+        else _slice_title_line_defects(parsed.slices)
+    )
+    if malformed:
+        defects = tuple(body_defect_text(defect) for defect in malformed)
         return BodyShapeCheck(BodyShapeVerdict.MALFORMED, defects)
     missing = missing_or_empty_sections(parsed.contract)
     if missing:

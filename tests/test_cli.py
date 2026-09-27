@@ -6706,14 +6706,25 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
     assert (next_exit_code, bash_exit_code, cut_exit_code) == (0, 0, 0), capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "line_break",
+    ["\n", "\r", "\f", "\u0085", "\u2028", "\u2029"],
+    ids=["LF", "CR", "FF", "NEL", "LS", "PS"],
+)
 def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    line_break: str,
 ) -> None:
-    """Issue #513 line 2: a first uncut row whose title holds a line break
-    would split the printed `cut` over two lines, so `next` prints no `cut`
-    for it and names the row to shorten instead."""
+    """Issues #513 line 2 and #517 line 3: a first uncut row whose title,
+    stored before `item edit` refused it, holds any character that splits a
+    line would split the printed `cut` over two lines, so `next` prints no
+    `cut` for it and names the row to shorten instead."""
     _real_state_ref_repository(
-        monkeypatch, tmp_path, {50: _state_ref_container_body("Epic", "Line one\nLine two")}
+        monkeypatch,
+        tmp_path,
+        {50: _state_ref_container_body("Epic", f"Line one{line_break}Line two")},
     )
 
     exit_code = issue_claim.main(["next"])
