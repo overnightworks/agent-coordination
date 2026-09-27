@@ -3,7 +3,8 @@
 A `RunContext` answers the questions every store and forge command asks
 about the checkout it runs in -- its toplevel, its tracked board
 configuration, the canonical remote and where that remote points, the forge
-repository it names, the default branch, and the forge itself. Each fact is
+repository it names, the default branch, the forge itself, and its one
+observation of `refs/aco/state` (issue #477). Each fact is
 read the first time a command asks for it and held for the rest of that run,
 never before: a command that refuses early, or never needs a fact, never
 pays the git, filesystem, or `gh` read behind it.
@@ -22,7 +23,7 @@ from collections.abc import Callable
 from functools import cached_property
 from pathlib import Path
 
-from . import board, body, checkout, forge, github, protocol
+from . import board, body, checkout, forge, github, protocol, store
 
 ForgeBuilder = Callable[["RunContext"], forge.ForgeReader]
 
@@ -193,3 +194,13 @@ class RunContext:
     @cached_property
     def forge(self) -> forge.ForgeReader:
         return self._build_forge(self)
+
+    @cached_property
+    def observation(self) -> protocol.ClaimState:
+        """This directory's one fetch of `refs/aco/state` (issue #477), from
+        its toplevel over the canonical remote: the state-ref board and
+        every CLI check read this same snapshot. A failed fetch raises and
+        is not held. No command asks again after its own write (`land`
+        releases through `fresh`); a transition still fetches for itself
+        until #418 B2 hands it this observation."""
+        return store.fetch_state(worktree=self.toplevel, remote=self.canonical_remote)
