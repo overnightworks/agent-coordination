@@ -5450,8 +5450,7 @@ def _rebuild_and_resume(
     )
     _print_start_target(target)
     try:
-        _require_the_checked_trunk(target, trunk)
-        checkout._validate_checkout(checked, directory=target.path)
+        _validate_built_worktree(checked, target)
     except protocol.ClaimError as error:
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     _print_start_resume(resumed, observed, context.config.storage, versioning)
@@ -5490,8 +5489,7 @@ def _check_build_and_claim(
     _print_claim_checks(plan, as_json=False)
     push = _WitnessedPush()
     try:
-        _require_the_checked_trunk(target, trunk)
-        checkout._validate_checkout(requested, directory=target.path)
+        _validate_built_worktree(requested, target)
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(plan, worktree=target.path, transport=push)
@@ -5507,14 +5505,17 @@ def _check_build_and_claim(
     return _report_claim(plan, claimed, claims, as_json=False)
 
 
-def _require_the_checked_trunk(target: _StartTarget, trunk: str) -> None:
-    """Refuse a worktree built on another commit than the trunk `start`
-    checked: another fetch moved the trunk between the checks and the
-    build, so rerunning `start` checks the trunk as it stands now."""
-    if checkout.head_commit(target.path) != trunk:
+def _validate_built_worktree(request: protocol.ClaimRequest, target: _StartTarget) -> None:
+    """`claim`'s own checkout preconditions against the worktree `start`
+    built. Its base is the trunk `start` checked, so a base mismatch means
+    another fetch moved the trunk between the checks and the build, and
+    rerunning `start` checks the trunk as it stands now (START-26)."""
+    try:
+        checkout._validate_checkout(request, directory=target.path)
+    except checkout.CheckoutBaseMismatchError as error:
         raise protocol.ClaimUnavailableError(
             "the trunk moved after start checked it; run start again"
-        )
+        ) from error
 
 
 def _report_uncertain_start_claim(error: protocol.ClaimError, target: _StartTarget) -> int:
