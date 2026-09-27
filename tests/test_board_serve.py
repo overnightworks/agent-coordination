@@ -464,6 +464,7 @@ def test_a_rebuild_the_unreachable_remote_refuses_keeps_the_held_page_naming_it_
     # rebuild remembered can name the remote.
     offline_reload = served_board.get(token=token, reload=True)
     assert offline_reload.status == 303
+    assert offline_reload.location is not None
     assert offline_reload.location == f"/?t={token}"
     shows_the_held_page_naming_the_refusal(
         _request(served_board.server, "GET", offline_reload.location)
