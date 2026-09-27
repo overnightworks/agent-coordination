@@ -2402,7 +2402,7 @@ def childless_containers_with_uncut_rows(
         for issue in issues
         if issue.kind is ItemKind.CONTAINER
         and issue.children_total is not None
-        and issue.children_closed == issue.children_total
+        and not issue.has_open_child
         and parse_body(issue.body, storage=storage).slices
     )
 
