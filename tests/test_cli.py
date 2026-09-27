@@ -14062,8 +14062,8 @@ def _push_nothing(_repo: Path, _remote: Path) -> None:
 
 
 _UNRECORDED_TRUNK = (
-    "ERROR: cannot determine the trunk: origin has branches but none of origin/HEAD, "
-    "origin/main or origin/master resolves; run git remote set-head origin -a\n"
+    "ERROR: cannot determine the trunk: no origin/HEAD, origin/main or origin/master "
+    "resolves; run git remote set-head origin -a\n"
 )
 
 

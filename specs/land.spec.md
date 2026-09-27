@@ -65,7 +65,8 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-08] A classified work item that is not open refuses `work item #<n> is not open; it cannot be landed`, exit `2`; an issue-less pull request skips this check.
 - [ ] [LANDCMD-09] The classification's own claim, parent, and closing rules then apply (LAND-14..28): a defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
 - [ ] [LANDCMD-10] A claim held by another agent or role, with no explicit coordinator override, refuses (REL-12's sentence), exit `2`, before the merge.
-- [ ] [LANDCMD-11] This checkout must sit on the default branch with nothing uncommitted, or `aco land` refuses `land must run from a clean checkout of the default branch '<branch>'`, exit `2`.
+- [ ] [LANDCMD-11] This checkout must sit on the forge's default branch with nothing uncommitted, or `aco land` refuses `land must run from a clean checkout of the default branch '<branch>'`, exit `2`.
+- [ ] [LANDCMD-20] The forge names `<branch>` even where the canonical remote records no `HEAD`; LANDCMD-11 never reads one.
 
 ## Merge, composed by `aco land`
 
@@ -76,6 +77,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 ## After the merge
 
 - [ ] [LANDCMD-15] A failure deleting the branch, fast-forwarding, or in the delegated `release --merged` prints `MERGED pull request #<n> as <sha>; follow-up incomplete: <step>; re-run aco land <n>`, exit `2`.
+- [ ] [LANDCMD-21] The fast-forward fetches the canonical remote `<remote>` once per run and moves `<branch>` to `<remote>/<branch>`; the delegated release walks that same ref.
 - [ ] [LANDCMD-16] Deleting the merged branch is idempotent: a forge already reporting it absent is success, not a refusal.
 - [ ] [LANDCMD-17] In this package's own repository, a successful landing's last line is `reinstall: uv tool install --force --from . agent-coordination`; any other repository prints nothing further.
 - [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11 and LANDCMD-19, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.

@@ -15,10 +15,11 @@ record's own fields this command reads (CLAIM-01, CLAIM-05, CLAIM-47), and
 accepts (PIN-08) and the state-ref forge gate (PIN-04, PIN-05). `<item>`
 is the argument as given; `<n>` its resolved number; `<step>` is one of
 `build`, `review`, `fix`, `land`; `<trunk>` is `<remote>/HEAD`'s target, for the
-canonical remote `<remote>`, when this checkout records one -- taken as
-recorded, even when that target no longer resolves -- otherwise the first
-of `<remote>/main`, `<remote>/master`, the local `main`, and the local
-`master` that resolves in this checkout. A refusal reaching the shared
+canonical remote `<remote>`, when this checkout records one that resolves,
+otherwise the first of `<remote>/main` and `<remote>/master` that resolves
+in this checkout, and only while `<remote>` has no remote-tracking branch
+at all -- a fresh or offline repository -- the first of the local `main`
+and the local `master` that resolves. A refusal reaching the shared
 collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 ## Behavior table
@@ -28,7 +29,8 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | a live issue claim, lane branch resolves | BRIEF-01, BRIEF-02, BRIEF-11, BRIEF-05 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch gone | BRIEF-04 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch read or `<trunk>` diff fails outright | BRIEF-18 | BRIEF-18 |
-| a live issue claim, lane branch resolves, no `<trunk>` | BRIEF-20 | BRIEF-20 |
+| a live issue claim, lane branch resolves, no `<trunk>`, `<remote>` has no branch | BRIEF-20 | BRIEF-20 |
+| a live issue claim, lane branch resolves, no `<trunk>`, `<remote>` has branches | BRIEF-21 | BRIEF-21 |
 | no live issue claim | BRIEF-03 | BRIEF-06 |
 | `<item>` names no item at all | BRIEF-08 | BRIEF-08 |
 | a non-GitHub canonical remote | BRIEF-07 | BRIEF-07 |
@@ -44,7 +46,8 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-04] With a live claim whose branch resolves neither locally nor as `origin/<branch>` -- git itself answering "no such ref" -- `TIP` prints `branch not found` and `TOUCHED` lists nothing (see E-BRIEF-03).
 - [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from `git diff --name-only <trunk>...<tip>` (see E-BRIEF-01, E-BRIEF-14).
 - [ ] [BRIEF-18] A live claim's branch read failing instead of answering not-found, or its `<trunk>...<tip>` diff failing, refuses with git's own detail, exit `2`, `reason: unavailable` (see E-BRIEF-12).
-- [ ] [BRIEF-20] A found tip with no `<trunk>` refuses `cannot determine the trunk: none of <remote>/HEAD, <remote>/main, <remote>/master, main or master resolves`, exit `2`, `reason: unavailable` (see E-BRIEF-15).
+- [ ] [BRIEF-20] A found tip with no `<trunk>` refuses `cannot determine the trunk: none of <remote>/HEAD, <remote>/main, <remote>/master, main or master resolves`, exit `2` (see E-BRIEF-16).
+- [ ] [BRIEF-21] A `<remote>` with branches refuses instead `cannot determine the trunk: no <remote>/HEAD, <remote>/main or <remote>/master resolves; run git remote set-head <remote> -a`, exit `2` (see E-BRIEF-15).
 - [ ] [BRIEF-08] `<item>` naming no item at all prints one empty line for the missing body, then every section exactly as BRIEF-01..06 describe with no live claim -- never a refusal (see E-BRIEF-06).
 
 ## `--json`
@@ -76,7 +79,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | refusal | `reason` |
 |---|---|
 | PIN-04 (`--repo` under `storage = state-ref`) | `invalid_usage` |
-| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 (no `<trunk>`) | `unavailable` |
+| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 and BRIEF-21 (no `<trunk>`) | `unavailable` |
 
 ## Never
 
@@ -324,12 +327,27 @@ $ aco brief 42 --json
 exit 0
 ```
 
-### E-BRIEF-15 -- no `<trunk>`
+### E-BRIEF-15 -- no `<trunk>` on a remote with branches
 
 Setup: as E-BRIEF-04, but `origin`'s default branch is `trunk` and it
-carries no `main` or `master`, the work repository has no local `main` or
-`master`, and after the claim and push `origin/HEAD` is no longer recorded
-(`git remote set-head origin --delete`)
+carries no `main` or `master`, and after the claim and push `origin/HEAD`
+is no longer recorded (`git remote set-head origin --delete`)
+
+```console
+$ aco brief 42
+2> ERROR: cannot determine the trunk: no origin/HEAD, origin/main or origin/master resolves; run git remote set-head origin -a
+exit 2
+$ aco brief 42 --json
+2> ERROR: cannot determine the trunk: no origin/HEAD, origin/main or origin/master resolves; run git remote set-head origin -a
+{"ok": false, "reason": "unavailable", "message": "cannot determine the trunk: no origin/HEAD, origin/main or origin/master resolves; run git remote set-head origin -a"}
+exit 2
+```
+
+### E-BRIEF-16 -- no `<trunk>` on a remote without branches
+
+Setup: as E-BRIEF-15, but `origin` is a fresh remote that carries no
+branch at all, the lane branch exists only in the work repository, and that
+repository has no local `main` or `master`
 
 ```console
 $ aco brief 42

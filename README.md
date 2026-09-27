@@ -253,7 +253,13 @@ is refused by name.
 - `storage` -- `"github"` (default) or `"state-ref"`; the pin and its
   precondition are `specs/storage-pin.spec.md`'s own.
 - `canonical_remote` -- the git remote name claim state and forge reads use
-  (default `origin`).
+  (default `origin`). It decides the repository aco recognizes, the trunk,
+  and the default branch: its recorded `HEAD` names them for the offline
+  checks and under `state-ref`, while under `github` `land` and
+  `release --merged` take the forge's default branch. A remote that has
+  branches but no recorded `HEAD`, `main`, or `master` -- a renamed default
+  branch -- refuses rather than guessing a local branch; the repair is
+  `git remote set-head <canonical_remote> -a`.
 - `priority_labels` -- an ordered list of labels that rank as critical work
   on the board (default `security`, `data`, `ci`, `product`, `ux`,
   `cleanup`).

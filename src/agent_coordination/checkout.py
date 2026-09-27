@@ -818,8 +818,8 @@ def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) 
         return remote_trunk
     if _has_remote_tracking_branch(remote, directory=directory):
         raise ClaimError(
-            f"cannot determine the trunk: {remote} has branches but none of {remote}/HEAD, "
-            f"{remote}/main or {remote}/master resolves; run git remote set-head {remote} -a"
+            f"cannot determine the trunk: no {remote}/HEAD, {remote}/main or "
+            f"{remote}/master resolves; run git remote set-head {remote} -a"
         )
     local_trunk = _first_resolving_ref(("main", "master"), directory=directory)
     if local_trunk is not None:
