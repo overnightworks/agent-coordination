@@ -118,6 +118,7 @@ NO_LANDINGS_YET = (
     "#230 slice 6 adds merge-commit-derived landings"
 )
 NO_BARE_ISSUE = "a state-ref item is created by aco item new, never as a bare forge issue"
+NO_RETYPE = "a state-ref item keeps the kind aco item new gave it"
 # PIN-16/PIN-17's sentences, completing `item <id> ...`.
 _PARENT_MISSING = "is referenced as a parent but does not exist"
 _BLOCKER_MISSING = "is listed as a blocker but does not exist"
@@ -579,6 +580,11 @@ class StateRefBoard:
         """Unsupported (`STATE_REF_CAPABILITIES`): `create_item` mints a
         state-ref item's id and records its parent and origin in one write."""
         raise forge.ForgeUnsupportedError(NO_BARE_ISSUE)
+
+    def set_item_kind(self, number: int, kind: ItemKind) -> None:
+        """Unsupported (`STATE_REF_CAPABILITIES`): a state-ref item's kind
+        never gates `item new --parent`, so nothing ever retypes one."""
+        raise forge.ForgeUnsupportedError(NO_RETYPE)
 
     def create_child(self, *, parent: int, title: str, body: str, kind: ItemKind) -> int:
         item_id = self.create_item(title=title, body=body, kind=kind, parent=parent)

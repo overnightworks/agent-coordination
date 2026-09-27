@@ -177,6 +177,7 @@ class FakeForge:
     item_bodies: dict[int, str] = field(default_factory=dict)
     fail_update_item_body: bool = False
     fail_create_child_relation: bool = False
+    fail_set_item_kind: bool = False
     drop_created_issue_type: bool = False
     capability_overrides: dict[forge.ForgeOperation, forge.Capability] = field(default_factory=dict)
     readiness_by_number: dict[int, forge.LandingReadiness] = field(default_factory=dict)
@@ -266,6 +267,10 @@ class FakeForge:
         self.item_bodies[number] = body
 
     def set_item_kind(self, number: int, kind: body.ItemKind) -> None:
+        """`fail_set_item_kind` simulates GitHub dropping the new type
+        (ITEM-46): the item keeps its old type and the retype raises."""
+        if self.fail_set_item_kind:
+            raise forge.ForgeError("retype dropped (simulated)")
         self.retyped_items.append((number, kind))
 
     def close_landed_item(self, number: int, *, pull_request: int) -> None:
@@ -17994,31 +17999,57 @@ def test_item_new_creates_a_github_issue_from_the_piped_body(
     assert (client.created_issues, client.linked_children) == (created, linked)
 
 
-def test_item_new_retypes_a_task_parent_to_container_and_says_so(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+@pytest.mark.parametrize(
+    ("retype_dropped", "status", "out", "err", "retyped", "created"),
+    [
+        pytest.param(
+            False,
+            0,
+            "#900\n",
+            "retyped #484 to Container for its first child\n",
+            [(484, body.ItemKind.CONTAINER)],
+            [("Write the docs", _ITEM_NEW_BODY, body.ItemKind.TASK)],
+            id="retypes_and_says_so",
+        ),
+        pytest.param(
+            True,
+            2,
+            "",
+            "ERROR: retype dropped (simulated)\n",
+            [],
+            [],
+            id="dropped_retype_refuses_before_creating_anything",
+        ),
+    ],
+)
+def test_item_new_retypes_a_task_parent_to_container_or_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    retype_dropped: bool,
+    status: int,
+    out: str,
+    err: str,
+    retyped: list[tuple[int, body.ItemKind]],
+    created: list[tuple[str, str, body.ItemKind]],
 ) -> None:
     """Issue #503, the #484 shape: an item becomes a container exactly when
     it gets its first child, so `--parent` on an open Task retypes it to
     Container and names that on stderr, instead of refusing `is not a
-    container`; stdout still carries only the created issue."""
+    container`; stdout still carries only the created issue. A retype the
+    forge drops refuses exit 2 before anything is created (ITEM-46)."""
     client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
     )
+    client.fail_set_item_kind = retype_dropped
     arguments = ["item", "new", "--title", "Write the docs", "--parent", "484"]
 
-    status = issue_claim.main(arguments)
+    exit_code = issue_claim.main(arguments)
 
     captured = capsys.readouterr()
-    assert (status, captured.out, captured.err) == (
-        0,
-        "#900\n",
-        "retyped #484 to Container for its first child\n",
-    )
-    assert (client.retyped_items, client.linked_children) == (
-        [(484, body.ItemKind.CONTAINER)],
-        [(484, 900)],
-    )
+    assert (exit_code, captured.out, captured.err) == (status, out, err)
+    assert (client.retyped_items, client.created_issues) == (retyped, created)
 
 
 @pytest.mark.parametrize(
