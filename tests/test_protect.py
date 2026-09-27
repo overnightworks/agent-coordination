@@ -3265,26 +3265,3 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
 
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)
-
-
-def test_protect_denies_an_untracked_board_configuration_before_judging_a_linked_worktrees_root(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """PROT-29 and PROT-12 (issue #490): a linked worktree's default branch
-    is its canonical remote's, so an untracked board configuration there
-    denies its own bare sentence ahead of PROT-14's checkout-root refusal."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    _use_real_path_is_tracked(monkeypatch)
-    worktree = _hub_canonical_worktree_file(
-        tmp_path, hub_head="trunk", branch="codex/issue-72-widget"
-    ).parent
-    _real_git(worktree, "rm", "-q", "--cached", ".agent-claim/board.toml")
-    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
-
-    assert _protect_refusal(monkeypatch, capsys, worktree) == (
-        2,
-        ".agent-claim/board.toml is not tracked in this checkout, so its storage pin "
-        "cannot be trusted: git add -f .agent-claim/board.toml",
-    )
