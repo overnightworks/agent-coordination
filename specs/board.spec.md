@@ -43,6 +43,7 @@ included.
 | `--repo` under `storage = "state-ref"` | BOARD-42, BOARD-43 | BOARD-42 | — |
 | the Landungen view's own rows | BOARD-12 | BOARD-20 | BOARD-20 |
 | an item with no recognized `kind` | BOARD-08 | — | — |
+| a state-ref item the store cannot read | BOARD-54 | BOARD-54 | BOARD-54 |
 | an uncut `[[slice]]` row | BOARD-14 | — | — |
 | a completed run | BOARD-11, BOARD-13 | — | — |
 | `--json`'s success/refusal envelope | BOARD-11, BOARD-43 (OUT-nn cited) | — | — |
@@ -82,6 +83,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-11] `board --json` wraps OUT-nn (`reason: "projected"`) around `items`, `ready_now`, `stale`, `recovery`, `landings`, `uncut`, `requests`, `measurements` only, never `repository` (E-BOARD-04).
 - [ ] [BOARD-43] `--json` on a dispatched refusal (BOARD-02, BOARD-39, BOARD-42, BOARD-53) prints that envelope with the sentence as `message` and `reason` below, exit `2` (see E-BOARD-15).
 - [ ] [BOARD-08] An item the forge reports no `kind` for, or a non-`container` `kind`, carries `"container": null` even with child counts of its own (#309): never guessed at (see E-BOARD-03).
+- [ ] [BOARD-54] A state-ref item PIN-14/PIN-15 refuses is listed, open, with BODY-50's reason and its read defect, e.g. `body malformed: record: no [record] table`; every other item reads as before (NEXT-36).
 
 `reason`, by which refusal fired:
 

@@ -29,6 +29,7 @@ it, `<s>` an integer score.
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
 | its first uncut row's title holds a line break | NEXT-32 | NEXT-14 |
+| a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
 | a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
 | that container is itself a child of another item | NEXT-25, NEXT-29, NEXT-33 | NEXT-14 |
 | a childless container has no further `Next` work | NEXT-07 | NEXT-13 |
@@ -61,6 +62,7 @@ it, `<s>` an integer score.
 - [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: title `Say "hi" to $HOME` prints `--title='Say "hi" to $HOME'`.
 - [ ] [NEXT-31] An advice command attaches each option's value as `--title=<quoted>` or `--scope=<quoted>`, so a value starting with `-` still reaches it: title `-draft` prints `--title=-draft`.
 - [ ] [NEXT-32] A first uncut row whose title splits into lines (LF, CR, FF, VT, NEL, U+2028…) gets no `cut`; `SKIPPED` reads `slice row <i> title carries a line break; shorten it to one line` (E-NEXT-10).
+- [ ] [NEXT-36] An item PIN-14/PIN-15 refuses is named under `SKIPPED` as `<item-id>: body malformed: <field>: <message>`; every other item still reads, one it blocks stays blocked (see E-NEXT-11).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
 - [ ] [NEXT-25] A childless container with an uncut row that is a child of any item -- any type, open or closed, any repository -- never gets `cut_slice` (CUT-03); `SKIPPED` names its repair (E-NEXT-09).
@@ -287,4 +289,24 @@ SKIPPED
 #183: cut slice "-draft"; run aco cut 183 --title=-draft
 #184: slice row 2 title carries a line break; shorten it to one line
 exit 0
+```
+
+### E-NEXT-11 — an unreadable item beside a readable one
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked; `aco-4470c5`'s file was stored before BODY-63 with a raw U+000B in a slice title, `aco-2620d6` is an unfilled Task
+
+```console
+$ aco next
+No actionable item.
+parallel: none
+scope unknown: none
+close: none
+
+SKIPPED
+aco-2620d6: body incomplete: Now, Next, Done when
+aco-4470c5: body malformed: agent-claim: agent-claim block is not valid TOML: Illegal character '\x0b' (at line 8, column 18)
+exit 3
+$ aco item show aco-4470c5
+2> ERROR: item aco-4470c5 has a malformed agent-claim block; repair it with aco item edit aco-4470c5 and a body whose agent-claim block carries a valid [record]
+exit 2
 ```

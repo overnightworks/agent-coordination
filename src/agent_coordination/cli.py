@@ -6566,6 +6566,8 @@ def _open_container(
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not an open container"
         )
+    if target.unreadable is not None:
+        raise protocol.ClaimUnavailableError(body.body_defect_text(target.unreadable))
     if target.kind not in accepted_kinds:
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not a container"

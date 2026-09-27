@@ -632,8 +632,9 @@ _MALFORMED_CONTENTS = pytest.mark.parametrize(
 
 
 class TestMalformedItem:
-    """Issue #447: one malformed item file refuses its own read and every
-    whole-store read (PIN-29), never a read of another single item."""
+    """Issues #447 and #517: one malformed item file refuses its own read,
+    never a read of another item, and the open board lists it by its
+    defect."""
 
     @_MALFORMED_CONTENTS
     def test_every_other_item_still_reads(self, content: bytes, problem: str) -> None:
@@ -645,25 +646,31 @@ class TestMalformedItem:
         assert (reference.state, reference.title) == (forge.ItemState.OPEN, "Slice A")
 
     @_MALFORMED_CONTENTS
-    @pytest.mark.parametrize(
-        "read",
-        [
-            pytest.param(lambda adapter: adapter.item_reference(MALFORMED_NUMBER), id="that-item"),
-            pytest.param(lambda adapter: adapter.list_open_board_issues(), id="the-open-board"),
-            pytest.param(lambda adapter: adapter.list_children(CONTAINER_NUMBER), id="children"),
-        ],
-    )
-    def test_reading_that_item_or_enumerating_the_store_refuses_naming_its_repair(
-        self, content: bytes, problem: str, read: Callable[[StateRefBoard], object]
+    def test_reading_that_item_refuses_naming_its_repair(
+        self, content: bytes, problem: str
     ) -> None:
-        """A malformed item's parent and state are unknown, so an enumeration
-        of the whole store refuses rather than guess past it (issue #447)."""
         adapter = _state_ref_board(_item_files_with_a_malformed_item(content))
 
         with pytest.raises(MalformedStateTreeError) as refusal:
-            read(adapter)
+            adapter.item_reference(MALFORMED_NUMBER)
 
         assert str(refusal.value) == _malformed_item_refusal(problem)
+
+    @_MALFORMED_CONTENTS
+    def test_the_open_board_lists_it_unreadable_beside_every_other_item(
+        self, content: bytes, problem: str
+    ) -> None:
+        """Issue #517 line 4: a malformed item's state is unknown, so the
+        open board lists it with its defect instead of refusing the store."""
+        del problem
+        adapter = _state_ref_board(_item_files_with_a_malformed_item(content))
+
+        listed = {issue.number: issue.unreadable for issue in adapter.list_open_board_issues()}
+
+        assert set(listed) == {CONTAINER_NUMBER, CHILD_A_NUMBER, CHILD_B_NUMBER, MALFORMED_NUMBER}
+        assert [number for number, defect in listed.items() if defect is not None] == [
+            MALFORMED_NUMBER
+        ]
 
     @pytest.mark.parametrize(
         ("record", "refusal"),
@@ -2487,10 +2494,10 @@ class TestCliStateRefForge:
         item's `[record]` table is validated once, at read time, by
         `StateRefBoard`'s own decode (issue #283) -- so a container without
         a working `[[slice]]` table (no agent-claim block to hold one) is
-        refused by that decode's own sentence and repair (issue #447) the
-        moment `cut` reads the store, rather than a second, cut-specific one.
-        `next` refuses the same sentence (PIN-29) instead of recommending
-        `cut` on such a container. Nothing reaches the remote."""
+        refused by the defect that decode names it by (issues #447, #517),
+        rather than a second, cut-specific sentence, and `next` names that
+        same defect instead of recommending `cut` on such a container.
+        Nothing reaches the remote."""
         item_files = {**_item_files(), f"{CONTAINER_ID}.md": b"Just prose, no block at all.\n"}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         remote_url = f"file://{bare_remote}"
@@ -2500,9 +2507,7 @@ class TestCliStateRefForge:
 
         assert status == 2
         assert capsys.readouterr().err == (
-            f"ERROR: item {CONTAINER_ID} has a malformed agent-claim block; "
-            f"repair it with aco item edit {CONTAINER_ID} "
-            "and a body whose agent-claim block carries a valid [record]\n"
+            "ERROR: body malformed: agent-claim: no agent-claim block\n"
         )
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
@@ -3053,10 +3058,6 @@ class TestCliStateRefForge:
                 CONTAINER_ID,
                 id="item-close-of-a-child-under-a-malformed-parent",
             ),
-            *(
-                pytest.param(command, None, MALFORMED_ID, id=command[0])
-                for command in (["board", "--json"], ["next"], ["rulings"])
-            ),
         ],
     )
     def test_a_malformed_item_refuses_naming_its_repair_and_writes_nothing(
@@ -3071,9 +3072,9 @@ class TestCliStateRefForge:
         planted: str,
     ) -> None:
         """Issue #447 proof 1: every command that must read exactly the
-        malformed item, or enumerate the whole store around it, refuses by
-        its id, naming `item edit` with a valid `[record]` as the repair,
-        and nothing reaches the remote."""
+        malformed item, or close an item beside it, refuses by its id,
+        naming `item edit` with a valid `[record]` as the repair, and
+        nothing reaches the remote."""
         item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
@@ -3085,6 +3086,52 @@ class TestCliStateRefForge:
         refusal = _malformed_item_refusal(item_id=planted)
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
+
+    @_MALFORMED_CONTENTS
+    def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        content: bytes,
+        problem: str,
+    ) -> None:
+        """Issue #517 line 4: `Slice A` turned unreadable -- and `Slice B`
+        is blocked by it -- yet `board`, `next` and `rulings` still read,
+        naming it by its defect, `item show` still reads every other item,
+        and only `item show` of that item refuses."""
+        item_files = _item_files_with_a_malformed_item(content, CHILD_A_ID)
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        unreadable_line = f"\n{CHILD_A_ID}: body malformed: "
+
+        board_exit_code = issue_claim.main(["board", "--json"])
+        board_items = json.loads(capsys.readouterr().out)["items"]
+        next_exit_code = issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        rulings_exit_code = issue_claim.main(["rulings"])
+        other_show_exit_code = issue_claim.main(["item", "show", CHILD_B_ID])
+        capsys.readouterr()
+        own_show_exit_code = issue_claim.main(["item", "show", CHILD_A_ID])
+
+        assert (board_exit_code, next_exit_code, rulings_exit_code, other_show_exit_code) == (
+            0,
+            3,
+            0,
+            0,
+        )
+        assert {item["number"] for item in board_items} == {
+            CONTAINER_NUMBER,
+            CHILD_A_NUMBER,
+            CHILD_B_NUMBER,
+        }
+        assert unreadable_line in next_out
+        assert f"\n{CHILD_B_ID}: blocked by {CHILD_A_ID}" in next_out
+        assert (own_show_exit_code, capsys.readouterr().err) == (
+            2,
+            f"ERROR: {_malformed_item_refusal(problem, CHILD_A_ID)}\n",
+        )
 
     def test_item_edit_with_a_valid_record_repairs_a_malformed_item(
         self,

@@ -40,6 +40,7 @@ from . import board, forge, items
 from .body import (
     RECORD_KEY,
     BodyReadState,
+    ContractDefect,
     ItemKind,
     Storage,
     body_defect_text,
@@ -134,15 +135,25 @@ class _DecodedItem:
 class _MalformedItem:
     """An item file whose bytes decode to no valid `agent-claim` block with
     a `[record]` table (issue #447): kept aside rather than refusing the
-    store at decode, so a read of any other single item still answers while
-    this item's own read and every whole-store read (PIN-29) refuse.
-    `problem` completes the sentence `item <id> ...`; `oid` is the
-    CAS `expected` a repairing `update_item_body` writes over; `title` is
-    the record's title when it alone still reads, for the twin search."""
+    store at decode, so a read of any other item still answers while this
+    item's own read refuses, and `board`/`next` list it by `defect` rather
+    than refusing the whole store (issue #517). `problem` completes the
+    sentence `item <id> ...`; `oid` is the CAS `expected` a repairing
+    `update_item_body` writes over; `text` is whatever of the file still
+    decodes; `title` is the record's title when it alone still reads, for
+    the twin search and the board's row."""
 
     problem: str
+    defect: ContractDefect
     oid: ObjectId
+    text: str = ""
     title: str | None = None
+
+
+# The defects an item file the block grammar never reached is named by
+# (issue #517): its bytes are no UTF-8, or its valid block has no record.
+_NOT_UTF8 = ContractDefect("item", "item file is not valid UTF-8")
+_NO_RECORD = ContractDefect(RECORD_KEY, "no [record] table")
 
 
 @dataclass(frozen=True)
@@ -190,16 +201,19 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
     """`content` turned into a `_DecodedItem`, or set aside as a
     `_MalformedItem` (issue #447): every item file must be UTF-8 text whose
     block parses VALID with a `[record]` table; one that does not refuses
-    its own read and every whole-store read (PIN-29), never another item's."""
+    its own read, never another item's."""
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
-        return _MalformedItem(problem="is not valid UTF-8", oid=oid)
+        return _MalformedItem(problem="is not valid UTF-8", defect=_NOT_UTF8, oid=oid)
     record = _valid_record(text)
     if record is None:
+        defects = parse_body(text, storage=Storage.STATE_REF).contract.defects
         return _MalformedItem(
             problem="has a malformed agent-claim block",
+            defect=(defects or (_NO_RECORD,))[0],
             oid=oid,
+            text=text,
             title=readable_record_title(text),
         )
     return _DecodedItem(record=items.parse_item_record(item_id, record), body=text, oid=oid)
@@ -308,10 +322,9 @@ class StateRefBoard:
     def require_well_formed(self) -> None:
         """Refuses with the lowest malformed item's own sentence and repair
         while `items/` holds any (issue #447): a malformed item's parent,
-        state, and blockers are unknown, so every answer that enumerates the
-        whole store -- the board `board`/`next`/`rulings`/`cut` project, a
-        container's children, what `item close` freed -- would guess past
-        it."""
+        state, and blockers are unknown, so what `item close` freed and a
+        `board --serve` ruling click's write would guess past it. Reads that
+        only project the board list it instead (issue #517)."""
         if self._malformed:
             item_id = min(self._malformed)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
@@ -437,7 +450,6 @@ class StateRefBoard:
         )
 
     def list_children(self, number: int) -> tuple[board.ChildItem, ...]:
-        self.require_well_formed()
         item_id = self._by_number.get(number)
         if item_id is None:
             return ()
@@ -451,11 +463,35 @@ class StateRefBoard:
         return self._default_branch
 
     def list_open_board_issues(self) -> tuple[board.Issue, ...]:
-        self.require_well_formed()
-        return tuple(
-            self._issue(item_id)
-            for item_id, decoded in self._items.items()
-            if decoded.record.state is items.RecordState.OPEN
+        """Every open item, plus every unreadable one as a row the board
+        names by its defect (issue #517): its state may not read, so it
+        counts as open, and one such item never hides the others."""
+        return (
+            *(
+                self._issue(item_id)
+                for item_id, decoded in self._items.items()
+                if decoded.record.state is items.RecordState.OPEN
+            ),
+            *(
+                self._unreadable_issue(item_id, malformed)
+                for item_id, malformed in self._malformed.items()
+            ),
+        )
+
+    @staticmethod
+    def _unreadable_issue(item_id: str, malformed: _MalformedItem) -> board.Issue:
+        """`malformed`'s board row: only its id, its title when that alone
+        still reads, and its defect are known -- its record's timestamps
+        are not, so its age counts from this read."""
+        read_at = items.format_record_timestamp(datetime.now(UTC))
+        return board.Issue(
+            items.item_number(item_id),
+            malformed.title or item_id,
+            (),
+            malformed.text,
+            read_at,
+            read_at,
+            unreadable=malformed.defect,
         )
 
     def open_issue(self, number: int) -> board.Issue | None:
@@ -493,6 +529,9 @@ class StateRefBoard:
             return ()
         dependencies: list[board.IssueDependency] = []
         for blocker_id in decoded.record.blocked_by:
+            if blocker_id in self._malformed:
+                dependencies.append(self._unreadable_blocker(blocker_id))
+                continue
             blocker = self._related(blocker_id, missing=_BLOCKER_MISSING)
             closed_at = None
             if blocker.record.closed_at is not None:
@@ -506,6 +545,16 @@ class StateRefBoard:
                 )
             )
         return tuple(dependencies)
+
+    def _unreadable_blocker(self, blocker_id: str) -> board.IssueDependency:
+        """An unreadable blocker (issue #517): its state does not read, so it
+        keeps blocking until repaired, rather than refusing the whole board."""
+        return board.IssueDependency(
+            board.IssueReference(self.repository.path, items.item_number(blocker_id)),
+            board.BlockerState.OPEN,
+            False,
+            None,
+        )
 
     def list_open_board_pull_requests(self) -> tuple[board.PullRequest, ...]:
         return ()

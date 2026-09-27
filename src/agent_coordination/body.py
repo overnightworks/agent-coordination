@@ -847,7 +847,7 @@ def _block_schema_defects(data: dict[str, object], storage: Storage) -> tuple[Co
     return tuple(defects)
 
 
-def _malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
+def malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
     return ParsedBody(
         contract=Contract(None, None, None, defects),
         contract_complete=False,
@@ -862,7 +862,7 @@ def _malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
     )
 
 
-_NO_BLOCK_PARSED_BODY = _malformed_parsed_body(
+_NO_BLOCK_PARSED_BODY = malformed_parsed_body(
     (ContractDefect(AGENT_CLAIM_FENCE_INFO, "no agent-claim block"),)
 )
 
@@ -970,7 +970,7 @@ def parse_body(body: str, *, storage: Storage = Storage.GITHUB) -> ParsedBody:
         return data
     defects = _block_schema_defects(data, storage)
     if defects:
-        return _malformed_parsed_body(defects)
+        return malformed_parsed_body(defects)
     return _valid_block_parsed_body(data, storage)
 
 
@@ -981,7 +981,7 @@ def _block_data(body: str) -> dict[str, object] | ParsedBody:
     if not fences:
         return _NO_BLOCK_PARSED_BODY
     if len(fences) > 1:
-        return _malformed_parsed_body(
+        return malformed_parsed_body(
             (
                 ContractDefect(
                     AGENT_CLAIM_FENCE_INFO, "multiple agent-claim blocks; exactly one is allowed"
@@ -990,13 +990,13 @@ def _block_data(body: str) -> dict[str, object] | ParsedBody:
         )
     _start, end, content = fences[0]
     if end is None:
-        return _malformed_parsed_body(
+        return malformed_parsed_body(
             (ContractDefect(AGENT_CLAIM_FENCE_INFO, "unclosed agent-claim block"),)
         )
     try:
         data = tomllib.loads(content)
     except tomllib.TOMLDecodeError as error:
-        return _malformed_parsed_body(
+        return malformed_parsed_body(
             (
                 ContractDefect(
                     AGENT_CLAIM_FENCE_INFO, f"agent-claim block is not valid TOML: {error}"

@@ -32,6 +32,7 @@ from .body import (
     Storage,
     body_defect_text,
     closing_fence_delimiter,
+    malformed_parsed_body,
     missing_or_empty_sections,
     opening_fence_delimiter,
     parse_body,
@@ -118,6 +119,10 @@ class Issue:
     children_closed: int | None = None
     children_total: int | None = None
     blocked_by_count: int = 0
+    # Why the store could not read this item at all (issue #517): the board
+    # names it with this defect instead of parsing `body`, and the item's
+    # other fields are only what could still be read.
+    unreadable: ContractDefect | None = None
 
     @property
     def has_open_child(self) -> bool:
@@ -1689,7 +1694,12 @@ def build_board(inputs: BoardBuildInputs) -> Board:
     repository = inputs.repository
     observed_at = (inputs.now or datetime.now(UTC)).astimezone(UTC)
     parsed_bodies = {
-        issue.number: parse_body(issue.body, storage=config.storage) for issue in issues
+        issue.number: (
+            parse_body(issue.body, storage=config.storage)
+            if issue.unreadable is None
+            else malformed_parsed_body((issue.unreadable,))
+        )
+        for issue in issues
     }
     contracts = {number: parsed.contract for number, parsed in parsed_bodies.items()}
     blockers: dict[int, tuple[IssueReference, ...]] = {
