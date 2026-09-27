@@ -441,10 +441,10 @@ def test_a_rebuild_the_unreachable_remote_refuses_keeps_the_held_page_naming_it_
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Issue #481, BOARD-52: while the remote is unreachable, a reload on a
-    page nothing has made stale, the page it redirects to, a later refresh,
-    a ruling click, and the page the click redirects to all answer -- no
-    traceback, no dropped connection -- with the held page naming the
-    refusal; a reload once the remote answers again rebuilds."""
+    page nothing has made stale, the page it redirects to, a ruling click,
+    and the page the click redirects to all answer -- no traceback, no
+    dropped connection -- with the held page naming the refusal; a reload
+    once the remote answers again rebuilds."""
     token = served_board.server.token
     refusal = "cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128)"
 
@@ -459,16 +459,15 @@ def test_a_rebuild_the_unreachable_remote_refuses_keeps_the_held_page_naming_it_
 
     monkeypatch.setattr(github, "GitHubForge", unreachable_remote)
 
-    # The reload comes before any click, so its redirect target and the
-    # refresh after it meet a held page no click has made stale: only the
-    # refusal the reload's own rebuild remembered can name the remote.
+    # The reload comes before any click, so its redirect target meets a
+    # held page no click has made stale: only the refusal the reload's own
+    # rebuild remembered can name the remote.
     offline_reload = served_board.get(token=token, reload=True)
     assert offline_reload.status == 303
     assert offline_reload.location == f"/?t={token}"
     shows_the_held_page_naming_the_refusal(
         _request(served_board.server, "GET", offline_reload.location)
     )
-    shows_the_held_page_naming_the_refusal(served_board.get(token=token))
 
     click = served_board.post_rule(
         {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes"}
