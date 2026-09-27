@@ -1,0 +1,8 @@
+claim_id = "8cd050bd70b349bf9c123acffc3979dd"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "0468ca7d3e4b52f74af0462971aa22daa69c80b0"
+branch = "claude/issue-488-trunk-owner"
+scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/brief.spec.md", "specs/release.spec.md", "specs/start.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_board_serve.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_protect.py", "tests/test_session.py", "tests/test_state_board.py"]
+opened_commit = "c8b04e50f157fc9ece222c5ad245acd17368fdf9"
+whole_reason = "ein Trunk-Owner im RunContext, den start, release, land, board, check und brief fragen"
