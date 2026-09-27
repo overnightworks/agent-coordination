@@ -3079,25 +3079,13 @@ def _close_real_item(
     return closed_oid
 
 
-@pytest.mark.parametrize(
-    "arrange", [_start_in_main_checkout, _claim_in_lane_worktree], ids=["start", "claim"]
-)
-def test_a_claim_whose_item_closes_under_its_rejected_push_refuses_and_writes_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-    arrange: Callable[[pytest.MonkeyPatch, Path, Path], list[str]],
+def _close_under_the_claims_push(
+    monkeypatch: pytest.MonkeyPatch, close: Callable[[], None]
 ) -> None:
-    """Issue #496 proof 2: the item is closed after the claim's checks judged
-    it open, so the claim's first push is rejected; the retry re-reads the
-    ref, finds the item's blob no longer the one checked, and refuses with
-    CAS-20's sentence -- no live claim ever stands on the closed item
-    (CLM-31, START-27)."""
-    repo, bare_remote, open_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
-    argv = arrange(monkeypatch, repo, tmp_path)
+    """The close lands after the claim's write read the ref, so its first
+    push is rejected and only the retry sees the closed item."""
     real_push = store.GitPushTransport.push
     close_pending = [True]
-    closed_oids: list[protocol.ObjectId] = []
 
     def close_lands_first(
         transport: store.GitPushTransport,
@@ -3109,19 +3097,95 @@ def test_a_claim_whose_item_closes_under_its_rejected_push_refuses_and_writes_no
     ) -> None:
         if close_pending:
             close_pending.clear()
-            closed_oids.append(_close_real_item(repo, bare_remote, issue=314, open_oid=open_oid))
+            close()
         real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
 
     monkeypatch.setattr(store.GitPushTransport, "push", close_lands_first)
 
+
+def _close_after_starts_build(monkeypatch: pytest.MonkeyPatch, close: Callable[[], None]) -> None:
+    """The close lands while `start` builds, before the claim's write reads
+    the ref from the new worktree, so no push is ever sent."""
+    real_build = checkout.create_linked_worktree
+
+    def build_then_close(
+        path: Path, *, branch: str, trunk: str, directory: Path | None = None
+    ) -> None:
+        real_build(path, branch=branch, trunk=trunk, directory=directory)
+        close()
+
+    monkeypatch.setattr(checkout, "create_linked_worktree", build_then_close)
+
+
+_KEPT_UNDER_SENT_PUSH = (
+    "the claim's push was sent, its outcome unknown; worktree {worktree} and "
+    "branch '{branch}' kept; run start again to resume it"
+)
+
+
+@pytest.mark.parametrize(
+    ("arrange", "close_at", "build_line"),
+    [
+        pytest.param(
+            _start_in_main_checkout,
+            _close_under_the_claims_push,
+            _KEPT_UNDER_SENT_PUSH,
+            id="start-close-under-its-push",
+        ),
+        pytest.param(
+            _start_in_main_checkout,
+            _close_after_starts_build,
+            _REMOVED_BOTH,
+            id="start-close-before-its-push",
+        ),
+        pytest.param(
+            _claim_in_lane_worktree,
+            _close_under_the_claims_push,
+            None,
+            id="claim-close-under-its-push",
+        ),
+    ],
+)
+def test_a_claim_whose_item_closes_after_its_checks_refuses_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path, Path], list[str]],
+    close_at: Callable[[pytest.MonkeyPatch, Callable[[], None]], None],
+    build_line: str | None,
+) -> None:
+    """Issue #496 proof 2: the item is closed after the claim's checks judged
+    it open; the claim's write finds the item's blob no longer the one
+    checked and refuses with CAS-20's sentence -- no live claim ever stands
+    on the closed item (CLM-31, START-27). `start` keeps its build once the
+    claim's push was sent (START-25) and removes it when none was (START-18);
+    `claim` builds nothing."""
+    repo, bare_remote, open_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    argv = arrange(monkeypatch, repo, tmp_path)
+    closed_oids: list[protocol.ObjectId] = []
+    close_at(
+        monkeypatch,
+        lambda: closed_oids.append(
+            _close_real_item(repo, bare_remote, issue=314, open_oid=open_oid)
+        ),
+    )
+
     status = issue_claim.main(argv)
 
     [closed_oid] = closed_oids
-    assert status == 2
-    assert capsys.readouterr().err.startswith(
-        f"ERROR: item '{items.format_item_id(314)}' was written since it was read "
-        f"(expected {open_oid}, found '{closed_oid}'); re-read and retry\n"
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    build_lines = (
+        [] if build_line is None else [build_line.format(worktree=worktree, branch=_START_BRANCH)]
     )
+    assert status == 2
+    assert capsys.readouterr().err.splitlines() == [
+        f"ERROR: item '{items.format_item_id(314)}' was written since it was read "
+        f"(expected {open_oid}, found '{closed_oid}'); re-read and retry",
+        *build_lines,
+    ]
+    build_kept = build_line == _KEPT_UNDER_SENT_PUSH
+    assert worktree.exists() is build_kept
+    assert (_START_BRANCH in _real_git(repo, "branch", "--list").stdout) is build_kept
     refetched = store.fetch_state(worktree=repo, remote="origin")
     assert not refetched.claims
     assert refetched.items[items.format_item_id(314)] == closed_oid
