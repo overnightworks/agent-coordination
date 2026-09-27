@@ -439,15 +439,20 @@ class StateRefBoard:
         return items.item_number(parent_id)
 
     def parent_issue(self, number: int) -> board.ParentIssue | None:
+        """`number`'s parent as the board reads it; an unreadable parent
+        (issue #517) is answered by its reference and whatever of its text
+        still decodes, its kind unknown, so the child still reads as nested
+        rather than refusing the whole board."""
         parent_number = self.parent_number(number)
         if parent_number is None:
             return None
-        parent = self._related(self._by_number[parent_number], missing=_PARENT_MISSING)
-        return board.ParentIssue(
-            board.IssueReference(self.repository.path, parent.record.number),
-            parent.body,
-            _item_kind(parent.record.kind),
-        )
+        parent_id = self._by_number[parent_number]
+        reference = board.IssueReference(self.repository.path, parent_number)
+        malformed = self._malformed.get(parent_id)
+        if malformed is not None:
+            return board.ParentIssue(reference, malformed.text, None)
+        parent = self._items[parent_id]
+        return board.ParentIssue(reference, parent.body, _item_kind(parent.record.kind))
 
     def list_children(self, number: int) -> tuple[board.ChildItem, ...]:
         item_id = self._by_number.get(number)

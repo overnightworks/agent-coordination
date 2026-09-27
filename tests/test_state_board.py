@@ -3098,11 +3098,17 @@ class TestCliStateRefForge:
         content: bytes,
         problem: str,
     ) -> None:
-        """Issue #517 line 4: `Slice A` turned unreadable -- and `Slice B`
-        is blocked by it -- yet `board`, `next` and `rulings` still read,
-        naming it by its defect, `item show` still reads every other item,
-        and only `item show` of that item refuses."""
-        item_files = _item_files_with_a_malformed_item(content, CHILD_A_ID)
+        """Issue #517 line 4: `Slice A` turned unreadable -- `Slice B` is
+        blocked by it and a childless container with an uncut row is nested
+        under it -- yet `board`, `next` and `rulings` still read, `board`
+        and `next` naming it by its defect, `item show` still reads every
+        other item, and only `item show` of that item refuses."""
+        nested_id = "aco-00000b"
+        nested_body = _container_body_with_slices(((1, "Cut it"),), parent=CHILD_A_ID)
+        item_files = {
+            **_item_files_with_a_malformed_item(content, CHILD_A_ID),
+            f"{nested_id}.md": nested_body.encode(),
+        }
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         unreadable_line = f"\n{CHILD_A_ID}: body malformed: "
 
@@ -3125,8 +3131,10 @@ class TestCliStateRefForge:
             CONTAINER_NUMBER,
             CHILD_A_NUMBER,
             CHILD_B_NUMBER,
+            items.item_number(nested_id),
         }
         assert unreadable_line in next_out
+        assert f"\n{nested_id}: " in next_out
         assert f"\n{CHILD_B_ID}: blocked by {CHILD_A_ID}" in next_out
         assert (own_show_exit_code, capsys.readouterr().err) == (
             2,
