@@ -3628,16 +3628,15 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     id gets this command's own "does not exist" sentence rather than
     `close_item`'s internal `_by_number` lookup failing with the wrong
     shape; `close_item` itself refuses a second close on an already-closed
-    item, naming its date. While the item, its parent, or one of its
-    children is malformed (issues #447, #536) it refuses before the write,
-    since the close and its parent hint decide with those; any other
-    malformed item only goes unfreed. Prints one line, `CLOSED aco-xxxxxx` (`--json`:
+    item, naming its date. An unreadable item, parent, or child, or a
+    parent `items/` lacks, refuses before the write
+    (`_refuse_an_unreadable_relative`); any other malformed item only goes
+    unfreed. Prints one line, `CLOSED aco-xxxxxx` (`--json`:
     `{"item", "number", "closed_at", "parent_closable"}`), then `release
     --merged`'s own `freed:` line -- open items whose only open local
     blocker was this one (`_freed_item_numbers`, issue #256; nothing new) --
     and, when this close was its parent's last open child, `release
-    --merged`'s own parent hint (issue #348). A parent `items/` lacks
-    (PIN-16) refuses before the write too. Every refusal reports through
+    --merged`'s own parent hint (issue #348). Every refusal reports through
     the shared envelope as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
