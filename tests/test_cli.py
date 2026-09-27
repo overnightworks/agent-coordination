@@ -6849,7 +6849,8 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
     """issue #348, Beweis 3 (#310 finding 29): a closable container ranked
     well below the board's top row, and a landed-but-open recovery item,
     both still appear under `close:` -- unconditionally, never gated by
-    which row `next` happens to recommend."""
+    which row `next` happens to recommend -- and, named there, never again
+    under `SKIPPED` (issue #510 line 2)."""
     top_ranked = board_issue(
         70,
         "Top ranked work",
@@ -6888,12 +6889,12 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
     assert out.startswith(f"RECOVERY\n#72: {board.RECOVERY_STEP}\n\n")
     assert out.splitlines()[0:2] == ["RECOVERY", f"#72: {board.RECOVERY_STEP}"]
     assert "#70 score" in out
-    assert "close: #71, #72" in out
+    assert out.endswith("close: #71, #72\n")
 
     json_exit_code = issue_claim.main(["--repo", REPOSITORY, "next", "--json"])
     assert json_exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["close"] == [71, 72]
+    assert (payload["close"], payload["skipped"]) == ([71, 72], [])
 
 
 _RECOVERY_SHARED_SCOPE = "b"

@@ -4687,14 +4687,15 @@ def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
         return _refuse(NextReason.UNAVAILABLE, error, as_json=as_json)
     projected = observed.board
     action = board.next_action(projected)
-    chosen_container = _next_action_container_number(action)
-    skipped = tuple(item for item in _unworkable(projected) if item.number != chosen_container)
+    close = board.zero_cost_closes(projected)
+    already_named = {_next_action_container_number(action), *close}
+    skipped = tuple(item for item in _unworkable(projected) if item.number not in already_named)
     report = _NextReport(
         action=action,
         skipped=skipped,
         recovery=projected.recovery,
         parallel=board.parallel_set(projected, observed.live_claims, action),
-        close=board.zero_cost_closes(projected),
+        close=close,
     )
     if as_json:
         _next_json(report, storage)

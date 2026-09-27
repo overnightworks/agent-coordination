@@ -37,7 +37,7 @@ it, `<s>` an integer score.
 | more than three such candidates | NEXT-10 | NEXT-15 |
 | the first action itself names no scope | NEXT-16 | NEXT-15 |
 | a candidate names no scope of its own | NEXT-17 | NEXT-15 |
-| a closable container or recovery item, any rank | NEXT-18, NEXT-19 | NEXT-14 |
+| a closable container or recovery item, any rank | NEXT-18, NEXT-19, NEXT-28 | NEXT-14 |
 | neither exists | NEXT-20 | NEXT-14 |
 
 ## No actionable item
@@ -64,6 +64,7 @@ it, `<s>` an integer score.
 
 - [ ] [NEXT-08] Every other unworkable item is named once under a trailing `SKIPPED` block, `<label>: <reason>`; a container `next` itself recommends cutting or closing is left out of that list.
 - [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
+- [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED`, in text or `--json` (see E-NEXT-06).
 
 ## `parallel:`
 
