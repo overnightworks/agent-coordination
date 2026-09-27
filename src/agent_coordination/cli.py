@@ -5929,9 +5929,17 @@ def _land_truncated_check_name(name: str) -> str:
 
 
 def _land_bounded_refusal(sentence: str) -> str:
-    if len(sentence) <= LAND_REFUSAL_SENTENCE_LENGTH_LIMIT:
-        return sentence
-    return sentence[: LAND_REFUSAL_SENTENCE_LENGTH_LIMIT - 1] + "…"
+    """`sentence` as one bounded refusal line: a pull request's own text
+    (a check name, a head's board configuration key) may carry a newline or
+    a terminal escape, so every character that does not print is shown
+    escaped (`\\n`, `\\x1b`) before the length cap applies (issue #505)."""
+    printable = "".join(
+        character if character.isprintable() else character.encode("unicode_escape").decode()
+        for character in sentence
+    )
+    if len(printable) <= LAND_REFUSAL_SENTENCE_LENGTH_LIMIT:
+        return printable
+    return printable[: LAND_REFUSAL_SENTENCE_LENGTH_LIMIT - 1] + "…"
 
 
 def _land_pending_check_names(checks: tuple[forge.CheckRun, ...]) -> tuple[str, ...]:
@@ -5994,6 +6002,52 @@ def _refuse_land_readiness(readiness: forge.LandingReadiness) -> None:
         raise protocol.ClaimUnavailableError(checks_refusal)
 
 
+def _land_governing_settings(config: board.BoardConfig) -> dict[str, object]:
+    """The settings that decide where `aco land`'s own release half writes
+    (issue #505): a pull request may change any other setting and still
+    land, but never one of these under its own landing."""
+    return {"storage": config.storage, "canonical_remote": config.canonical_remote}
+
+
+def _land_head_config_refusal(
+    number: int, head_text: str | None, landed: board.BoardConfig
+) -> str | None:
+    """Why the pull request head's board configuration `head_text` refuses
+    `aco land` against the default branch's own `landed` one (LANDCMD-22..24),
+    or `None` when it keeps every governing setting. The head's copy is
+    only checked, never obeyed: `landed` alone governs this run (issue
+    #505 R1)."""
+    path = board.CONFIG_PATH
+    cannot_release = "aco land cannot release its claim across that change"
+    if head_text is None:
+        return f"pull request #{number} removes {path}; {cannot_release}"
+    try:
+        head = board.parse_config(head_text, path)
+    except protocol.ClaimError as error:
+        return _land_bounded_refusal(f"pull request #{number} carries an invalid {path}: {error}")
+    landed_settings = _land_governing_settings(landed)
+    changed = next(
+        (
+            setting
+            for setting, value in _land_governing_settings(head).items()
+            if value != landed_settings[setting]
+        ),
+        None,
+    )
+    if changed is None:
+        return None
+    return f"pull request #{number} changes {changed} in {path}; {cannot_release}"
+
+
+def _refuse_land_head_config(
+    client: github.GitHubForge, readiness: forge.LandingReadiness, landed: board.BoardConfig
+) -> None:
+    head_text = client.file_at_commit(board.CONFIG_PATH, readiness.head_sha)
+    refusal = _land_head_config_refusal(readiness.number, head_text, landed)
+    if refusal is not None:
+        raise protocol.ClaimUnavailableError(refusal)
+
+
 def _land_preflight(
     client: github.GitHubForge,
     claims_provider: Callable[[], protocol.ClaimState],
@@ -6008,8 +6062,10 @@ def _land_preflight(
     `_classification_defect`) rather than a second copy of them.
 
     In order: readiness (no local git read at all), the pull request's own
-    shape, then the named item's live open state -- LANDCMD-08 before claim
-    validation (issue #405 review/gate finding) -- then `claims_provider`,
+    shape, its head's board configuration against this checkout's own
+    (LANDCMD-22..24, issue #505), then the named item's live open state --
+    LANDCMD-08 before claim validation (issue #405 review/gate finding) --
+    then `claims_provider`,
     the one step that reads `refs/aco/state` locally, so a pull request this
     preflight would refuse on GitHub's own answers alone never pays for that
     read at all, and finally this session's own authorization against the
@@ -6028,6 +6084,7 @@ def _land_preflight(
     structural = _structural_classification(context, detail)
     if isinstance(structural, board.ClassificationDefect):
         raise protocol.ClaimUnavailableError(f"pull request #{number} {structural.message}")
+    _refuse_land_head_config(client, readiness, context.run.config)
     if isinstance(structural, board.WorkItemClassification):
         reference = _fetch_issue_reference(client, structural.item.number)
         if reference.state is not forge.ItemState.OPEN:

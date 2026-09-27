@@ -10,6 +10,7 @@ import runpy
 import shlex
 import sys
 import threading
+import tomllib
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -186,6 +187,8 @@ class FakeForge:
     merge_remote: Path | None = None
     fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
+    head_board_config: str | None = ""
+    file_reads: list[tuple[Path, str]] = field(default_factory=list)
     requests: int = field(default=0, init=False)
     _requests_lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False, compare=False
@@ -318,6 +321,16 @@ class FakeForge:
     def delete_branch(self, branch: str) -> None:
         self._run()
         self.deleted_branches.append(branch)
+
+    def file_at_commit(self, path: Path, sha: str) -> str | None:
+        """This fake's mirror of `GitHubForge.file_at_commit` (issue #505):
+        every pull request head carries `head_board_config` as its board
+        configuration -- by default an empty one, which pins exactly what an
+        unconfigured checkout does -- and `None` removes it. Each read's
+        path and commit land in `file_reads`."""
+        self._run()
+        self.file_reads.append((path, sha))
+        return self.head_board_config
 
     def list_open_board_issues(self) -> tuple[board.Issue, ...]:
         self._run()
@@ -15033,6 +15046,104 @@ def test_land_refuses_a_classification_defect_reusing_checks_own_rules(
     assert client.merge_calls == []
 
 
+def _toml_syntax_error(text: str) -> str:
+    """Python's own `tomllib` wording for `text`'s syntax error -- the
+    parser's text, not this tool's, so each Python version may word it
+    differently."""
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        return str(error)
+    raise AssertionError(f"{text!r} parses as TOML")
+
+
+@pytest.mark.parametrize(
+    ("head_board_config", "item_closed", "reason"),
+    [
+        pytest.param(
+            None,
+            False,
+            "pull request #12 removes .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="removed",
+        ),
+        pytest.param(
+            None,
+            True,
+            "pull request #12 removes .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="removed-ahead-of-a-closed-item",
+        ),
+        pytest.param(
+            'storage = "state-ref"\n',
+            False,
+            "pull request #12 changes storage in .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="storage-changed",
+        ),
+        pytest.param(
+            'canonical_remote = "upstream"\n',
+            False,
+            "pull request #12 changes canonical_remote in .agent-claim/board.toml; "
+            "aco land cannot release its claim across that change",
+            id="canonical-remote-changed",
+        ),
+        pytest.param(
+            'storage = "gitlab"\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml storage must be 'github' or 'state-ref'",
+            id="invalid",
+        ),
+        pytest.param(
+            "not toml =",
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: cannot read board "
+            f"configuration .agent-claim/board.toml: {_toml_syntax_error('not toml =')}",
+            id="invalid-syntax",
+        ),
+        pytest.param(
+            f'{"x" * 300} = "y"\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml has unknown top-level key " + "x" * 61 + "…",
+            id="invalid-bounded",
+        ),
+        pytest.param(
+            '"bad\\nkey" = 1\n"esc\\u001b[31m" = 2\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml has unknown top-level key bad\\nkey, esc\\x1b[31m",
+            id="invalid-control-characters-escaped",
+        ),
+    ],
+)
+def test_land_refuses_a_head_that_changes_its_governing_board_config_before_any_write(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    head_board_config: str | None,
+    item_closed: bool,
+    reason: str,
+) -> None:
+    """Issue #505 proofs 2 and 3 (LANDCMD-22..24): a pull request head that
+    removes the board configuration, changes `storage` or `canonical_remote`
+    in it, or carries one the validator refuses would strand `land`'s own
+    release half, so it refuses before any write -- ahead of LANDCMD-08's
+    item check, and within the 200-character refusal line."""
+    monkeypatch.setattr(issue_claim, "_fetch_issue_reference", _LIVE_FETCH_ISSUE_REFERENCE)
+    client = _land_preflight_client(
+        monkeypatch, readiness=_land_readiness(), item_closed=item_closed
+    )
+    client.head_board_config = head_board_config
+
+    assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
+
+    error_line = capsys.readouterr().err
+    assert error_line == f"ERROR: {reason}\n"
+    assert len(error_line.rstrip("\n")) <= issue_claim.LAND_REFUSAL_LINE_LENGTH_LIMIT
+    assert (client.merge_calls, client.deleted_branches) == ([], [])
+
+
 def test_land_refuses_a_closed_work_item(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -15142,21 +15253,39 @@ def test_land_refuses_a_coordinator_override_with_the_wrong_role_before_the_merg
     assert client.merge_calls == []
 
 
+@pytest.mark.parametrize(
+    "head_board_config",
+    [
+        pytest.param("", id="config-unchanged"),
+        pytest.param(
+            'priority_labels = ["ux"]\nidea_label = "idea"\nbody_contract = "block"\n',
+            id="only-non-governing-settings-changed",
+        ),
+    ],
+)
 def test_land_merges_a_green_pull_request_and_runs_the_release_path(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    head_board_config: str,
 ) -> None:
     """Issue #405 Beweis 1: a green pull request merges with a pinned head
     sha and a self-composed commit message whose classification trailer is
     its own last paragraph, the remote branch delete request is made, this
     checkout's own `main` fast-forwards to the fresh merge commit, and the
-    existing `release --merged` path closes the item and frees the claim."""
+    existing `release --merged` path closes the item and frees the claim.
+    Issue #505 proof 4: a head changing only settings that never decide
+    where the release writes (LANDCMD-23) lands the same way, its board
+    configuration read at the very head sha the merge is pinned to."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.head_board_config = head_board_config
     trunk_before = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
 
     [(number, head_sha, _title, body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
+    assert client.file_reads == [(board.CONFIG_PATH, head_sha)]
     paragraphs = body.strip().split("\n\n")
     assert paragraphs[-1] == f"Work-Item: #{WORK_ITEM_ISSUE}"
     assert client.deleted_branches == [LANDING_BRANCH]
@@ -15452,8 +15581,9 @@ def _land_on_the_forges_trunk(
         client.merge_remote = tmp_path / f"{canonical}.git"
         _real_git(tmp_path, "init", "-q", "--bare", str(client.merge_remote))
         _real_git(repo, "remote", "add", canonical, str(client.merge_remote))
+        client.head_board_config = f'canonical_remote = "{canonical}"\n'
         (repo / ".agent-claim").mkdir()
-        (repo / ".agent-claim" / "board.toml").write_text(f'canonical_remote = "{canonical}"\n')
+        (repo / ".agent-claim" / "board.toml").write_text(client.head_board_config)
         _real_git(repo, "add", "-f", ".agent-claim/board.toml")
         _real_git(repo, "commit", "-q", "-m", "canonical remote")
         _real_git(repo, "push", "-q", canonical, LANDING_BRANCH)
@@ -17264,54 +17394,79 @@ _UNTRACKED_BOARD_CONFIG_ERROR = (
     "ERROR: .agent-claim/board.toml is not tracked in this checkout, so its "
     "storage pin cannot be trusted: git add -f .agent-claim/board.toml\n"
 )
+_MISSING_BOARD_CONFIG_ERROR = (
+    "ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request "
+    "adding only .agent-claim/board.toml into the default branch first, without aco\n"
+)
 
 
+def _write_untracked_board_config(toplevel: Path) -> None:
+    (toplevel / ".agent-claim").mkdir()
+    (toplevel / ".agent-claim" / "board.toml").write_text("")
+
+
+@pytest.mark.parametrize(
+    ("config_on_disk", "refusal"),
+    [
+        pytest.param(False, _MISSING_BOARD_CONFIG_ERROR, id="missing"),
+        pytest.param(True, _UNTRACKED_BOARD_CONFIG_ERROR, id="present-untracked"),
+    ],
+)
 @pytest.mark.parametrize(
     "arguments",
     [
         pytest.param(["bootstrap"], id="bootstrap"),
         pytest.param(["board", "--json"], id="board"),
         pytest.param(["claim", "1", "--scope", "README.md"], id="claim-ahead-of-clm-01"),
+        pytest.param(["--repo", REPOSITORY, "land", "12"], id="land"),
     ],
 )
-def test_untracked_board_config_refuses_every_store_command_by_name(
+def test_an_untrusted_board_config_refuses_every_store_command_by_name(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     arguments: list[str],
+    config_on_disk: bool,
+    refusal: str,
 ) -> None:
-    """Issue #315: an absent, untracked, or ignored `.agent-claim/board.toml`
-    no longer reads as `storage = "github"`'s silent default -- `bootstrap`
-    (which never resolves a forge) and `board` (which does, through
-    `RunContext.forge`) both refuse by the same sentence, naming the repair,
-    before either does any other work. `claim` in the main checkout on
-    `main` refuses it ahead of CLM-01, since only the configuration names
-    the canonical remote whose recorded default branch CLM-01 judges
-    (CLM-30, issue #490)."""
-    repository, _remote = _real_repository_with_bare_remote(tmp_path)
+    """Issues #315 and #505: a `.agent-claim/board.toml` that is not tracked
+    never reads as `storage = "github"`'s silent default -- every store
+    command, `land` included, refuses before any other work and writes
+    nothing. A file present but untracked or ignored names the `git add -f`
+    repair (PIN-01); a file absent altogether names the one-time adoption
+    instead (PIN-32). `claim` in the main checkout on `main` refuses it
+    ahead of CLM-01, since only the configuration names the canonical remote
+    whose recorded default branch CLM-01 judges (CLM-30, issue #490)."""
+    repository, remote = _real_repository_with_bare_remote(tmp_path)
     (repository / "README.md").write_text("hello\n")
     _real_git(repository, "add", "README.md")
     _real_git(repository, "commit", "-q", "-m", "initial")
     _push_repository_trunk(repository, "origin")
+    if config_on_disk:
+        _write_untracked_board_config(repository)
+    _redirect_toplevel(monkeypatch, repository)
     monkeypatch.chdir(repository)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(arguments)
 
-    captured = capsys.readouterr()
-    assert status == 2
-    assert captured.err == _UNTRACKED_BOARD_CONFIG_ERROR
+    assert (status, capsys.readouterr().err) == (2, refusal)
+    assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
 
 
 @pytest.mark.parametrize("item", ["5", "16777216"], ids=["in-the-id-space", "past-the-id-space"])
 def test_untracked_board_config_refuses_item_show_in_its_own_json_envelope(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], item: str
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    item: str,
 ) -> None:
     """ITEM-17 (#469 review finding 2): an untracked pin is `item show`'s own
     `precondition_failed` refusal under `--json` whatever number it names --
     PIN-31's guard reads no pin it cannot trust, so it never takes the
     refusal from the command."""
+    _write_untracked_board_config(tmp_path)
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(["item", "show", item, "--json"])

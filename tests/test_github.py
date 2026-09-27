@@ -6,6 +6,7 @@ tests that build a `GitHubForge` only to hand it to `issue_claim._board`/
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 import subprocess
@@ -1110,6 +1111,67 @@ def test_github_adapter_reports_a_merge_conflict_when_the_pull_request_changed(
 
     with pytest.raises(forge.ForgeMergeConflictError):
         client.merge_landing(57, head_sha=MERGE_COMMIT_SHA, title="t", body="Work-Item: #42\n")
+
+
+def _file_contents_client(answer: str | forge.ForgeError) -> GitHubForge:
+    def run(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        if isinstance(answer, forge.ForgeError):
+            raise answer
+        return answer
+
+    return GitHubForge(github.repository_id(REPOSITORY), run=run)
+
+
+def test_github_adapter_reads_a_file_at_a_commit_from_its_base64_contents() -> None:
+    """Issue #505 proof 5: the contents API answers one base64 object --
+    line-wrapped the way GitHub sends it -- and the adapter hands back the
+    file's own text."""
+    calls: list[list[str]] = []
+    encoded = base64.encodebytes(b'storage = "github"\n').decode("ascii")
+
+    def run(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        calls.append(arguments)
+        return json.dumps({"encoding": "base64", "content": encoded})
+
+    client = GitHubForge(github.repository_id(REPOSITORY), run=run)
+
+    text = client.file_at_commit(Path(".agent-claim/board.toml"), MERGE_COMMIT_SHA)
+
+    assert text == 'storage = "github"\n'
+    assert calls[0][1] == (
+        f"repos/{REPOSITORY}/contents/.agent-claim/board.toml?ref={MERGE_COMMIT_SHA}"
+    )
+
+
+def test_github_adapter_reads_a_file_absent_at_a_commit_as_none() -> None:
+    client = _file_contents_client(forge.ForgeNotFoundError("gh: Not Found (HTTP 404)"))
+
+    assert client.file_at_commit(Path(".agent-claim/board.toml"), MERGE_COMMIT_SHA) is None
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param(json.dumps([]), id="not-one-object"),
+        pytest.param(json.dumps({"encoding": "none", "content": ""}), id="not-base64"),
+        pytest.param(json.dumps({"encoding": "base64", "content": 5}), id="content-not-text"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "abc"}), id="bad-padding"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "/w=="}), id="not-utf-8"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "!!!!"}), id="not-alphabet"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "ä==="}), id="not-ascii"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "YW JjZA=="}), id="space"),
+        pytest.param(json.dumps({"encoding": "base64", "content": "YW\tJjZA=="}), id="tab"),
+        pytest.param(
+            json.dumps({"encoding": "base64", "content": "YQ==\u00a0"}), id="not-ascii-whitespace"
+        ),
+    ],
+)
+def test_github_adapter_fails_loud_on_malformed_file_contents(answer: str) -> None:
+    client = _file_contents_client(answer)
+    path = Path(".agent-claim/board.toml")
+
+    with pytest.raises(forge.ForgeMalformedResponseError, match="malformed file contents"):
+        client.file_at_commit(path, MERGE_COMMIT_SHA)
 
 
 def test_github_adapter_deletes_a_merged_branch() -> None:

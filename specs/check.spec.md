@@ -18,8 +18,8 @@ under `storage = "state-ref"`. `<n>` is the argument as given, an issue's
 printed `#<n>` its `storage = "github"` form and the item id under
 `storage = "state-ref"` (PIN-30), `<repository>` the checked repository's
 own `owner/repo` path. A refusal that never even
-reaches this command's own dispatch (no checkout, an untracked storage pin,
-an unreachable forge) prints `ERROR: <sentence>` on stderr and, with
+reaches this command's own dispatch (no checkout, an absent or untracked
+storage pin (PIN-01/PIN-32), an unreachable forge) prints `ERROR: <sentence>` on stderr and, with
 `--json`, the envelope with `reason: "unavailable"`; exit `2` either way.
 `aco check <sha>` (a trunk commit, not a bare number) is a fourth answer
 this file owns like the other three: `specs/landing-grammar.spec.md` owns
@@ -117,7 +117,7 @@ is enough): <git detail>`.
 bare repository with `main` at one commit, a git identity, `origin/HEAD`,
 and `ACO_AGENT` set to `Ada`; `<owner>/<repo>` is the runner's own
 repository path. Every session that reaches this command's own dispatch
-also needs `.agent-claim/board.toml` tracked (PIN-01), since that read
+also needs `.agent-claim/board.toml` present and tracked (PIN-01/PIN-32), since that read
 comes before pull-request or issue mode ever run; the checkout-less
 session (E-CHECK-06) is the one exception, since it never reaches the
 dispatch at all. A session reading a pull request or an issue also names a

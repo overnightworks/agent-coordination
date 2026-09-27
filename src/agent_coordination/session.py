@@ -49,8 +49,14 @@ def board_config(toplevel: Path) -> board.BoardConfig:
     explicitly (issue #314 gate B3), never the calling process's own cwd:
     `protect` and `rescope` pass their payload's own resolved checkout, so a
     foreign cwd can never wrongly deny a valid config or bless an untracked
-    one."""
+    one. A file absent altogether is no repair `git add -f` could make
+    (issue #505): its own sentence names the one-time adoption instead."""
     if not checkout.path_is_tracked(board.CONFIG_PATH.as_posix(), directory=toplevel):
+        if not (toplevel / board.CONFIG_PATH).exists():
+            raise protocol.ClaimUnavailableError(
+                f"{board.CONFIG_PATH} does not exist in this checkout; merge a pull request "
+                f"adding only {board.CONFIG_PATH} into the default branch first, without aco"
+            )
         raise protocol.ClaimUnavailableError(
             f"{board.CONFIG_PATH} is not tracked in this checkout, so its "
             f"storage pin cannot be trusted: git add -f {board.CONFIG_PATH}"
