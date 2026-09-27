@@ -3214,7 +3214,7 @@ class TestCliStateRefForge:
             *_unplaced_malformed_child_cases(),
         ],
     )
-    def test_an_item_whose_relatives_cannot_be_read_refuses_and_writes_nothing(
+    def test_an_unreadable_item_or_relative_refuses_and_writes_nothing(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
