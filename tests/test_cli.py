@@ -18434,6 +18434,20 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
     )
 
 
+def _start_refused_push_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    """A `start` whose store rejects every push of its claim unwritten
+    reads exactly what a successful one does: deciding to remove its build
+    observes the state ref no third time (issue #480 review finding 3,
+    CAS-53, CAS-55)."""
+    run = _start_command(monkeypatch, tmp_path)
+
+    def rejected(_transport: store.GitPushTransport, **_arguments: object) -> None:
+        raise protocol.PushRejectedError("! [remote rejected] (failed to lock)")
+
+    monkeypatch.setattr(store.GitPushTransport, "push", rejected)
+    return replace(run, exit_code=2)
+
+
 @pytest.mark.parametrize(
     "arrange",
     [
@@ -18452,6 +18466,7 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
         pytest.param(_release_command, id="release"),
         pytest.param(_cut_command, id="two-write-cut"),
         pytest.param(_start_command, id="two-directory-state-ref-start"),
+        pytest.param(_start_refused_push_command, id="state-ref-start-refused-push"),
         pytest.param(_land_command, id="land-rereads-after-its-fast-forward"),
         pytest.param(_github_item_close_refusal_command, id="item-close-github-refusal"),
         pytest.param(_claim_comma_scope_refusal_command, id="claim-scope-shape-refusal"),
