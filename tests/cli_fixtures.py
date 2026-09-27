@@ -64,6 +64,21 @@ def trunk_git_calls(monkeypatch: pytest.MonkeyPatch, remote: str) -> list[tuple[
     return calls
 
 
+def landed_from_another_clone(tmp_path: Path, *git_step: str) -> str:
+    """The tip a second clone of `tmp_path`'s bare `remote.git`
+    (`_real_repository_with_bare_remote`) pushes to its `main` after running
+    `git_step` -- a commit or a merge -- so a checkout that has not fetched
+    since stands behind the remote (issue #488)."""
+    other = tmp_path / "other"
+    _real_git(tmp_path, "clone", "-q", str(tmp_path / "remote.git"), str(other))
+    _real_git(other, "config", "user.name", "Other")
+    _real_git(other, "config", "user.email", "other@example.com")
+    _real_git(other, "config", "commit.gpgsign", "false")
+    _real_git(other, *git_step)
+    _real_git(other, "push", "-q", "origin", "HEAD:main")
+    return _real_git(other, "rev-parse", "HEAD").stdout.strip()
+
+
 def fetched_once_then_read(calls: list[tuple[str, Path]]) -> dict[Path, bool]:
     """Per directory that fetched in `calls` (`trunk_git_calls`): whether it
     fetched exactly once and read the recorded `HEAD` after that fetch."""

@@ -55,6 +55,7 @@ from cli_fixtures import (
     arrange_scope_width,
     count_context_reads,
     fetched_once_then_read,
+    landed_from_another_clone,
     main_exit_code,
     run_context_over,
     stub_board_config_tracked,
@@ -2984,11 +2985,8 @@ def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_def
     """Issue #479 (CAS-55): the claim's checks observe the state ref again
     once the trunk fetch is done, while the canonical remote and default
     branch the run already read stay held -- one read of each per
-    directory `start` works in. Issue #488 proof 3: counted at the git
-    launcher, each directory fetches its trunk once and reads the recorded
-    `HEAD` after that fetch."""
-    repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
-    trunk_calls = trunk_git_calls(monkeypatch, "origin")
+    directory `start` works in."""
+    _real_state_ref_start_scenario(monkeypatch, tmp_path)
     remote_url, default_branch_name = checkout.remote_url, checkout.default_branch_name
     reads: list[tuple[str, Path | None]] = []
 
@@ -3006,7 +3004,6 @@ def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_def
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
     assert {kind for kind, _directory in reads} == {"remote url", "default branch"}
     assert [read for read in set(reads) if reads.count(read) > 1] == []
-    assert fetched_once_then_read(trunk_calls) == {repo.resolve(): True}
 
 
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
@@ -13784,12 +13781,25 @@ def _release_cleanup_scenario(
     *,
     merge_into_main: bool = True,
     link_worktree: bool = True,
+    landed_elsewhere: bool = False,
 ) -> Path:
     """`repo`'s own would-be lane worktree path -- linked to `_CLEANUP_BRANCH`
     unless `link_worktree` is `False` -- a claimed issue #72 on that branch,
     and a merged, closing pull request #12 ready for `release --merged` to
-    verify."""
+    verify. `landed_elsewhere` merges the branch on the remote alone, from
+    another clone, and forgets the recorded `origin/HEAD`, so this checkout
+    knows the landing only once it fetches (issue #488 proof 1); its trunk
+    is then walked for real."""
     repo = _release_cleanup_repository(tmp_path, merge_into_main=merge_into_main)
+    merge_commit = MERGE_COMMIT_SHA
+    if landed_elsewhere:
+        _real_git(repo, "push", "-q", "origin", _CLEANUP_BRANCH)
+        _real_git(repo, "remote", "set-head", "origin", "--delete")
+        merge_commit = landed_from_another_clone(
+            tmp_path,
+            *("merge", "-q", "--no-ff", f"origin/{_CLEANUP_BRANCH}", "-m", "Merge feature"),
+            *("-m", f"Work-Item: #{WORK_ITEM_ISSUE}"),
+        )
     worktree = repo.parent / f"{repo.name}-worktrees" / _CLEANUP_WORKTREE_NAME
     if link_worktree:
         worktree.parent.mkdir(parents=True)
@@ -13802,19 +13812,22 @@ def _release_cleanup_scenario(
         body=f"Work-Item: #{WORK_ITEM_ISSUE}\n\nCloses #{WORK_ITEM_ISSUE}",
         merged=True,
         head_ref_name=_CLEANUP_BRANCH,
-        merge_commit=MERGE_COMMIT_SHA,
+        merge_commit=merge_commit,
     )
     client.closed_issues.add(WORK_ITEM_ISSUE)
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
     monkeypatch.setattr(issue_claim, "_fetch_issue_reference", _LIVE_FETCH_ISSUE_REFERENCE)
     # This module's own worktree/branch cleanup mechanics (issue #322), not
     # the merge-commit trailer authority (issue #397): every scenario below
-    # -- including one that never actually merges `_CLEANUP_BRANCH` into
-    # `main` -- stubs the walked trunk to authorize closing #72 regardless.
+    # but a landing elsewhere -- including one that never actually merges
+    # `_CLEANUP_BRANCH` into `main` -- stubs the walked trunk to authorize
+    # closing #72 regardless.
     monkeypatch.setattr(
         checkout,
         "trunk_landings",
-        lambda *_args, **_kwargs: (
+        _LIVE_TRUNK_LANDINGS
+        if landed_elsewhere
+        else lambda *_args, **_kwargs: (
             _trunk_landing(MERGE_COMMIT_SHA, board.TrunkWorkItemClassification((WORK_ITEM_ISSUE,))),
         ),
     )
@@ -13837,17 +13850,99 @@ def test_release_merged_removes_a_clean_merged_lane_worktree_and_branch(
     assert "worktree: removed\n" in capsys.readouterr().out
 
 
-def test_release_merged_under_github_fetches_its_trunk_once_for_verification_and_cleanup(
+def _start_from_a_stale_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
+    """`start` once the remote's `main` moved on from another clone: the
+    exit code, and whether its worktree stands on that remote tip."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    _real_git(repo, "remote", "set-head", "origin", "--delete")
+    remote_tip = landed_from_another_clone(
+        tmp_path, "commit", "-q", "--allow-empty", "-m", "landed elsewhere"
+    )
+    monkeypatch.chdir(repo)
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    return status, _real_git(worktree, "rev-parse", "HEAD").stdout.strip() == remote_tip
+
+
+def _release_a_merge_the_remote_alone_holds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> object:
+    """`release --merged` of a pull request merged on the remote alone: the
+    exit code once it verified the new merge commit's trailer, and whether
+    the lane worktree it merged is still there."""
+    worktree = _release_cleanup_scenario(
+        monkeypatch, tmp_path, merge_into_main=False, landed_elsewhere=True
+    )
+    status = issue_claim.main(["--repo", REPOSITORY, "release", "72", "--merged", "12"])
+    return status, worktree.exists()
+
+
+def _route_a_land_rerun_by_a_merge_the_remote_alone_holds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> object:
+    """A rerun of `land` for a pull request merged on the remote alone: the
+    item its release routes to, by the new merge commit's own trailer."""
+    _release_cleanup_scenario(monkeypatch, tmp_path, merge_into_main=False, landed_elsewhere=True)
+    merge_sha = _real_git(tmp_path / "remote.git", "rev-parse", "main").stdout.strip()
+    return issue_claim._land_release_routing(None, merge_sha, run_context_over(FakeForge()))
+
+
+@pytest.mark.parametrize(
+    ("run_against_a_stale_checkout", "expected"),
+    [
+        pytest.param(_start_from_a_stale_checkout, (0, True), id="start-builds-on-the-tip"),
+        pytest.param(_release_a_merge_the_remote_alone_holds, (0, False), id="release-merged"),
+        pytest.param(
+            _route_a_land_rerun_by_a_merge_the_remote_alone_holds,
+            WORK_ITEM_ISSUE,
+            id="land-rerun-routing",
+        ),
+    ],
+)
+def test_a_landing_only_the_remote_holds_is_seen_by_every_fetching_trunk_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_against_a_stale_checkout: Callable[[pytest.MonkeyPatch, Path], object],
+    expected: object,
 ) -> None:
-    """Issue #488 proof 3: the merge-commit verification and the worktree
-    cleanup's merged check ask the same fetched trunk, so the run fetches
-    once and reads the recorded `HEAD` after it."""
-    worktree = _release_cleanup_scenario(monkeypatch, tmp_path)
+    """Issue #488 proof 1, against real git: no `origin/HEAD` is recorded
+    and this checkout's `main` stands behind a remote that moved on from
+    another clone; `start`, `release --merged` and a `land` rerun each read
+    the trunk their context fetched, so each sees the remote's landing."""
+    assert run_against_a_stale_checkout(monkeypatch, tmp_path) == expected
+
+
+def _start_under_state_ref(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    return ["start", "314", "--scope", "src/x.py"]
+
+
+def _release_merged_with_cleanup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _release_cleanup_scenario(monkeypatch, tmp_path)
+    return ["--repo", REPOSITORY, "release", "72", "--merged", "12"]
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_start_under_state_ref, id="start"),
+        pytest.param(_release_merged_with_cleanup, id="release-merged-verification-and-cleanup"),
+    ],
+)
+def test_a_command_fetches_its_trunk_once_and_reads_the_recorded_head_after_the_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+) -> None:
+    """Issue #488 proof 3, counted at the git launcher: every trunk reader
+    of one run -- `start`'s claim check and build, `release --merged`'s
+    merge-commit verification and its worktree cleanup -- asks the same
+    fetched trunk, so its directory fetches once and reads the recorded
+    `HEAD` after that fetch."""
+    argv = arrange(monkeypatch, tmp_path)
     trunk_calls = trunk_git_calls(monkeypatch, "origin")
 
-    assert issue_claim.main(["--repo", REPOSITORY, "release", "72", "--merged", "12"]) == 0
-    assert not worktree.exists()
+    assert issue_claim.main(argv) == 0
     assert fetched_once_then_read(trunk_calls) == {(tmp_path / "repo").resolve(): True}
 
 

@@ -11,10 +11,18 @@ import sys
 from pathlib import Path
 
 import pytest
-from cli_fixtures import main_exit_code, stub_board_config_tracked
+from cli_fixtures import (
+    _push_repository_trunk,
+    _real_git,
+    _real_repository_with_bare_remote,
+    landed_from_another_clone,
+    main_exit_code,
+    stub_board_config_tracked,
+    trunk_git_calls,
+)
 
-from agent_coordination import checkout, cli, forge, github, session, store
-from agent_coordination.protocol import ClaimState, ClaimUnavailableError
+from agent_coordination import checkout, cli, forge, github, process, session, store
+from agent_coordination.protocol import ClaimError, ClaimState, ClaimUnavailableError
 from agent_coordination.session import RunContext
 
 
@@ -219,6 +227,121 @@ def test_a_failed_observation_is_fetched_again_and_a_successful_one_is_held(
     later_asks = (context.observation, context.observation)
 
     assert (later_asks, fetched_from) == ((observed, observed), [(worktree, "origin")] * 2)
+
+
+def _commit(repository: Path, message: str) -> str:
+    _real_git(repository, "commit", "-q", "--allow-empty", "-m", message)
+    return _real_git(repository, "rev-parse", "HEAD").stdout.strip()
+
+
+def _pushed_repository(tmp_path: Path, board_config: str = "") -> Path:
+    """A repository with one commit pushed to its bare `origin`, no `HEAD`
+    recorded for it, and `board_config` as its board configuration."""
+    repository, _remote = _real_repository_with_bare_remote(tmp_path)
+    _commit(repository, "initial")
+    _real_git(repository, "push", "-q", "origin", "main")
+    _write_board_config(repository, board_config)
+    return repository
+
+
+def _git_version() -> tuple[int, ...]:
+    version = _real_git(Path.cwd(), "--version").stdout.split()[2]
+    return tuple(int(part) for part in version.split(".")[:2])
+
+
+def test_a_fetched_trunk_is_resolved_after_the_fetch_never_from_a_trunk_held_before_it(
+    tmp_path: Path,
+) -> None:
+    """Issue #488: with no recorded `HEAD` and no remote-tracking trunk yet,
+    the held trunk is the stale local `main`; once the context fetches, it
+    resolves the trunk again and names the remote's tip, never the ref it
+    held before the fetch."""
+    repository = _pushed_repository(tmp_path)
+    _real_git(repository, "update-ref", "-d", "refs/remotes/origin/main")
+    remote_tip = landed_from_another_clone(
+        tmp_path, "commit", "-q", "--allow-empty", "-m", "landed elsewhere"
+    )
+    context = _context().for_directory(repository)
+
+    held = context.trunk_ref
+    fetched = context.fetched_trunk_ref()
+
+    assert (held, fetched, context.trunk_ref) == ("main", "refs/remotes/origin/main", fetched)
+    assert checkout.trunk_commit(fetched, directory=repository) == remote_tip
+
+
+@pytest.mark.skipif(
+    _git_version() < (2, 48), reason="git records a fetched remote's HEAD from 2.48 on"
+)
+def test_a_fetch_records_the_remote_head_the_trunk_then_names(tmp_path: Path) -> None:
+    """Issue #488 proof 4: a checkout that never recorded its remote's
+    `HEAD` has it recorded by the context's own fetch, and the trunk is read
+    from it."""
+    repository = _pushed_repository(tmp_path)
+    before = checkout.recorded_head_ref("origin", directory=repository)
+
+    fetched = _context().for_directory(repository).fetched_trunk_ref()
+
+    assert (before, checkout.recorded_head_ref("origin", directory=repository), fetched) == (
+        None,
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/main",
+    )
+
+
+def test_every_trunk_read_names_the_canonical_remote_never_a_diverging_origin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #488 proof 2: `hub` is canonical beside an `origin` one commit
+    behind it; the held trunk, the fetched trunk, and the landings walked
+    from it are all `hub`'s, and git never fetches or reads `origin`'s
+    `HEAD` for them."""
+    repository = _pushed_repository(tmp_path, 'canonical_remote = "hub"\n')
+    hub = tmp_path / "hub.git"
+    _real_git(tmp_path, "init", "-q", "--bare", "-b", "main", str(hub))
+    _real_git(repository, "remote", "add", "hub", str(hub))
+    _commit(repository, "second")
+    _push_repository_trunk(repository, "hub")
+    origin_reads = trunk_git_calls(monkeypatch, "origin")
+    context = _context().for_directory(repository)
+
+    held, fetched = context.trunk_ref, context.fetched_trunk_ref()
+    walked = checkout.trunk_landings(fetched, 20, directory=context.toplevel)
+
+    assert (held, fetched, len(walked), origin_reads) == (
+        "refs/remotes/hub/main",
+        "refs/remotes/hub/main",
+        2,
+        [],
+    )
+
+
+def test_a_failed_trunk_fetch_fails_loud_and_is_fetched_again_on_the_next_ask(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #488: a fetch that fails is never held as done -- the next ask
+    fetches again -- while one that succeeds answers every later ask."""
+    repository = _pushed_repository(tmp_path)
+    launch = checkout._git_run
+    fetched_from: list[str] = []
+
+    def failing_first_fetch(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        if arguments[0] == "fetch":
+            fetched_from.append(arguments[1])
+            if len(fetched_from) == 1:
+                return process.CapturedResult(1, b"", b"fatal: could not read from remote")
+        return launch(arguments, directory=directory)
+
+    monkeypatch.setattr(checkout, "_git_run", failing_first_fetch)
+    context = _context().for_directory(repository)
+
+    with pytest.raises(ClaimError, match="could not read from remote"):
+        context.fetched_trunk_ref()
+    later_asks = (context.fetched_trunk_ref(), context.fetched_trunk_ref())
+
+    assert (later_asks, fetched_from) == (("refs/remotes/origin/main",) * 2, ["origin"] * 2)
 
 
 def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:
