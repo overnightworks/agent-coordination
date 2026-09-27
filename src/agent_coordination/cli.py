@@ -1762,6 +1762,13 @@ def _board(
         children = _fetch_children(client, container_numbers)
         pull_requests = (open_pull_requests.result(), merged_pull_requests.result())
         closed_item_sizes = closed_item_sizes_future.result()
+    # The same forge relation `_cut_target` refuses a nested container on
+    # (issue #503), so `next` never proposes a `cut` that `cut` refuses.
+    nesting_parents = {
+        number: parent.reference
+        for number in board.childless_containers_with_uncut_rows(issues, config.storage)
+        if (parent := client.parent_issue(number)) is not None
+    }
     if landing is None:
         dependencies = _validated_dependencies(
             issues,
@@ -1804,6 +1811,7 @@ def _board(
             trunk_landed_work_items=frozenset(entry.item for entry in trunk_landing_items),
             trunk_landing_items=trunk_landing_items,
             children=children,
+            nesting_parents=nesting_parents,
             dependencies=dependencies,
             requests=client.requests,
             claim_ages=history.ages,

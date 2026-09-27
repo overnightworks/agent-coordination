@@ -6386,18 +6386,49 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
 
 
 @pytest.mark.parametrize(
-    ("slice_titles", "repair"),
+    ("parent_kind", "parent_open", "parent_repository", "slice_titles", "repair"),
     [
         pytest.param(
+            body.ItemKind.CONTAINER,
+            True,
+            REPOSITORY,
             ("Scheibe Z",),
             "nested container, which cut refuses; set its type Task and take "
             'slice "Scheibe Z"\'s scope as its own',
-            id="one_row_names_the_task_repair",
+            id="open_container_parent_one_row_names_the_task_repair",
         ),
         pytest.param(
+            body.ItemKind.CONTAINER,
+            True,
+            REPOSITORY,
             ("Scheibe Y", "Scheibe Z"),
-            "nested container, which cut refuses; move its slice rows to #298",
+            f"nested container, which cut refuses; move its slice rows to {REPOSITORY}#298",
             id="several_rows_name_the_move_to_the_parent",
+        ),
+        pytest.param(
+            body.ItemKind.FEATURE,
+            True,
+            REPOSITORY,
+            ("Scheibe Y", "Scheibe Z"),
+            f"nested container, which cut refuses; move its slice rows to {REPOSITORY}#298",
+            id="feature_parent",
+        ),
+        pytest.param(
+            body.ItemKind.CONTAINER,
+            False,
+            REPOSITORY,
+            ("Scheibe Y", "Scheibe Z"),
+            f"nested container, which cut refuses; move its slice rows to {REPOSITORY}#298",
+            id="closed_parent",
+        ),
+        pytest.param(
+            body.ItemKind.CONTAINER,
+            False,
+            "other-owner/other-repo",
+            ("Scheibe Y", "Scheibe Z"),
+            "nested container, which cut refuses; move its slice rows to "
+            "other-owner/other-repo#298",
+            id="parent_in_another_repository",
         ),
     ],
 )
@@ -6405,24 +6436,27 @@ def test_next_names_a_nested_containers_repair_where_cut_refuses_its_row(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    parent_kind: body.ItemKind,
+    parent_open: bool,
+    parent_repository: str,
     slice_titles: tuple[str, ...],
     repair: str,
 ) -> None:
-    """Issue #503, the #299 shape: a container nested under another one,
-    its own children closed and an uncut `[[slice]]` row left. `cut`
-    refuses a nested container, so `next` never prints that `cut` -- it
-    names the container's repair under `SKIPPED` instead, and `cut` keeps
-    its refusal: the advice and the command agree."""
+    """Issue #503, the #299 shape: a container that is itself a child, its
+    own children closed and an uncut `[[slice]]` row left. `cut` refuses it
+    whatever its parent's type, state, or repository, so `next` never prints
+    that `cut` -- it names the container's repair under `SKIPPED` instead,
+    and `cut` keeps its refusal: the advice and the command agree."""
     parent = board.Issue(
         298,
         "Epic",
         (),
-        complete_contract("Finish #299."),
+        complete_contract("Finish #299.", scope=["docs/epic.md"]),
         "2026-08-20T00:00:00Z",
         "2026-08-20T00:00:00Z",
-        kind=body.ItemKind.CONTAINER,
-        children_closed=0,
-        children_total=1,
+        kind=parent_kind,
+        children_closed=0 if parent_kind is body.ItemKind.CONTAINER else None,
+        children_total=1 if parent_kind is body.ItemKind.CONTAINER else None,
     )
     nested = board.Issue(
         299,
@@ -6435,13 +6469,14 @@ def test_next_names_a_nested_containers_repair_where_cut_refuses_its_row(
         children_closed=1,
         children_total=1,
     )
-    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(parent, nested))
+    board_parent = (parent,) if parent_open and parent_repository == REPOSITORY else ()
+    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(*board_parent, nested))
     client.children = {
         298: (board.ChildItem(299, board.ChildState.OPEN),),
         299: (board.ChildItem(300, board.ChildState.CLOSED),),
     }
     client.parents[299] = board.ParentIssue(
-        board.IssueReference(REPOSITORY, 298), parent.body, body.ItemKind.CONTAINER
+        board.IssueReference(parent_repository, 298), parent.body, parent_kind
     )
     cut_arguments = ["--repo", REPOSITORY, "cut", "299", "--title", slice_titles[0]]
 
@@ -6449,14 +6484,14 @@ def test_next_names_a_nested_containers_repair_where_cut_refuses_its_row(
     next_out = capsys.readouterr().out
     cut_exit_code = issue_claim.main(cut_arguments)
 
-    assert (next_exit_code, cut_exit_code) == (3, 2)
-    assert next_out == (
-        "No actionable item.\nparallel: none\nscope unknown: none\nclose: none\n\n"
-        f"SKIPPED\n#298: container; claim a child\n#299: {repair}\n"
-    )
+    assert cut_exit_code == 2
+    assert f"\n#299: {repair}\n" in next_out
+    assert "cut 299" not in next_out
     assert capsys.readouterr().err == (
-        f"ERROR: #299 is itself a child of {REPOSITORY}#298; nested containers are not supported\n"
+        f"ERROR: #299 is itself a child of {parent_repository}#298; "
+        "nested containers are not supported\n"
     )
+    assert next_exit_code == (0 if parent_kind is body.ItemKind.FEATURE else 3)
 
 
 def test_next_json_names_a_cuttable_container_slice(

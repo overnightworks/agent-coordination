@@ -28,7 +28,7 @@ it, `<s>` an integer score.
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05 | NEXT-12 |
-| that container is nested under another container | NEXT-25 | NEXT-14 |
+| that container is itself a child of another item | NEXT-25 | NEXT-14 |
 | a childless container has no further `Next` work | NEXT-07 | NEXT-13 |
 | that same container still names further work | NEXT-06 | NEXT-13 |
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
@@ -56,7 +56,7 @@ it, `<s>` an integer score.
 - [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title "<cut title>"`, exit `0` (see E-NEXT-03).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
-- [ ] [NEXT-25] A childless container nested under an open container, with an uncut row, never gets `cut_slice` (`cut` refuses it, CUT-03); `SKIPPED` names its repair instead (see E-NEXT-09).
+- [ ] [NEXT-25] A childless container with an uncut row that is a child of any item -- any type, open or closed, any repository -- never gets `cut_slice` (CUT-03); `SKIPPED` names its repair (E-NEXT-09).
 
 ## `RECOVERY` and `SKIPPED`
 
@@ -257,4 +257,4 @@ $ aco cut 299 --title "Scheibe Z"
 exit 2
 ```
 
-With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to #298`.
+With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
