@@ -57,6 +57,8 @@ def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
     _guard.setenv(GIT_ALLOW_PROTOCOL_ENV, LOCAL_PROTOCOLS_ONLY)
     _guard.setenv("GH_CONFIG_DIR", _empty_gh_config.name)
     _guard.setenv("GH_HOST", UNREACHABLE_GH_HOST)
+    # An operator's GH_REPO may name its own host, which would outrank GH_HOST.
+    _guard.delenv("GH_REPO", raising=False)
     _guard.setenv("DBUS_SESSION_BUS_ADDRESS", _UNUSABLE_SESSION_BUS_ADDRESS)
     for token_env in _GH_TOKEN_ENVS:
         _guard.setenv(token_env, "")
