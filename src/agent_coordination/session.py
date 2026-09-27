@@ -195,10 +195,13 @@ class RunContext:
     def canonical_remote_is_configured(self) -> bool:
         """Whether the checkout configures the canonical remote at all,
         answered once per context (issue #508) -- the one answer to that
-        question, asked before every read of the remote: its URL, state
-        ref, trunk, fetch and recorded or forge default branch. Neither a
-        remote-tracking ref a removed remote left behind nor a local branch
-        ever answers for a remote that is not there."""
+        question. `configured_canonical_remote` refuses on it before the
+        remote's URL, state ref, trunk, fetch and `default_branch`;
+        `recorded_default_branch`, the offline checks' read, answers `None`
+        on it instead and leaves the refusal to each check's own rule
+        (`rescope`'s PROT-45). Neither a remote-tracking ref a removed
+        remote left behind nor a local branch ever answers for a remote
+        that is not there."""
         return checkout.remote_is_configured(self.canonical_remote, directory=self.directory)
 
     @property
