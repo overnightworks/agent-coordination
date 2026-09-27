@@ -37,6 +37,7 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | git will not delete the branch a refused `start` built | START-21 |
 | git will not remove the worktree a refused `start` built | START-23 |
 | run from a linked worktree | START-19 |
+| run from a linked worktree whose git directory names no checkout | START-24 |
 | run inside the item's own lane worktree, clean or dirty | START-20 |
 | every case | START-05 |
 
@@ -72,7 +73,8 @@ built (START-18); an interrupt, or a failure once the claim is written, removes 
 - [ ] [START-06] A worktree already at the computed path, clean, same branch, with a live claim already on it: looks it up by identity/branch and reprints it verbatim, never minting a second id (see E-START-02).
 - [ ] [START-11] The same clean resume with no live claim (released, abandoned, or reopened after merge) mints a fresh id through the ordinary claim path, exactly as a first build would (see E-START-06).
 - [ ] [START-12] An explicit `--slug` not matching the shape a derived slug would always produce refuses `--slug must be <rule>`, exit 2, before any worktree or branch is touched (see E-START-04).
-- [ ] [START-19] `<repo>` is the caller's checkout if main; from a linked worktree, the one `core.worktree` or a `.git` common directory names, else the caller's own; never nested under it (see E-START-12).
+- [ ] [START-19] `<repo>` is the caller's checkout if main; from a linked worktree, the one `core.worktree` or a `.git` common directory names; never nested under it (see E-START-12).
+- [ ] [START-24] Run in a linked worktree whose git directory names no checkout refuses `main checkout unknown: git directory <dir> names no checkout; run start from the main checkout`, exit 2.
 - [ ] [START-20] Run inside a linked worktree on the live claim's branch, `start` reprints that claim as START-06 does, clean or dirty, whatever slug the path carries; exit 0 (see E-START-13).
 
 ## Refusing a target, a collision, or a dirty resume

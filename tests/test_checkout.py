@@ -1605,33 +1605,49 @@ def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
     assert checkout.main_checkout_root(toplevel=caller) == main.resolve()
 
 
-def test_main_checkout_root_from_a_linked_worktree_of_a_separate_git_directory_is_the_caller(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Issue #479 (START-19): a linked worktree whose git directory records
-    no checkout builds beside its own checkout -- never a refusal, and never
-    beside the git directory, which is no checkout to read or build from."""
-    lane = _linked_lane_of(_git_directory_kept_elsewhere(tmp_path), tmp_path)
-    monkeypatch.chdir(lane)
-
-    assert checkout.main_checkout_root(toplevel=lane) == lane.resolve()
+def _linked_to_a_git_directory_kept_elsewhere(
+    tmp_path: Path, _monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    return _git_directory_kept_elsewhere(tmp_path)
 
 
-def test_main_checkout_root_refuses_a_linked_worktree_whose_core_worktree_git_cannot_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Issue #479 (START-19): a `core.worktree` read git itself fails is
-    reported, never guessed past."""
+def _core_worktree_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A conventional repository whose `core.worktree` read fails outright."""
     _stub_one_git_call(
         monkeypatch,
         ["config", "--get", "core.worktree"],
         exit_status=128,
         stderr="fatal: bad config line 1",
     )
-    lane = _linked_lane_of(_conventional_checkout(tmp_path), tmp_path)
+    return _conventional_checkout(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("build_checkout", "refusal"),
+    [
+        pytest.param(
+            _linked_to_a_git_directory_kept_elsewhere,
+            r"main checkout unknown: git directory .* names no checkout; "
+            r"run start from the main checkout",
+            id="names-no-checkout",
+        ),
+        pytest.param(_core_worktree_unreadable, "fatal: bad config line 1", id="config-fails"),
+    ],
+)
+def test_main_checkout_root_refuses_a_linked_worktree_it_cannot_trace_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_checkout: Callable[[Path, pytest.MonkeyPatch], Path],
+    refusal: str,
+) -> None:
+    """Issue #479 (START-19, START-24): from a linked worktree whose git
+    directory records no checkout, or whose `core.worktree` git cannot read,
+    `start` refuses rather than build beside, or read the board
+    configuration of, the linked worktree itself."""
+    lane = _linked_lane_of(build_checkout(tmp_path, monkeypatch), tmp_path)
     monkeypatch.chdir(lane)
 
-    with pytest.raises(ClaimError, match="fatal: bad config line 1"):
+    with pytest.raises(ClaimError, match=refusal):
         checkout.main_checkout_root(toplevel=lane)
 
 
