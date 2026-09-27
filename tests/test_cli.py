@@ -18228,7 +18228,8 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
             None,
             False,
             0,
-            '{"ok": true, "reason": "edited", "item": 484, "kind": "container"}\n',
+            '{"ok": true, "reason": "edited", "item": "#484", "number": 484, '
+            '"kind": "container"}\n',
             "",
             [(484, body.ItemKind.CONTAINER)],
             id="retype_reports_the_json_envelope",
@@ -18311,7 +18312,7 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     storages; a retype the forge drops, an item that is not open, a body
     redirected onto stdin (which `--kind` never reads), or `--size`/`--whole`
     beside it (ITEM-50) refuses exit 2 before any retype; `--json` reports
-    the `item` and its new `kind`. stdin is a real descriptor, `/dev/null`
+    the `item` label, its `number` and new `kind`. stdin is a real descriptor, `/dev/null`
     unless the case pipes a body."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
     client.board_issues = (

@@ -3557,10 +3557,11 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
 def _print_item_edit_kind_result(
     number: int, kind: body.ItemKind, storage: body.Storage, *, as_json: bool
 ) -> None:
+    label = board.item_label(number, storage)
     if as_json:
-        _emit_json(True, ItemReason.EDITED, item=number, kind=kind.value)
+        _emit_json(True, ItemReason.EDITED, item=label, number=number, kind=kind.value)
     else:
-        print(f"EDITED {board.item_label(number, storage)} kind={kind.value}")
+        print(f"EDITED {label} kind={kind.value}")
 
 
 def _print_item_edit_result(
