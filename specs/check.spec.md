@@ -40,7 +40,7 @@ the trailer grammar that mode reads and the sentences it refuses with
 | `<sha>` is a classified trunk commit | CHECK-12 | CHECK-14 |
 | `<sha>` is a trunk commit the trailer grammar refuses | CHECK-13 | CHECK-14 |
 | `<sha>` is off the walked first-parent trunk | CHECK-13 | CHECK-14 |
-| `<sha>`, the canonical remote never configured | CHECK-15 | CHECK-15 |
+| `<sha>`, the canonical remote with no URL configured | CHECK-15 | CHECK-15 |
 | no checkout, or another pre-dispatch failure | CHECK-10 | CHECK-10 |
 | `--repo` given, `storage = "state-ref"` | CHECK-11 | CHECK-11 |
 
@@ -64,7 +64,7 @@ the trailer grammar that mode reads and the sentences it refuses with
 | trunk commit classified (CHECK-12) | `valid` | `0` |
 | trunk trailer refused (CHECK-13) | `invalid_classification` | `2` |
 | `<sha>` off the walked trunk (CHECK-13) | `not_on_trunk` | `2` |
-| `<sha>`, the canonical remote never configured (CHECK-15) | `unavailable` | `2` |
+| `<sha>`, the canonical remote with no URL configured (CHECK-15) | `unavailable` | `2` |
 | no checkout, or another pre-dispatch failure (CHECK-10) | `unavailable` | `2` |
 | `--repo` given, `storage = "state-ref"` (CHECK-11) | `invalid_usage` | `2` |
 | `<n>` past `aco-ffffff`, `storage = "state-ref"` (PIN-31) | `invalid_usage` | `2` |
@@ -245,7 +245,7 @@ $ aco check <sha> --json
 exit 2
 ```
 
-### E-CHECK-09 — a canonical remote the checkout never configured
+### E-CHECK-09 — a canonical remote with no URL configured
 
 Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, `<sha>` an unpushed local commit carrying `No-Item: docs`; the same holds when `hub` has only a URL-less line such as a global `prune = true`, and `refs/remotes/hub/*` left behind
 

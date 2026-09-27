@@ -87,6 +87,7 @@ def _protect_git_values(
     rather than a missing fixture key."""
     resolved_git_directory = git_directory or (work / ".git" / "worktrees" / "issue-72")
     resolved_common_directory = common_directory or (work / ".git")
+    origin_url = f"git@github.com:{REPOSITORY}.git"
     values = {
         ("branch", "--show-current"): branch,
         ("rev-parse", "--verify", "HEAD"): BASE,
@@ -95,10 +96,10 @@ def _protect_git_values(
         ),
         # The canonical-remote comparison (issue #176, Erwartung 6) reads this
         # to confirm the fake forge target (REPOSITORY) matches it.
-        ("config", "--get", "remote.origin.url"): f"git@github.com:{REPOSITORY}.git",
-        ("config", "--get", "--default", "", "remote.origin.url"): (
-            f"git@github.com:{REPOSITORY}.git"
-        ),
+        ("config", "--get", "remote.origin.url"): origin_url,
+        # `checkout.remote_is_configured` reads this to find the canonical
+        # remote has a URL (issue #512).
+        ("config", "--get", "--default", "", "remote.origin.url"): origin_url,
     }
     if origin_head is not None:
         values[RECORDED_ORIGIN_HEAD_READ] = origin_head
