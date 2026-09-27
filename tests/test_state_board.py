@@ -329,12 +329,40 @@ def _item_files_with_a_malformed_item(
     return {**_item_files(), f"{item_id}.md": content}
 
 
+def _task_item(parent: str | None, title: str = "Slice A") -> bytes:
+    """An open task's file under `parent`, projected like `CHILD_A_ID`."""
+    return _state_ref_body(
+        _CHILD_A_PROJECTION, _record(title=title, state="open", kind="task", parent=parent)
+    ).encode()
+
+
 def _blank_title_item(parent: str | None = None) -> bytes:
     """The item `item new --title ""` wrote before issue #447: a complete
     `[record]` whose only defect is its empty title, under `parent`."""
-    return _state_ref_body(
-        _CHILD_A_PROJECTION, _record(title="", state="open", kind="task", parent=parent)
-    ).encode()
+    return _task_item(parent, title="")
+
+
+# An id no `items/` entry carries, named as a `parent` (PIN-16).
+DANGLING_PARENT_ID = "aco-ffffff"
+
+
+def _malformed_item_refusal_case(
+    arguments: list[str],
+    *,
+    case_id: str,
+    planted: str = MALFORMED_ID,
+    planted_under: str | None = None,
+    piped_body: str | None = None,
+) -> object:
+    """One CLI refusal row: `_item_files()` plus a blank-title item planted
+    as `planted` under `planted_under`, refused by `planted`'s repair."""
+    return pytest.param(
+        arguments,
+        piped_body,
+        _item_files_with_a_malformed_item(_blank_title_item(planted_under), planted),
+        _malformed_item_refusal(item_id=planted),
+        id=case_id,
+    )
 
 
 # A second open expectation line beside `EXPECTATION_TEXT` (issue #283): one
@@ -3112,57 +3140,47 @@ class TestCliStateRefForge:
         assert issue_claim.main(arguments) == 0
 
     @pytest.mark.parametrize(
-        ("arguments", "piped_body", "planted", "planted_under"),
+        ("arguments", "piped_body", "item_files", "refusal"),
         [
-            pytest.param(["item", "show", MALFORMED_ID], None, MALFORMED_ID, None, id="item-show"),
-            pytest.param(
-                ["item", "close", MALFORMED_ID], None, MALFORMED_ID, None, id="item-close"
+            _malformed_item_refusal_case(["item", "show", MALFORMED_ID], case_id="item-show"),
+            _malformed_item_refusal_case(["item", "close", MALFORMED_ID], case_id="item-close"),
+            _malformed_item_refusal_case(
+                ["item", "edit", MALFORMED_ID, "--size", "S"], case_id="edit-size"
             ),
-            pytest.param(
-                ["item", "edit", MALFORMED_ID, "--size", "S"],
-                None,
-                MALFORMED_ID,
-                None,
-                id="edit-size",
-            ),
-            pytest.param(
+            _malformed_item_refusal_case(
                 ["item", "edit", MALFORMED_ID],
-                CONTAINER_BODY,
-                MALFORMED_ID,
-                None,
-                id="edit-without-a-record",
+                piped_body=CONTAINER_BODY,
+                case_id="edit-without-a-record",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "close", CHILD_A_ID],
+                planted=CONTAINER_ID,
+                case_id="item-close-of-a-child-under-a-malformed-parent",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "close", CONTAINER_ID],
+                planted_under=CONTAINER_ID,
+                case_id="item-close-of-a-container-over-a-malformed-child",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "edit", MALFORMED_ID, "--kind", "container"],
+                case_id="edit-kind-of-the-malformed-item",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "edit", CONTAINER_ID, "--kind", "task"],
+                planted_under=CONTAINER_ID,
+                case_id="edit-kind-of-a-container-over-a-malformed-child",
             ),
             pytest.param(
                 ["item", "close", CHILD_A_ID],
                 None,
-                CONTAINER_ID,
-                None,
-                id="item-close-of-a-child-under-a-malformed-parent",
-            ),
-            pytest.param(
-                ["item", "close", CONTAINER_ID],
-                None,
-                MALFORMED_ID,
-                CONTAINER_ID,
-                id="item-close-of-a-container-over-a-malformed-child",
-            ),
-            pytest.param(
-                ["item", "edit", MALFORMED_ID, "--kind", "container"],
-                None,
-                MALFORMED_ID,
-                None,
-                id="edit-kind-of-the-malformed-item",
-            ),
-            pytest.param(
-                ["item", "edit", CONTAINER_ID, "--kind", "task"],
-                None,
-                MALFORMED_ID,
-                CONTAINER_ID,
-                id="edit-kind-of-a-container-over-a-malformed-child",
+                {**_item_files(), f"{CHILD_A_ID}.md": _task_item(parent=DANGLING_PARENT_ID)},
+                f"item {DANGLING_PARENT_ID} is referenced as a parent but does not exist",
+                id="item-close-of-a-child-whose-parent-is-missing",
             ),
         ],
     )
-    def test_a_malformed_item_refuses_naming_its_repair_and_writes_nothing(
+    def test_an_item_whose_relatives_cannot_be_read_refuses_and_writes_nothing(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
@@ -3171,14 +3189,16 @@ class TestCliStateRefForge:
         worktree: Path,
         arguments: list[str],
         piped_body: str | None,
-        planted: str,
-        planted_under: str | None,
+        item_files: dict[str, bytes],
+        refusal: str,
     ) -> None:
         """Issue #447 proof 1: every command that must read exactly the
         malformed item, or close or retype an item that is its parent or
         child (issue #536), refuses by its id, naming `item edit` with a
-        valid `[record]` as the repair, and nothing reaches the remote."""
-        item_files = _item_files_with_a_malformed_item(_blank_title_item(planted_under), planted)
+        valid `[record]` as the repair, and nothing reaches the remote.
+        Issue #536 (ITEM-53, PIN-16): `item close` of an item whose `parent`
+        no `items/` entry carries refuses PIN-16's sentence before the close
+        writes, so the item stays open rather than closing and then refusing."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
         remote_url = f"file://{bare_remote}"
@@ -3186,35 +3206,6 @@ class TestCliStateRefForge:
 
         status = issue_claim.main(arguments)
 
-        refusal = _malformed_item_refusal(item_id=planted)
-        assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
-        assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
-
-    def test_closing_an_item_whose_parent_is_missing_refuses_before_any_write(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-        tmp_path: Path,
-        bare_remote: Path,
-        worktree: Path,
-    ) -> None:
-        """Issue #536 (ITEM-53, PIN-16): `item close` of an item whose
-        `parent` names an id no `items/` entry carries refuses PIN-16's
-        sentence before the close writes, so the item stays open on the
-        state ref rather than closing and then refusing."""
-        dangling_parent = "aco-ffffff"
-        orphan = _state_ref_body(
-            _CHILD_A_PROJECTION,
-            _record(title="Slice A", state="open", kind="task", parent=dangling_parent),
-        )
-        item_files = {**_item_files(), f"{CHILD_A_ID}.md": orphan.encode()}
-        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
-        remote_url = f"file://{bare_remote}"
-        before = store.fetch_state(worktree=worktree, remote=remote_url)
-
-        status = issue_claim.main(["item", "close", CHILD_A_ID])
-
-        refusal = f"item {dangling_parent} is referenced as a parent but does not exist"
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
 
