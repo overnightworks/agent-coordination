@@ -2605,11 +2605,14 @@ def _bash_rm_rf_target_payload(target: Path) -> dict[str, object]:
 
 def _unguarded_scratchpad(tmp_path: Path) -> Path:
     """A tester's scratchpad (issue #483): a throwaway main checkout with
-    its own bare remote (`repo`, `remote.git`), a linked worktree of a
-    guarded repository placed inside it (`guarded-worktree`), a directory
-    symlink into that guarded repository's main checkout (`guarded-link`),
-    and a file symlink from the throwaway checkout into it
-    (`repo/into-guarded.md`)."""
+    its own bare remote (`repo`, `remote.git`) and a linked worktree of it
+    on a feature branch (`lane`), a linked worktree of a guarded
+    repository placed inside it (`guarded-worktree`), a directory symlink
+    into that guarded repository's main checkout (`guarded-link`), file
+    symlinks from the throwaway checkout and its worktree into that main
+    checkout (`repo/into-guarded.md`, `lane/into-guarded.md`), and one from
+    the throwaway checkout into the guarded worktree
+    (`repo/into-guarded-worktree.md`)."""
     guarded, _worktree = _protect_real_repo_with_worktree(tmp_path)
     scratch = tmp_path / "scratch"
     scratch.mkdir()
@@ -2623,8 +2626,11 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
         "-b",
         "codex/issue-9-guarded",
     )
+    _real_git(throwaway, "worktree", "add", "-q", str(scratch / "lane"), "-b", "codex/issue-9-lane")
     (scratch / "guarded-link").symlink_to(guarded, target_is_directory=True)
-    (throwaway / "into-guarded.md").symlink_to(guarded / "README.md")
+    for link in (throwaway / "into-guarded.md", scratch / "lane" / "into-guarded.md"):
+        link.symlink_to(guarded / "README.md")
+    (throwaway / "into-guarded-worktree.md").symlink_to(scratch / "guarded-worktree" / "README.md")
     return scratch
 
 
@@ -2641,6 +2647,8 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         ("{scratch}", _write_target_payload, "guarded-worktree/src/x.py", 2, "claim first", 1),
         ("{scratch}", _write_target_payload, "guarded-link/README.md", 2, "not main", 0),
         ("{scratch}", _write_target_payload, "repo/into-guarded.md", 2, "not main", 0),
+        ("{scratch}", _write_target_payload, "lane/into-guarded.md", 2, "not main", 0),
+        ("{scratch}", _write_target_payload, "repo/into-guarded-worktree.md", 2, "claim first", 1),
         (
             "scratch",
             _write_target_payload,
@@ -2668,6 +2676,8 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         "guarded-worktree-inside-still-needs-a-claim",
         "directory-symlink-into-a-guarded-checkout",
         "file-symlink-into-a-guarded-checkout",
+        "file-symlink-from-a-throwaway-worktree-into-a-guarded-checkout",
+        "file-symlink-into-a-guarded-worktree",
         "relative-entry-fails-closed",
         "missing-entry-fails-closed",
         "malformed-variable-keeps-session-settings-writable",
@@ -2689,9 +2699,10 @@ def test_protect_unguarded_directories_exempt_only_the_repositories_they_hold(
     sits in an `ACO_PROTECT_UNGUARDED` directory allows every write, root
     deletion included, without reading the store; a guarded repository
     reached from inside it -- its linked worktree, a directory symlink, a
-    file symlink -- is still judged as guarded; and an entry that is not an
-    existing absolute directory denies every path in a checkout except the
-    session's own ignored settings."""
+    file symlink, from the throwaway checkout or its worktree -- is still
+    judged by that guarded checkout; and an entry that is not an existing
+    absolute directory denies every path in a checkout except the session's
+    own ignored settings."""
     scratch = _unguarded_scratchpad(tmp_path)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     if unguarded is not None:

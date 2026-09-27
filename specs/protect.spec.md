@@ -232,7 +232,7 @@ than a bare `claim first`.
 ## Never
 
 - `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, a path no claim can ever cover (PROT-14, PROT-42, PROT-43), a path outside every repository, or one in an unguarded repository, touches `store.fetch_state` zero times.
-- `protect` never exempts a guarded repository through an unguarded directory: its linked worktree placed there, a directory symlink into it, or a write through a file symlink from an unguarded repository into it is judged as guarded (PROT-40).
+- `protect` never exempts a guarded repository through an unguarded directory: its linked worktree placed there, a directory symlink into it, or a write through a file symlink from an unguarded repository into it is judged by the guarded checkout it lands in, never by the link's own (PROT-40).
 - `protect` never allows a write through a file symlink outside every repository as outside when its target lies in a checkout: that checkout judges the write (PROT-12 in a main checkout). A recognized `rm` or `mv` of the link itself never touches its target and stays outside (PROT-32).
 - `protect` never reads a git failure as outside every repository: a path below a `.git` file or a `.git` directory denies when git cannot tell which checkout it is, with that failure's text (PROT-17); inside a git directory itself, PROT-43's sentence.
 - `protect` never reads a git failure as an unguarded repository: PROT-40 weighs only a checkout git has resolved.
