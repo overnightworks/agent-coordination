@@ -2159,9 +2159,9 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
     arguments: list[str],
     refusal: str,
 ) -> None:
-    """Issue #479 proof 1: every refusal of the claim `start` makes inside
-    its worktree removes exactly the worktree and branch this call created,
-    and says so."""
+    """Issue #479 proof 1: every check that can refuse the claim runs
+    before `start` builds, so a refusal builds nothing -- no worktree, no
+    branch, no `worktree:` line -- and has nothing to undo."""
     repo = _start_scenario(monkeypatch, tmp_path)
     arrange(monkeypatch)
     monkeypatch.chdir(repo)
@@ -2169,38 +2169,76 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314", *arguments])
 
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    err = capsys.readouterr().err
-    assert (status, _worktrees_and_branches(repo)) == (2, before)
-    assert err.startswith(f"ERROR: {refusal}")
-    assert err.endswith(
-        f"removed worktree {worktree} and branch '{_START_BRANCH}' this start created\n"
+    out, err = capsys.readouterr()
+    assert (status, _worktrees_and_branches(repo), out) == (2, before, "")
+    assert refusal in err
+    assert "removed worktree" not in err
+
+
+def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Another agent's claim on #314 lands between `start`'s check phase and
+    its one ledger write: the only refusal left after the build."""
+    fake = _patch_store_write(monkeypatch)
+    held = _store_claim_from_request(
+        request("held-claim", "Grok sess-9", issue=314, branch="grok/issue-314-other", scope=("a",))
     )
+    commit = fake.commit_transition
+
+    def racing_commit(
+        *, worktree: Path, subject: str, intent: protocol.ClaimTransitionIntent, remote: str
+    ) -> protocol.ClaimState:
+        claims = {**fake.state.claims, protocol.claim_key(held.identity, held.branch): held}
+        fake.state = replace(fake.state, claims=claims)
+        return commit(worktree=worktree, subject=subject, intent=intent, remote=remote)
+
+    monkeypatch.setattr(store, "commit_transition", racing_commit)
 
 
-def test_a_refused_start_names_the_branch_git_would_not_delete(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+@pytest.mark.parametrize(
+    ("git_keeps_the_branch", "removal"),
+    [
+        pytest.param(
+            False,
+            "removed worktree {worktree} and branch '{branch}' this start created",
+            id="removes-both",
+        ),
+        pytest.param(
+            True,
+            "removed worktree {worktree} this start created; "
+            "branch '{branch}' kept: git failure: error: branch not fully merged",
+            id="git-keeps-the-branch",
+        ),
+    ],
+)
+def test_a_claim_refused_at_the_commit_removes_what_start_built(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    git_keeps_the_branch: bool,
+    removal: str,
 ) -> None:
-    """Issue #479: the undo deletes the branch only the safe way; when git
-    refuses that, the refusal says which branch stays and why."""
+    """Issue #479 (START-18, START-21): a claim the ledger refuses after the
+    build removes exactly the worktree and branch this call built, and says
+    so; when git will not delete the branch the safe way, it says which
+    branch stays and why."""
     repo = _start_scenario(monkeypatch, tmp_path)
-    _serve_an_item_without_scope(monkeypatch)
-    _stub_one_git_call(
-        monkeypatch,
-        ["branch", "-d", _START_BRANCH],
-        exit_status=1,
-        stderr="error: branch not fully merged",
-    )
+    _claim_lands_before_the_commit(monkeypatch)
+    if git_keeps_the_branch:
+        _stub_one_git_call(
+            monkeypatch,
+            ["branch", "-d", _START_BRANCH],
+            exit_status=1,
+            stderr="error: branch not fully merged",
+        )
     monkeypatch.chdir(repo)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
 
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    err = capsys.readouterr().err
     assert (status, worktree.exists()) == (2, False)
-    assert capsys.readouterr().err.endswith(
-        f"removed worktree {worktree} this start created; "
-        f"branch '{_START_BRANCH}' kept: git failure: error: branch not fully merged\n"
-    )
+    assert err.startswith("ERROR: issue #314 is claimed by Grok sess-9")
+    assert err.endswith(removal.format(worktree=worktree, branch=_START_BRANCH) + "\n")
 
 
 def test_start_keeps_its_worktree_when_the_report_fails_after_the_claim(
@@ -2489,41 +2527,22 @@ def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
     assert answers == [root_answer] * 3
 
 
-def test_start_under_state_ref_claims_from_the_worktree_it_creates(
+def test_start_under_state_ref_claims_the_worktree_it_builds(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Issue #322 review finding 2: under `storage = "state-ref"`, `start`
-    must claim through a forge directed at the worktree it just created,
-    never the one it cached from the caller checkout before that worktree
-    existed. A real bare remote and a real `refs/aco/state` (`_use_real_store`)
-    prove it end to end: the claim `start` prints is read back through
-    `store.fetch_state` scoped to the worktree path itself, not the
-    original checkout. Both checkouts share the same bare remote, so that
-    final read alone would also pass under the pre-fix bug -- reusing
-    `session.forge()`'s cached instance for the claim never even calls
-    `_state_ref_forge` a second time, but the claim write itself is
-    resolved by `_cmd_claim`'s own `directory` argument regardless of which
-    forge instance served the claim, so it lands in the right place either
-    way. The recorded `directory` each `_state_ref_forge` call receives
-    (issue #322 review, delta finding 2) is what distinguishes the two: a
-    reused forge never resolves a second one at all, while the fix's fresh
-    instance resolves its last one against the created worktree."""
+    """Issue #322 review finding 2, end to end under `storage = "state-ref"`
+    with a real bare remote and a real `refs/aco/state`: the claim `start`
+    prints is the one the worktree it built reads back. That the claim's
+    checks read the item as it stands after the fetch, never the snapshot
+    `start`'s first read took, is
+    `test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch`."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
-    real_state_ref_forge = issue_claim._state_ref_forge
-    recorded_directories: list[Path | None] = []
-
-    def recording_state_ref_forge(context: RunContext) -> state_board.StateRefBoard:
-        recorded_directories.append(context.directory)
-        return real_state_ref_forge(context)
-
-    monkeypatch.setattr(issue_claim, "_state_ref_forge", recording_state_ref_forge)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
     assert status == 0
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    assert recorded_directories[-1] == worktree
     claim_id = _claimed_line_id(capsys.readouterr().out, f"issue {item_id}")
     live = store.fetch_state(worktree=worktree, remote="origin").claims
     claim = live[protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)]
@@ -2531,22 +2550,22 @@ def test_start_under_state_ref_claims_from_the_worktree_it_creates(
     assert claim.scope == ("src/x.py",)
 
 
-def test_start_under_state_ref_claims_against_the_item_current_when_the_worktree_exists(
+def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Issue #322 review finding 2 (the fix's own gate): item #314 gains a
-    `scope` after `start`'s pre-worktree forge read but before its claim
-    step, exactly the window a caller-checkout-cached forge cannot see. A
-    fresh forge built from the worktree after `resolve_or_create_worktree`
-    re-reads the item and refuses the now-mismatched `--scope`; a forge
-    reused from the pre-worktree read would still see no `scope` at all and
+    """Issue #322 review finding 2 (the fix's own gate), moved before the
+    build by issue #479: item #314 gains a `scope` after `start`'s
+    item-existence read but while it fetches the trunk, exactly the window a
+    caller-checkout-cached forge cannot see. The claim's checks read a fresh
+    forge once the fetch is done and refuse the now-mismatched `--scope`; a
+    forge reused from the first read would still see no `scope` at all and
     wrongly let the claim through."""
     repo, remote, seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
-    real_resolve_or_create_worktree = checkout.resolve_or_create_worktree
+    real_fetched_trunk = checkout.fetched_trunk
 
-    def advance_item_then_create_worktree(path: Path, branch: str, *, remote: str) -> bool:
-        created = real_resolve_or_create_worktree(path, branch, remote=remote)
+    def fetch_trunk_then_advance_item(remote: str, **kwargs: Path | None) -> str:
+        trunk = real_fetched_trunk(remote, **kwargs)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(
@@ -2560,15 +2579,15 @@ def test_start_under_state_ref_claims_against_the_item_current_when_the_worktree
                 operation_id="item-op-314-race",
             ),
         )
-        return created
+        return trunk
 
     remote_path = remote
-    monkeypatch.setattr(checkout, "resolve_or_create_worktree", advance_item_then_create_worktree)
+    monkeypatch.setattr(checkout, "fetched_trunk", fetch_trunk_then_advance_item)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
     assert status == 2
-    assert capsys.readouterr().err.startswith(f"ERROR: {issue_claim.CLAIM_SCOPE_MISMATCH}\n")
+    assert capsys.readouterr().err == f"ERROR: {issue_claim.CLAIM_SCOPE_MISMATCH}\n"
     live = store.fetch_state(worktree=repo, remote="origin").claims
     assert protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) not in live
 
@@ -17913,14 +17932,16 @@ def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRu
 
 
 def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """The created worktree's scope entry is no git tree, so the width gate
-    (#326) asks the worktree context's held toplevel (issue #472)."""
+    """Both reads are of the caller's checkout: the claim's checks run on a
+    fresh context of it once the trunk is fetched (issue #479, #322 review
+    finding 2), where they used to run on the built worktree's; the width
+    gate measures the fetched trunk's own tree and asks no toplevel for a
+    scope entry that is no tree in it."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
-    worktree = repo.parent / f"{repo.name}-worktrees" / "issue-314-fresh-slug-title"
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
-        toplevel_reads={None: 1, worktree: 1},
-        config_reads={repo: 1, worktree: 1},
+        toplevel_reads={None: 2},
+        config_reads={repo: 2},
     )
 
 

@@ -2423,7 +2423,12 @@ def _judge_worktree(tmp_path: Path, *, branch: str) -> Path:
     _real_git(repo, "commit", "-q", "-m", "initial")
     _push_repository_trunk(repo, "origin")
     worktree = tmp_path / "repo-worktrees" / branch.replace("/", "-")
-    checkout.create_linked_worktree(worktree, branch=branch, remote="origin", directory=repo)
+    checkout.create_linked_worktree(
+        worktree,
+        branch=branch,
+        start_point=checkout.fetched_trunk("origin", directory=repo),
+        directory=repo,
+    )
     return worktree
 
 

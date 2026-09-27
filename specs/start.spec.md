@@ -32,7 +32,8 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | a non-worktree directory already sits at the computed path | START-15 |
 | a live claim on the target is held by a different agent or branch | START-16 |
 | a clean resume's own `--scope` differs from the live claim's stored scope | START-17 |
-| the claim refuses after this call built the worktree | START-18 |
+| the claim's own checks refuse | START-23 |
+| the ledger refuses the claim after this call built the worktree | START-18 |
 | git will not delete the branch a refused `start` built | START-21 |
 | run from a linked worktree | START-19 |
 | run from a linked worktree whose git directory names no checkout | START-22 |
@@ -55,13 +56,16 @@ merge -- leaves no live claim behind, so the next `start` on that same clean wor
 brand-new id, never a stale or deterministic per-item one.
 
 `start` checks, then builds: target, slug, prefix, and the claim store are refused before any git
-write. The claim's own checks read the worktree they run in, so they run once it exists, and
-a refusal there removes what this call built (START-18).
+write. Where no worktree stands yet, `start` fetches the trunk and runs every check the claim
+itself makes -- scope, container, body, a broken item, priority or `--out-of-order`, width, a
+claim already held -- against that one fetched commit, then builds the worktree from it: such a
+refusal builds nothing (START-23). Only the ledger refusing the claim at its one write, because
+another claim landed after the checks, removes what this call built (START-18).
 
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.
 - [ ] [START-03] No identity resolves a prefix: refuses `branch prefix is required: set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID`, exit 2; an unusable one, `claim`'s own sentence, before any worktree.
-- [ ] [START-04] `--scope`/`--whole`/`--out-of-order` pass through verbatim to the claim acquired inside the worktree, exactly as `aco claim <n>` reads them (CLM-06..CLM-18, CLAIM-53..CLAIM-55).
+- [ ] [START-04] `--scope`/`--whole`/`--out-of-order` pass through verbatim to the claim `start` acquires, exactly as `aco claim <n>` reads them (CLM-06..CLM-18, CLAIM-53..CLAIM-55).
 - [ ] [START-05] `start` never changes the caller's own working directory: it stands wherever it started once `start` returns, whatever worktree it just built or claimed in.
 - [ ] [START-06] A worktree already at the computed path, clean, same branch, with a live claim already on it: looks it up by identity/branch and reprints it verbatim, never minting a second id (see E-START-02).
 - [ ] [START-11] The same clean resume with no live claim (released, abandoned, or reopened after merge) mints a fresh id through the ordinary claim path, exactly as a first build would (see E-START-06).
@@ -81,7 +85,8 @@ a refusal there removes what this call built (START-18).
 - [ ] [START-15] Something other than a git worktree already sitting at the computed path refuses `path exists and is not a worktree of this repository`, exit `2` (see E-START-08).
 - [ ] [START-16] A live claim on the target held by a different agent or branch is never silently resumed: it falls through to the ordinary claim path, refused by CLAIM-11's own sentence (see E-START-09).
 - [ ] [START-17] A resume's own explicit `--scope` disagreeing with the live claim's stored scope refuses `live claim scope differs; release it first`, exit `2` (see E-START-10).
-- [ ] [START-18] A claim refused after this call built the worktree removes it and its branch, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-11).
+- [ ] [START-23] A refusal of the claim's own checks comes before the build: no `worktree:`/`branch:` line, no worktree, no branch; exit 2 (see E-START-11).
+- [ ] [START-18] A claim the ledger refuses at its write, after the build, removes the worktree and branch, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
 - [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 
 ## Never
@@ -220,17 +225,14 @@ $ aco start 314 --scope src/other.py
 exit 2
 ```
 
-### E-START-11 -- a claim refused inside the worktree this call built removes it again
+### E-START-11 -- a claim the checks refuse builds nothing
 
 Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` open, title `Fresh Slug`, a body naming no
 `scope`
 
 ```console
 $ aco start 314
-worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
-branch: ada/issue-314-fresh-slug
 2> ERROR: item names no scope; pass --scope
-2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' this start created
 exit 2
 ```
 
@@ -270,13 +272,27 @@ exit 0
 
 ### E-START-14 -- git keeps the branch a refused call built
 
-Setup: as E-START-11, and `git branch -d ada/issue-314-fresh-slug` refuses `error: branch not fully merged`
+Setup: as E-START-15, and `git branch -d ada/issue-314-fresh-slug` refuses `error: branch not fully merged`
 
 ```console
 $ aco start 314
 worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
 branch: ada/issue-314-fresh-slug
-2> ERROR: item names no scope; pass --scope
+2> ERROR: issue #314 is claimed by Grok sess-9 (builder) on issue #314 branch grok/issue-314-other
 2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug this start created; branch 'ada/issue-314-fresh-slug' kept: git failure: error: branch not fully merged
+exit 2
+```
+
+### E-START-15 -- a claim that lands after the checks makes the call remove its build
+
+Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` as E-START-01; `Grok sess-9` claims `#314`
+on branch `grok/issue-314-other` after this call's checks passed and before its claim is written
+
+```console
+$ aco start 314
+worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
+branch: ada/issue-314-fresh-slug
+2> ERROR: issue #314 is claimed by Grok sess-9 (builder) on issue #314 branch grok/issue-314-other
+2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' this start created
 exit 2
 ```
