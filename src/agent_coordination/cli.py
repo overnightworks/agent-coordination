@@ -3560,20 +3560,27 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
         if _stdin_is_a_regular_file():
             raise protocol.ClaimUnavailableError(ITEM_EDIT_KIND_STDIN_REFUSAL)
         client = context.forge_writer
-        # A malformed item's parent is unknown (issue #447), so it might be
-        # this container's open child: the retype holds the store well formed
-        # through its write rather than guessing past it (issue #517).
-        if isinstance(client, state_board.StateRefBoard):
-            client.hold_well_formed()
         storage = context.config.storage
         number = parsed.item
         kind = body.ItemKind(parsed.kind)
-        target = next(
-            (issue for issue in client.list_open_board_issues() if issue.number == number), None
-        )
+        # Under state-ref the retype reads its item alone (ITEM-37/38, issue
+        # #536); the forge answers only through its open-issue list.
+        if isinstance(client, state_board.StateRefBoard):
+            target = client.open_issue(number)
+        else:
+            target = next(
+                (issue for issue in client.list_open_board_issues() if issue.number == number),
+                None,
+            )
         label = board.item_label(number, storage)
         if target is None:
             raise protocol.ClaimUnavailableError(f"{label} is not an open item")
+        # The retype decides with the item and its children alone (issue
+        # #536), and holds the store it read through its write, so a child
+        # written since refuses it rather than being guessed past (#447).
+        if isinstance(client, state_board.StateRefBoard):
+            _refuse_an_unreadable_relative(client, number, with_parent=False)
+            client.hold_items()
         if kind is body.ItemKind.TASK and target.has_open_child:
             raise protocol.ClaimUnavailableError(
                 f"{label} has an open child; a container with open children stays a container"
@@ -3624,9 +3631,10 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     id gets this command's own "does not exist" sentence rather than
     `close_item`'s internal `_by_number` lookup failing with the wrong
     shape; `close_item` itself refuses a second close on an already-closed
-    item, naming its date. While any item is malformed (issue #447) it
-    refuses before the write, since the report after it reads the whole
-    store. Prints one line, `CLOSED aco-xxxxxx` (`--json`:
+    item, naming its date. An unreadable item refuses at its own read; an
+    unreadable parent or child, or a parent `items/` lacks, refuses before
+    the write (`_refuse_an_unreadable_relative`); any other malformed item only goes
+    unfreed. Prints one line, `CLOSED aco-xxxxxx` (`--json`:
     `{"item", "number", "closed_at", "parent_closable"}`), then `release
     --merged`'s own `freed:` line -- open items whose only open local
     blocker was this one (`_freed_item_numbers`, issue #256; nothing new) --
@@ -3646,20 +3654,55 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
             raise protocol.ClaimUnavailableError(
                 _missing_item_refusal(number, client, context.config.storage)
             )
-        client.require_well_formed()
+        _refuse_an_unreadable_relative(client, number, with_parent=True)
         closed_at = client.close_item(number)
         result = _ItemCloseResult(
             item_id=items.format_item_id(number),
             number=number,
             closed_at=closed_at,
             freed=_item_close_freed(client, number),
-            parent_closable=_parent_closable_number(client, number, body.Storage.STATE_REF),
+            parent_closable=_closable_parent_of_a_closed_item(client, number),
         )
         _print_item_close_result(result, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
         named = _named_refusal(error, body.Storage.STATE_REF)
         return _refuse(ItemReason.PRECONDITION_FAILED, named, as_json=as_json)
+
+
+def _refuse_an_unreadable_relative(
+    client: state_board.StateRefBoard, number: int, *, with_parent: bool
+) -> None:
+    """Refuses by the lowest id while one of `number`'s children -- a
+    malformed item the state-ref board cannot place under a parent counting
+    as one -- or, `with_parent`, its parent does not read (issue #536,
+    ITEM-53): a single-item write decides with those alone, so each is read
+    through the one narrow `item_references` read, and an unrelated
+    malformed item never blocks the write. `parent_number` refuses a parent
+    `items/` lacks (PIN-16) here too, before the write rather than after it."""
+    relatives = {child.number for child in client.list_children(number)}
+    relatives.update(client.unplaced_child_numbers(number))
+    parent = client.parent_number(number) if with_parent else None
+    if parent is not None:
+        relatives.add(parent)
+    client.item_references(sorted(relatives))
+
+
+def _closable_parent_of_a_closed_item(
+    client: state_board.StateRefBoard, closed_item: int
+) -> int | None:
+    """`_parent_closable_number`'s parent hint, withheld while the parent's
+    own `item close` would refuse by an unreadable relative (issue #536,
+    ITEM-54): the hint recommends that close, so it asks the very check
+    that close runs rather than contradicting it."""
+    closable = _parent_closable_number(client, closed_item, body.Storage.STATE_REF)
+    if closable is None:
+        return None
+    try:
+        _refuse_an_unreadable_relative(client, closable, with_parent=True)
+    except protocol.MalformedStateTreeError:
+        return None
+    return closable
 
 
 def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]:

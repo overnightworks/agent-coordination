@@ -60,7 +60,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | a title or body whose stored bytes the read would refuse | ITEM-52 | — | ITEM-52, BODY-63 | — |
 | `item show`/`edit`/`close --json` | — | ITEM-09 | ITEM-15 | ITEM-16 |
 | a malformed piped body | ITEM-27 | — | ITEM-25 | — |
-| another item malformed | ITEM-37, ITEM-42 | ITEM-37 | — | PIN-29 |
+| another item malformed | ITEM-37, ITEM-42 | ITEM-37 | ITEM-53, ITEM-54, PIN-29 | ITEM-53, ITEM-54, PIN-29 |
 | the item itself malformed | — | ITEM-38 | ITEM-39..ITEM-41 | ITEM-38 |
 | a refusal reached with `--json` | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 |
 
@@ -139,7 +139,9 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 - [ ] [ITEM-37] Under `storage = "state-ref"`, an item whose file PIN-14/PIN-15 refuse never stops `item new`, nor `item show` of any other item.
 - [ ] [ITEM-42] That item's `record.title`, while it still reads as a non-empty string, joins ITEM-33's twin search as an open item's title.
-- [ ] [ITEM-38] Reading that item itself (`item show`, `item close`, `item edit --size`/`--whole`) refuses PIN-14/PIN-15's sentence, then the repair clause of E-ITEM-10.
+- [ ] [ITEM-53] Beside a malformed item, `item close` refuses only if it is its item, its parent, or a child, and `item edit --kind` only if it is its item or a child; any other malformed item stops neither (PIN-29).
+- [ ] [ITEM-54] For ITEM-53, a malformed item whose `[record]`, or its `parent`, does not read counts as a child of every Container; one whose record reads without a parent is a child of none.
+- [ ] [ITEM-38] Reading that item itself (`item show`, `item close`, `item edit --size`/`--whole`/`--kind`) refuses PIN-14/PIN-15's sentence, then the repair clause of E-ITEM-10.
 - [ ] [ITEM-39] `aco item edit <id> < BODY` on that item takes BODY's complete `[record]` as the item's own, `updated_at` moved to now; BODY without a `[record]` refuses as ITEM-38 (see E-ITEM-10).
 - [ ] [ITEM-40] That `[record]`'s `parent` or `blocked_by` naming a missing item refuses PIN-16/PIN-17's sentence, a malformed one or the item itself ITEM-38's, before any write.
 - [ ] [ITEM-41] That `[record]` naming `state = "closed"` refuses `a repair records state = "open"; close <id> afterwards with aco item close <id>`, before any write.
