@@ -4350,7 +4350,8 @@ class _StoreAndIssues:
     concurrently (issue #440) rather than one after the other -- neither
     reads the other's result. Under `github` both are round trips a board
     build pays; under `state-ref` the forge already holds the observation
-    before the threads start (issue #477), so only the issue list is paid."""
+    and the item files before the threads start (issue #477), so neither
+    thread pays a round trip."""
 
     observed: protocol.ClaimState
     issues: tuple[board.Issue, ...]
