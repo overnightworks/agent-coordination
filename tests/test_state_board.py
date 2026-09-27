@@ -1440,6 +1440,32 @@ class TestStateRefBoardWrites:
         stored = store.read_item_files(worktree, state.tip)[f"{CHILD_A_ID}.md"]
         assert stored.startswith(b"First writer.")
 
+    def test_a_write_whose_body_the_read_would_refuse_names_its_defect_and_writes_nothing(
+        self, bare_remote: Path, worktree: Path
+    ) -> None:
+        """ITEM-52 (issue #517): the adapter itself checks every body it
+        stores with the read's own rule -- `ask`, `rule` and `cut` compose
+        theirs past any piped-body pre-check -- so a body whose block the
+        read would set aside refuses by its first defect and the remote
+        keeps the stored item."""
+        _push_item_tree(bare_remote, worktree, _item_files())
+        adapter = _fetch_state_ref_board(
+            bare_remote, worktree, writer=self._writer(bare_remote, worktree)
+        )
+        stored_body = adapter.item_reference(CHILD_A_NUMBER).body
+        assert stored_body is not None
+        oversized = stored_body.replace("```agent-claim\n", '```agent-claim\nsize = "XL"\n', 1)
+        before = store.fetch_state(worktree=worktree, remote=str(bare_remote))
+
+        with pytest.raises(ClaimUnavailableError) as refused:
+            adapter.update_item_body(CHILD_A_NUMBER, oversized)
+
+        assert str(refused.value) == (
+            "body malformed: size: size must be S, M, or L; "
+            "stored, that body would not read back, so nothing was written"
+        )
+        assert store.fetch_state(worktree=worktree, remote=str(bare_remote)).tip == before.tip
+
     def test_close_item_sets_state_and_closed_at_keeps_the_rest_and_refuses_a_second_close(
         self, bare_remote: Path, worktree: Path
     ) -> None:
