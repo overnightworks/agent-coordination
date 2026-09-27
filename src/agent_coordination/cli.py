@@ -1480,14 +1480,19 @@ def _parent_closable_number(
     is the one owner for that decision, reused rather than re-derived board-wide
     for one relation. `None` covers every non-container parent, one still
     holding another open child, an already-closed parent (a second close
-    would only refuse), or no parent at all."""
+    would only refuse), or no parent at all. The container decision runs
+    before the parent's own state read, so an unreadable parent (issue
+    #517, never a container by kind) is answered `None` rather than
+    refusing a close that already stood."""
     parent = client.parent_issue(closed_child)
     if parent is None:
         return None
-    if client.item_reference(parent.reference.number).state is not forge.ItemState.OPEN:
-        return None
     children = client.list_children(parent.reference.number)
-    return board.closable_container_number(parent, children, storage)
+    closable = board.closable_container_number(parent, children, storage)
+    if closable is None:
+        return None
+    parent_is_open = client.item_reference(closable).state is forge.ItemState.OPEN
+    return closable if parent_is_open else None
 
 
 def _release_landing(
@@ -3341,13 +3346,15 @@ def _retype_task_parent(
 
 def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item new` under `storage = "state-ref"` (issues #285, #316): the one
-    write path for a fresh state-ref item -- `StateRefBoard.create_item`,
-    the same CAS write `cut`'s own `create_child` performs, generalized to
-    an optional parent and origin -- so this module never grows a second
-    way to create one. `--origin` binds the fresh item to a foreign forge
-    issue (`items.parse_origin`'s own grammar, refused by `argparse` before
-    this ever runs) without aco governing that forge at all. An open Task
-    parent turns Container first (`_retype_task_parent`). Narrows the
+    write path for a fresh state-ref item -- `StateRefBoard.compose_item`
+    then `create_item`, the same CAS write `cut`'s own `create_child`
+    performs, generalized to an optional parent and origin -- so this
+    module never grows a second way to create one. `--origin` binds the
+    fresh item to a foreign forge issue (`items.parse_origin`'s own grammar,
+    refused by `argparse` before this ever runs) without aco governing that
+    forge at all. An open Task parent turns Container
+    (`_retype_task_parent`) once the item is composed and before it is
+    written, so an item the read would refuse retypes nothing. Narrows the
     context's forge to the state-ref board (`_state_ref_board`), since
     `create_item` is not part of the generic `ForgeWriter` port every other
     write command narrows to."""
@@ -3360,21 +3367,22 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
         _refuse_possible_twin(
             client, parsed.title, client.open_item_titles(), parent=parsed.parent, storage=storage
         )
-    if parent is not None:
-        _retype_task_parent(client, client.open_issue(parent), storage)
     kind = body.ItemKind(parsed.kind)
     skeleton = (
         body.BLOCK_CONTAINER_SKELETON
         if kind is body.ItemKind.CONTAINER
         else body.BLOCK_CHILD_SKELETON
     )
-    item_id = client.create_item(
+    new_item = client.compose_item(
         title=parsed.title,
         body=_item_new_body(parsed, skeleton),
         kind=kind,
         parent=parsed.parent,
         origin=parsed.origin,
     )
+    if parent is not None:
+        _retype_task_parent(client, client.open_issue(parent), storage)
+    item_id = client.create_item(new_item)
     _print_item_new_result(item_id, items.item_number(item_id), as_json=parsed.json)
     return 0
 
@@ -3547,6 +3555,11 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
         if _stdin_is_a_regular_file():
             raise protocol.ClaimUnavailableError(ITEM_EDIT_KIND_STDIN_REFUSAL)
         client = context.forge_writer
+        # A malformed item's parent is unknown (issue #447), so it might be
+        # this container's open child: the retype holds the store well formed
+        # through its write rather than guessing past it (issue #517).
+        if isinstance(client, state_board.StateRefBoard):
+            client.hold_well_formed()
         storage = context.config.storage
         number = parsed.item
         kind = body.ItemKind(parsed.kind)
@@ -4917,8 +4930,8 @@ def _whole_from_item_body(
     an explicit `--whole`, never costs this read. Reuses `open_by_number`
     when the caller already fetched it (a derived scope); otherwise reads
     the one target item alone, never the whole board, so a replay (CLM-15)
-    or a live-claim resume (START-06) never meets PIN-29's refusal of some
-    other item (issue #447). Resolves the repository's own storage pin
+    or a live-claim resume (START-06) never reads past its own item (issue
+    #447). Resolves the repository's own storage pin
     itself, since a trip's resolver runs before `_cmd_claim`'s own branch
     has necessarily done so."""
     if not isinstance(identity, protocol.IssueIdentity):
@@ -6478,7 +6491,7 @@ def _landing_report(
 ) -> tuple[ReleaseLanding | None, str | None]:
     """The `(landing, hint)` pair `_cmd_release` prints once its release
     transition already committed (issue #256): a forge hiccup here, or a
-    malformed state-ref item the board read refuses on (issue #447), can only
+    state-ref store the board read refuses (issue #447), can only
     ever downgrade the report to `hint`, never undo or fail that release."""
     landed = (
         board.IssueReference(context.forge.repository.path, identity.issue)
@@ -6566,6 +6579,8 @@ def _open_container(
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not an open container"
         )
+    if target.unreadable is not None:
+        raise protocol.ClaimUnavailableError(body.body_defect_text(target.unreadable))
     if target.kind not in accepted_kinds:
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not a container"
@@ -7314,7 +7329,7 @@ class _ServedBoardCache:
         met, if any (issues #447, #481): rebuilt through `context` first when
         nothing is held yet, it is stale, or `reload` asks -- a request the
         held page answers never reads `context` at all. A refused rebuild --
-        PIN-29's malformed item or an unreachable remote alike -- keeps the
+        an item PIN-16 names missing or an unreachable remote alike -- keeps the
         last page built and its refusal until a later rebuild succeeds, so
         every request in between, the reload's own redirect target
         included, shows that page with the sentence beside its age instead
@@ -7404,8 +7419,8 @@ def _board_server(parsed: argparse.Namespace, context: RunContext) -> board_serv
             cache.discard()
         return board_serve.RuleOutcome(refusal=None)
 
-    # Building the first page before `start` makes a store PIN-29 refuses
-    # (issue #447) stop the server before any token write or ruling click;
+    # Building the first page before `start` makes a store the board read
+    # refuses (issue #447) stop the server before any token write or ruling click;
     # the first `GET` then serves this very page instead of building again.
     # No request exists yet, so it reads through the run's own context.
     cache.held(context, reload=False)

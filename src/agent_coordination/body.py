@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -846,7 +847,7 @@ def _block_schema_defects(data: dict[str, object], storage: Storage) -> tuple[Co
     return tuple(defects)
 
 
-def _malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
+def malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
     return ParsedBody(
         contract=Contract(None, None, None, defects),
         contract_complete=False,
@@ -861,7 +862,7 @@ def _malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
     )
 
 
-_NO_BLOCK_PARSED_BODY = _malformed_parsed_body(
+_NO_BLOCK_PARSED_BODY = malformed_parsed_body(
     (ContractDefect(AGENT_CLAIM_FENCE_INFO, "no agent-claim block"),)
 )
 
@@ -969,7 +970,7 @@ def parse_body(body: str, *, storage: Storage = Storage.GITHUB) -> ParsedBody:
         return data
     defects = _block_schema_defects(data, storage)
     if defects:
-        return _malformed_parsed_body(defects)
+        return malformed_parsed_body(defects)
     return _valid_block_parsed_body(data, storage)
 
 
@@ -980,7 +981,7 @@ def _block_data(body: str) -> dict[str, object] | ParsedBody:
     if not fences:
         return _NO_BLOCK_PARSED_BODY
     if len(fences) > 1:
-        return _malformed_parsed_body(
+        return malformed_parsed_body(
             (
                 ContractDefect(
                     AGENT_CLAIM_FENCE_INFO, "multiple agent-claim blocks; exactly one is allowed"
@@ -989,13 +990,13 @@ def _block_data(body: str) -> dict[str, object] | ParsedBody:
         )
     _start, end, content = fences[0]
     if end is None:
-        return _malformed_parsed_body(
+        return malformed_parsed_body(
             (ContractDefect(AGENT_CLAIM_FENCE_INFO, "unclosed agent-claim block"),)
         )
     try:
         data = tomllib.loads(content)
     except tomllib.TOMLDecodeError as error:
-        return _malformed_parsed_body(
+        return malformed_parsed_body(
             (
                 ContractDefect(
                     AGENT_CLAIM_FENCE_INFO, f"agent-claim block is not valid TOML: {error}"
@@ -1010,10 +1011,25 @@ def readable_record_title(body: str) -> str | None:
     another field leaves the block malformed (issue #447), so `item new`'s
     twin search still compares a malformed state-ref item's title; `None`
     when no valid title can be read at all."""
+    title = _readable_record(body).get("title")
+    return title.strip() if is_valid_title(title) else None
+
+
+def readable_record_parent(body: str) -> str | None:
+    """`body`'s `[record]` parent when it alone still reads -- even when
+    another field leaves the block malformed (issue #517), so a container
+    still counts a malformed state-ref child as its own; `None` when no
+    parent can be read at all."""
+    parent = _readable_record(body).get("parent")
+    return parent if isinstance(parent, str) else None
+
+
+def _readable_record(body: str) -> Mapping[str, object]:
+    """`body`'s `[record]` table as far as its block still decodes as TOML,
+    empty when it does not."""
     data = _block_data(body)
     record = data.get(RECORD_KEY) if isinstance(data, dict) else None
-    title = record.get("title") if isinstance(record, dict) else None
-    return title.strip() if is_valid_title(title) else None
+    return record if isinstance(record, dict) else {}
 
 
 @dataclass(frozen=True)
@@ -1056,21 +1072,8 @@ _JsonRows = list[_JsonObject]
 
 # `protocol.toml_string` is this repository's one TOML basic-string writer
 # (issue #378): it lives below this module in the Layers contract, so it is
-# imported rather than kept as a second escape table here.
-
-_TOML_MULTILINE_STRING_ESCAPES = {"\\": "\\\\", '"': '\\"'}
-
-
-def _toml_multiline_string(value: str) -> str:
-    """A TOML multi-line basic string for `value` -- an `[[expectation]]`
-    `picture`'s inline SVG (issue #295), which needs literal newlines a
-    single-line basic string cannot hold. Backslashes and quotes are
-    escaped so no run of the content can be mistaken for the closing
-    `\"\"\"`; raw newlines stay literal. `tomllib.loads` reads it back to
-    `value` unchanged -- the leading newline right after the opening
-    delimiter is the one TOML trims automatically, so none is added here."""
-    escaped = "".join(_TOML_MULTILINE_STRING_ESCAPES.get(char, char) for char in value)
-    return f'"""\n{escaped}"""'
+# imported rather than kept as a second escape table here, and so is its
+# multi-line twin `protocol.toml_multiline_string`.
 
 
 def _render_frozen_until(data: Mapping[str, object]) -> list[str]:
@@ -1129,7 +1132,9 @@ def _render_expectations(data: Mapping[str, object]) -> list[str]:
         if "example" in expectation:
             lines.append(f"example = {protocol.toml_string(expectation['example'])}")
         if "picture" in expectation:
-            lines.append(f"picture = {_toml_multiline_string(cast(str, expectation['picture']))}")
+            lines.append(
+                f"picture = {protocol.toml_multiline_string(cast(str, expectation['picture']))}"
+            )
     return lines
 
 
@@ -1414,6 +1419,39 @@ def missing_or_empty_sections(contract: Contract) -> tuple[str, ...]:
     return tuple(name for name, value in contract_fields(contract) if not value)
 
 
+# Characters that end a line although `unicodedata` files them as separators
+# rather than controls (category Zl/Zp).
+_LINE_SEPARATORS = frozenset({"\u2028", "\u2029"})
+
+
+def _breaks_a_line(character: str) -> bool:
+    return character != "\t" and (
+        unicodedata.category(character) == "Cc" or character in _LINE_SEPARATORS
+    )
+
+
+def _slice_title_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, ...]:
+    """The rule wherever a body's shape is judged -- `body --check`,
+    `check`, `item new`/`item edit` (issue #517 line 2): a slice title is
+    one line, since `next` prints it inside a runnable `cut`, so every
+    control character but TAB and every line or paragraph separator is a
+    defect. `board` and `next` keep reading a body stored before this rule,
+    and `next` names such a row instead of printing its `cut`."""
+    defects: list[ContractDefect] = []
+    for position, row in enumerate(slices):
+        breaking = next((character for character in row.title if _breaks_a_line(character)), None)
+        if breaking is not None:
+            field = f"slice[{position}].title"
+            defects.append(
+                ContractDefect(
+                    field,
+                    f"{field} of row {row.index} holds U+{ord(breaking):04X}; "
+                    "a slice title stays on one line",
+                )
+            )
+    return tuple(defects)
+
+
 class BodyShapeVerdict(StrEnum):
     """Whether a body's own shape is one a builder can start from (issue
     #404): the third state beyond `BodyReadState.VALID`/`MALFORMED` -- a
@@ -1445,8 +1483,13 @@ def body_shape_check(body: str, *, storage: Storage = Storage.GITHUB) -> BodySha
     `reason` reads. `storage` gates the one storage-specific extension,
     `[record]` (issue #248)."""
     parsed = parse_body(body, storage=storage)
-    if parsed.read_state is BodyReadState.MALFORMED:
-        defects = tuple(body_defect_text(defect) for defect in parsed.contract.defects)
+    malformed = (
+        parsed.contract.defects
+        if parsed.read_state is BodyReadState.MALFORMED
+        else _slice_title_line_defects(parsed.slices)
+    )
+    if malformed:
+        defects = tuple(body_defect_text(defect) for defect in malformed)
         return BodyShapeCheck(BodyShapeVerdict.MALFORMED, defects)
     missing = missing_or_empty_sections(parsed.contract)
     if missing:

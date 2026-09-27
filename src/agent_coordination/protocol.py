@@ -1402,9 +1402,10 @@ def apply(state: ClaimState, intent: ClaimTransitionIntent) -> ClaimState:
 # `board.py`'s renderers import it rather than keeping a second escape
 # table and drifting from what `tomllib.loads` (the reader) accepts back.
 # It escapes every control character TOML's basic-string grammar forbids
-# unescaped, not only backslash and quote: a value carrying a tab or a
-# newline would otherwise round-trip into TOML that `tomllib.loads` (the
-# reader) refuses to parse back.
+# unescaped (U+0000-U+001F and U+007F), not only backslash and quote: the
+# short escapes where TOML has one, `\uXXXX` for the rest. A value carrying
+# U+000B would otherwise round-trip into TOML that `tomllib.loads` (the
+# reader) refuses to parse back (#517).
 
 _TOML_STRING_ESCAPES = {
     "\\": "\\\\",
@@ -1420,8 +1421,36 @@ _TOML_STRING_ESCAPES = {
 def toml_string(value: object) -> str:
     """A TOML basic string for `value` -- the writer's one escaping path,
     matching what `tomllib.loads` (the reader) accepts back unchanged."""
-    escaped = "".join(_TOML_STRING_ESCAPES.get(char, char) for char in cast(str, value))
+    escaped = "".join(_toml_string_escape(char) for char in cast(str, value))
     return f'"{escaped}"'
+
+
+# A multi-line basic string may hold a newline and a tab literally; every
+# other character keeps `toml_string`'s own escape.
+_TOML_MULTILINE_LITERALS = frozenset("\n\t")
+
+
+def toml_multiline_string(value: str) -> str:
+    """A TOML multi-line basic string for `value` -- an `[[expectation]]`
+    `picture`'s inline SVG (issue #295), which needs literal newlines a
+    single-line basic string cannot hold. Every other character takes
+    `toml_string`'s escape, so a quote run is never mistaken for the
+    closing `\"\"\"` and a control character the reader forbids literal
+    (issue #517) is written as `\\uXXXX`. `tomllib.loads` reads it back to
+    `value` unchanged -- the leading newline right after the opening
+    delimiter is the one TOML trims automatically, so none is added here."""
+    escaped = "".join(
+        char if char in _TOML_MULTILINE_LITERALS else _toml_string_escape(char) for char in value
+    )
+    return f'"""\n{escaped}"""'
+
+
+def _toml_string_escape(char: str) -> str:
+    if char in _TOML_STRING_ESCAPES:
+        return _TOML_STRING_ESCAPES[char]
+    if _has_control_character(char):
+        return f"\\u{ord(char):04X}"
+    return char
 
 
 def _toml_string_array(values: tuple[str, ...]) -> str:

@@ -149,17 +149,24 @@ def test_claim_scope_is_recorded_and_serialized_in_canonical_order() -> None:
     )
 
 
-def test_serialize_claim_toml_escapes_control_characters_the_reader_accepts_back() -> None:
-    """`toml_string` (issue #378) escapes every control character TOML's
-    basic-string grammar forbids literal, not only backslash and quote: a
-    claim field carrying a tab or a newline still round-trips through
-    `tomllib.loads` (the reader `claims/<key>.toml` is read back with)
-    instead of producing TOML the reader refuses to parse."""
-    claim = _active_claim(agent="Grok sess-1\twith a tab\nand a newline")
+@pytest.mark.parametrize(
+    "control_character",
+    [chr(code) for code in (*range(0x20), 0x7F)],
+    ids=lambda character: f"U+{ord(character):04X}",
+)
+def test_serialize_claim_toml_escapes_control_characters_the_reader_accepts_back(
+    control_character: str,
+) -> None:
+    """`toml_string` (issues #378, #517) escapes every control character
+    TOML's basic-string grammar forbids literal, not only backslash, quote,
+    tab and newline: a claim field carrying U+0000-U+001F or U+007F still
+    round-trips through `tomllib.loads` (the reader `claims/<key>.toml` is
+    read back with) instead of producing TOML the reader refuses to parse."""
+    agent = f"Grok sess-1 before{control_character}after"
 
-    decoded = tomllib.loads(protocol.serialize_claim_toml(claim))
+    decoded = tomllib.loads(protocol.serialize_claim_toml(_active_claim(agent=agent)))
 
-    assert decoded["agent"] == "Grok sess-1\twith a tab\nand a newline"
+    assert decoded["agent"] == agent
 
 
 def test_scope_overlap_is_repository_wide_and_path_aware() -> None:

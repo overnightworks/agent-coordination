@@ -40,7 +40,13 @@ from pathlib import Path
 from typing import cast
 
 from . import board
-from .body import ExpectationState, Storage, expectation_line_state, expectation_lines
+from .body import (
+    BodyReadState,
+    ExpectationState,
+    Storage,
+    expectation_line_state,
+    expectation_lines,
+)
 
 RULE_OUTCOMES: tuple[str, ...] = ("yes", "no", "later")
 
@@ -135,6 +141,9 @@ class TopicPart:
     # line names it), so this is the one place its history can render --
     # empty, unlike `Topic.ruled`, for a child whose lines are all still open.
     ruled: tuple[RuledExpectation, ...] = ()
+    # A container child's BODY-50 reason (`_body_problem`); a standalone
+    # item's own part leaves it to its `Topic.problem`.
+    problem: str | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +174,7 @@ class Topic:
     # in block order -- empty for an item with none, in which case the
     # topic renders exactly as it did before this field existed.
     ruled: tuple[RuledExpectation, ...] = ()
+    problem: str | None = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +258,15 @@ def _lane_card(
     )
 
 
+def _body_problem(item: board.BoardItem) -> str | None:
+    """BOARD-54: an item whose body does not read is still listed, and the
+    page names why with the reason `aco board` and `aco next` print
+    (BODY-50) -- never as a healthy open topic."""
+    if item.read_state is BodyReadState.MALFORMED:
+        return item.actionable_reason
+    return None
+
+
 def _item_part_state(item: board.BoardItem) -> TopicPartState:
     """Whether an open item is worked on, waits on the operator, or sits
     untouched -- `item` is always open: `board.Board.items` never lists a
@@ -282,7 +301,14 @@ def _topic_part(
         board.open_blocker_label(reference, repository, storage) for reference in child.blocked_by
     )
     ruled = _ruled_expectations(bodies.get(child.number, ""), storage=storage)
-    return TopicPart(child.number, item.title if item else None, state, blocked_by or None, ruled)
+    return TopicPart(
+        child.number,
+        item.title if item else None,
+        state,
+        blocked_by or None,
+        ruled,
+        problem=None if item is None else _body_problem(item),
+    )
 
 
 def _standalone_topic(
@@ -300,6 +326,7 @@ def _standalone_topic(
         parts=(part,),
         estimate=board.estimate_cell(item),
         ruled=_ruled_expectations(body, storage=storage),
+        problem=_body_problem(item),
     )
 
 
@@ -334,6 +361,7 @@ def _topics(
                     parts=parts,
                     estimate=board.estimate_cell(item),
                     ruled=_ruled_expectations(bodies.get(item.number, ""), storage=storage),
+                    problem=_body_problem(item),
                 )
             )
         elif item.container_parent is None:
@@ -520,7 +548,12 @@ def _render_lane(lane: LaneCard, *, storage: Storage) -> str:
 def _part_label(part: TopicPart, *, storage: Storage) -> str:
     title = f" {html.escape(part.title)}" if part.title else ""
     blocked = f" (blocked by {html.escape(part.blocked_by)})" if part.blocked_by else ""
-    return f"{board.item_label(part.number, storage)}{title}{blocked}"
+    problem = _render_problem(part.problem)
+    return f"{board.item_label(part.number, storage)}{title}{blocked}{problem}"
+
+
+def _render_problem(problem: str | None) -> str:
+    return f'<span class="problem">{html.escape(problem)}</span>' if problem else ""
 
 
 def _render_part(part: TopicPart, *, storage: Storage) -> str:
@@ -582,13 +615,14 @@ def _render_topic(topic: Topic, *, storage: Storage) -> str:
     parts = "".join(_render_part(part, storage=storage) for part in topic.parts)
     label = board.item_label(topic.item, storage)
     ruled_history = _render_ruled_history(topic.ruled, item=topic.item, storage=storage)
+    problem = _render_problem(topic.problem)
     return f"""
       <li>
         <details>
           <summary>
             <span class="t-name">
               <strong>{label} {html.escape(topic.title)}</strong>
-              <span class="t-estimate">{html.escape(topic.estimate)}</span>
+              <span class="t-estimate">{html.escape(topic.estimate)}</span>{problem}
             </span>
             <span class="t-progress">
               <span class="bar" role="img" aria-label="{topic.closed} of {topic.total} done">
@@ -878,6 +912,7 @@ summary:focus-visible {{
 .topics summary:hover .t-name strong {{ color: var(--accent); }}
 .t-name strong::after {{ content: " +"; color: var(--muted); font-weight: 400; }}
 .t-estimate {{ color: var(--muted); font: 0.82rem var(--mono); margin-left: 0.4em; }}
+.problem {{ display: block; color: var(--work); font: 0.82rem var(--mono); }}
 .topics details[open] .t-name strong::after {{ content: " \\2212"; }}
 .t-progress {{
   display: grid; grid-template-columns: minmax(0, 1fr) 3.4em; gap: 12px; align-items: center;

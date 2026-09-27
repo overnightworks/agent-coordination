@@ -12,6 +12,7 @@ is proven against a real object database, not an invented one.
 from __future__ import annotations
 
 import hashlib
+import html
 import io
 import json
 import re
@@ -328,11 +329,11 @@ def _item_files_with_a_malformed_item(
     return {**_item_files(), f"{item_id}.md": content}
 
 
-def _blank_title_item() -> bytes:
+def _blank_title_item(parent: str | None = None) -> bytes:
     """The item `item new --title ""` wrote before issue #447: a complete
-    `[record]` whose only defect is its empty title."""
+    `[record]` whose only defect is its empty title, under `parent`."""
     return _state_ref_body(
-        _CHILD_A_PROJECTION, _record(title="", state="open", kind="task")
+        _CHILD_A_PROJECTION, _record(title="", state="open", kind="task", parent=parent)
     ).encode()
 
 
@@ -369,6 +370,29 @@ EDIT_BLOCKER_ID = "aco-00000b"
 EDIT_BLOCKER_NUMBER = items.item_number(EDIT_BLOCKER_ID)
 _EDIT_TARGET_PROJECTION = _Projection("Ship the target.", "Land it.", "Target is done.")
 _EDIT_BLOCKER_PROJECTION = _Projection("Ship the blocker.", "Land it.", "Blocker is done.")
+
+
+def _edit_target_body(
+    *,
+    blocked_by: tuple[str, ...] = (),
+    record_title: str = "Target",
+    slice_title: str | None = None,
+) -> str:
+    """A body piped to `item edit` of the target, its titles written as TOML
+    `\\uXXXX` escapes (JSON's, which TOML shares) so a control character
+    reaches the reader decoded, as an operator's escaped TOML delivers it."""
+    data: dict[str, object] = {
+        **_EDIT_TARGET_PROJECTION.block_data(),
+        "record": _record(title="RECORD-TITLE", state="open", kind="task", blocked_by=blocked_by),
+    }
+    if slice_title is not None:
+        data["slice"] = [{"index": 1, "title": "SLICE-TITLE"}]
+    block = (
+        render_block(data)
+        .replace('"RECORD-TITLE"', json.dumps(record_title))
+        .replace('"SLICE-TITLE"', json.dumps(slice_title))
+    )
+    return f"Prose.\n\n```agent-claim\n{block}```\n"
 
 
 def _edit_target_item_files() -> dict[str, bytes]:
@@ -586,7 +610,7 @@ class TestEmptyStart:
         assert adapter.list_open_board_issues() == ()
 
 
-_MALFORMED_CONTENTS = pytest.mark.parametrize(
+_MALFORMED_CONTENTS = (
     ("content", "problem"),
     [
         pytest.param(
@@ -603,16 +627,27 @@ _MALFORMED_CONTENTS = pytest.mark.parametrize(
         pytest.param(
             _blank_title_item(), "has a malformed agent-claim block", id="blank-record-title"
         ),
+        pytest.param(
+            _blank_title_item(parent=CONTAINER_ID),
+            "has a malformed agent-claim block",
+            id="blank-record-title-under-a-readable-parent",
+        ),
         pytest.param(b"\xff\xfe not utf-8", "is not valid UTF-8", id="not-utf8"),
+        pytest.param(
+            _container_body_with_slices(((1, "Line one|Line two"),)).replace("|", "\v").encode(),
+            "has a malformed agent-claim block",
+            id="raw-vertical-tab-in-a-slice-title",
+        ),
     ],
 )
 
 
 class TestMalformedItem:
-    """Issue #447: one malformed item file refuses its own read and every
-    whole-store read (PIN-29), never a read of another single item."""
+    """Issues #447 and #517: one malformed item file refuses its own read,
+    never a read of another item, and the open board lists it by its
+    defect."""
 
-    @_MALFORMED_CONTENTS
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_every_other_item_still_reads(self, content: bytes, problem: str) -> None:
         del problem
         adapter = _state_ref_board(_item_files_with_a_malformed_item(content))
@@ -621,26 +656,55 @@ class TestMalformedItem:
 
         assert (reference.state, reference.title) == (forge.ItemState.OPEN, "Slice A")
 
-    @_MALFORMED_CONTENTS
-    @pytest.mark.parametrize(
-        "read",
-        [
-            pytest.param(lambda adapter: adapter.item_reference(MALFORMED_NUMBER), id="that-item"),
-            pytest.param(lambda adapter: adapter.list_open_board_issues(), id="the-open-board"),
-            pytest.param(lambda adapter: adapter.list_children(CONTAINER_NUMBER), id="children"),
-        ],
-    )
-    def test_reading_that_item_or_enumerating_the_store_refuses_naming_its_repair(
-        self, content: bytes, problem: str, read: Callable[[StateRefBoard], object]
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
+    def test_reading_that_item_refuses_naming_its_repair(
+        self, content: bytes, problem: str
     ) -> None:
-        """A malformed item's parent and state are unknown, so an enumeration
-        of the whole store refuses rather than guess past it (issue #447)."""
         adapter = _state_ref_board(_item_files_with_a_malformed_item(content))
 
         with pytest.raises(MalformedStateTreeError) as refusal:
-            read(adapter)
+            adapter.item_reference(MALFORMED_NUMBER)
 
         assert str(refusal.value) == _malformed_item_refusal(problem)
+
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
+    def test_the_open_board_lists_it_unreadable_beside_every_other_item(
+        self, content: bytes, problem: str
+    ) -> None:
+        """Issue #517 line 4: a malformed item's state is unknown, so the
+        open board lists it with its defect instead of refusing the store."""
+        del problem
+        adapter = _state_ref_board(_item_files_with_a_malformed_item(content))
+
+        listed = {issue.number: issue.unreadable for issue in adapter.list_open_board_issues()}
+
+        assert set(listed) == {CONTAINER_NUMBER, CHILD_A_NUMBER, CHILD_B_NUMBER, MALFORMED_NUMBER}
+        assert [number for number, defect in listed.items() if defect is not None] == [
+            MALFORMED_NUMBER
+        ]
+
+    def test_its_container_counts_it_as_an_open_child(self) -> None:
+        """Issue #517: a container whose only child is unreadable, that
+        child's `[record].parent` still reading, never reads as childless,
+        so no close or cut verdict guesses past it."""
+        unreadable_child = _state_ref_body(
+            _CHILD_A_PROJECTION, _record(title="", state="open", kind="task", parent=CONTAINER_ID)
+        )
+        container_file = f"{CONTAINER_ID}.md"
+        adapter = _state_ref_board(
+            {
+                container_file: _item_files()[container_file],
+                f"{MALFORMED_ID}.md": unreadable_child.encode(),
+            }
+        )
+
+        container = adapter.open_issue(CONTAINER_NUMBER)
+
+        assert container is not None
+        assert container.has_open_child
+        assert adapter.list_children(CONTAINER_NUMBER) == (
+            board.ChildItem(MALFORMED_NUMBER, board.ChildState.OPEN),
+        )
 
     @pytest.mark.parametrize(
         ("record", "refusal"),
@@ -1382,6 +1446,32 @@ class TestStateRefBoardWrites:
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{CHILD_A_ID}.md"]
         assert stored.startswith(b"First writer.")
+
+    def test_a_write_whose_body_the_read_would_refuse_names_its_defect_and_writes_nothing(
+        self, bare_remote: Path, worktree: Path
+    ) -> None:
+        """ITEM-52 (issue #517): the adapter itself checks every body it
+        stores with the read's own rule -- `ask`, `rule` and `cut` compose
+        theirs past any piped-body pre-check -- so a body whose block the
+        read would set aside refuses by its first defect and the remote
+        keeps the stored item."""
+        _push_item_tree(bare_remote, worktree, _item_files())
+        adapter = _fetch_state_ref_board(
+            bare_remote, worktree, writer=self._writer(bare_remote, worktree)
+        )
+        stored_body = adapter.item_reference(CHILD_A_NUMBER).body
+        assert stored_body is not None
+        oversized = stored_body.replace("```agent-claim\n", '```agent-claim\nsize = "XL"\n', 1)
+        before = store.fetch_state(worktree=worktree, remote=str(bare_remote))
+
+        with pytest.raises(ClaimUnavailableError) as refused:
+            adapter.update_item_body(CHILD_A_NUMBER, oversized)
+
+        assert str(refused.value) == (
+            "body malformed: size: size must be S, M, or L; "
+            "stored, that body would not read back, so nothing was written"
+        )
+        assert store.fetch_state(worktree=worktree, remote=str(bare_remote)).tip == before.tip
 
     def test_close_item_sets_state_and_closed_at_keeps_the_rest_and_refuses_a_second_close(
         self, bare_remote: Path, worktree: Path
@@ -2464,10 +2554,10 @@ class TestCliStateRefForge:
         item's `[record]` table is validated once, at read time, by
         `StateRefBoard`'s own decode (issue #283) -- so a container without
         a working `[[slice]]` table (no agent-claim block to hold one) is
-        refused by that decode's own sentence and repair (issue #447) the
-        moment `cut` reads the store, rather than a second, cut-specific one.
-        `next` refuses the same sentence (PIN-29) instead of recommending
-        `cut` on such a container. Nothing reaches the remote."""
+        refused by the defect that decode names it by (issues #447, #517),
+        rather than a second, cut-specific sentence, and `next` names that
+        same defect instead of recommending `cut` on such a container.
+        Nothing reaches the remote."""
         item_files = {**_item_files(), f"{CONTAINER_ID}.md": b"Just prose, no block at all.\n"}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         remote_url = f"file://{bare_remote}"
@@ -2477,9 +2567,7 @@ class TestCliStateRefForge:
 
         assert status == 2
         assert capsys.readouterr().err == (
-            f"ERROR: item {CONTAINER_ID} has a malformed agent-claim block; "
-            f"repair it with aco item edit {CONTAINER_ID} "
-            "and a body whose agent-claim block carries a valid [record]\n"
+            "ERROR: body malformed: agent-claim: no agent-claim block\n"
         )
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
@@ -3030,9 +3118,11 @@ class TestCliStateRefForge:
                 CONTAINER_ID,
                 id="item-close-of-a-child-under-a-malformed-parent",
             ),
-            *(
-                pytest.param(command, None, MALFORMED_ID, id=command[0])
-                for command in (["board", "--json"], ["next"], ["rulings"])
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--kind", "container"],
+                None,
+                MALFORMED_ID,
+                id="edit-kind-beside-a-malformed-item",
             ),
         ],
     )
@@ -3048,9 +3138,9 @@ class TestCliStateRefForge:
         planted: str,
     ) -> None:
         """Issue #447 proof 1: every command that must read exactly the
-        malformed item, or enumerate the whole store around it, refuses by
-        its id, naming `item edit` with a valid `[record]` as the repair,
-        and nothing reaches the remote."""
+        malformed item, or close or retype an item beside it, refuses by its id,
+        naming `item edit` with a valid `[record]` as the repair, and
+        nothing reaches the remote."""
         item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
@@ -3062,6 +3152,92 @@ class TestCliStateRefForge:
         refusal = _malformed_item_refusal(item_id=planted)
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
+
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
+    def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        content: bytes,
+        problem: str,
+    ) -> None:
+        """Issue #517 line 4: `Slice A` turned unreadable -- `Slice B` is
+        blocked by it and a childless container with an uncut row is nested
+        under it -- yet `board`, `next` and `rulings` still read, `board`
+        and `next` naming it by its defect -- `board --html` by the same
+        reason (BOARD-54) --, `item show` still reads every other item, and
+        only `item show` of that item refuses."""
+        nested_id = "aco-00000b"
+        nested_body = _container_body_with_slices(((1, "Cut it"),), parent=CHILD_A_ID)
+        item_files = {
+            **_item_files_with_a_malformed_item(content, CHILD_A_ID),
+            f"{nested_id}.md": nested_body.encode(),
+        }
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        unreadable_line = f"\n{CHILD_A_ID}: body malformed: "
+
+        board_exit_code = issue_claim.main(["board", "--json"])
+        board_items = json.loads(capsys.readouterr().out)["items"]
+        next_exit_code = issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        html_exit_code = issue_claim.main(["board", "--html"])
+        rendered_html = capsys.readouterr().out
+        rulings_exit_code = issue_claim.main(["rulings"])
+        other_show_exit_code = issue_claim.main(["item", "show", CHILD_B_ID])
+        capsys.readouterr()
+        own_show_exit_code = issue_claim.main(["item", "show", CHILD_A_ID])
+
+        assert (
+            board_exit_code,
+            next_exit_code,
+            html_exit_code,
+            rulings_exit_code,
+            other_show_exit_code,
+        ) == (0, 3, 0, 0, 0)
+        assert {item["number"] for item in board_items} == {
+            CONTAINER_NUMBER,
+            CHILD_A_NUMBER,
+            CHILD_B_NUMBER,
+            items.item_number(nested_id),
+        }
+        assert unreadable_line in next_out
+        unreadable_reason = next_out.split(f"\n{CHILD_A_ID}: ", 1)[1].split("\n", 1)[0]
+        assert html.escape(unreadable_reason) in rendered_html
+        assert f"\n{nested_id}: " in next_out
+        assert f"\n{CHILD_B_ID}: blocked by {CHILD_A_ID}" in next_out
+        assert (own_show_exit_code, capsys.readouterr().err) == (
+            2,
+            f"ERROR: {_malformed_item_refusal(problem, CHILD_A_ID)}\n",
+        )
+
+    def test_board_html_names_an_unreadable_child_inside_its_readable_containers_topic(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #517 line 4 (BOARD-54): `Slice A` turned unreadable while
+        its `[record].parent` still names the container, so `board --html`
+        prints its reason inside that container's topic, beside its part."""
+        item_files = _item_files_with_a_malformed_item(
+            _blank_title_item(parent=CONTAINER_ID), CHILD_A_ID
+        )
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        unreadable_reason = next_out.split(f"\n{CHILD_A_ID}: ", 1)[1].split("\n", 1)[0]
+
+        html_exit_code = issue_claim.main(["board", "--html"])
+
+        after_container_title = capsys.readouterr().out.split(f"{CONTAINER_ID} Epic</strong>", 1)[1]
+        container_topic = after_container_title.split("<strong>", 1)[0]
+        assert html_exit_code == 0
+        assert f'<span class="problem">{html.escape(unreadable_reason)}</span>' in container_topic
 
     def test_item_edit_with_a_valid_record_repairs_a_malformed_item(
         self,
@@ -3492,54 +3668,132 @@ class TestCliStateRefForge:
         assert f"{EDIT_TARGET_ID}: blocked by" not in freed_out
 
     @pytest.mark.parametrize(
-        ("blocked_by", "refusal"),
+        ("command", "piped_body", "refusal"),
         [
             pytest.param(
-                ("aco-ffffff",),
+                ["item", "edit", EDIT_TARGET_ID],
+                _edit_target_body(blocked_by=("aco-ffffff",)),
                 "item aco-ffffff is listed as a blocker but does not exist",
                 id="unknown-blocker",
             ),
             pytest.param(
-                (EDIT_TARGET_ID,),
+                ["item", "edit", EDIT_TARGET_ID],
+                _edit_target_body(blocked_by=(EDIT_TARGET_ID,)),
                 f"item {EDIT_TARGET_ID} is listed as its own blocker",
                 id="itself",
             ),
             pytest.param(
-                (EDIT_BLOCKER_ID, EDIT_BLOCKER_ID),
+                ["item", "edit", EDIT_TARGET_ID],
+                _edit_target_body(blocked_by=(EDIT_BLOCKER_ID, EDIT_BLOCKER_ID)),
                 f"item {EDIT_TARGET_ID} lists blocker {EDIT_BLOCKER_ID} more than once",
                 id="repeated-blocker",
             ),
+            *(
+                pytest.param(
+                    ["item", "edit", EDIT_TARGET_ID],
+                    _edit_target_body(slice_title=f"Line one{character}Line two"),
+                    f"body malformed: slice[0].title: slice[0].title of row 1 holds {codepoint}; "
+                    "a slice title stays on one line",
+                    id=f"slice-title-{codepoint}",
+                )
+                for character, codepoint in (
+                    ("\v", "U+000B"),
+                    ("\n", "U+000A"),
+                    ("\r", "U+000D"),
+                    ("\f", "U+000C"),
+                    ("\x00", "U+0000"),
+                    ("\u0085", "U+0085"),
+                    ("\u2028", "U+2028"),
+                    ("\u2029", "U+2029"),
+                )
+            ),
+            pytest.param(
+                ["item", "new", "--title", "Fresh\udcfftwo"],
+                "",
+                "body malformed: item: item file is not valid UTF-8; "
+                "stored, that body would not read back, so nothing was written",
+                id="item-new-title-that-would-not-read-back",
+            ),
+            pytest.param(
+                ["item", "new", "--title", "Fresh\udcfftwo", "--parent", EDIT_TARGET_ID],
+                "",
+                "body malformed: item: item file is not valid UTF-8; "
+                "stored, that body would not read back, so nothing was written",
+                id="item-new-under-a-task-parent-that-would-not-read-back",
+            ),
         ],
     )
-    def test_item_edit_refuses_an_unresolved_blocker_and_the_board_still_reads(
+    def test_a_write_the_read_would_refuse_refuses_before_any_write_and_the_board_still_reads(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
-        blocked_by: tuple[str, ...],
+        command: list[str],
+        piped_body: str,
         refusal: str,
     ) -> None:
-        """Issue #450 proof 1: a piped `blocked_by` naming no item, the
-        edited item itself, or one item twice refuses before any write, so
-        `board --json` keeps reading instead of refusing from then on."""
+        """Issues #450 proof 1 and #517 lines 1-2: a piped `blocked_by`
+        naming no item, the edited item itself, or one item twice, a slice
+        title holding a line break or control character, or any body whose
+        stored bytes the read would set aside refuses before any write, so
+        `board --json` and `next` keep reading instead of refusing from then
+        on."""
         self._live_state_ref_checkout(
             monkeypatch, tmp_path, bare_remote, worktree, _edit_target_item_files()
         )
-        unresolved_body = _state_ref_body(
-            _EDIT_TARGET_PROJECTION,
-            _record(title="Target", state="open", kind="task", blocked_by=blocked_by),
-        )
-        monkeypatch.setattr(sys, "stdin", io.StringIO(unresolved_body))
+        monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body))
         remote_url = f"file://{bare_remote}"
         before = store.fetch_state(worktree=worktree, remote=remote_url)
 
-        status = issue_claim.main(["item", "edit", EDIT_TARGET_ID])
+        status = issue_claim.main(command)
+        err = capsys.readouterr().err
 
-        assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+        assert (status, err.startswith("ERROR: "), err.endswith(f"{refusal}\n")) == (2, True, True)
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
-        assert issue_claim.main(["board", "--json"]) == 0
+        assert (issue_claim.main(["board", "--json"]), issue_claim.main(["next"])) == (0, 0)
+
+    @pytest.mark.parametrize(
+        ("piped_body", "shown_title"),
+        [
+            pytest.param(
+                _edit_target_body(slice_title="Left\tright"),
+                'title = "Left\\tright"',
+                id="slice-title-holding-a-tab",
+            ),
+            pytest.param(
+                _edit_target_body(record_title="Target\vtwo"),
+                'title = "Target\\u000Btwo"',
+                id="record-title-holding-U+000B",
+            ),
+        ],
+    )
+    def test_item_edit_writes_a_title_the_read_reads_back(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        piped_body: str,
+        shown_title: str,
+    ) -> None:
+        """Issue #517 lines 1-2: TAB is the one control character a slice
+        title keeps, and a record title may hold any control character,
+        which the writer escapes; the edit lands and `item show` reads it
+        back."""
+        self._live_state_ref_checkout(
+            monkeypatch, tmp_path, bare_remote, worktree, _edit_target_item_files()
+        )
+        monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body))
+
+        edited = issue_claim.main(["item", "edit", EDIT_TARGET_ID])
+        capsys.readouterr()
+        shown = issue_claim.main(["item", "show", EDIT_TARGET_ID])
+
+        assert (edited, shown) == (0, 0)
+        assert shown_title in capsys.readouterr().out
 
     def test_item_edit_two_processes_from_the_same_snapshot_the_second_refuses(
         self,

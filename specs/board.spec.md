@@ -43,6 +43,7 @@ included.
 | `--repo` under `storage = "state-ref"` | BOARD-42, BOARD-43 | BOARD-42 | — |
 | the Landungen view's own rows | BOARD-12 | BOARD-20 | BOARD-20 |
 | an item with no recognized `kind` | BOARD-08 | — | — |
+| a state-ref item the store cannot read | BOARD-54 | BOARD-54 | BOARD-54 |
 | an uncut `[[slice]]` row | BOARD-14 | — | — |
 | a completed run | BOARD-11, BOARD-13 | — | — |
 | `--json`'s success/refusal envelope | BOARD-11, BOARD-43 (OUT-nn cited) | — | — |
@@ -82,6 +83,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-11] `board --json` wraps OUT-nn (`reason: "projected"`) around `items`, `ready_now`, `stale`, `recovery`, `landings`, `uncut`, `requests`, `measurements` only, never `repository` (E-BOARD-04).
 - [ ] [BOARD-43] `--json` on a dispatched refusal (BOARD-02, BOARD-39, BOARD-42, BOARD-53) prints that envelope with the sentence as `message` and `reason` below, exit `2` (see E-BOARD-15).
 - [ ] [BOARD-08] An item the forge reports no `kind` for, or a non-`container` `kind`, carries `"container": null` even with child counts of its own (#309): never guessed at (see E-BOARD-03).
+- [ ] [BOARD-54] A state-ref item PIN-14/PIN-15 refuses is listed, open, with BODY-50's reason and its read defect, e.g. `body malformed: record: no [record] table`; every other item reads as before (NEXT-36).
 
 `reason`, by which refusal fired:
 
@@ -132,7 +134,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-48] Every ruling click, written or refused, rebuilds the page, so the page it redirects to shows the line as the forge now holds it, unless BOARD-51 keeps the last page.
 - [ ] [BOARD-49] A client that hangs up mid-response leaves stderr empty; any other request error still prints its traceback.
 - [ ] [BOARD-50] The reload link's request rebuilds, then redirects (`303`) to the plain URL, no `reload` field, so a later plain refresh serves the held page without rebuilding (see E-BOARD-18).
-- [ ] [BOARD-51] A rebuild PIN-29 refuses (`specs/storage-pin.spec.md`) keeps the page last built and shows PIN-29's sentence beside its age.
+- [ ] [BOARD-51] A rebuild the store refuses (`specs/storage-pin.spec.md`, e.g. PIN-16) keeps the page last built and shows that refusal beside its age; an unreadable item alone never does (BOARD-54).
 - [ ] [BOARD-52] A refused rebuild, an unreachable remote included, keeps its refusal: a reload still redirects (`303`), and each request shows the held page with it until a rebuild succeeds (see E-BOARD-19).
 
 ## Never
