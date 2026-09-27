@@ -69,18 +69,20 @@ def test_push_to_a_non_local_remote_is_refused(tmp_path: Path, transport: str, u
     assert f"transport '{transport}' not allowed" in push.stderr
 
 
+@pytest.mark.usefixtures("isolated_global_git_config")
 def test_a_module_outside_tests_run_with_the_project_configuration_is_guarded(
     tmp_path: Path,
 ) -> None:
     """The same https refusal, copied into a scratch directory and run by a
-    pytest whose environment carries no guard of its own: only the plugin the
-    project configuration loads can make it pass (#530 line 2)."""
+    pytest whose environment carries no guard of its own and whose git reads
+    no global or system configuration: only the plugin the project
+    configuration loads can make it pass (#530 line 2)."""
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     probe = shutil.copy(__file__, scratch / "test_scratch_probe.py")
     unguarded_environment = {
         name: value for name, value in os.environ.items() if name != GIT_ALLOW_PROTOCOL_ENV
-    }
+    } | {"GIT_CONFIG_NOSYSTEM": "1"}
     command = [
         sys.executable,
         "-m",
