@@ -37,7 +37,7 @@ an item as `specs/landing-grammar.spec.md` names it: `#<n>` under
 | claim opened over an hour ago | — | CLAIM-47, CLAIM-48 | CLAIM-49 |
 | state ref rewritten | — | CLAIM-50 | — |
 | foreign claim, coordinator override | CLAIM-51 | — | CLAIM-38, CLAIM-39, CLAIM-40 |
-| hand-corrupted claim file | CLAIM-06..CLAIM-08, CLAIM-59..CLAIM-63 | CLAIM-06..CLAIM-08, CLAIM-59..CLAIM-63 | — |
+| hand-corrupted claim file | CLAIM-06..CLAIM-08, CLAIM-59..CLAIM-63, CLAIM-70 | CLAIM-06..CLAIM-08, CLAIM-59..CLAIM-63, CLAIM-70 | — |
 | hand-corrupted claim key | CLAIM-09, CLAIM-56, CLAIM-64..CLAIM-66 | CLAIM-09, CLAIM-56, CLAIM-64..CLAIM-66 | — |
 | item naming its own scope | CLAIM-53, CLAIM-54, CLAIM-55, CLAIM-67, CLAIM-68 | — | — |
 | one claim's own `--json` view | CLAIM-69 | CLAIM-69 | CLAIM-69 |
@@ -63,6 +63,7 @@ an item as `specs/landing-grammar.spec.md` names it: `#<n>` under
 - [ ] [CLAIM-61] A claim file whose `claim_id` is not a claim id refuses `claim file issue-42.toml at <oid> has an invalid claim id`, exit `2`.
 - [ ] [CLAIM-62] A claim file whose `base` or `opened_commit` is not a 40-character lowercase commit id refuses `claim file issue-42.toml at <oid> has a malformed commit id`, exit `2`.
 - [ ] [CLAIM-63] A claim file that is not valid TOML refuses `malformed claim file issue-42.toml at <oid>: <reason>`, exit `2`; a `whole_reason` that is not text refuses `field 'whole_reason' must be text`.
+- [ ] [CLAIM-70] A claim file whose `scope` holds a path CLAIM-20 refuses fails the state read with `claim file issue-42.toml at <oid> has an invalid scope: <CLAIM-20 sentence>`, exit `2`; no legacy record is kept.
 
 ## A hand-corrupted claim key
 
@@ -86,7 +87,7 @@ an item as `specs/landing-grammar.spec.md` names it: `#<n>` under
 
 - [ ] [CLAIM-18] Each `--scope` value is exactly one path, comma and all, and a comma-bearing value matching no versioned file refuses `matches no versioned file; one --scope path per flag`, exit `2`.
 - [ ] [CLAIM-19] A scope value that is absolute, starts with `~`, carries `..`, is `.`, or opens with `.git` refuses `claim scope must be repository-relative: '<path>'`, exit `2`.
-- [ ] [CLAIM-20] A scope value with surrounding whitespace, a backslash, a control character, or over 512 characters refuses `claim scope entries must be canonical bounded paths`, exit `2`.
+- [ ] [CLAIM-20] A scope value with surrounding whitespace, a backslash, a TAB, a display control (NEXT-37) or over 512 characters refuses `claim scope entries must be canonical bounded paths`, exit `2`.
 - [ ] [CLAIM-21] A scope naming the same path twice refuses `claim scope contains duplicate paths`, exit `2`.
 - [ ] [CLAIM-22] An empty scope refuses `claim marker scope must be a non-empty list`, exit `2`.
 - [ ] [CLAIM-23] A scope of more than 256 entries refuses `claim marker scope exceeds 256 entries`, exit `2`; 256 entries still claim.
