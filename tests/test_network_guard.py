@@ -1,7 +1,7 @@
 """Behavioral tests for `tests/network_guard.py` (issues #530 and #534).
 
-Git is the boundary the guard constrains, so each proof runs real git under
-`tmp_path`. The refused remotes point at a closed
+Git and gh are the boundaries the guard constrains, so each proof runs the
+real binary under `tmp_path`. The refused remotes point at a closed
 loopback port, so a push the guard failed to stop still ends on this machine.
 """
 
@@ -70,6 +70,7 @@ def test_a_request_naming_its_own_host_ends_at_the_loopback_proxy():
         "http_proxy": _LOOPBACK_ONLY_PROXY,
         "NO_PROXY": None,
         "no_proxy": None,
+        "GH_REPO": None,
     }}
     routing = {{name: os.environ.get(name) for name in safe_routing}}
     assert routing == safe_routing, routing
@@ -205,12 +206,13 @@ def test_a_run_started_with_a_hostile_gh_setup_finds_no_login_and_stays_on_the_m
     tmp_path: Path, plugin_arguments: list[str], guarded: bool
 ) -> None:
     """A pytest run started with the operator's gh configuration, every gh
-    token variable, a proxy of its own and a proxy exemption for every host
-    asks gh for a login, and for a host it names, from its module: it finds
-    none and its request ends at the closed loopback port only while the
-    plugin displaces them before the run begins (#534 line 1). The blocked
-    run proves the seeded login is one gh would use; its request is never
-    sent, because the module checks the proxy routing first."""
+    token variable, a repository on a host of its own, a proxy of its own
+    and a proxy exemption for every host asks gh for a login, and for a
+    host it names, from its module: it finds none and its request ends at
+    the closed loopback port only while the plugin displaces them before
+    the run begins (#534 line 1). The blocked run proves the seeded login
+    is one gh would use; its request is never sent, because the module
+    checks the routing first."""
     hostile_config = tmp_path / "operator-gh-config"
     hostile_config.mkdir()
     (hostile_config / "hosts.yml").write_text(
@@ -231,6 +233,7 @@ def test_a_run_started_with_a_hostile_gh_setup_finds_no_login_and_stays_on_the_m
         "HTTPS_PROXY": "http://127.0.0.1:1",
         "NO_PROXY": "*",
         "no_proxy": "*",
+        "GH_REPO": "example.invalid/o/r",
     }
 
     run = _run_scratch_pytest(scratch, _SCRATCH_GH_MODULE, plugin_arguments, hostile_environment)
