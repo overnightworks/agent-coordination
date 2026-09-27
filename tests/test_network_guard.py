@@ -1,7 +1,7 @@
 """Behavioral tests for `tests/network_guard.py` (issue #530).
 
-Git is the boundary the guard constrains, so each proof pushes with real git
-from a repository under `tmp_path`. The refused remotes point at a closed
+Git is the boundary the guard constrains, so each proof runs real git under
+`tmp_path`. The refused remotes point at a closed
 loopback port, so a push the guard failed to stop still ends on this machine.
 """
 
@@ -129,24 +129,37 @@ def test_a_refused_remote_probe_ignores_operator_proxies_when_the_guard_is_gone(
     assert "127.0.0.1 port 9" in push.stderr
 
 
-@pytest.mark.usefixtures("isolated_global_git_config")
-def test_a_module_outside_tests_run_with_the_project_configuration_is_guarded(
+@pytest.mark.parametrize(
+    ("plugin_arguments", "guarded"),
+    [
+        pytest.param([], True, id="plugin-loaded"),
+        pytest.param(["-p", "no:network_guard"], False, id="plugin-blocked"),
+    ],
+)
+def test_a_module_outside_tests_is_guarded_by_the_project_plugin_alone(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    plugin_arguments: list[str],
+    guarded: bool,
 ) -> None:
     """A scratch directory whose initial conftest, module import and test
-    each ask git for an https remote, run by a pytest whose environment
-    carries no guard of its own and whose git reads no global or system
-    configuration: only the plugin the project configuration loads can
-    make it pass, and only if it guards before the initial conftests
-    load (#530 lines 1 and 2)."""
+    each ask git for an https remote passes only when the plugin the project
+    configuration loads guards before the initial conftests (#530 lines 1
+    and 2). The operator's runtime git configuration refuses https here
+    too; the blocked run proves the scratch pytest never inherits it."""
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.https.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "never")
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     (scratch / "conftest.py").write_text(_SCRATCH_CONFTEST)
     probe = scratch / "test_scratch_probe.py"
     probe.write_text(_SCRATCH_TEST_MODULE)
     unguarded_environment = {
-        name: value for name, value in os.environ.items() if name != GIT_ALLOW_PROTOCOL_ENV
-    } | {"GIT_CONFIG_NOSYSTEM": "1", "LC_ALL": "C"}
+        name: value
+        for name, value in _machine_local_git_environment().items()
+        if name != GIT_ALLOW_PROTOCOL_ENV
+    }
     command = [
         sys.executable,
         "-m",
@@ -158,6 +171,7 @@ def test_a_module_outside_tests_run_with_the_project_configuration_is_guarded(
         str(scratch),
         "-p",
         "no:cacheprovider",
+        *plugin_arguments,
         str(probe),
     ]
 
@@ -165,5 +179,4 @@ def test_a_module_outside_tests_run_with_the_project_configuration_is_guarded(
         command, cwd=scratch, env=unguarded_environment, capture_output=True, text=True, check=False
     )
 
-    assert run.returncode == 0, run.stdout + run.stderr
-    assert "1 passed" in run.stdout
+    assert (run.returncode == 0) is guarded, run.stdout + run.stderr
