@@ -1,0 +1,8 @@
+claim_id = "e19a2bc6c8fd4537a5938794df7a5374"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "28db24ae5772dfdb19ecf0e4ed0e8abf927f420f"
+branch = "claude/issue-524-pin-merge-base"
+scope = ["specs/storage-pin.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_checkout.py", "tests/test_cli.py"]
+opened_commit = "8b34d16b57a8a7038e4fe61732d3ab0540f9bcb4"
+whole_reason = "PIN-32's one decision, its git read and its proofs"
