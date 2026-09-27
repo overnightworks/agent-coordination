@@ -96,7 +96,9 @@ def _protect_git_values(
         # The canonical-remote comparison (issue #176, Erwartung 6) reads this
         # to confirm the fake forge target (REPOSITORY) matches it.
         ("config", "--get", "remote.origin.url"): f"git@github.com:{REPOSITORY}.git",
-        ("remote",): "origin",
+        ("config", "--get", "--default", "", "remote.origin.url"): (
+            f"git@github.com:{REPOSITORY}.git"
+        ),
     }
     if origin_head is not None:
         values[RECORDED_ORIGIN_HEAD_READ] = origin_head
@@ -3331,3 +3333,27 @@ def test_protect_and_rescope_judge_the_canonical_remotes_recorded_default_branch
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
 
     assert refusal_of(monkeypatch, capsys, path) == (2, sentence)
+
+
+def test_protect_names_a_canonical_remote_that_has_config_lines_but_no_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #512 line 1 (PROT-45): a `remote.upstream.fetch` line without a
+    URL, beside a `HEAD` the remote left behind, is still no configured
+    canonical remote -- `protect` names it rather than judging its branch."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    _use_real_path_is_tracked(monkeypatch)
+    path = _hub_canonical_worktree_file(
+        tmp_path, canonical="upstream", canonical_head="trunk", branch="codex/issue-72-widget"
+    )
+    _real_git(
+        path.parent, "config", "remote.upstream.fetch", "+refs/heads/*:refs/remotes/upstream/*"
+    )
+    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
+
+    assert _protect_refusal(monkeypatch, capsys, path) == (2, _UNCONFIGURED_UPSTREAM)
