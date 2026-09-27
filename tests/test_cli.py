@@ -2789,21 +2789,28 @@ def _state_ref_item_body(title: str, **block_fields: object) -> str:
 
 
 def _real_state_ref_start_scenario(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, canonical_remote: str = "origin"
 ) -> tuple[Path, Path, protocol.ObjectId]:
     """A real bare-remote-backed, `storage = "state-ref"` repository (issue
     #322 review finding 2) with item #314 open, untitled scope, ready for
     `start` -- the state-ref counterpart of `_start_scenario`, real
     `refs/aco/state` and all (`_use_real_store`), since `_FakeStore` cannot
-    see which directory a read ran against."""
+    see which directory a read ran against. A `canonical_remote` other than
+    `origin` keeps an `origin` beside it on the same bare remote, as a
+    fork's clone does, so both remotes record a `HEAD`."""
     _use_real_store(monkeypatch)
-    repo, remote = _real_repository_with_bare_remote(tmp_path)
+    repo, remote = _real_repository_with_bare_remote(tmp_path, remote_name=canonical_remote)
     config_dir = repo / ".agent-claim"
     config_dir.mkdir()
-    (config_dir / "board.toml").write_text('storage = "state-ref"\n')
+    (config_dir / "board.toml").write_text(
+        f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
+    )
     _real_git(repo, "add", ".agent-claim/board.toml")
     _real_git(repo, "commit", "-q", "-m", "pin state-ref storage")
-    _push_repository_trunk(repo, "origin")
+    _push_repository_trunk(repo, canonical_remote)
+    if canonical_remote != "origin":
+        _real_git(repo, "remote", "add", "origin", str(remote))
+        _push_repository_trunk(repo, "origin")
     store.bootstrap(worktree=repo, remote=str(remote))
     content = _state_ref_item_body("Fresh Slug Title").encode()
     seeded_oid = store.hash_blob(repo, content)
@@ -2991,17 +2998,19 @@ def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resu
     assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
 
 
+@pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
 def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_trunk_head(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, canonical_remote: str
 ) -> None:
     """Issue #479 (CAS-55): the claim's checks observe the state ref again
     once the trunk fetch is done, while the canonical remote's URL and its
     recorded `HEAD` the run already read stay held -- one read of each per
-    directory `start` works in. Counted at the one git launcher, keyed by
-    the directory git ran in, so every reader of the recorded `HEAD` is
-    seen: the default branch, the trunk fetch, the trunk walk behind the
-    claim's board, and the worktree build alike."""
-    _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    directory `start` works in, whichever remote is canonical. Counted at
+    the one git launcher, keyed by the directory git ran in, so every
+    reader of a recorded `HEAD` is seen: the default branch, the trunk
+    fetch, the trunk walk behind the claim's board, and the worktree build
+    alike."""
+    _real_state_ref_start_scenario(monkeypatch, tmp_path, canonical_remote=canonical_remote)
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     remote_url, launch = checkout.remote_url, checkout._git_run
     reads: list[tuple[str, Path]] = []

@@ -106,7 +106,6 @@ class RunContext:
         self.repo = repo
         self.directory = directory
         self._build_forge = build_forge
-        self._recorded_heads: dict[str, str | None] = {}
 
     def for_directory(self, directory: Path, *, is_toplevel: bool = False) -> RunContext:
         """A context for another checkout of the same run (`start`'s
@@ -203,15 +202,16 @@ class RunContext:
 
     @cached_property
     def default_branch(self) -> str:
-        """The default branch by provider: `origin/HEAD` of this directory
-        under `state-ref` (every repository piloting that pin names its
-        canonical remote `origin`), the forge's own answer under `github`."""
+        """The default branch by provider: the canonical remote's recorded
+        `HEAD` in this directory under `state-ref`, where that remote is the
+        forge, the forge's own answer under `github`."""
         if self.config.storage is not body.Storage.STATE_REF:
             return self.forge.default_branch()
-        branch = checkout.default_branch_of(self._recorded_head(checkout.DEFAULT_BRANCH_REMOTE))
+        remote = self.canonical_remote
+        branch = checkout.default_branch_of(self._recorded_head, remote=remote)
         if branch is None:
             raise protocol.ClaimUnavailableError(
-                "cannot resolve the default branch; run aco from a checkout with origin/HEAD set"
+                f"cannot resolve the default branch; run aco from a checkout with {remote}/HEAD set"
             )
         return branch
 
@@ -220,9 +220,8 @@ class RunContext:
         """The canonical remote's trunk ref in this directory (issue #479):
         the ref a command fetches, builds a worktree from, or walks for
         landings."""
-        remote = self.canonical_remote
         return checkout.trunk_ref_or_guess(
-            remote, self._recorded_head(remote), directory=self.directory
+            self.canonical_remote, self._recorded_head, directory=self.directory
         )
 
     def fetch_trunk(self) -> str:
@@ -236,16 +235,12 @@ class RunContext:
         vars(self).pop("trunk_ref", None)
         return self.trunk_ref
 
-    def _recorded_head(self, remote: str) -> str | None:
-        """`remote`'s recorded `HEAD` in this directory, read once per remote
-        and held: the default branch (`origin`'s) and the trunk (the
-        canonical remote's) ask git the same question whenever the canonical
-        remote is `origin` (issue #479)."""
-        if remote not in self._recorded_heads:
-            self._recorded_heads[remote] = checkout.recorded_head_ref(
-                remote, directory=self.directory
-            )
-        return self._recorded_heads[remote]
+    @cached_property
+    def _recorded_head(self) -> str | None:
+        """The canonical remote's recorded `HEAD` in this directory, read
+        once and held: the default branch under `state-ref` and the trunk
+        both stand on it (issue #479)."""
+        return checkout.recorded_head_ref(self.canonical_remote, directory=self.directory)
 
     @cached_property
     def forge(self) -> forge.ForgeReader:

@@ -665,19 +665,22 @@ def recorded_head_ref(remote: str, *, directory: Path | None = None) -> str | No
     return symbolic or None
 
 
-def default_branch_of(origin_head: str | None) -> str | None:
-    """The default branch name `origin_head` -- `recorded_head_ref`'s answer
-    for `DEFAULT_BRANCH_REMOTE` -- names, or `None` when none was recorded."""
-    if origin_head is None:
+def default_branch_of(recorded_head: str | None, *, remote: str) -> str | None:
+    """The default branch name `recorded_head` -- `recorded_head_ref`'s
+    answer for `remote` -- names, or `None` when none was recorded."""
+    if recorded_head is None:
         return None
-    return origin_head.removeprefix(f"refs/remotes/{DEFAULT_BRANCH_REMOTE}/")
+    return recorded_head.removeprefix(f"refs/remotes/{remote}/")
 
 
 def default_branch_name(*, directory: Path | None = None) -> str | None:
     """The repository's default branch name, read from `directory`'s own
     `origin/HEAD` when given (issue #314) or the process's own checkout
     otherwise, or `None` when git cannot resolve it."""
-    return default_branch_of(recorded_head_ref(DEFAULT_BRANCH_REMOTE, directory=directory))
+    return default_branch_of(
+        recorded_head_ref(DEFAULT_BRANCH_REMOTE, directory=directory),
+        remote=DEFAULT_BRANCH_REMOTE,
+    )
 
 
 def is_default_branch(branch: str, *, directory: Path | None = None) -> bool:
