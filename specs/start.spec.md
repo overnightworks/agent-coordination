@@ -57,13 +57,15 @@ merge -- leaves no live claim behind, so the next `start` on that same clean wor
 brand-new id, never a stale or deterministic per-item one.
 
 `start` checks, then builds: target, slug, prefix, and the claim store are refused before any git
-write. Where no worktree stands yet, `start` fetches the trunk and runs every check the claim
-itself makes -- scope, container, body, a broken item, priority or `--out-of-order`, width, a
-claim already held -- against that one fetched commit, then builds the worktree from the trunk:
-such a refusal builds nothing (START-22). Only a refusal between the build and the claim's one
-write -- another claim landed after the checks, the store could not be reached, or another fetch
-moved the trunk so the worktree stands on a commit the checks never saw -- removes what this call
-built (START-18); an interrupt, or a failure once the claim is written, removes nothing.
+write. The item, the store, and every check the claim makes read the main checkout's own board
+configuration, never that of a lane worktree `start` runs or claims in. Where no worktree stands
+yet, `start` fetches the trunk and runs every check the claim itself makes -- scope, container,
+body, a broken item, priority or `--out-of-order`, width, a claim already held -- against that one
+fetched commit, then builds the worktree from the trunk: such a refusal builds nothing (START-22).
+Only a refusal between the build and the claim's one write -- another claim landed after the checks,
+the store could not be reached, or another fetch moved the trunk so the worktree stands on a commit
+the checks never saw -- removes what this call built (START-18); an interrupt, or a failure once the
+claim is written, removes nothing.
 
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.

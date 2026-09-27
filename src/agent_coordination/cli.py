@@ -4954,7 +4954,9 @@ def _claim_target_checks(
     return checks, target_issue, replayed
 
 
-def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_claim(
+    parsed: argparse.Namespace, session: _WriteSession, *, worktree: Path | None = None
+) -> int:
     """`claim`'s own `--json` refusals (issue #406, `ClaimReason`):
     `_claim_write`'s typed exceptions choose `target_invalid`/
     `body_invalid`/`claim_conflict`; `RepoMeaninglessUnderStateRefError`
@@ -4963,7 +4965,7 @@ def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
     `unavailable`, matching `ask`/`rule`/`brief`'s own catch-all."""
     as_json = parsed.json
     try:
-        return _claim_write(parsed, session)
+        return _claim_write(parsed, session, worktree=worktree)
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(ClaimReason.INVALID_USAGE, error, as_json=as_json)
     except _ClaimTargetInvalidError as error:
@@ -4994,13 +4996,26 @@ def _named_claim_conflict(
     return _ClaimConflictError(error.named(board.item_labeller(storage)))
 
 
-def _claim_write(parsed: argparse.Namespace, session: _WriteSession) -> int:
-    plan = _checked_claim(_request(parsed, directory=session.context.directory), session)
+def _claim_write(
+    parsed: argparse.Namespace, session: _WriteSession, *, worktree: Path | None = None
+) -> int:
+    """`claim` made in the session's own checkout, or in `worktree` when
+    given (`start` claiming in a lane worktree that already stands, issue
+    #479): then the request is read and checked in `worktree` and the scope
+    measured against its HEAD, while the claim's checks read the session's
+    own board configuration -- the main checkout's."""
+    if worktree is None:
+        requested = _request(parsed, directory=session.context.directory)
+        plan = _checked_claim(requested, session)
+        worktree = session.context.toplevel
+    else:
+        requested = _request(parsed, directory=worktree)
+        plan = _checked_claim(requested, session, revision=requested.base)
     if plan.refused:
         _refuse_claim(parsed.json, plan.target_issue, plan.checks)
         return 2
     _print_claim_checks(plan, as_json=parsed.json)
-    claimed, live = _committed_claim(plan, worktree=session.context.toplevel)
+    claimed, live = _committed_claim(plan, worktree=worktree)
     return _report_claim(plan, claimed, live, as_json=parsed.json)
 
 
@@ -5033,9 +5048,10 @@ def _checked_claim(
     slice rules, and the ledger's own conflict, `protocol.apply` run on the
     observed state (issue #479). Refusing slice rules come back in the plan
     for the caller to report in its own shape; every other refusal raises.
-    `revision` names the commit the scope is measured against when no
-    checkout of it exists yet (`start`'s fetched trunk); the session's own
-    checkout otherwise."""
+    `revision` names the commit the scope is measured against when the
+    session's own checkout is not the one claimed in (`start`'s fetched
+    trunk before its worktree exists, or the HEAD of a lane worktree that
+    already stands); the session's own checkout otherwise."""
     context = session.context
     if isinstance(requested.identity, protocol.LaneIdentity) and not requested.scope:
         raise protocol.ClaimUnavailableError(LANE_CLAIM_SCOPE_REQUIRED)
@@ -5288,13 +5304,13 @@ def _print_start_resume(
     )
 
 
-def _start_branch_and_slug(parsed: argparse.Namespace, session: _WriteSession) -> tuple[str, str]:
+def _start_branch_and_slug(parsed: argparse.Namespace, context: RunContext) -> tuple[str, str]:
     """The lane branch and slug `start` builds for an open item, refusing a
     missing or closed one, an unusable slug, and an unsafe prefix before any
     git write."""
     number = parsed.item
-    item = session.forge().item_reference(number)
-    label = board.item_label(number, session.context.config.storage)
+    item = context.forge.item_reference(number)
+    label = board.item_label(number, context.config.storage)
     if item.state is forge.ItemState.MISSING:
         raise protocol.ClaimUnavailableError(f"issue {label} does not exist here")
     if item.state is forge.ItemState.CLOSED:
@@ -5315,24 +5331,26 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     caller's own lane, or a prior `start`'s at the computed path -- is
     claimed in place; otherwise the claim is checked against the freshly
     fetched trunk before the worktree is built, so a refusal leaves
-    nothing behind."""
-    context = session.context
-    branch, slug = _start_branch_and_slug(parsed, session)
-    observed = context.observation
+    nothing behind. The item, the store, and every check the claim makes
+    read the main checkout's own board configuration, never a lane
+    worktree's the caller stands in or claims in: a lane may be changing
+    its `board.toml`."""
+    caller = session.context
+    main_context = caller.for_directory(
+        checkout.main_checkout_root(toplevel=caller.toplevel), is_toplevel=True
+    )
+    branch, slug = _start_branch_and_slug(parsed, main_context)
+    observed = main_context.observation
     _require_state_ref(observed)
     live = observed.claims.get(protocol.claim_key(_resolved_identity(parsed.item, branch), branch))
-    if live is not None and _runs_in_lane_worktree(context, live.branch):
-        own_lane = _StartTarget(context.toplevel, live.branch)
-        return _claim_in_start_worktree(parsed, context, own_lane, observed, live)
-    main_checkout = checkout.main_checkout_root(toplevel=context.toplevel)
+    if live is not None and _runs_in_lane_worktree(caller, live.branch):
+        own_lane = _StartTarget(caller.toplevel, live.branch)
+        return _claim_in_start_worktree(parsed, main_context, own_lane, observed, live)
     target = _StartTarget(
-        _start_worktree_path(main_checkout, number=parsed.item, slug=slug), branch
+        _start_worktree_path(main_context.toplevel, number=parsed.item, slug=slug), branch
     )
     if checkout.existing_start_worktree(target.path, branch):
-        return _claim_in_start_worktree(parsed, context, target, observed, live)
-    # The checks read the main checkout's own board.toml, never a lane
-    # worktree's the caller stands in: a lane may be changing it.
-    main_context = context.for_directory(main_checkout, is_toplevel=True)
+        return _claim_in_start_worktree(parsed, main_context, target, observed, live)
     resumed = _resumable_start_claim(live, branch)
     if resumed is not None:
         return _rebuild_and_resume(parsed, main_context, target, observed, resumed)
@@ -5370,23 +5388,21 @@ def _claim_in_start_worktree(
     live: protocol.ActiveClaim | None,
 ) -> int:
     """Claim, or resume, in a worktree that already stands: nothing is
-    built, so a refusal has nothing to undo."""
-    worktree_context = context.for_directory(target.path)
+    built, so a refusal has nothing to undo. `context` is the main
+    checkout's; only the scope is measured in the worktree itself."""
     resumed = _resumable_start_claim(live, target.branch)
     if resumed is not None:
-        versioning = _checked_start_resume(resumed, parsed, context=worktree_context)
+        versioning = _checked_start_resume(
+            resumed, parsed, context=context.for_directory(target.path)
+        )
         _print_start_target(target)
-        _print_start_resume(resumed, observed, worktree_context.config.storage, versioning)
+        _print_start_resume(resumed, observed, context.config.storage, versioning)
         return 0
     _print_start_target(target)
-    # The worktree's own context (issue #322 review finding 2, issue #457),
-    # never `session.forge` itself: that forge is held by the caller
-    # checkout's context since the item-existence read above, and reusing it
-    # here would let the worktree-scoped claim read a state-ref snapshot
-    # taken before the worktree existed instead of from the checkout it
-    # actually claims in.
-    claim_session = _WriteSession(forge=_LazyForge(worktree_context), release_branch=None)
-    return _cmd_claim(_start_claim_arguments(parsed), claim_session)
+    # The main checkout's one observation, the same snapshot the lookup above
+    # read (CAS-53): nothing fetched since.
+    claim_session = _WriteSession(forge=_LazyForge(context), release_branch=None)
+    return _cmd_claim(_start_claim_arguments(parsed), claim_session, worktree=target.path)
 
 
 def _rebuild_and_resume(
@@ -5406,8 +5422,7 @@ def _rebuild_and_resume(
         target.path, branch=target.branch, remote=context.canonical_remote
     )
     _print_start_target(target)
-    storage = context.for_directory(target.path).config.storage
-    _print_start_resume(resumed, observed, storage, versioning)
+    _print_start_resume(resumed, observed, context.config.storage, versioning)
     return 0
 
 
@@ -5424,11 +5439,13 @@ def _check_build_and_claim(
     once the claim is written leaves the worktree standing with the claim
     that names it."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
-    # The main checkout's own context, never the caller's held forge: the
-    # fetch above may take a while, and the claim must read the item as it
-    # stands once the fetch is done, not the snapshot the item-existence
-    # read took (issue #322 review finding 2, issue #457).
-    check_session = _WriteSession(forge=_LazyForge(context), release_branch=None)
+    # A second context of the main checkout, never the one whose observation
+    # the item-existence read already holds: the fetch above may take a
+    # while, and the claim must read the item as it stands once the fetch is
+    # done, not the snapshot that read took (issue #322 review finding 2,
+    # CAS-55).
+    check_context = context.for_directory(context.toplevel, is_toplevel=True)
+    check_session = _WriteSession(forge=_LazyForge(check_context), release_branch=None)
     requested = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
     plan = _checked_claim(requested, check_session, revision=trunk)
     if plan.refused:

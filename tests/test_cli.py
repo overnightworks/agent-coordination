@@ -1970,32 +1970,6 @@ def test_start_from_a_linked_worktree_builds_beside_the_main_checkout(
     assert checkout.resolve_path_checkout(worktree) is not None
 
 
-def test_start_from_a_linked_worktree_checks_against_the_main_checkouts_board_config(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #479 (head ruling 27.09.2026): the check phase reads the main
-    checkout's `board.toml`, never the one a lane the caller stands in is
-    changing -- here a lane that drops `security` from the priority labels
-    must not let #314 pass the security item the main checkout ranks first."""
-    repo = _start_scenario(monkeypatch, tmp_path)
-    security = board_issue(
-        500,
-        "Security first",
-        complete_contract("Claim #500.", scope=["src/y.py"]),
-        labels=("security",),
-    )
-    _serve_start_board(monkeypatch, _start_item(), security)
-    other_lane = _stand_in_another_lane(monkeypatch, repo, tmp_path)
-    (other_lane / board.CONFIG_PATH).parent.mkdir()
-    (other_lane / board.CONFIG_PATH).write_text('priority_labels = ["cleanup"]\n')
-    before = _worktrees_and_branches(repo)
-
-    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
-
-    assert (status, _worktrees_and_branches(repo)) == (2, before)
-    assert "higher-priority actionable item #500" in capsys.readouterr().err
-
-
 def _stand_in_another_lane(monkeypatch: pytest.MonkeyPatch, repo: Path, tmp_path: Path) -> Path:
     """Run from a linked worktree of `repo` on another item's lane."""
     other_lane = tmp_path / "other-lane"
@@ -2003,6 +1977,61 @@ def _stand_in_another_lane(monkeypatch: pytest.MonkeyPatch, repo: Path, tmp_path
     _redirect_toplevel(monkeypatch, other_lane)
     monkeypatch.chdir(other_lane)
     return other_lane
+
+
+def _stand_in_the_items_released_lane(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, _tmp_path: Path
+) -> Path:
+    """Run from item #314's own clean lane worktree after its claim was
+    released: `start` claims there afresh (START-11)."""
+    assert issue_claim.main(["--repo", REPOSITORY, "start", "314"]) == 0
+    assert issue_claim.main(["--repo", REPOSITORY, "release", "314", "--abandoned", "paused"]) == 0
+    lane = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _redirect_toplevel(monkeypatch, lane)
+    monkeypatch.chdir(lane)
+    return lane
+
+
+@pytest.mark.parametrize(
+    "stand_in_a_lane",
+    [
+        pytest.param(_stand_in_another_lane, id="another-lane-builds"),
+        pytest.param(_stand_in_the_items_released_lane, id="own-released-lane-claims"),
+    ],
+)
+def test_start_from_a_linked_worktree_checks_against_the_main_checkouts_board_config(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    stand_in_a_lane: Callable[[pytest.MonkeyPatch, Path, Path], Path],
+) -> None:
+    """Issue #479 (head ruling 27.09.2026): the claim's checks read the main
+    checkout's `board.toml`, never the one a lane the caller stands in has
+    committed -- whether `start` builds a new worktree or claims afresh in
+    the item's own released lane -- so a lane that drops `security` from the
+    priority labels must not let #314 pass the security item the main
+    checkout ranks first."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    monkeypatch.chdir(repo)
+    lane = stand_in_a_lane(monkeypatch, repo, tmp_path)
+    (lane / board.CONFIG_PATH).parent.mkdir()
+    (lane / board.CONFIG_PATH).write_text('priority_labels = ["cleanup"]\n')
+    _real_git(lane, "add", str(board.CONFIG_PATH))
+    _real_git(lane, "commit", "-q", "-m", "lane changes its board config")
+    security = board_issue(
+        500,
+        "Security first",
+        complete_contract("Claim #500.", scope=["src/y.py"]),
+        labels=("security",),
+    )
+    _serve_start_board(monkeypatch, _start_item(), security)
+    capsys.readouterr()
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    assert (status, _worktrees_and_branches(repo)) == (2, before)
+    assert "higher-priority actionable item #500" in capsys.readouterr().err
 
 
 def test_start_inside_its_own_lane_worktree_reprints_the_live_claim(
