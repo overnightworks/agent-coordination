@@ -1,8 +1,0 @@
-claim_id = "7d67ffd6b12f41438f78bfd33c0a3fd6"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "0f7bdc79bf4e92a224c7c59ef45a49b0ad2bd03d"
-branch = "claude/issue-481-serve-reload-offline"
-scope = ["scripts/test_budget_ratchet.txt", "specs/board.spec.md", "src/agent_coordination/board_html.py", "src/agent_coordination/board_serve.py", "src/agent_coordination/cli.py", "tests/test_board_html.py", "tests/test_board_serve.py", "tests/test_cli.py"]
-opened_commit = "15ff8b5c3769cbb7a175988d5fafe78bdda003bb"
-whole_reason = "der Board-Server antwortet auch dann, wenn ein Reload am Remote scheitert"
