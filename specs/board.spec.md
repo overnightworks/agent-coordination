@@ -134,7 +134,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-48] Every ruling click, written or refused, rebuilds the page, so the page it redirects to shows the line as the forge now holds it, unless BOARD-51 keeps the last page.
 - [ ] [BOARD-49] A client that hangs up mid-response leaves stderr empty; any other request error still prints its traceback.
 - [ ] [BOARD-50] The reload link's request rebuilds, then redirects (`303`) to the plain URL, no `reload` field, so a later plain refresh serves the held page without rebuilding (see E-BOARD-18).
-- [ ] [BOARD-51] A rebuild PIN-29 refuses (`specs/storage-pin.spec.md`) keeps the page last built and shows PIN-29's sentence beside its age.
+- [ ] [BOARD-51] A rebuild the store refuses (`specs/storage-pin.spec.md`, e.g. PIN-16) keeps the page last built and shows that refusal beside its age; an unreadable item alone never does (BOARD-54).
 - [ ] [BOARD-52] A refused rebuild, an unreachable remote included, keeps its refusal: a reload still redirects (`303`), and each request shows the held page with it until a rebuild succeeds (see E-BOARD-19).
 
 ## Never
