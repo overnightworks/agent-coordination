@@ -5325,10 +5325,13 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     )
     if checkout.existing_start_worktree(target.path, branch):
         return _claim_in_start_worktree(parsed, context, target, observed, live)
+    # The checks read the main checkout's own board.toml, never a lane
+    # worktree's the caller stands in: a lane may be changing it.
+    main_context = context.for_directory(main_checkout, is_toplevel=True)
     resumed = _resumable_start_claim(live, branch)
     if resumed is not None:
-        return _rebuild_and_resume(parsed, context, target, observed, resumed)
-    return _check_build_and_claim(parsed, context, target)
+        return _rebuild_and_resume(parsed, main_context, target, observed, resumed)
+    return _check_build_and_claim(parsed, main_context, target)
 
 
 def _start_claim_arguments(
@@ -5414,11 +5417,11 @@ def _check_build_and_claim(
     a claim that landed after the checks. A failure once the claim is
     written leaves the worktree standing with the claim that names it."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
-    # A fresh context, never the caller's held forge: the fetch above may
-    # take a while, and the claim must read the item as it stands once the
-    # fetch is done, not the snapshot the item-existence read took (issue
-    # #322 review finding 2, issue #457).
-    check_session = _WriteSession(forge=_LazyForge(context.fresh()), release_branch=None)
+    # The main checkout's own context, never the caller's held forge: the
+    # fetch above may take a while, and the claim must read the item as it
+    # stands once the fetch is done, not the snapshot the item-existence
+    # read took (issue #322 review finding 2, issue #457).
+    check_session = _WriteSession(forge=_LazyForge(context), release_branch=None)
     requested = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
     plan = _checked_claim(requested, check_session, revision=trunk)
     if plan.refused:

@@ -1959,16 +1959,48 @@ def test_start_from_a_linked_worktree_builds_beside_the_main_checkout(
     """Issue #479 proof 2: the worktree's place comes from the main
     checkout, never nested under the linked worktree the call runs in."""
     repo = _start_scenario(monkeypatch, tmp_path)
-    other_lane = tmp_path / "other-lane"
-    _real_git(repo, "worktree", "add", "-q", "-b", "codex/issue-9-other", str(other_lane))
-    _redirect_toplevel(monkeypatch, other_lane)
-    monkeypatch.chdir(other_lane)
+    _stand_in_another_lane(monkeypatch, repo, tmp_path)
 
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
 
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
     assert (status, capsys.readouterr().out.splitlines()[0]) == (0, f"worktree: {worktree}")
     assert checkout.resolve_path_checkout(worktree) is not None
+
+
+def test_start_from_a_linked_worktree_checks_against_the_main_checkouts_board_config(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 (head ruling 27.09.2026): the check phase reads the main
+    checkout's `board.toml`, never the one a lane the caller stands in is
+    changing -- here a lane that drops `security` from the priority labels
+    must not let #314 pass the security item the main checkout ranks first."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    security = board_issue(
+        500,
+        "Security first",
+        complete_contract("Claim #500.", scope=["src/y.py"]),
+        labels=("security",),
+    )
+    _serve_start_board(monkeypatch, _start_item(), security)
+    other_lane = _stand_in_another_lane(monkeypatch, repo, tmp_path)
+    (other_lane / board.CONFIG_PATH).parent.mkdir()
+    (other_lane / board.CONFIG_PATH).write_text('priority_labels = ["cleanup"]\n')
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    assert (status, _worktrees_and_branches(repo)) == (2, before)
+    assert "higher-priority actionable item #500" in capsys.readouterr().err
+
+
+def _stand_in_another_lane(monkeypatch: pytest.MonkeyPatch, repo: Path, tmp_path: Path) -> Path:
+    """Run from a linked worktree of `repo` on another item's lane."""
+    other_lane = tmp_path / "other-lane"
+    _real_git(repo, "worktree", "add", "-q", "-b", "codex/issue-9-other", str(other_lane))
+    _redirect_toplevel(monkeypatch, other_lane)
+    monkeypatch.chdir(other_lane)
+    return other_lane
 
 
 def test_start_inside_its_own_lane_worktree_reprints_the_live_claim(
@@ -18070,15 +18102,15 @@ def _land_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRu
 
 
 def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """Both reads are of the caller's checkout: the claim's checks run on a
-    fresh context of it once the trunk is fetched (issue #479, #322 review
-    finding 2), where they used to run on the built worktree's; the width
-    gate measures the fetched trunk's own tree and asks no toplevel for a
-    scope entry that is no tree in it."""
+    """Every read is of the caller's checkout, here the main one: once as
+    the command's own, once resolved as the main checkout whose context the
+    claim's checks run on once the trunk is fetched (issue #479, #322 review
+    finding 2); the width gate measures the fetched trunk's own tree and
+    asks no toplevel for a scope entry that is no tree in it."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
-        toplevel_reads={None: 2},
+        toplevel_reads={None: 1, repo: 1},
         config_reads={repo: 2},
     )
 
