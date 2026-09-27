@@ -18053,10 +18053,11 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
 
 
 @pytest.mark.parametrize(
-    ("number", "retype_dropped", "status", "out", "err", "retyped"),
+    ("number", "flags", "retype_dropped", "status", "out", "err", "retyped"),
     [
         pytest.param(
             "484",
+            (),
             False,
             0,
             "EDITED #484 kind=container\n",
@@ -18066,6 +18067,17 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         ),
         pytest.param(
             "484",
+            ("--json",),
+            False,
+            0,
+            '{"ok": true, "reason": "edited", "item": 484, "kind": "container"}\n',
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="retype_reports_the_json_envelope",
+        ),
+        pytest.param(
+            "484",
+            (),
             True,
             2,
             "",
@@ -18074,7 +18086,7 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
             id="dropped_retype_refuses",
         ),
         pytest.param(
-            "485", False, 2, "", "ERROR: #485 is not an open item\n", [], id="no_open_item"
+            "485", (), False, 2, "", "ERROR: #485 is not an open item\n", [], id="no_open_item"
         ),
     ],
 )
@@ -18083,6 +18095,7 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     number: str,
+    flags: tuple[str, ...],
     retype_dropped: bool,
     status: int,
     out: str,
@@ -18093,14 +18106,14 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     `storage = "github"` too, through the same forge retype `item new
     --parent` uses, so `next`'s nested-container repair runs under both
     storages; a retype the forge drops, or an item that is not open,
-    refuses exit 2."""
+    refuses exit 2; `--json` reports the `item` and its new `kind`."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
     )
     client.fail_set_item_kind = retype_dropped
 
-    exit_code = issue_claim.main(["item", "edit", number, "--kind", "container"])
+    exit_code = issue_claim.main(["item", "edit", number, "--kind", "container", *flags])
 
     captured = capsys.readouterr()
     assert (exit_code, captured.out, captured.err) == (status, out, err)
