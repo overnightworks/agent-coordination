@@ -5479,7 +5479,7 @@ def _rebuild_and_resume(
     try:
         _validate_built_worktree(checked, target, context)
     except protocol.ClaimError as error:
-        return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
+        return _refuse_built_start(error, target)
     _print_start_resume(resumed, observed, context.config.storage, versioning)
     return 0
 
@@ -5527,12 +5527,7 @@ def _check_build_and_claim(
     except protocol.SentWriteError as error:
         return _report_uncertain_start_claim(_named_refusal(error, storage), target)
     except protocol.ClaimError as error:
-        reason = (
-            ClaimReason.CLAIM_CONFLICT
-            if isinstance(error, protocol.ClaimConflictError)
-            else ClaimReason.UNAVAILABLE
-        )
-        return _refuse_built_start(reason, _named_refusal(error, storage), target)
+        return _refuse_built_start(_named_refusal(error, storage), target)
     return _report_claim(plan, claimed, claims, as_json=False)
 
 
@@ -5569,11 +5564,9 @@ def _report_uncertain_start_claim(error: protocol.ClaimError, target: _StartTarg
     return status
 
 
-def _refuse_built_start(
-    reason: ClaimReason, error: protocol.ClaimError, target: _StartTarget
-) -> int:
+def _refuse_built_start(error: protocol.ClaimError, target: _StartTarget) -> int:
     try:
-        return _refuse(reason, error, as_json=False)
+        return _refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
     finally:
         # A refusal that cannot be written (a closed stderr) must still
         # leave nothing behind (START-18).

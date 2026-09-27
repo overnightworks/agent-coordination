@@ -3191,6 +3191,34 @@ def test_a_claim_whose_item_closes_after_its_checks_refuses_and_writes_nothing(
     assert refetched.items[items.format_item_id(314)] == closed_oid
 
 
+def test_a_github_claim_lands_though_a_stale_ledger_item_changes_under_its_rejected_push(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #496 proof 3 (CAS-60): under `github` the forge holds the item's
+    state, so an `items/` entry the ledger still carries pins nothing -- its
+    close rejects the claim's first push and the retry lands the claim."""
+    _use_real_store(monkeypatch)
+    repo, bare_remote = _real_repository_with_bare_remote(tmp_path)
+    (repo / "base.txt").write_text("base\n")
+    _real_git(repo, "add", "base.txt")
+    _real_git(repo, "commit", "-q", "-m", "initial")
+    _push_repository_trunk(repo, "origin")
+    store.bootstrap(worktree=repo, remote=str(bare_remote))
+    open_oid = _land_real_item(repo, bare_remote, issue=314, content=b"open\n")
+    _serve_start_board(monkeypatch, _start_item())
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    argv = _claim_in_lane_worktree(monkeypatch, repo, tmp_path)
+    _close_under_the_claims_push(
+        monkeypatch, lambda: _close_real_item(repo, bare_remote, issue=314, open_oid=open_oid)
+    )
+
+    assert issue_claim.main(["--repo", REPOSITORY, *argv]) == 0
+
+    refetched = store.fetch_state(worktree=repo, remote="origin")
+    assert refetched.items[items.format_item_id(314)] != open_oid
+    assert [claim.identity for claim in refetched.claims.values()] == [protocol.IssueIdentity(314)]
+
+
 @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
 def test_start_observes_the_state_ref_afresh_and_its_default_branch_after_the_fetch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, canonical_remote: str
