@@ -13976,31 +13976,44 @@ def _land_rerun(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
     return ["--repo", REPOSITORY, "land", "12"]
 
 
+def test_start_fetches_its_trunk_once_and_reads_the_recorded_head_after_the_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #488 proof 3, counted at the git launcher: `start`'s claim
+    check and build ask the same fetched trunk, so its directory fetches
+    once and reads the recorded `HEAD` after that fetch."""
+    argv = _start_under_state_ref(monkeypatch, tmp_path)
+    trunk_calls = trunk_git_calls(monkeypatch, "origin")
+
+    assert issue_claim.main(argv) == 0
+    assert fetched_once_then_read(trunk_calls) == {(tmp_path / "repo").resolve(): True}
+
+
 @pytest.mark.parametrize(
     "arrange",
     [
-        pytest.param(_start_under_state_ref, id="start"),
         pytest.param(_release_merged_with_cleanup, id="release-merged-verification-and-cleanup"),
         pytest.param(_land, id="land-fast-forward-and-release"),
         pytest.param(_land_rerun, id="land-rerun-fast-forward-routing-and-release"),
     ],
 )
-def test_a_command_fetches_its_trunk_once_and_reads_the_recorded_head_after_the_fetch(
+def test_a_github_landing_fetches_once_and_never_asks_the_recorded_head(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
 ) -> None:
-    """Issue #488 proof 3, counted at the git launcher: every trunk reader
-    of one run -- `start`'s claim check and build, `release --merged`'s
-    merge-commit verification and its worktree cleanup, `land`'s
-    fast-forward, a rerun's routing and its delegated release -- asks the
-    same fetched trunk, so its directory fetches once and reads the recorded
-    `HEAD` after that fetch."""
+    """Issues #488 and #492, counted at the git launcher: every reader of
+    one github landing run -- `release --merged`'s merge-commit
+    verification, board report and worktree cleanup, `land`'s fast-forward,
+    a rerun's routing and its delegated release -- walks the forge's
+    default branch on the one fetched canonical remote (LANDCMD-21, REL-37,
+    REL-38), so its directory fetches once and never reads the recorded
+    `HEAD`."""
     argv = arrange(monkeypatch, tmp_path)
     trunk_calls = trunk_git_calls(monkeypatch, "origin")
 
     assert issue_claim.main(argv) == 0
-    assert fetched_once_then_read(trunk_calls) == {(tmp_path / "repo").resolve(): True}
+    assert trunk_calls == [("fetch", (tmp_path / "repo").resolve())]
 
 
 def _start_on_github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
@@ -14918,15 +14931,20 @@ def test_land_refuses_a_dirty_checkout_before_any_write(
 
 
 def _land_on_the_forges_trunk(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, canonical: str, checked_out: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    canonical: str,
+    checked_out: str,
+    leftover_main: bool,
 ) -> tuple[Path, FakeForge]:
     """`_land_scenario` with no recorded `HEAD`, where the forge alone
     names the default branch `trunk` (issue #492): `canonical` carries
-    `trunk`, the lane branch, and the `main` the switch to `trunk` left
-    behind, the lane branch stands in its own clean linked worktree `lane`,
-    and the checkout stands on `checked_out`. A canonical remote other than
-    `origin` is a fresh bare `<canonical>.git` the tracked board
-    configuration names."""
+    `trunk`, the lane branch, and -- when `leftover_main` -- the `main` the
+    switch to `trunk` left behind, the lane branch stands in its own clean
+    linked worktree `lane`, and the checkout stands on `checked_out`. A
+    canonical remote other than `origin` is a fresh bare `<canonical>.git`
+    the tracked board configuration names."""
     repo, client = _land_scenario(monkeypatch, tmp_path, set_head=False)
     client.default_branch_name = "trunk"
     client.landings[12] = replace(client.landings[12], target_branch="trunk")
@@ -14941,18 +14959,31 @@ def _land_on_the_forges_trunk(
         _real_git(repo, "commit", "-q", "-m", "canonical remote")
         _real_git(repo, "push", "-q", canonical, LANDING_BRANCH)
     _real_git(repo, "push", "-q", canonical, "trunk", "trunk:main")
+    if not leftover_main:
+        bare = Path(_real_git(repo, "remote", "get-url", canonical).stdout.strip())
+        _real_git(bare, "symbolic-ref", "HEAD", "refs/heads/trunk")
+        _real_git(repo, "push", "-q", canonical, "--delete", "main")
     _real_git(repo, "checkout", "-q", "-B", checked_out)
     _real_git(repo, "worktree", "add", "-q", str(tmp_path / "lane"), LANDING_BRANCH)
     return repo, client
 
 
 @pytest.mark.parametrize(
-    ("canonical", "checked_out", "expected_status", "expected_error", "expected_fetches"),
+    (
+        "canonical",
+        "leftover_main",
+        "checked_out",
+        "expected_status",
+        "expected_error",
+        "expected_fetches",
+    ),
     [
-        pytest.param("origin", "trunk", 0, "", 1, id="origin-trunk-fast-forwards"),
-        pytest.param("hub", "trunk", 0, "", 1, id="hub-trunk-fast-forwards"),
+        pytest.param("origin", True, "trunk", 0, "", 1, id="origin-trunk-fast-forwards"),
+        pytest.param("hub", True, "trunk", 0, "", 1, id="hub-trunk-fast-forwards"),
+        pytest.param("origin", False, "trunk", 0, "", 1, id="origin-without-main-fast-forwards"),
         pytest.param(
             "origin",
+            True,
             "main",
             2,
             "ERROR: land must run from a clean checkout of the default branch 'trunk'\n",
@@ -14966,6 +14997,7 @@ def test_land_takes_the_forges_default_branch_where_the_remote_records_no_head(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     canonical: str,
+    leftover_main: bool,
     checked_out: str,
     expected_status: int,
     expected_error: str,
@@ -14975,10 +15007,15 @@ def test_land_takes_the_forges_default_branch_where_the_remote_records_no_head(
     `trunk` and no `<canonical>/HEAD` is recorded. `land` runs from a clean
     `trunk`, fast-forwards it from `<canonical>/trunk` after fetching that
     remote once, and its delegated release removes the lane's worktree as
-    merged into that same `trunk`, never judged by the `main` left behind
-    (LANDCMD-21); a checkout on `main` refuses LANDCMD-11 naming `trunk`."""
+    merged into that same `trunk` -- neither a `main` left behind nor its
+    absence decides it (LANDCMD-21); a checkout on `main` refuses LANDCMD-11
+    naming `trunk`."""
     repo, client = _land_on_the_forges_trunk(
-        monkeypatch, tmp_path, canonical=canonical, checked_out=checked_out
+        monkeypatch,
+        tmp_path,
+        canonical=canonical,
+        checked_out=checked_out,
+        leftover_main=leftover_main,
     )
     trunk_calls = trunk_git_calls(monkeypatch, canonical)
 

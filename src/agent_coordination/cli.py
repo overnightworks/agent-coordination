@@ -1478,18 +1478,20 @@ def _parent_closable_number(
 
 def _release_landing(
     context: RunContext,
-    claims: tuple[protocol.ActiveClaim, ...],
-    claim_ages: Mapping[str, datetime],
+    new_state: protocol.ClaimState,
     landed: board.IssueReference | None,
     storage: body.Storage,
+    trunk_ref: str,
 ) -> ReleaseLanding:
-    """A merged release's own board read (issue #256): fetched once, lazily,
-    only after the release transition already committed -- the caller wraps
-    this in one broad `forge.ForgeError` catch, so a forge hiccup here can
-    never undo or fail a release that already stood. The dependency fetch
-    below is the one round trip both `_freed_item_numbers` and `_board` need
-    for this same candidate set; passing it into `_board` keeps this a
-    single fetch rather than two (issue #256 review)."""
+    """A merged release's own board read (issue #256) of `new_state`, the
+    claims its release transition left: fetched once, lazily, only after
+    that transition already committed -- the caller wraps this in one broad
+    `forge.ForgeError` catch, so a forge hiccup here can never undo or fail
+    a release that already stood. The dependency fetch below is the one
+    round trip both `_freed_item_numbers` and `_board` need for this same
+    candidate set; passing it into `_board` keeps this a single fetch rather
+    than two (issue #256 review). The board walks `trunk_ref`, the ref the
+    release judged its landing on (LANDCMD-21, issue #492)."""
     client = context.forge
     issues = client.list_open_board_issues()
     candidates = tuple(issue.number for issue in issues if issue.blocked_by_count > 0)
@@ -1497,10 +1499,10 @@ def _release_landing(
     freed = () if landed is None else _freed_item_numbers(dependencies, landed)
     projected = _board(
         context,
-        claims,
+        tuple(new_state.claims.values()),
         issues=issues,
-        history=_ClaimHistory(ages=claim_ages),
-        dependencies=dependencies,
+        history=_ClaimHistory(ages=_claim_ages(context.toplevel, new_state)),
+        landing=_LandingReads(dependencies, trunk_ref),
     )
     action = board.next_action(projected)
     parent_closable = (
@@ -1655,6 +1657,18 @@ class _ClaimHistory:
     unparsed_lifecycle_commits: int = 0
 
 
+@dataclass(frozen=True)
+class _LandingReads:
+    """What a merged release already read before its board report (issues
+    #256, #492), bundled so `_board` stays under the five-argument ceiling:
+    the dependency wave `_freed_item_numbers` needed for the same candidate
+    set, and the trunk ref the release judged its landing on, which the
+    board walks instead of the trunk as the last fetch left it."""
+
+    dependencies: dict[int, tuple[board.IssueDependency, ...]]
+    trunk_ref: str
+
+
 def _closed_item_numbers(
     lane_events: tuple[metrics.LaneEvent, ...], open_numbers: frozenset[int]
 ) -> frozenset[int]:
@@ -1698,7 +1712,7 @@ def _board(
     *,
     issues: tuple[board.Issue, ...] | None = None,
     history: _ClaimHistory | None = None,
-    dependencies: dict[int, tuple[board.IssueDependency, ...]] | None = None,
+    landing: _LandingReads | None = None,
 ) -> board.Board:
     history = history or _ClaimHistory()
     now = datetime.now(UTC)
@@ -1741,19 +1755,22 @@ def _board(
         children = _fetch_children(client, container_numbers)
         pull_requests = (open_pull_requests.result(), merged_pull_requests.result())
         closed_item_sizes = closed_item_sizes_future.result()
-    if dependencies is None:
-        # A caller that already fetched and validated this exact candidate
-        # set -- `_release_landing`'s own `list_board_dependencies` wave,
-        # issue #256 review -- passes it in above instead of paying for a
-        # second round trip here.
+    if landing is None:
         dependencies = _validated_dependencies(
             issues,
             _fetch_dependencies(
                 client, tuple(issue.number for issue in issues if issue.blocked_by_count > 0)
             ),
         )
+        trunk_ref = context.trunk_ref
+    else:
+        # A merged release already fetched and validated this exact
+        # candidate set (`_release_landing`'s own `list_board_dependencies`
+        # wave, issue #256 review) and judged its landing on its own trunk
+        # ref (issue #492), so neither is read a second time here.
+        dependencies, trunk_ref = landing.dependencies, landing.trunk_ref
     trunk_landings = checkout.trunk_landings(
-        context.trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel
+        trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel
     )
     # One walk of `trunk_landings` feeds three views `board.py` keeps
     # separate (issue #371): `trunk_landing_items` (sha and all) drives the
@@ -5690,10 +5707,14 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         ),
         intent=intent,
     )
+    # The run already fetched the canonical remote and asked the forge's
+    # default branch to verify the merge, so this ref costs no read.
     landing, hint = (
         (None, None)
         if client is None
-        else _landing_report(context, identity, worktree, new_state, storage)
+        else _landing_report(
+            context, identity, new_state, storage, context.fetched_default_branch_ref()
+        )
     )
     worktree_cleanup = (
         _cleanup_landed_worktree(
@@ -6278,9 +6299,8 @@ def _cmd_release_landed(
             "an issue-less lane has no item to close"
         )
     context = session.context
-    landings = checkout.trunk_landings(
-        context.trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel
-    )
+    trunk_ref = context.trunk_ref
+    landings = checkout.trunk_landings(trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel)
     commit = _landed_commit(
         landings, identity.issue, cast(str, parsed.merged), context.config.storage
     )
@@ -6320,7 +6340,7 @@ def _cmd_release_landed(
         intent=intent,
     )
     client.mark_landed(write, new_oid)
-    landing, hint = _landing_report(context, identity, worktree, new_state, storage)
+    landing, hint = _landing_report(context, identity, new_state, storage, trunk_ref)
     worktree_cleanup = _cleanup_landed_worktree(
         parsed, resolved.selected.branch, context, context.fetched_trunk_ref
     )
@@ -6344,9 +6364,9 @@ def _cmd_release_landed(
 def _landing_report(
     context: RunContext,
     identity: protocol.ClaimIdentity,
-    worktree: Path,
     new_state: store.ClaimState,
     storage: body.Storage,
+    trunk_ref: str,
 ) -> tuple[ReleaseLanding | None, str | None]:
     """The `(landing, hint)` pair `_cmd_release` prints once its release
     transition already committed (issue #256): a forge hiccup here, or a
@@ -6358,13 +6378,7 @@ def _landing_report(
         else None
     )
     try:
-        landing = _release_landing(
-            context,
-            tuple(new_state.claims.values()),
-            _claim_ages(worktree, new_state),
-            landed,
-            storage,
-        )
+        landing = _release_landing(context, new_state, landed, storage, trunk_ref)
     except forge.ForgeError as error:
         hint = (
             f"hint: could not read the board to report what this landing freed ({error}); "
