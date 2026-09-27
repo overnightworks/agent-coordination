@@ -227,11 +227,12 @@ class RunContext:
         remote -- at most once per run (issue #488): the ref `start` builds
         from and `release --merged` verifies a fresh merge against. The
         recorded `HEAD` is read again after the fetch, never one held from
-        before it, since a fetch may record or move it."""
+        before it, since a fetch may record or move it: the held trunk is
+        dropped before the resolution, so one that fails is asked again."""
         if not self._trunk_fetched:
             checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
             self._trunk_fetched = True
-            self.trunk_ref = self._resolved_trunk_ref()
+            self.__dict__.pop("trunk_ref", None)
         return self.trunk_ref
 
     def _resolved_trunk_ref(self) -> str:

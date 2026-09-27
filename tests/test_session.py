@@ -344,6 +344,28 @@ def test_a_failed_trunk_fetch_fails_loud_and_is_fetched_again_on_the_next_ask(
     assert (later_asks, fetched_from) == (("refs/remotes/origin/main",) * 2, ["origin"] * 2)
 
 
+def test_a_trunk_the_fetch_pruned_fails_loud_on_every_ask_never_answered_by_the_held_ref(
+    tmp_path: Path,
+) -> None:
+    """Issue #488: the trunk held before the fetch names `origin/main`; the
+    fetch prunes it and nothing else resolves -- no recorded `HEAD`, no
+    local `main` or `master` -- so every later ask fails loud instead of
+    answering with the ref held from before the fetch."""
+    repository = _pushed_repository(tmp_path)
+    _real_git(repository, "branch", "-m", "main", "work")
+    _real_git(repository, "config", "fetch.prune", "true")
+    context = _context().for_directory(repository)
+    held = context.trunk_ref
+    _real_git(tmp_path / "remote.git", "update-ref", "-d", "refs/heads/main")
+
+    with pytest.raises(ClaimError, match="cannot determine the trunk"):
+        context.fetched_trunk_ref()
+    with pytest.raises(ClaimError, match="cannot determine the trunk"):
+        context.fetched_trunk_ref()
+
+    assert held == "refs/remotes/origin/main"
+
+
 def _forbid_context_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every fact a context holds starts from its toplevel, so forbidding it
     forbids every read a context could make."""
