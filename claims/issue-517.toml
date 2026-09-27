@@ -1,0 +1,8 @@
+claim_id = "4343ab2bd49b4d4bb4fc0aa66bbab3b7"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "f5867e1f2fd8b5c76c3a51bf21b297852ad6f985"
+branch = "claude/issue-517-body-guard"
+scope = ["scripts/test_budget_ratchet.txt", "specs/board.spec.md", "specs/body-block.spec.md", "specs/body.spec.md", "specs/item.spec.md", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "src/agent_coordination/items.py", "src/agent_coordination/state_board.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_items.py", "tests/test_state_board.py"]
+opened_commit = "e8fb39c1ecb88d4317937cc7f1bce18983426d7d"
+whole_reason = "the one body parser, its write boundary and every reader that must not wedge on it"
