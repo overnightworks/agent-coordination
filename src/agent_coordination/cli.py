@@ -5209,10 +5209,19 @@ def _print_start_target(target: _StartTarget) -> None:
 
 
 def _remove_refused_start_worktree(target: _StartTarget) -> None:
-    """Undo the build of a `start` whose claim the ledger refused after the
-    check phase passed (issue #479), saying so: a refusal must leave no
-    worktree or branch behind."""
-    outcome = checkout.remove_linked_worktree(target.path, branch=target.branch)
+    """Undo the build of a `start` whose claim was refused after the check
+    phase passed (issue #479), saying so: a refusal must leave no worktree
+    or branch behind. When git will not remove the worktree, that is said
+    too, beside the refusal rather than in its place."""
+    try:
+        outcome = checkout.remove_linked_worktree(target.path, branch=target.branch)
+    except protocol.ClaimError as error:
+        print(
+            f"worktree {target.path} and branch '{target.branch}' this start created "
+            f"kept: git failure: {error}",
+            file=sys.stderr,
+        )
+        return
     if outcome.branch.removed:
         print(
             f"removed worktree {target.path} and branch '{target.branch}' this start created",
@@ -5414,8 +5423,10 @@ def _check_build_and_claim(
     #479). Only a refusal between the build and the write removes the build
     again: the new worktree failing `claim`'s own checkout preconditions
     (the trunk moved under another fetch meanwhile), or the ledger refusing
-    a claim that landed after the checks. A failure once the claim is
-    written leaves the worktree standing with the claim that names it."""
+    the write -- a claim that landed after the checks, a store it cannot
+    reach. An interrupt or an unexpected error is no refusal, and a failure
+    once the claim is written leaves the worktree standing with the claim
+    that names it."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
     # The main checkout's own context, never the caller's held forge: the
     # fetch above may take a while, and the claim must read the item as it
@@ -5434,14 +5445,13 @@ def _check_build_and_claim(
     _print_claim_checks(plan, as_json=False)
     try:
         checkout._validate_checkout(requested, directory=target.path)
-    except protocol.ClaimError as error:
-        return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
-    try:
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(replace(plan, worktree=target.path))
     except _ClaimConflictError as error:
         return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
+    except protocol.ClaimError as error:
+        return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)
 
 

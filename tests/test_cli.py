@@ -2236,6 +2236,16 @@ def _git_keeps_the_raced_branch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> 
     )
 
 
+def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
+    """The ledger write fails before anything is written, with a refusal
+    that is no claim conflict."""
+
+    def unreachable(**_arguments: object) -> protocol.ClaimState:
+        raise protocol.ClaimUnavailableError("remote origin hung up")
+
+    monkeypatch.setattr(store, "commit_transition", unreachable)
+
+
 def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     """Another push moves the trunk after `start` fetched and checked it,
     so the worktree it builds stands on a commit it never checked."""
@@ -2270,6 +2280,12 @@ _REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start cr
             id="git-keeps-the-branch",
         ),
         pytest.param(_trunk_moves_after_the_fetch, "claim base ", _REMOVED_BOTH, id="trunk-moved"),
+        pytest.param(
+            _the_store_cannot_be_reached,
+            "remote origin hung up",
+            _REMOVED_BOTH,
+            id="store-unreachable",
+        ),
     ],
 )
 def test_a_claim_refused_after_the_build_removes_what_start_built(
@@ -2296,6 +2312,34 @@ def test_a_claim_refused_after_the_build_removes_what_start_built(
     assert (status, worktree.exists()) == (2, False)
     assert err.startswith(f"ERROR: {refusal}")
     assert err.endswith(removal.format(worktree=worktree, branch=_START_BRANCH) + "\n")
+
+
+def test_a_refused_start_git_cannot_undo_keeps_the_refusal_and_names_what_stays(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #479 (START-23): when git will not remove the worktree a
+    refused call built, the refusal and its exit stay, and a line names the
+    worktree and branch left standing and git's reason."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    _claim_lands_before_the_commit(monkeypatch, repo)
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _stub_one_git_call(
+        monkeypatch,
+        ["worktree", "remove", str(worktree)],
+        exit_status=128,
+        stderr="fatal: cannot remove a locked working tree",
+    )
+    monkeypatch.chdir(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
+
+    err = capsys.readouterr().err
+    assert (status, worktree.exists()) == (2, True)
+    assert err.startswith("ERROR: issue #314 is claimed by Grok sess-9")
+    assert err.endswith(
+        f"worktree {worktree} and branch '{_START_BRANCH}' this start created "
+        "kept: git failure: fatal: cannot remove a locked working tree\n"
+    )
 
 
 class _ClosedPipe(io.StringIO):
