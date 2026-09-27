@@ -23,6 +23,7 @@ from cli_fixtures import (
     _real_repository_with_bare_remote,
     _set_agent_identity_env,
     _stub_one_git_call,
+    dangle_recorded_head,
 )
 
 from agent_coordination import board, checkout, process
@@ -844,14 +845,8 @@ def _record_origin_head_as_a_plain_ref(repo: Path, _remote: Path) -> None:
     _real_git(repo, "update-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 
 
-def _dangle_origin_head_after_a_rename(repo: Path, remote: Path) -> None:
-    """The remote renames its default branch `master` to `main` and a
-    `fetch --prune` drops `origin/master`, while `origin/HEAD` still names
-    it (issue #490)."""
-    _real_git(repo, "push", "-q", "origin", "main:master")
-    _real_git(repo, "remote", "set-head", "origin", "master")
-    _real_git(remote, "branch", "-m", "master", "main")
-    _real_git(repo, "fetch", "-q", "--prune", "origin")
+def _dangle_origin_head_after_a_rename(repo: Path, _remote: Path) -> None:
+    dangle_recorded_head(repo, "origin")
 
 
 @pytest.mark.parametrize(

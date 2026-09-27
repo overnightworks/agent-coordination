@@ -2458,10 +2458,8 @@ class TestCliStateRefForge:
         assert f"<li>{first_id} {first_date} <code>{first_sha[:7]}</code></li>" in rendered_html
         assert f"<li>{second_id} {second_date} <code>{second_sha[:7]}</code></li>" in rendered_html
 
-    @pytest.mark.parametrize("command", [["board", "--json"], ["start", "314"]])
-    @pytest.mark.parametrize("dangling", [False, True], ids=["never-recorded", "dangling"])
     @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
-    def test_a_command_refuses_without_the_canonical_remotes_head(
+    def test_board_refuses_without_the_canonical_remotes_head(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
@@ -2469,29 +2467,19 @@ class TestCliStateRefForge:
         bare_remote: Path,
         worktree: Path,
         canonical_remote: str,
-        dangling: bool,
-        command: list[str],
     ) -> None:
-        """PIN-05 (issue #490): the canonical remote never recorded its
-        `HEAD`, or it still names `master` after the remote renamed that
-        branch `main` and `fetch --prune` dropped it -- either way the
-        refusal names that remote, worded exactly as the run tells the
-        operator to fix it, never git's own error for a ref it cannot
-        resolve."""
+        """PIN-05 (issue #490): no `git remote set-head` ever ran here, so
+        the canonical remote's `HEAD` stays unresolved -- the refusal
+        `_state_ref_forge` owns names that remote, worded exactly as the run
+        tells the operator to fix it."""
         remote_url = f"file://{bare_remote}"
         _git("remote", "add", canonical_remote, remote_url, cwd=worktree)
-        if dangling:
-            _git("push", canonical_remote, "main:master", cwd=worktree)
-            _git("remote", "set-head", canonical_remote, "master", cwd=worktree)
-            _git("branch", "-m", "master", "main", cwd=bare_remote)
-            _git("fetch", "--prune", canonical_remote, cwd=worktree)
-        else:
-            _git("push", canonical_remote, "main", cwd=worktree)
+        _git("push", canonical_remote, "main", cwd=worktree)
         store.bootstrap(worktree=worktree, remote=remote_url)
         self._enter_pinned_checkout(monkeypatch, worktree, canonical_remote=canonical_remote)
         monkeypatch.setenv("PATH", _path_without_gh(tmp_path))
 
-        status = issue_claim.main(command)
+        status = issue_claim.main(["board", "--json"])
 
         assert status == 2
         assert capsys.readouterr().err == (

@@ -55,6 +55,7 @@ from cli_fixtures import (
     _stub_one_git_call,
     arrange_scope_width,
     count_context_reads,
+    dangle_recorded_head,
     fetched_once_then_read,
     landed_from_another_clone,
     main_exit_code,
@@ -13989,6 +13990,48 @@ def test_a_command_fetches_its_trunk_once_and_reads_the_recorded_head_after_the_
 
     assert issue_claim.main(argv) == 0
     assert fetched_once_then_read(trunk_calls) == {(tmp_path / "repo").resolve(): True}
+
+
+def _start_on_github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    monkeypatch.chdir(_start_scenario(monkeypatch, tmp_path))
+    return ["--repo", REPOSITORY, "start", "314"]
+
+
+def _check_the_trunk_tip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _repo, sha_of = _check_sha(monkeypatch, tmp_path)
+    return ["check", sha_of("main")]
+
+
+def _board_on_github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
+    monkeypatch.chdir(_start_scenario(monkeypatch, tmp_path))
+    return ["--repo", REPOSITORY, "board", "--json"]
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_start_on_github, id="start"),
+        pytest.param(_check_the_trunk_tip, id="check"),
+        pytest.param(_board_on_github, id="board"),
+    ],
+)
+def test_a_command_resolves_origin_main_past_a_dangling_origin_head(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+) -> None:
+    """Issue #490 proof 2, against real git: the remote renamed `master` to
+    `main` and `origin/master` is gone, while `origin/HEAD` still names it.
+    `start`, `check` and `board` walk `origin/main` as their trunk instead
+    of failing on git's own error for a ref it cannot resolve."""
+    argv = arrange(monkeypatch, tmp_path)
+    dangle_recorded_head(tmp_path / "repo", "origin")
+
+    status = issue_claim.main(argv)
+
+    assert (status, capsys.readouterr().err) == (0, "")
 
 
 def test_release_merged_json_carries_the_worktree_cleanup_outcome(

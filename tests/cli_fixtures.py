@@ -137,6 +137,16 @@ def _push_repository_trunk(repo: Path, remote_name: str) -> None:
     _real_git(repo, "remote", "set-head", remote_name, "main")
 
 
+def dangle_recorded_head(repo: Path, remote_name: str) -> None:
+    """`<remote_name>/HEAD` left naming `master` once the remote renamed
+    that branch `main` and `<remote_name>/master` is gone from `repo`
+    (issue #490): the recorded `HEAD` dangles, while `<remote_name>/main`
+    stands at `repo`'s `main`."""
+    _real_git(repo, "push", "-q", remote_name, "main", "main:master")
+    _real_git(repo, "remote", "set-head", remote_name, "master")
+    _real_git(repo, "push", "-q", "--delete", remote_name, "master")
+
+
 def stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every store-command test reads a tracked `board.toml` by default
     (issue #315), whichever of `test_cli.py`'s faked worktree, `test_protect.py`'s
