@@ -1,0 +1,8 @@
+claim_id = "b6de80d8d42047fd889c2b3758e3b7ea"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "73e815bce1e3f085b7a4b9fe2955bca599ce0509"
+branch = "claude/issue-534-test-isolation-gh"
+scope = [".agent-claim/brief.toml", "scripts/test_budget_ratchet.txt", "tests/cli_fixtures.py", "tests/conftest.py", "tests/network_guard.py", "tests/test_network_guard.py"]
+opened_commit = "6d248161c44be4d97e63a572136067099754b5a6"
+whole_reason = "one test-isolation plugin for git and gh, the shared real-git helper it seals, and the probe rule"
