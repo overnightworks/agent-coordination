@@ -4345,10 +4345,12 @@ class _ObservedBoard:
 
 @dataclass(frozen=True)
 class _StoreAndIssues:
-    """`_store_observation_and_issues`'s own result: the claim-state fetch
-    and the open-issue list, read concurrently (issue #440) rather than one
-    after the other -- both are independent `git`/`gh` round trips a board
-    build always pays, and neither reads the other's result."""
+    """`_store_observation_and_issues`'s own result: the context's
+    observation of the claim state and the open-issue list, read
+    concurrently (issue #440) rather than one after the other -- neither
+    reads the other's result. Under `github` both are round trips a board
+    build pays; under `state-ref` the forge already holds the observation
+    before the threads start (issue #477), so only the issue list is paid."""
 
     observed: protocol.ClaimState
     issues: tuple[board.Issue, ...]
