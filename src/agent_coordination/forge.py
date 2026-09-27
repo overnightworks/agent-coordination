@@ -254,6 +254,7 @@ class ForgeOperation(StrEnum):
     CREATE_ISSUE = "create_issue"
     CREATE_CHILD = "create_child"
     UPDATE_ITEM_BODY = "update_item_body"
+    SET_ITEM_KIND = "set_item_kind"
 
 
 class BoardSource(Protocol):
@@ -356,3 +357,10 @@ class ForgeWriter(ForgeReader, Protocol):
     def create_child(self, *, parent: int, title: str, body: str, kind: ItemKind) -> int: ...
 
     def update_item_body(self, number: int, body: str) -> None: ...
+
+    def set_item_kind(self, number: int, kind: ItemKind) -> None:
+        """Retype existing item `number` to `kind` -- `item new --parent`
+        turning the Task it is about to give a first child into a Container,
+        and `item edit --kind` (issue #503); raises when the forge did not
+        take the type."""
+        ...

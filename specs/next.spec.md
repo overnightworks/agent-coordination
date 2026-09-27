@@ -28,8 +28,9 @@ it, `<s>` an integer score.
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05 | NEXT-12 |
-| a childless container has no further `Next` work | NEXT-06 | NEXT-13 |
-| that same container still names further work | NEXT-07 | NEXT-13 |
+| that container is itself a child of another item | NEXT-25 | NEXT-14 |
+| a childless container has no further `Next` work | NEXT-07 | NEXT-13 |
+| that same container still names further work | NEXT-06 | NEXT-13 |
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
 | an unworkable item exists beside the top action | NEXT-08 | NEXT-14 |
 | further free items exist, disjoint from the first action | NEXT-09, NEXT-21, NEXT-22 | NEXT-15 |
@@ -53,17 +54,19 @@ it, `<s>` an integer score.
 ## A container's own action
 
 - [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title "<cut title>"`, exit `0` (see E-NEXT-03).
-- [ ] [NEXT-06] A childless container with an empty slice table and a `Next` line naming work prints only `close_container <label>: <next>`, never a guessed `cut` command (see E-NEXT-04).
+- [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
+- [ ] [NEXT-25] A childless container with an uncut row that is a child of any item -- any type, open or closed, any repository -- never gets `cut_slice` (CUT-03); `SKIPPED` names its repair (E-NEXT-09).
 
 ## `RECOVERY` and `SKIPPED`
 
 - [ ] [NEXT-08] Every other unworkable item is named once under a trailing `SKIPPED` block, `<label>: <reason>`; a container `next` itself recommends cutting or closing is left out of that list.
+- [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
 
 ## `parallel:`
 
 - [ ] [NEXT-09] `parallel:` lists every further free item the walk placed, `<label> (<n> path[s])`, comma-joined, in board order, alongside the first action (see E-NEXT-05).
-- [ ] [NEXT-21] `parallel:` occupies live claims' scopes and the first action's scope, then walks further qualifying actions in board order, skipping a close proposal or recovery item outright (see E-NEXT-05).
+- [ ] [NEXT-21] `parallel:` occupies live claims' scopes and the first action's scope, then walks further qualifying actions in board order, skipping a close, check or recovery item outright (see E-NEXT-05).
 - [ ] [NEXT-22] A candidate whose `scope` stays disjoint (CLAIM-31/CLAIM-32's grammar) from everything occupied is placed, its `scope` then joining what's occupied for the rest of the walk (see E-NEXT-05).
 - [ ] [NEXT-10] Beyond three placed candidates, only the first three are named, followed by `, and <n> more`; `--json`'s own `candidates` array still carries every one (see E-NEXT-05).
 - [ ] [NEXT-16] Once the first action names no scope, the tail collapses to `parallel: unknown (first action names no scope)`; `scope unknown:` is skipped, never printed as `none` (see E-NEXT-02).
@@ -71,7 +74,7 @@ it, `<s>` an integer score.
 
 ## `close:`
 
-- [ ] [NEXT-18] `close:` unions closable containers (kind, no open child, no uncut `[[slice]]` row) then recovery items, both in board order, first-seen, regardless of the first action's rank (#310; see E-NEXT-06).
+- [ ] [NEXT-18] `close:` unions closable containers (kind, no open child, no uncut `[[slice]]` row, no `Next` work) then recovery items, in board order, first-seen, whatever the first action (E-NEXT-06).
 - [ ] [NEXT-19] `close:` never names a container the forge reports no recognized `kind` for (BOARD-08's own exclusion, #309): such an item is read as ordinary, not as one with nothing left to do.
 - [ ] [NEXT-20] `close:` prints `none` when neither a closable container nor a recovery item exists.
 
@@ -79,7 +82,7 @@ it, `<s>` an integer score.
 
 - [ ] [NEXT-11] A work-item action's `reason` is `work_item` (`ok: true`), adding `number`, `score`, `title`, `next`, `command`, `ruling_landings`/`ruling_old`/`ruling_hint` per NEXT-04 (E-NEXT-07).
 - [ ] [NEXT-12] A cut proposal's `reason` is `"cut_slice"` (`ok: true`), the object adding `number`, `title`, `slice`, `cut_title`, `command` (see E-NEXT-07).
-- [ ] [NEXT-13] A close proposal's `reason` is `"close_container"` (`ok: true`), the object adding `number`, `closed`, `total`, `next_step` -- never `command`/`cut_title`, since none exists to run (see E-NEXT-07).
+- [ ] [NEXT-13] A close or check proposal's `reason` is `"close_container"` or `"check_container"` (`ok: true`), adding `number`, `closed`, `total`, `next_step` (`null` on close), never `command`.
 - [ ] [NEXT-14] The object always carries `recovery` (`{number, title, step}` each), `skipped` (`{number, reason}` each), and `close` (a bare number array), independent of `reason`.
 - [ ] [NEXT-15] `parallel` always carries `first_scope_unknown`, `candidates` (`{number, scope}` each, uncapped), and `scope_unknown` (a bare number array).
 - [ ] [NEXT-24] `--json` on a dispatched refusal (BOARD-02, BOARD-42) prints OUT-nn's envelope with the sentence as `message` and `reason` from the table below, exit `2` (see E-NEXT-08).
@@ -167,6 +170,18 @@ close: #182
 exit 0
 ```
 
+The same container after a slice landed, its `Next` line still naming the next slice (issue #503):
+
+```console
+$ aco next
+check_container #182: no open children; check done_when
+Next: Scheibe D schneiden.
+parallel: none
+scope unknown: none
+close: none
+exit 0
+```
+
 ### E-NEXT-05 — five disjoint candidates, capped at three
 
 Setup: bare-remote, fake `gh`, six open items each naming its own disjoint scope
@@ -221,3 +236,25 @@ $ aco --repo acme/items next --json
 {"ok": false, "reason": "invalid_usage", "message": "--repo is meaningless under storage = state-ref"}
 exit 2
 ```
+
+### E-NEXT-09 — a nested container's uncut row, never a `cut` that `cut` refuses
+
+Setup: bare-remote, fake `gh`, container `#298` with one open child, the container `#299`; `#299` has no open child and one `[[slice]]` row titled `Scheibe Z`
+
+```console
+$ aco next
+No actionable item.
+parallel: none
+scope unknown: none
+close: none
+
+SKIPPED
+#298: container; claim a child
+#299: nested container, which cut refuses; run aco item edit 299 --kind task and claim it with slice "Scheibe Z"'s scope
+exit 3
+$ aco cut 299 --title "Scheibe Z"
+2> ERROR: #299 is itself a child of example/agent-coordination#298; nested containers are not supported
+exit 2
+```
+
+The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; `aco claim 299 --scope <that row's paths>` then claims it. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.

@@ -113,6 +113,7 @@ _board_item_for_vulture = BoardItem(
     actionable=False,
     actionable_reason=None,
     read_state=BodyReadState.VALID,
+    childless_verdict=None,
     size=None,
     has_slices=False,
     estimate=None,

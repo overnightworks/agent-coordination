@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -257,16 +258,21 @@ def _item_files() -> dict[str, bytes]:
 
 
 def _container_body_with_slices(
-    slice_rows: tuple[tuple[int, str], ...], blocked_by: tuple[str, ...] = ()
+    slice_rows: tuple[tuple[int, str], ...],
+    blocked_by: tuple[str, ...] = (),
+    parent: str | None = None,
 ) -> str:
-    """`CONTAINER_ID`'s own body, its `[[slice]]` table set to `slice_rows`
-    and its stored `blocked_by` to `blocked_by` -- the one shape issue
-    #291's `cut` proofs need and the flat `_CONTAINER_PROJECTION`/`_record`
-    pair above cannot express (neither carries a `slice` array)."""
+    """`CONTAINER_ID`'s own body, its `[[slice]]` table set to `slice_rows`,
+    its stored `blocked_by` to `blocked_by` and its `parent` to `parent` --
+    the one shape issue #291's `cut` proofs need and the flat
+    `_CONTAINER_PROJECTION`/`_record` pair above cannot express (neither
+    carries a `slice` array)."""
     data = {
         **_CONTAINER_PROJECTION.block_data(),
         "slice": [{"index": index, "title": title} for index, title in slice_rows],
-        "record": _record(title="Epic", state="open", kind="container", blocked_by=blocked_by),
+        "record": _record(
+            title="Epic", state="open", kind="container", blocked_by=blocked_by, parent=parent
+        ),
     }
     return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
 
@@ -2066,6 +2072,83 @@ class TestCliStateRefForge:
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
 
+    def _nested_container_files(
+        self, slice_rows: tuple[tuple[int, str], ...]
+    ) -> tuple[str, dict[str, bytes]]:
+        """`CONTAINER_ID` carrying `slice_rows`, itself a child of an open
+        outer container -- the #299 shape -- and that outer container's id."""
+        outer_id = "aco-0000aa"
+        return outer_id, {
+            f"{outer_id}.md": _state_ref_body(
+                _CONTAINER_PROJECTION, _record(title="Outer", state="open", kind="container")
+            ).encode(),
+            f"{CONTAINER_ID}.md": _container_body_with_slices(slice_rows, parent=outer_id).encode(),
+        }
+
+    def test_next_names_the_move_to_the_parent_for_a_nested_containers_rows_under_state_ref(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #503: a nested container's several uncut rows need moving to
+        its parent, named by item id, and `cut` keeps its refusal."""
+        outer_id, item_files = self._nested_container_files(((1, "Slice Y"), (2, "Slice Z")))
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        next_status = issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        cut_status = issue_claim.main(["cut", CONTAINER_ID, "--title", "Slice Y"])
+
+        assert (next_status, cut_status) == (3, 2)
+        assert (
+            f"\n{CONTAINER_ID}: nested container, which cut refuses; "
+            f"move its slice rows to {outer_id}\n"
+        ) in next_out
+        assert capsys.readouterr().err == (
+            f"ERROR: {CONTAINER_ID} is itself a child of {outer_id}; "
+            "nested containers are not supported\n"
+        )
+
+    def test_following_next_for_a_nested_containers_one_row_ends_in_a_claim_under_state_ref(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #503 head ruling (#506 end-to-end finding): `next`'s repair
+        for a nested container's one uncut row is a command aco runs under
+        state-ref too -- `item edit --kind task` (ITEM-47) -- and following
+        it to the end claims the item on that row's scope."""
+        _outer_id, item_files = self._nested_container_files(((1, "Slice Z"),))
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        _stub_claim_checkout(monkeypatch)
+
+        next_status = issue_claim.main(["next"])
+        advice = next(
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith(f"{CONTAINER_ID}: nested container")
+        )
+        repair = advice.split("; run aco ", 1)[1].split(" and claim it with ", 1)[0]
+        repair_status = issue_claim.main(shlex.split(repair))
+        repair_out = capsys.readouterr().out
+        claim_status = issue_claim.main(
+            ["claim", CONTAINER_ID, "--agent", "Codex Sol", "--scope", "README"]
+        )
+
+        assert (next_status, repair, repair_status) == (
+            3,
+            f"item edit {CONTAINER_ID} --kind task",
+            0,
+        )
+        assert repair_out == f"EDITED {CONTAINER_ID} kind=task\n"
+        assert claim_status == 0, capsys.readouterr().err
+
     def _cut_child_scope(
         self, worktree: Path, bare_remote: Path, capsys: pytest.CaptureFixture[str]
     ) -> tuple[str, ...] | None:
@@ -3157,6 +3240,121 @@ class TestCliStateRefForge:
         after_record = _decoded_record(after_body, CHILD_A_ID)
         assert replace(after_record, updated_at=before_record.updated_at) == before_record
 
+    @pytest.mark.parametrize(
+        ("item", "kind", "status", "out", "err", "stored_kind"),
+        [
+            pytest.param(
+                CHILD_A_ID,
+                "container",
+                0,
+                f"EDITED {CHILD_A_ID} kind=container\n",
+                "",
+                "container",
+                id="task-becomes-container",
+            ),
+            pytest.param(
+                CONTAINER_ID,
+                "task",
+                2,
+                "",
+                f"ERROR: {CONTAINER_ID} has an open child; "
+                "a container with open children stays a container\n",
+                "container",
+                id="container-with-open-children-refuses",
+            ),
+        ],
+    )
+    def test_item_edit_kind_retypes_only_the_record_kind_or_refuses(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        item: str,
+        kind: str,
+        status: int,
+        out: str,
+        err: str,
+        stored_kind: str,
+    ) -> None:
+        """Issue #503 head ruling (ITEM-47/ITEM-48): `item edit --kind`
+        moves only `record.kind` (and `updated_at`) between task and
+        container, reading no stdin; a container with an open child keeps
+        its kind and nothing is written."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        remote_url = f"file://{bare_remote}"
+        before = store.fetch_state(worktree=worktree, remote=remote_url)
+        assert before.tip is not None
+        before_body = store.read_item_files(worktree, before.tip)[f"{item}.md"].decode()
+
+        edited = issue_claim.main(["item", "edit", item, "--kind", kind])
+
+        captured = capsys.readouterr()
+        assert (edited, captured.out, captured.err) == (status, out, err)
+        after = store.fetch_state(worktree=worktree, remote=remote_url)
+        assert after.tip is not None
+        after_body = store.read_item_files(worktree, after.tip)[f"{item}.md"].decode()
+        before_record = _decoded_record(before_body, item)
+        after_record = _decoded_record(after_body, item)
+        assert after_record.kind == stored_kind
+        assert (
+            replace(after_record, kind=before_record.kind, updated_at=before_record.updated_at)
+            == before_record
+        )
+
+    @pytest.mark.parametrize(
+        ("parent_state", "err", "parent_kind"),
+        [
+            pytest.param(
+                "open",
+                f"retyped {CHILD_A_ID} to Container for its first child\n",
+                "container",
+                id="open-task-retyped",
+            ),
+            pytest.param("closed", "", "task", id="closed-task-kept"),
+        ],
+    )
+    def test_item_new_retypes_an_open_task_parent_container_and_says_so(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        parent_state: str,
+        err: str,
+        parent_kind: str,
+    ) -> None:
+        """Issue #503 head ruling (ITEM-45 under state-ref, the #484 shape):
+        an item becomes a container with its first child, so `--parent` on
+        an open Task retypes it and says so on stderr; stdout stays the
+        created id. A closed parent keeps its kind."""
+        parent_body = _state_ref_body(
+            _CHILD_A_PROJECTION,
+            _record(
+                title="Slice A",
+                state=parent_state,
+                kind="task",
+                parent=CONTAINER_ID,
+                closed_at="2026-09-16T00:00:00Z" if parent_state == "closed" else None,
+            ),
+        )
+        item_files = {**_item_files(), f"{CHILD_A_ID}.md": parent_body.encode()}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        status = issue_claim.main(["item", "new", "--title", "Fresh Child", "--parent", CHILD_A_ID])
+
+        captured = capsys.readouterr()
+        printed = captured.out.strip()
+        assert (status, captured.err) == (0, err)
+        remote_url = f"file://{bare_remote}"
+        state = store.fetch_state(worktree=worktree, remote=remote_url)
+        assert state.tip is not None
+        stored = store.read_item_files(worktree, state.tip)
+        assert _decoded_record(stored[f"{CHILD_A_ID}.md"].decode(), CHILD_A_ID).kind == parent_kind
+        assert _decoded_record(stored[f"{printed}.md"].decode(), printed).parent == CHILD_A_ID
+
     def test_item_edit_json_prints_the_item_number_and_fresh_oid(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -4086,15 +4284,10 @@ class TestCliStateRefForge:
         assert _run_ok(["status", child_id], capsys).strip() == f"UNCLAIMED issue {child_id}"
 
         close_out = _run_ok(["item", "close", child_id], capsys)
-        # `child_id` was `container_id`'s only child and the container's own
-        # block carries no `[[slice]]` row, so this close leaves it freshly
-        # closable (issue #348) -- named by the same parent hint `release
-        # --merged` prints.
-        assert close_out.splitlines() == [
-            f"CLOSED {child_id}",
-            "freed: none",
-            f"parent {container_id}: no open children — close it",
-        ]
+        # `child_id` was `container_id`'s only child, but the container's own
+        # `Next` line still names work, so the parent hint
+        # `release --merged` shares never offers to close it (issue #503).
+        assert close_out.splitlines() == [f"CLOSED {child_id}", "freed: none"]
 
         asked_text = "Does the runbook still hold without a forge?"
         asked_out = _run_ok(["ask", container_id, "--text", asked_text], capsys)

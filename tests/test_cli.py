@@ -5,9 +5,11 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import re
 import runpy
 import shlex
+import socket
 import sys
 import threading
 import tomllib
@@ -18,6 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
+from typing import TextIO
 
 import pytest
 from board_fixtures import (
@@ -173,10 +176,12 @@ class FakeForge:
     created_children: list[tuple[int, str, str, body.ItemKind]] = field(default_factory=list)
     created_issues: list[tuple[str, str, body.ItemKind]] = field(default_factory=list)
     linked_children: list[tuple[int, int]] = field(default_factory=list)
+    retyped_items: list[tuple[int, body.ItemKind]] = field(default_factory=list)
     next_created_child_number: int = 900
     item_bodies: dict[int, str] = field(default_factory=dict)
     fail_update_item_body: bool = False
     fail_create_child_relation: bool = False
+    fail_set_item_kind: bool = False
     drop_created_issue_type: bool = False
     capability_overrides: dict[forge.ForgeOperation, forge.Capability] = field(default_factory=dict)
     readiness_by_number: dict[int, forge.LandingReadiness] = field(default_factory=dict)
@@ -266,6 +271,13 @@ class FakeForge:
         if self.fail_update_item_body:
             raise ClaimError("update item body failed (simulated)")
         self.item_bodies[number] = body
+
+    def set_item_kind(self, number: int, kind: body.ItemKind) -> None:
+        """`fail_set_item_kind` simulates GitHub dropping the new type
+        (ITEM-46): the item keeps its old type and the retype raises."""
+        if self.fail_set_item_kind:
+            raise forge.ForgeError("retype dropped (simulated)")
+        self.retyped_items.append((number, kind))
 
     def close_landed_item(self, number: int, *, pull_request: int) -> None:
         """This fake's mirror of `GitHubForge.close_landed_item` (issue
@@ -415,6 +427,9 @@ class ReaderOnlyForge(FakeForge):
 
     def update_item_body(self, number: int, body: str) -> None:
         pytest.fail("a read-only command must never update an item body")
+
+    def set_item_kind(self, number: int, kind: body.ItemKind) -> None:
+        pytest.fail("a read-only command must never retype an item")
 
     def close_landed_item(self, number: int, *, pull_request: int) -> None:
         pytest.fail("a read-only command must never close a landed item")
@@ -6391,6 +6406,115 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
         assert client.created_children[0][0] == item.number
 
 
+@pytest.mark.parametrize(
+    ("parent_kind", "parent_open", "parent_repository", "slice_titles", "repair"),
+    [
+        pytest.param(
+            body.ItemKind.CONTAINER,
+            True,
+            REPOSITORY,
+            ("Scheibe Z",),
+            "nested container, which cut refuses; run aco item edit 299 --kind task and "
+            'claim it with slice "Scheibe Z"\'s scope',
+            id="open_container_parent_one_row_names_the_task_repair",
+        ),
+        pytest.param(
+            body.ItemKind.CONTAINER,
+            True,
+            REPOSITORY,
+            ("Scheibe Y", "Scheibe Z"),
+            f"nested container, which cut refuses; move its slice rows to {REPOSITORY}#298",
+            id="several_rows_name_the_move_to_the_parent",
+        ),
+        pytest.param(
+            body.ItemKind.FEATURE,
+            True,
+            REPOSITORY,
+            ("Scheibe Y", "Scheibe Z"),
+            f"nested container, which cut refuses; move its slice rows to {REPOSITORY}#298",
+            id="feature_parent",
+        ),
+        pytest.param(
+            body.ItemKind.CONTAINER,
+            False,
+            REPOSITORY,
+            ("Scheibe Y", "Scheibe Z"),
+            f"nested container, which cut refuses; move its slice rows to {REPOSITORY}#298",
+            id="closed_parent",
+        ),
+        pytest.param(
+            body.ItemKind.CONTAINER,
+            False,
+            "other-owner/other-repo",
+            ("Scheibe Y", "Scheibe Z"),
+            "nested container, which cut refuses; move its slice rows to "
+            "other-owner/other-repo#298",
+            id="parent_in_another_repository",
+        ),
+    ],
+)
+def test_next_names_a_nested_containers_repair_where_cut_refuses_its_row(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    parent_kind: body.ItemKind,
+    parent_open: bool,
+    parent_repository: str,
+    slice_titles: tuple[str, ...],
+    repair: str,
+) -> None:
+    """Issue #503, the #299 shape: a container that is itself a child, its
+    own children closed and an uncut `[[slice]]` row left. `cut` refuses it
+    whatever its parent's type, state, or repository, so `next` never prints
+    that `cut` -- it names the container's repair under `SKIPPED` instead,
+    and `cut` keeps its refusal: the advice and the command agree."""
+    parent = board.Issue(
+        298,
+        "Epic",
+        (),
+        complete_contract("Finish #299.", scope=["docs/epic.md"]),
+        "2026-08-20T00:00:00Z",
+        "2026-08-20T00:00:00Z",
+        kind=parent_kind,
+        children_closed=0 if parent_kind is body.ItemKind.CONTAINER else None,
+        children_total=1 if parent_kind is body.ItemKind.CONTAINER else None,
+    )
+    nested = board.Issue(
+        299,
+        "Nested epic",
+        (),
+        complete_contract("keiner", slice=slice_entries(*slice_titles)),
+        "2026-08-20T00:00:00Z",
+        "2026-08-20T00:00:00Z",
+        kind=body.ItemKind.CONTAINER,
+        children_closed=1,
+        children_total=1,
+    )
+    board_parent = (parent,) if parent_open and parent_repository == REPOSITORY else ()
+    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(*board_parent, nested))
+    client.children = {
+        298: (board.ChildItem(299, board.ChildState.OPEN),),
+        299: (board.ChildItem(300, board.ChildState.CLOSED),),
+    }
+    client.parents[299] = board.ParentIssue(
+        board.IssueReference(parent_repository, 298), parent.body, parent_kind
+    )
+    cut_arguments = ["--repo", REPOSITORY, "cut", "299", "--title", slice_titles[0]]
+
+    next_exit_code = issue_claim.main(["--repo", REPOSITORY, "next"])
+    next_out = capsys.readouterr().out
+    cut_exit_code = issue_claim.main(cut_arguments)
+
+    assert cut_exit_code == 2
+    assert f"\n#299: {repair}\n" in next_out
+    assert "cut 299" not in next_out
+    assert capsys.readouterr().err == (
+        f"ERROR: #299 is itself a child of {parent_repository}#298; "
+        "nested containers are not supported\n"
+    )
+    assert next_exit_code == (0 if parent_kind is body.ItemKind.FEATURE else 3)
+
+
 def test_next_json_names_a_cuttable_container_slice(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -6478,9 +6602,10 @@ def test_next_names_a_container_with_no_slice_row_by_its_own_next_line(
     """Issue #208, reproduced live at #122: an empty slice table is the
     typed statement that there is nothing here to cut, even though the
     container's own `Next` line still names real work. `next` must not
-    fabricate `cut --title "<the whole Next paragraph>"` from that prose --
-    it names the container and its own sentence, the same way
-    `close_container` already declines a command when there is none."""
+    fabricate `cut --title "<the whole Next paragraph>"` from that prose,
+    nor list it under `close:` while that sentence names work (issue #503,
+    the #418 shape after a slice landed): it names the container for a
+    `done_when` check and its own sentence, and no command."""
     container = board.Issue(
         187,
         "Epic",
@@ -6498,19 +6623,19 @@ def test_next_names_a_container_with_no_slice_row_by_its_own_next_line(
 
     assert exit_code == 0
     assert capsys.readouterr().out == (
-        "close_container #187: Schließen, sobald die letzte Bedingung erfüllt ist.\n"
-        "parallel: none\nscope unknown: none\nclose: #187\n"
+        "check_container #187: no open children; check done_when\n"
+        "Next: Schließen, sobald die letzte Bedingung erfüllt ist.\n"
+        "parallel: none\nscope unknown: none\nclose: none\n"
     )
 
 
 def test_next_json_names_a_container_with_no_slice_row_by_its_own_next_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """The JSON form of the same #208 case: `reason` stays `close_container`
-    (there is still nothing to cut) but `next_step` carries the container's
-    own sentence instead of `null`, and no `command` or `cut_title` is
-    invented from it -- text and JSON agree on there being no command to
-    run."""
+    """The JSON form of the same #208/#503 case: `reason` is
+    `check_container`, never `close_container` while the `Next` line names
+    work; `next_step` carries that sentence, `close` stays empty, and no
+    `command` or `cut_title` is invented from it."""
     container = board.Issue(
         188,
         "Epic",
@@ -6528,11 +6653,12 @@ def test_next_json_names_a_container_with_no_slice_row_by_its_own_next_line(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["reason"] == "close_container"
+    assert payload["reason"] == "check_container"
     assert payload["number"] == 188
     assert payload["closed"] == 2
     assert payload["total"] == 2
     assert payload["next_step"] == "Schließen, sobald die letzte Bedingung erfüllt ist."
+    assert payload["close"] == []
     assert "command" not in payload
     assert "cut_title" not in payload
 
@@ -13461,7 +13587,11 @@ PARENT_OF_WORK_ITEM = 79
 
 
 def _released_last_child_client(
-    monkeypatch: pytest.MonkeyPatch, *, sibling_open: bool, parent_closed: bool = False
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sibling_open: bool,
+    parent_closed: bool = False,
+    parent_next: str = "keiner",
 ) -> FakeForge:
     """`merged_release_client` plus a recorded parent relation (issue #348,
     Beweis 4): `WORK_ITEM_ISSUE` is `PARENT_OF_WORK_ITEM`'s only child when
@@ -13472,13 +13602,15 @@ def _released_last_child_client(
     the third negative case: the parent itself already closed (by some
     other landing) before this release even runs -- a childless, uncut
     parent that is not open must never be named closable, since a second
-    close would only refuse."""
+    close would only refuse. `parent_next` is the parent's own `Next` line:
+    one still naming work is a container between two slices (issue #503,
+    the #418 shape), never closable either."""
     client = merged_release_client(monkeypatch, body="Work-Item: #72\n\nCloses #72")
     client.closed_issues.add(WORK_ITEM_ISSUE)
     monkeypatch.setattr(issue_claim, "_fetch_issue_reference", _LIVE_FETCH_ISSUE_REFERENCE)
     client.parents[WORK_ITEM_ISSUE] = board.ParentIssue(
         board.IssueReference(REPOSITORY, PARENT_OF_WORK_ITEM),
-        complete_contract("keiner"),
+        complete_contract(parent_next),
         body.ItemKind.CONTAINER,
     )
     children = [board.ChildItem(WORK_ITEM_ISSUE, board.ChildState.CLOSED)]
@@ -13491,11 +13623,14 @@ def _released_last_child_client(
 
 
 @pytest.mark.parametrize(
-    ("sibling_open", "parent_closed", "hint_expected"),
+    ("sibling_open", "parent_closed", "parent_next", "hint_expected"),
     [
-        pytest.param(False, False, True, id="last_open_child_names_the_parent"),
-        pytest.param(True, False, False, id="a_sibling_still_open_omits_the_hint"),
-        pytest.param(False, True, False, id="an_already_closed_parent_omits_the_hint"),
+        pytest.param(False, False, "keiner", True, id="last_open_child_names_the_parent"),
+        pytest.param(True, False, "keiner", False, id="a_sibling_still_open_omits_the_hint"),
+        pytest.param(False, True, "keiner", False, id="an_already_closed_parent_omits_the_hint"),
+        pytest.param(
+            False, False, "Cut slice 3.", False, id="a_parent_naming_further_work_omits_the_hint"
+        ),
     ],
 )
 def test_release_merged_names_the_parent_hint_only_for_the_last_open_child(
@@ -13503,6 +13638,7 @@ def test_release_merged_names_the_parent_hint_only_for_the_last_open_child(
     capsys: pytest.CaptureFixture[str],
     sibling_open: bool,
     parent_closed: bool,
+    parent_next: str,
     hint_expected: bool,
 ) -> None:
     """issue #348, Beweis 4: releasing a container's last open child names
@@ -13510,7 +13646,12 @@ def test_release_merged_names_the_parent_hint_only_for_the_last_open_child(
     line makes for a childless, uncut container -- a still-open sibling
     keeps the container un-closable and the hint absent, and so does a
     parent that is already closed itself (G2 review)."""
-    _released_last_child_client(monkeypatch, sibling_open=sibling_open, parent_closed=parent_closed)
+    _released_last_child_client(
+        monkeypatch,
+        sibling_open=sibling_open,
+        parent_closed=parent_closed,
+        parent_next=parent_next,
+    )
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "release", str(WORK_ITEM_ISSUE), "--merged", "12"]
@@ -18014,6 +18155,254 @@ def test_item_new_creates_a_github_issue_from_the_piped_body(
 
     assert (status, capsys.readouterr().out) == (0, out)
     assert (client.created_issues, client.linked_children) == (created, linked)
+
+
+@pytest.mark.parametrize(
+    ("retype_dropped", "status", "out", "err", "retyped", "created"),
+    [
+        pytest.param(
+            False,
+            0,
+            "#900\n",
+            "retyped #484 to Container for its first child\n",
+            [(484, body.ItemKind.CONTAINER)],
+            [("Write the docs", _ITEM_NEW_BODY, body.ItemKind.TASK)],
+            id="retypes_and_says_so",
+        ),
+        pytest.param(
+            True,
+            2,
+            "",
+            "ERROR: retype dropped (simulated)\n",
+            [],
+            [],
+            id="dropped_retype_refuses_before_creating_anything",
+        ),
+    ],
+)
+def test_item_new_retypes_a_task_parent_to_container_or_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    retype_dropped: bool,
+    status: int,
+    out: str,
+    err: str,
+    retyped: list[tuple[int, body.ItemKind]],
+    created: list[tuple[str, str, body.ItemKind]],
+) -> None:
+    """Issue #503, the #484 shape: an item becomes a container exactly when
+    it gets its first child, so `--parent` on an open Task retypes it to
+    Container and names that on stderr, instead of refusing `is not a
+    container`; stdout still carries only the created issue. A retype the
+    forge drops refuses exit 2 before anything is created (ITEM-46)."""
+    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    client.board_issues = (
+        board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
+    )
+    client.fail_set_item_kind = retype_dropped
+    arguments = ["item", "new", "--title", "Write the docs", "--parent", "484"]
+
+    exit_code = issue_claim.main(arguments)
+
+    captured = capsys.readouterr()
+    assert (exit_code, captured.out, captured.err) == (status, out, err)
+    assert (client.retyped_items, client.created_issues) == (retyped, created)
+
+
+@contextlib.contextmanager
+def _devnull_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    with Path(os.devnull).open() as stdin:
+        yield stdin
+
+
+@contextlib.contextmanager
+def _body_file_on_stdin(tmp_path: Path) -> Iterator[TextIO]:
+    body_file = tmp_path / "body.md"
+    body_file.write_text(_ITEM_NEW_BODY)
+    with body_file.open() as stdin:
+        yield stdin
+
+
+@contextlib.contextmanager
+def _piped_body_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    """`cat body.md | aco ...`: the read end of a pipe whose writer already
+    wrote the body and closed."""
+    read_end, write_end = os.pipe()
+    with os.fdopen(write_end, "w") as writer:
+        writer.write(_ITEM_NEW_BODY)
+    with os.fdopen(read_end) as stdin:
+        yield stdin
+
+
+@contextlib.contextmanager
+def _closed_stdin(_tmp_path: Path) -> Iterator[None]:
+    """`aco ... <&-`: Python leaves `sys.stdin` as `None`."""
+    yield None
+
+
+@contextlib.contextmanager
+def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    """The stdin an agent harness such as Claude Code's Bash tool hands a
+    command: one end of a socket that never delivers a body."""
+    harness_end, other_end = socket.socketpair()
+    with harness_end, other_end, harness_end.makefile("r") as stdin:
+        yield stdin
+
+
+@pytest.mark.parametrize(
+    ("number", "flags", "stdin_source", "retype_dropped", "status", "out", "err", "retyped"),
+    [
+        pytest.param(
+            "484",
+            (),
+            _devnull_on_stdin,
+            False,
+            0,
+            "EDITED #484 kind=container\n",
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="retypes_through_the_forge",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _empty_harness_socket_on_stdin,
+            False,
+            0,
+            "EDITED #484 kind=container\n",
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="empty_harness_socket_retypes",
+        ),
+        pytest.param(
+            "484",
+            ("--json",),
+            _devnull_on_stdin,
+            False,
+            0,
+            '{"ok": true, "reason": "edited", "item": "#484", "number": 484, '
+            '"kind": "container"}\n',
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="retype_reports_the_json_envelope",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _devnull_on_stdin,
+            True,
+            2,
+            "",
+            "ERROR: retype dropped (simulated)\n",
+            [],
+            id="dropped_retype_refuses",
+        ),
+        pytest.param(
+            "485",
+            (),
+            _devnull_on_stdin,
+            False,
+            2,
+            "",
+            "ERROR: #485 is not an open item\n",
+            [],
+            id="no_open_item",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _body_file_on_stdin,
+            False,
+            2,
+            "",
+            "ERROR: item edit --kind reads no stdin; drop the redirect\n",
+            [],
+            id="body_file_refuses",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _piped_body_on_stdin,
+            False,
+            0,
+            "EDITED #484 kind=container\n",
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="piped_body_passes_unread",
+        ),
+        pytest.param(
+            "484",
+            (),
+            _closed_stdin,
+            False,
+            0,
+            "EDITED #484 kind=container\n",
+            "",
+            [(484, body.ItemKind.CONTAINER)],
+            id="closed_stdin_retypes",
+        ),
+        pytest.param(
+            "484",
+            ("--size", "S", "--json"),
+            _devnull_on_stdin,
+            False,
+            2,
+            '{"ok": false, "reason": "invalid_usage", '
+            '"message": "argument --size: not allowed with argument --kind"}\n',
+            "ERROR: argument --size: not allowed with argument --kind\n",
+            [],
+            id="size_beside_kind_refuses",
+        ),
+        pytest.param(
+            "484",
+            ("--whole", "one PR", "--json"),
+            _devnull_on_stdin,
+            False,
+            2,
+            '{"ok": false, "reason": "invalid_usage", '
+            '"message": "argument --whole: not allowed with argument --kind"}\n',
+            "ERROR: argument --whole: not allowed with argument --kind\n",
+            [],
+            id="whole_beside_kind_refuses",
+        ),
+    ],
+)
+def test_item_edit_kind_retypes_a_github_issue_or_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    number: str,
+    flags: tuple[str, ...],
+    stdin_source: Callable[[Path], contextlib.AbstractContextManager[TextIO | None]],
+    retype_dropped: bool,
+    status: int,
+    out: str,
+    err: str,
+    retyped: list[tuple[int, body.ItemKind]],
+) -> None:
+    """Issue #503 (ITEM-47): `item edit --kind` runs under
+    `storage = "github"` too, through the same forge retype `item new
+    --parent` uses, so `next`'s nested-container repair runs under both
+    storages; a retype the forge drops, an item that is not open, a body
+    file redirected onto stdin (which `--kind` never reads, ITEM-49), or
+    `--size`/`--whole` beside it (ITEM-50) refuses exit 2 before any retype,
+    while a pipe, the empty socket an agent harness hands as stdin, or a
+    closed stdin passes (ITEM-51); `--json` reports the `item` label, its
+    `number` and new `kind`. Each case sets its own stdin."""
+    client = _item_new_github_client(monkeypatch, tmp_path, "")
+    client.board_issues = (
+        board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
+    )
+    client.fail_set_item_kind = retype_dropped
+
+    with stdin_source(tmp_path) as stdin:
+        monkeypatch.setattr(sys, "stdin", stdin)
+        exit_code = issue_claim.main(["item", "edit", number, "--kind", "container", *flags])
+
+    captured = capsys.readouterr()
+    assert (exit_code, captured.out, captured.err) == (status, out, err)
+    assert client.retyped_items == retyped
 
 
 @pytest.mark.parametrize(

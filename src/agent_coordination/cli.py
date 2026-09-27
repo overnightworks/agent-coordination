@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 import threading
 import tomllib
@@ -851,15 +852,21 @@ def _add_item_parser(commands: argparse._SubParsersAction) -> None:
     edit.add_argument(
         "item", type=board.parse_item_reference, help=f"the item to edit, {ITEM_REF_HELP}"
     )
-    edit.add_argument(
+    one_field = edit.add_mutually_exclusive_group()
+    one_field.add_argument(
         "--size",
         choices=tuple(metrics.Size),
         help="set only this item's size class (any storage); skips the stdin body read",
     )
-    edit.add_argument(
+    one_field.add_argument(
         "--whole",
         metavar="REASON",
         help="set only this item's whole reason (any storage); skips the stdin body read",
+    )
+    one_field.add_argument(
+        "--kind",
+        choices=ITEM_EDIT_KINDS,
+        help="set only this item's kind (any storage); skips the stdin body read",
     )
     _add_json_flag(edit)
     close = item_commands.add_parser(
@@ -1430,7 +1437,7 @@ class ReleaseLanding:
 def _next_action_item(action: board.NextAction) -> board.BoardItem:
     """The `BoardItem` `action` targets, whichever action kind it is -- a
     plain claim target for `WorkItemAction`, the container itself for
-    `CutSliceAction`/`CloseContainerAction` (issue #256)."""
+    `CutSliceAction`/`CheckContainerAction`/`CloseContainerAction` (issue #256)."""
     return action.item if isinstance(action, board.WorkItemAction) else action.container
 
 
@@ -1762,6 +1769,13 @@ def _board(
         children = _fetch_children(client, container_numbers)
         pull_requests = (open_pull_requests.result(), merged_pull_requests.result())
         closed_item_sizes = closed_item_sizes_future.result()
+    # The same forge relation `_cut_target` refuses a nested container on
+    # (issue #503), so `next` never proposes a `cut` that `cut` refuses.
+    nesting_parents = {
+        number: parent.reference
+        for number in board.childless_containers_with_uncut_rows(issues, config.storage)
+        if (parent := client.parent_issue(number)) is not None
+    }
     if landing is None:
         dependencies = _validated_dependencies(
             issues,
@@ -1804,6 +1818,7 @@ def _board(
             trunk_landed_work_items=frozenset(entry.item for entry in trunk_landing_items),
             trunk_landing_items=trunk_landing_items,
             children=children,
+            nesting_parents=nesting_parents,
             dependencies=dependencies,
             requests=client.requests,
             claim_ages=history.ages,
@@ -1952,7 +1967,7 @@ def _next_action_command(
 class NextReason(StrEnum):
     """`aco next`'s own `--json` `reason` vocabulary (issue #412,
     `specs/next.spec.md`): the action type -- `work_item`, `cut_slice`,
-    `close_container` -- names a success (`ok: true`) exactly as it did
+    `check_container`, `close_container` -- names a success (`ok: true`) exactly as it did
     when carried under the dropped `"action"` key; `nothing_actionable`
     is the one `ok: false` outcome that exits `3` in text (NEXT-01) and
     under `--json` alike, the sole reason exit `3` is ever used.
@@ -1963,6 +1978,7 @@ class NextReason(StrEnum):
 
     WORK_ITEM = "work_item"
     CUT_SLICE = "cut_slice"
+    CHECK_CONTAINER = "check_container"
     CLOSE_CONTAINER = "close_container"
     NOTHING_ACTIONABLE = "nothing_actionable"
     INVALID_USAGE = "invalid_usage"
@@ -1974,6 +1990,8 @@ def _next_action_reason(action: board.NextAction) -> NextReason:
         return NextReason.WORK_ITEM
     if isinstance(action, board.CutSliceAction):
         return NextReason.CUT_SLICE
+    if isinstance(action, board.CheckContainerAction):
+        return NextReason.CHECK_CONTAINER
     return NextReason.CLOSE_CONTAINER
 
 
@@ -2007,7 +2025,7 @@ def _next_action_payload(action: board.NextAction, storage: body.Storage) -> dic
         "number": action.container.number,
         "closed": action.container_progress.closed,
         "total": action.container_progress.total,
-        "next_step": action.next_step,
+        "next_step": (action.next_step if isinstance(action, board.CheckContainerAction) else None),
     }
 
 
@@ -2131,8 +2149,11 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
             f"cut_slice {container_label}: {action.next_step}",
             f"Next: {_next_action_command(action, storage)}",
         ]
-    if action.next_step is not None:
-        return [f"close_container {container_label}: {action.next_step}"]
+    if isinstance(action, board.CheckContainerAction):
+        return [
+            f"check_container {container_label}: {board.CHECK_DONE_WHEN}",
+            f"Next: {action.next_step}",
+        ]
     progress = action.container_progress
     return [
         f"close_container {container_label}: "
@@ -2851,6 +2872,9 @@ def _issue_check(
 
 
 BODY_TEMPLATE_KINDS = ("task", "feature", "container")
+# `item edit --kind`'s targets: an item turns container with its first
+# child and back to task once none is open (issue #503).
+ITEM_EDIT_KINDS = (body.ItemKind.TASK.value, body.ItemKind.CONTAINER.value)
 DEFAULT_BODY_TEMPLATE_KIND = "task"
 
 
@@ -2864,6 +2888,20 @@ def _read_body_check_input() -> str:
         raise protocol.ClaimError(
             f"stdin is not valid UTF-8: {error}; pipe the body as UTF-8 text"
         ) from error
+
+
+def _stdin_is_a_regular_file() -> bool:
+    """Whether a file a shell redirected (`< body.md`) stands on stdin --
+    told from the descriptor's type, never by reading, since an idle pipe or
+    socket a harness holds open would block a read forever. Only a regular
+    file counts: an agent harness hands a command a pipe or a socket even
+    when it redirected nothing, so a pipe, socket, terminal, `/dev/null` or a
+    closed stdin passes, and a body piped in (`cat body.md |`) goes unread."""
+    try:
+        mode = os.fstat(sys.stdin.fileno()).st_mode
+    except (AttributeError, OSError, ValueError):
+        return False
+    return stat.S_ISREG(mode)
 
 
 class BodyCheckReason(StrEnum):
@@ -3219,7 +3257,8 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item new` under `storage = "github"` (issue #444): the body piped on
     stdin passes the same shape check `aco check <n>` applies before
     anything else is read or written, so an invalid body creates nothing;
-    `--parent` must name an open container; then the twin search, the only
+    `--parent` must name an open container or Task (a Task is retyped once
+    the twin search passes, `_retype_task_parent`); then the twin search, the only
     guard against a second run: the issue an earlier run created carries
     the same title, so the search names it. Then one issue of the
     organization's type for `--kind`, recorded under `--parent` when given
@@ -3237,8 +3276,11 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     client = context.forge_writer
     open_issues = client.list_open_board_issues()
     storage = context.config.storage
-    if parsed.parent is not None:
-        _open_container(open_issues, parsed.parent, storage)
+    parent = (
+        None
+        if parsed.parent is None
+        else _open_container(open_issues, parsed.parent, storage, ITEM_PARENT_KINDS)
+    )
     if not parsed.not_a_twin:
         _refuse_possible_twin(
             client,
@@ -3247,6 +3289,7 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
             parent=parsed.parent,
             storage=storage,
         )
+    _retype_task_parent(client, parent, storage)
     kind = body.ItemKind(parsed.kind)
     try:
         number = (
@@ -3271,6 +3314,20 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     return 0
 
 
+def _retype_task_parent(
+    client: forge.ForgeWriter, parent: board.Issue | None, storage: body.Storage
+) -> None:
+    """Retype an open Task `--parent` to Container before it gets its first
+    child (issue #503), under either storage, and say so on stderr, leaving
+    stdout and `--json` the created item's alone; any other parent keeps
+    its kind."""
+    if parent is None or parent.kind is not body.ItemKind.TASK:
+        return
+    client.set_item_kind(parent.number, body.ItemKind.CONTAINER)
+    label = board.item_label(parent.number, storage)
+    print(f"retyped {label} to Container for its first child", file=sys.stderr)
+
+
 def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> int:
     """`item new` under `storage = "state-ref"` (issues #285, #316): the one
     write path for a fresh state-ref item -- `StateRefBoard.create_item`,
@@ -3278,7 +3335,8 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
     an optional parent and origin -- so this module never grows a second
     way to create one. `--origin` binds the fresh item to a foreign forge
     issue (`items.parse_origin`'s own grammar, refused by `argparse` before
-    this ever runs) without aco governing that forge at all. Narrows the
+    this ever runs) without aco governing that forge at all. An open Task
+    parent turns Container first (`_retype_task_parent`). Narrows the
     context's forge to the state-ref board (`_state_ref_board`), since
     `create_item` is not part of the generic `ForgeWriter` port every other
     write command narrows to."""
@@ -3291,6 +3349,8 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
         _refuse_possible_twin(
             client, parsed.title, client.open_item_titles(), parent=parsed.parent, storage=storage
         )
+    if parent is not None:
+        _retype_task_parent(client, client.open_issue(parent), storage)
     kind = body.ItemKind(parsed.kind)
     skeleton = (
         body.BLOCK_CONTAINER_SKELETON
@@ -3320,9 +3380,10 @@ ITEM_EDIT_GITHUB_REFUSAL = "forge issues are edited on the forge; aco never gove
 
 def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM` (issue #287; `--size`, issue #357; `--whole`,
-    issue #399): with `--size` or `--whole`, a narrow write of only that one
-    top-level field (`_cmd_item_edit_size`/`_cmd_item_edit_whole`, both
-    storages); with neither, the state-ref item's own body, replaced from
+    issue #399; `--kind`, issue #503): with `--size`, `--whole`, or `--kind`,
+    a narrow write of only that one field (`_cmd_item_edit_size`/
+    `_cmd_item_edit_whole`/`_cmd_item_edit_kind`, both storages); with none,
+    the state-ref item's own body, replaced from
     stdin only -- refused before any write when the piped body carries no
     valid `agent-claim` block (`body --check`'s own sentences,
     `_body_shape_defects`). The CAS `expected` oid is this process's own
@@ -3348,6 +3409,8 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
         return _cmd_item_edit_size(parsed, context)
     if parsed.whole is not None:
         return _cmd_item_edit_whole(parsed, context)
+    if parsed.kind is not None:
+        return _cmd_item_edit_kind(parsed, context)
     as_json = parsed.json
     try:
         if context.config.storage is not body.Storage.STATE_REF:
@@ -3454,6 +3517,53 @@ def _print_item_edit_whole_result(
         _emit_json(True, ItemReason.EDITED, item=number, whole=reason)
     else:
         print(f"EDITED {board.item_label(number, storage)} whole={reason}")
+
+
+ITEM_EDIT_KIND_STDIN_REFUSAL = "item edit --kind reads no stdin; drop the redirect"
+
+
+def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
+    """`aco item edit ITEM --kind task|container` (issue #503): the one
+    retype a person runs, over the `ForgeWriter.set_item_kind` both storages
+    implement -- the repair `next` names for a nested container with one
+    uncut row. Reads no stdin, and refuses a file redirected there before
+    any write, so a body redirected from a file is never silently dropped.
+    A container with an open child stays one, since a Task never has
+    children to claim through. Every refusal reports through the shared
+    envelope as `precondition_failed`."""
+    as_json = parsed.json
+    try:
+        if _stdin_is_a_regular_file():
+            raise protocol.ClaimUnavailableError(ITEM_EDIT_KIND_STDIN_REFUSAL)
+        client = context.forge_writer
+        storage = context.config.storage
+        number = parsed.item
+        kind = body.ItemKind(parsed.kind)
+        target = next(
+            (issue for issue in client.list_open_board_issues() if issue.number == number), None
+        )
+        label = board.item_label(number, storage)
+        if target is None:
+            raise protocol.ClaimUnavailableError(f"{label} is not an open item")
+        if kind is body.ItemKind.TASK and target.has_open_child:
+            raise protocol.ClaimUnavailableError(
+                f"{label} has an open child; a container with open children stays a container"
+            )
+        client.set_item_kind(number, kind)
+        _print_item_edit_kind_result(number, kind, storage, as_json=as_json)
+        return 0
+    except protocol.ClaimError as error:
+        return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
+
+
+def _print_item_edit_kind_result(
+    number: int, kind: body.ItemKind, storage: body.Storage, *, as_json: bool
+) -> None:
+    label = board.item_label(number, storage)
+    if as_json:
+        _emit_json(True, ItemReason.EDITED, item=label, number=number, kind=kind.value)
+    else:
+        print(f"EDITED {label} kind={kind.value}")
 
 
 def _print_item_edit_result(
@@ -4562,9 +4672,9 @@ def _cmd_rulings(parsed: argparse.Namespace, context: RunContext) -> int:
 def _next_action_container_number(action: board.NextAction | None) -> int | None:
     """The container `action` targets, when it targets one -- excluded from
     `SKIPPED` below since a container is always non-actionable itself."""
-    if isinstance(action, board.CutSliceAction | board.CloseContainerAction):
-        return action.container.number
-    return None
+    if action is None or isinstance(action, board.WorkItemAction):
+        return None
+    return action.container.number
 
 
 def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
@@ -6420,17 +6530,27 @@ def _print_release_result(report: ReleaseReport, *, as_json: bool) -> None:
         print(f"worktree: {worktree_cleanup_outcome_text(report.worktree)}")
 
 
+CONTAINER_KINDS = frozenset({body.ItemKind.CONTAINER})
+# `item new --parent` also takes a Task: an item becomes a container exactly
+# when it gets its first child, so that write retypes it (issue #503).
+ITEM_PARENT_KINDS = frozenset({body.ItemKind.CONTAINER, body.ItemKind.TASK})
+
+
 def _open_container(
-    open_issues: Iterable[board.Issue], number: int, storage: body.Storage
+    open_issues: Iterable[board.Issue],
+    number: int,
+    storage: body.Storage,
+    accepted_kinds: frozenset[body.ItemKind] = CONTAINER_KINDS,
 ) -> board.Issue:
-    """`number`'s open issue when its type is a container -- `cut`'s own
-    target and `item new --parent` (issue #444) -- or why it is not."""
+    """`number`'s open issue when its type is one of `accepted_kinds` --
+    `cut`'s own target and `item new --parent` (issue #444) -- or why it is
+    not."""
     target = next((issue for issue in open_issues if issue.number == number), None)
     if target is None:
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not an open container"
         )
-    if target.kind is not body.ItemKind.CONTAINER:
+    if target.kind not in accepted_kinds:
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} is not a container"
         )
