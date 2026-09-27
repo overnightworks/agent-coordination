@@ -1423,7 +1423,7 @@ class ReleaseLanding:
 def _next_action_item(action: board.NextAction) -> board.BoardItem:
     """The `BoardItem` `action` targets, whichever action kind it is -- a
     plain claim target for `WorkItemAction`, the container itself for
-    `CutSliceAction`/`CloseContainerAction` (issue #256)."""
+    `CutSliceAction`/`CheckContainerAction`/`CloseContainerAction` (issue #256)."""
     return action.item if isinstance(action, board.WorkItemAction) else action.container
 
 
@@ -1945,7 +1945,7 @@ def _next_action_command(
 class NextReason(StrEnum):
     """`aco next`'s own `--json` `reason` vocabulary (issue #412,
     `specs/next.spec.md`): the action type -- `work_item`, `cut_slice`,
-    `close_container` -- names a success (`ok: true`) exactly as it did
+    `check_container`, `close_container` -- names a success (`ok: true`) exactly as it did
     when carried under the dropped `"action"` key; `nothing_actionable`
     is the one `ok: false` outcome that exits `3` in text (NEXT-01) and
     under `--json` alike, the sole reason exit `3` is ever used.
@@ -1956,6 +1956,7 @@ class NextReason(StrEnum):
 
     WORK_ITEM = "work_item"
     CUT_SLICE = "cut_slice"
+    CHECK_CONTAINER = "check_container"
     CLOSE_CONTAINER = "close_container"
     NOTHING_ACTIONABLE = "nothing_actionable"
     INVALID_USAGE = "invalid_usage"
@@ -1967,6 +1968,8 @@ def _next_action_reason(action: board.NextAction) -> NextReason:
         return NextReason.WORK_ITEM
     if isinstance(action, board.CutSliceAction):
         return NextReason.CUT_SLICE
+    if isinstance(action, board.CheckContainerAction):
+        return NextReason.CHECK_CONTAINER
     return NextReason.CLOSE_CONTAINER
 
 
@@ -2000,7 +2003,7 @@ def _next_action_payload(action: board.NextAction, storage: body.Storage) -> dic
         "number": action.container.number,
         "closed": action.container_progress.closed,
         "total": action.container_progress.total,
-        "next_step": action.next_step,
+        "next_step": (action.next_step if isinstance(action, board.CheckContainerAction) else None),
     }
 
 
@@ -2124,8 +2127,11 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
             f"cut_slice {container_label}: {action.next_step}",
             f"Next: {_next_action_command(action, storage)}",
         ]
-    if action.next_step is not None:
-        return [f"close_container {container_label}: {action.next_step}"]
+    if isinstance(action, board.CheckContainerAction):
+        return [
+            f"check_container {container_label}: no open children; check done_when",
+            f"Next: {action.next_step}",
+        ]
     progress = action.container_progress
     return [
         f"close_container {container_label}: "
@@ -4555,9 +4561,9 @@ def _cmd_rulings(parsed: argparse.Namespace, context: RunContext) -> int:
 def _next_action_container_number(action: board.NextAction | None) -> int | None:
     """The container `action` targets, when it targets one -- excluded from
     `SKIPPED` below since a container is always non-actionable itself."""
-    if isinstance(action, board.CutSliceAction | board.CloseContainerAction):
-        return action.container.number
-    return None
+    if action is None or isinstance(action, board.WorkItemAction):
+        return None
+    return action.container.number
 
 
 def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:

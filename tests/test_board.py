@@ -1611,9 +1611,9 @@ def test_next_action_never_cuts_a_container_whose_slice_table_is_empty() -> None
     there is nothing here to cut, even when the container's own `Next` line
     still names real work. `next_action` must not fall back to building a
     `CutSliceAction` (and an unrunnable `cut --title "<paragraph>"`) out of
-    that prose -- it reports the container and its own sentence through
-    `CloseContainerAction` instead, exactly like a container with nothing
-    left, just with `next_step` carrying the sentence rather than `None`."""
+    that prose -- nor offer to close it while that sentence names work
+    (issue #503, the #418 shape between two slices): it names the container
+    and its own sentence through `CheckContainerAction` instead."""
     container = board.Issue(
         130,
         "Container",
@@ -1631,9 +1631,9 @@ def test_next_action_never_cuts_a_container_whose_slice_table_is_empty() -> None
 
     action = board.next_action(projected)
 
-    assert isinstance(action, board.CloseContainerAction)
-    assert action.container.number == 130
-    assert action.next_step == "Cut the next slice."
+    assert isinstance(action, board.CheckContainerAction)
+    assert (action.container.number, action.next_step) == (130, "Cut the next slice.")
+    assert board.zero_cost_closes(projected) == ()
 
 
 def test_next_action_closes_a_container_with_no_open_child_and_no_further_work() -> None:
@@ -1657,7 +1657,6 @@ def test_next_action_closes_a_container_with_no_open_child_and_no_further_work()
     assert isinstance(action, board.CloseContainerAction)
     assert action.container.number == 140
     assert action.container_progress == board.ContainerProgress(3, 3, ())
-    assert action.next_step is None
 
 
 def test_next_action_cuts_a_container_with_an_uncut_row_and_no_further_next_work() -> None:
@@ -2819,6 +2818,13 @@ PARENT_ISSUE_REFERENCE = board.IssueReference(REPOSITORY, 79)
             complete_contract("Cut it.", slice=slice_entries("Scheibe 1")),
             None,
             id="an_uncut_slice_row_keeps_the_parent_un_closable",
+        ),
+        pytest.param(
+            ItemKind.CONTAINER,
+            (board.ChildItem(80, board.ChildState.CLOSED),),
+            complete_contract("Cut slice 2."),
+            None,
+            id="a_next_line_naming_work_keeps_the_parent_un_closable",
         ),
         pytest.param(
             ItemKind.CONTAINER,
