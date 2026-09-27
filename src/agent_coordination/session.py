@@ -192,17 +192,24 @@ class RunContext:
         return checkout.parse_remote_location(self.canonical_remote_url)
 
     @cached_property
-    def configured_canonical_remote(self) -> str:
-        """The canonical remote's name, once this context found the
-        checkout configures it (issue #508) -- the one answer to that
+    def canonical_remote_is_configured(self) -> bool:
+        """Whether the checkout configures the canonical remote at all,
+        answered once per context (issue #508) -- the one answer to that
         question, asked before every read of the remote: its URL, state
-        ref, trunk, fetch and default branch. A remote the checkout never
-        configured refuses naming it, so neither a remote-tracking ref it
-        left behind nor a local branch ever answers for it."""
-        remote = self.canonical_remote
-        if not checkout.remote_is_configured(remote, directory=self.directory):
-            raise protocol.ClaimError(checkout.unconfigured_trunk_remote_refusal(remote))
-        return remote
+        ref, trunk, fetch and recorded or forge default branch. Neither a
+        remote-tracking ref a removed remote left behind nor a local branch
+        ever answers for a remote that is not there."""
+        return checkout.remote_is_configured(self.canonical_remote, directory=self.directory)
+
+    @property
+    def configured_canonical_remote(self) -> str:
+        """The canonical remote's name, refused by name when the checkout
+        does not configure it (issue #508)."""
+        if not self.canonical_remote_is_configured:
+            raise protocol.ClaimError(
+                checkout.unconfigured_trunk_remote_refusal(self.canonical_remote)
+            )
+        return self.canonical_remote
 
     @cached_property
     def canonical_remote_url(self) -> str:

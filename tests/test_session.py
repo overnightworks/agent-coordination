@@ -525,6 +525,22 @@ def test_every_read_of_a_canonical_remote_the_checkout_does_not_configure_refuse
     )
 
 
+def test_a_canonical_remote_found_unconfigured_stays_refused_for_the_whole_context(
+    tmp_path: Path,
+) -> None:
+    """Issue #508: whether the checkout configures its canonical remote is
+    answered once per context, a refusal as much as a success -- adding
+    `hub` after the first ask changes nothing for that context."""
+    repository = _pushed_repository(tmp_path, 'storage = "state-ref"\ncanonical_remote = "hub"\n')
+    context = _context().for_directory(repository)
+    with pytest.raises(ClaimError, match="canonical remote 'hub' is not configured"):
+        _ = context.trunk_ref
+    _real_git(repository, "remote", "add", "hub", str(tmp_path / "remote.git"))
+
+    with pytest.raises(ClaimError, match="canonical remote 'hub' is not configured"):
+        _ = context.default_branch
+
+
 def test_a_configured_canonical_remote_without_branches_still_guesses_the_local_trunk(
     tmp_path: Path,
 ) -> None:
