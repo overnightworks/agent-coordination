@@ -262,7 +262,9 @@ def test_a_run_started_with_a_hostile_gh_setup_finds_no_login(
     )
 
     assert (run.returncode == 0) is guarded, run.stdout + run.stderr
-    assert (_GH_FOUND_A_LOGIN in run.stdout) is not guarded, run.stdout + run.stderr
+    assert (f"AssertionError: {_GH_FOUND_A_LOGIN}" in run.stdout) is not guarded, (
+        run.stdout + run.stderr
+    )
 
 
 @pytest.mark.parametrize(("plugin_arguments", "guarded"), _PLUGIN_CASES)
