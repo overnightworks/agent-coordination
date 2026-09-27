@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, Literal, NoReturn, TypeVar, cast
 
 from . import (
     __version__,
@@ -3654,7 +3654,10 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
             )
         _refuse_an_unreadable_relative(client, number, with_parent=True)
         closed_at = client.close_item(number)
-        freed, freed_hint = _item_close_freed_or_hint(client, number)
+        freed_or_hint = _board_read_after_write(lambda: _item_close_freed(client, number))
+        freed, freed_hint = (
+            (None, freed_or_hint) if isinstance(freed_or_hint, str) else (freed_or_hint, None)
+        )
         result = _ItemCloseResult(
             item_id=items.format_item_id(number),
             number=number,
@@ -3716,19 +3719,6 @@ def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]
     dependencies = _validated_dependencies(issues, _fetch_dependencies(client, candidates))
     landed = board.IssueReference(client.repository.path, number)
     return _freed_item_numbers(dependencies, landed)
-
-
-def _item_close_freed_or_hint(
-    client: forge.ForgeReader, number: int
-) -> tuple[tuple[int, ...] | None, str | None]:
-    """`_item_close_freed`, read after the close is already written (issue
-    #541, ITEM-55): an unrelated item that does not read can no longer undo
-    that close, so it downgrades `freed:` to one hint naming the item and its
-    defect rather than failing a close that stood."""
-    try:
-        return _item_close_freed(client, number), None
-    except (forge.ForgeError, protocol.MalformedStateTreeError) as error:
-        return None, f"hint: freed: unknown -- {error}"
 
 
 @dataclass(frozen=True)
@@ -6547,6 +6537,30 @@ def _cmd_release_landed(
     return 0
 
 
+_BoardRead = TypeVar("_BoardRead")
+
+
+def _board_read_after_write(read: Callable[[], _BoardRead]) -> _BoardRead | str:
+    """`read`'s result, or the one hint that replaces it, for a board read a
+    command runs once its own write already committed (`release --merged`,
+    issue #256; `item close`, issue #541): a forge hiccup (LAND-38) or a
+    board read refusal (LAND-65) can only downgrade that report, never undo
+    or fail the write, so this is the one owner of which refusals become a
+    hint and what it says."""
+    try:
+        return read()
+    except forge.ForgeError as error:
+        return (
+            f"hint: could not read the board to report what this landing freed ({error}); "
+            "run `aco board` once the forge is reachable"
+        )
+    except protocol.MalformedStateTreeError as error:
+        return (
+            f"hint: could not read the board to report what this landing freed ({error}); "
+            "run `aco board` once it is repaired"
+        )
+
+
 def _landing_report(
     context: RunContext,
     identity: protocol.ClaimIdentity,
@@ -6563,20 +6577,11 @@ def _landing_report(
         if isinstance(identity, protocol.IssueIdentity)
         else None
     )
-    try:
-        landing = _release_landing(context, new_state, landed, storage, trunk_ref)
-    except forge.ForgeError as error:
-        hint = (
-            f"hint: could not read the board to report what this landing freed ({error}); "
-            "run `aco board` once the forge is reachable"
-        )
-        return None, hint
-    except protocol.MalformedStateTreeError as error:
-        hint = (
-            f"hint: could not read the board to report what this landing freed ({error}); "
-            "run `aco board` once it is repaired"
-        )
-        return None, hint
+    landing = _board_read_after_write(
+        lambda: _release_landing(context, new_state, landed, storage, trunk_ref)
+    )
+    if isinstance(landing, str):
+        return None, landing
     return landing, None
 
 

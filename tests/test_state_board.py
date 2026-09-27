@@ -4066,16 +4066,20 @@ class TestCliStateRefForge:
 
     @pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
     @pytest.mark.parametrize(
-        ("unrelated_blocked_by", "refusal"),
+        ("unrelated_blocked_by", "hint"),
         [
             (
                 ("aco-ffffff",),
-                "item aco-ffffff is listed as a blocker but does not exist",
+                "hint: could not read the board to report what this landing freed "
+                "(item aco-ffffff is listed as a blocker but does not exist); "
+                "run `aco board` once it is repaired",
             ),
             (
                 (CLOSE_TARGET_ID, CLOSE_TARGET_ID),
-                "GitHub returned a malformed board blocked-by list for #16: "
-                "listing total_blocked_by=2, detail length=2",
+                "hint: could not read the board to report what this landing freed "
+                "(GitHub returned a malformed board blocked-by list for #16: "
+                "listing total_blocked_by=2, detail length=2); "
+                "run `aco board` once the forge is reachable",
             ),
         ],
         ids=["missing-blocker", "repeated-blocker"],
@@ -4088,7 +4092,7 @@ class TestCliStateRefForge:
         bare_remote: Path,
         worktree: Path,
         unrelated_blocked_by: tuple[str, ...],
-        refusal: str,
+        hint: str,
         as_json: bool,
     ) -> None:
         """Issue #541 (ITEM-55): an unrelated item whose stored blockers the
@@ -4106,7 +4110,6 @@ class TestCliStateRefForge:
             f"{unrelated_id}.md": unrelated_body.encode(),
         }
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
-        hint = f"hint: freed: unknown -- {refusal}"
         arguments = ["item", "close", str(CLOSE_BLOCKER_NUMBER), *(["--json"] if as_json else [])]
 
         status = issue_claim.main(arguments)

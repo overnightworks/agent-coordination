@@ -135,7 +135,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 ## `item close`
 
 - [ ] [ITEM-16] `aco item close ITEM --json` prints `reason: "closed"`, then `item`, `number`, `closed_at`, `parent_closable` (issue #348's parent hint); overlaps ITEM-09's `item`/`number` (see E-ITEM-04).
-- [ ] [ITEM-55] After the write, only hints: a `freed:` read another item refuses prints `hint: freed: unknown -- <refusal>` instead (`--json`: on stderr), exit `0` (see E-ITEM-15).
+- [ ] [ITEM-55] After the write, only hints: a `freed:` read another item refuses prints LAND-38's or LAND-65's `hint:` line instead (`--json`: on stderr), exit `0` (see E-ITEM-15).
 
 ## One malformed item (issue #447)
 
@@ -420,7 +420,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-a>` op
 ```console
 $ aco item close <item-a>
 CLOSED <item-a>
-hint: freed: unknown -- item aco-ffffff is listed as a blocker but does not exist
+hint: could not read the board to report what this landing freed (item aco-ffffff is listed as a blocker but does not exist); run `aco board` once it is repaired
 exit 0
 $ aco item close <item-a>
 2> ERROR: <item-a> is already closed (closed on <closed_at>)
