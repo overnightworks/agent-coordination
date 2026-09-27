@@ -6185,7 +6185,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
     if detail.merged:
         assert detail.merge_commit is not None  # `merged` is true; github.py guarantees this.
         merge_sha = detail.merge_commit
-        checkout.refuse_unclean_default_branch_checkout(context.recorded_default_branch)
+        checkout.refuse_unclean_default_branch_checkout()
         # A rerun: this run's own preflight never ran, so it never verified a
         # classification -- `_land_release_routing` reads the merge commit's
         # own trailer instead (issue #405 point 4).
@@ -6206,7 +6206,7 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
         detail, classification, readiness = _land_preflight(
             client, claims_provider, check_context, number, parsed
         )
-        checkout.refuse_unclean_default_branch_checkout(context.recorded_default_branch)
+        checkout.refuse_unclean_default_branch_checkout()
         merge_sha = _land_merge(client, detail, readiness, classification)
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)

@@ -757,15 +757,13 @@ def is_default_branch(branch: str, default_branch: str | None) -> bool:
     return branch in DEFAULT_BRANCH_FALLBACK
 
 
-def refuse_unclean_default_branch_checkout(
-    branch: str | None, *, directory: Path | None = None
-) -> None:
+def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> None:
     """`land`'s own precondition (issue #405): the checkout at `directory`
-    (or the calling process's own cwd) must already sit on the repository's
-    default branch `branch` with nothing uncommitted, since `land`
-    fast-forwards that exact branch in place once its merge succeeds --
-    raises the ruled refusal otherwise, and `default branch unknown` when
-    `branch` is `None`."""
+    (or the calling process's own cwd) must already sit on the default
+    branch `origin`'s recorded `HEAD` names, with nothing uncommitted, since
+    `land` fast-forwards that exact branch in place once its merge succeeds
+    -- raises the ruled refusal otherwise."""
+    branch = recorded_default_branch("origin", directory=directory)
     if branch is None:
         raise ClaimError(DEFAULT_BRANCH_UNKNOWN_REASON)
     current = current_branch(directory=directory)
