@@ -2963,6 +2963,48 @@ def test_protect_judges_a_write_through_a_symlink_by_the_link_and_the_target_che
     assert len(fetches) == store_reads
 
 
+@pytest.mark.parametrize(
+    ("failing_store", "reason"),
+    [
+        ("src/nested/repo-worktrees/issue-72-widget", "store unreadable"),
+        ("", "claim first"),
+    ],
+    ids=[
+        "target-store-fails-and-the-link-store-is-still-read",
+        "target-denial-wins-over-a-link-failure",
+    ],
+)
+def test_protect_runs_both_symlink_claim_checks_when_one_store_read_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    failing_store: str,
+    reason: str,
+) -> None:
+    """PROT-44 (issue #486): a failure reading one checkout's store is that
+    checkout's denial, never a reason to skip the other's claim check, and
+    on a double denial the target's is reported -- here a link inside the
+    claimed worktree's scope into a nested worktree no claim covers."""
+    _symlinks_across_checkouts(tmp_path)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    claim = _protect_active_claim("Ada", scope=("src",), branch="codex/issue-72-widget")
+    unreadable = tmp_path / _CLAIMED_WORKTREE / failing_store
+    fetches: list[Path] = []
+
+    def fetch_state(*, worktree: Path, remote: str) -> protocol.ClaimState:
+        fetches.append(worktree)
+        if worktree == unreadable:
+            raise RuntimeError("store unreadable")
+        return _protect_state_with_claim(claim)
+
+    monkeypatch.setattr(store, "fetch_state", fetch_state)
+
+    link = tmp_path / _CLAIMED_WORKTREE / "src" / "into-nested-worktree.md"
+    assert _protect_main(monkeypatch, _write_target_payload(link)) == 2
+    _assert_protect_decision(capsys, decision="deny", reason=reason)
+    assert len(fetches) == 2
+
+
 def test_protect_denies_path_required_for_a_worktree_symlink_leading_outside_it(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

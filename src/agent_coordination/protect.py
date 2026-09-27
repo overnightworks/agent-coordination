@@ -572,8 +572,9 @@ def _protect_checkout_scope_denial(
     store-free checks run before either store or the identity is read, so
     a link in a main checkout denies "not main" without them. Once both
     pass, each checkout's claim check runs, even after the target's
-    denies. A target git cannot resolve is the target's denial too, so it
-    denies with that failure before the link's own checkout is judged."""
+    denies or fails to read its board, store, or identity. A target git
+    cannot resolve is the target's denial too, so it denies with that
+    failure before the link's own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
@@ -586,12 +587,23 @@ def _protect_checkout_scope_denial(
     for outcome in store_free_outcomes:
         if isinstance(outcome, str):
             return outcome
-    claim_denials = [
-        _protect_claim_denial(outcome, context=context, miss_denial=miss_denial)
-        for outcome in store_free_outcomes
-        if isinstance(outcome, _ClaimQuestion)
-    ]
-    return next((denial for denial in claim_denials if denial is not None), None)
+    claim_verdicts: list[str | Exception | None] = []
+    for question in store_free_outcomes:
+        if not isinstance(question, _ClaimQuestion):
+            continue
+        # A failed board, store, or identity read is `cli`'s denial of this
+        # checkout alone: held back so the other checkout's claim check
+        # still runs, and so a target denial still wins over a link failure.
+        try:
+            claim_verdicts.append(
+                _protect_claim_denial(question, context=context, miss_denial=miss_denial)
+            )
+        except Exception as error:
+            claim_verdicts.append(error)
+    verdict = next((verdict for verdict in claim_verdicts if verdict is not None), None)
+    if isinstance(verdict, Exception):
+        raise verdict
+    return verdict
 
 
 @dataclass(frozen=True, slots=True)
