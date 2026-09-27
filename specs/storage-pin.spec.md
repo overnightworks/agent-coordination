@@ -36,13 +36,16 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 ## The pin and its precondition
 
-- [ ] [PIN-32] A store command with no `<path>` refuses the merge sentence below while `<trunk>` tracks `<path>`, else the adoption sentence, and writes nothing (see E-PIN-32, E-PIN-33).
+- [ ] [PIN-32] With no `<path>`, a store command refuses the removal sentence while this branch contains a `<trunk>` tracking `<path>`, the merge sentence while `<trunk>` alone tracks it, else the adoption one.
 
-The merge sentence is `<path> does not exist in this checkout, but <trunk>
+It writes nothing (see E-PIN-32, E-PIN-33, E-PIN-36). The removal sentence
+is `<path> was removed on this branch; restore it with git checkout <trunk>
+-- <path>`. The merge sentence is `<path> does not exist in this checkout, but <trunk>
 tracks it; merge <trunk> into this branch`. The adoption sentence is `<path>
 does not exist in this checkout; merge a pull request adding only <path> into
-the default branch first, without aco`. An `origin` with no URL configured
-refuses CHECK-15's sentence instead, never either of these (see E-PIN-34).
+the default branch first, without aco (fetch first if the default branch may
+already carry it)`. An `origin` with no URL configured
+refuses CHECK-15's sentence instead, never any of these (see E-PIN-34).
 
 With no `<path>`, no configuration names another canonical remote, so
 `<trunk>` is `origin`'s trunk as the last fetch left it, read without a
@@ -50,6 +53,8 @@ fetch of its own -- `origin/main`, or the local `main` while `origin` has no
 remote-tracking branch at all. A `<trunk>` that does not resolve -- `origin`
 tracking only a branch such as `trunk` with no `origin/HEAD`, or no commit
 at all -- tracks nothing, so the adoption sentence answers, never the trunk's own refusal.
+So does a `<trunk>` fetched before the adoption landed; the sentence's
+parenthesis names that fetch, since no fetch runs here (see E-PIN-35).
 
 - [ ] [PIN-01] Any store command with a present but untracked or ignored `<path>` refuses `<path> is not tracked in this checkout, so its storage pin cannot be trusted: git add -f <path>` (E-PIN-01).
 - [ ] [PIN-02] A tracked `.agent-claim/board.toml` naming no `storage` key pins `storage = "github"`, the default every existing repository already reads.
@@ -136,7 +141,7 @@ Setup: bare-remote, no `.agent-claim/board.toml` in the checkout at all
 
 ```console
 $ aco claim 1 --scope README.md
-2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco
+2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco (fetch first if the default branch may already carry it)
 exit 2
 ```
 
@@ -159,6 +164,28 @@ Setup: E-PIN-33's, then `git remote remove origin`
 $ cd <tmp>/lane
 $ aco claim 1 --scope README.md
 2> ERROR: cannot determine the trunk: canonical remote 'origin' is not configured
+exit 2
+```
+
+### E-PIN-35 — a stale trunk fetch still answers the adoption sentence
+
+Setup: E-PIN-33's, then `refs/remotes/origin/main` reset to `main`'s first commit, as a fetch before the adoption left it
+
+```console
+$ cd <tmp>/lane
+$ aco claim 1 --scope README.md
+2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco (fetch first if the default branch may already carry it)
+exit 2
+```
+
+### E-PIN-36 — a branch that removed the pin itself restores it
+
+Setup: E-PIN-33's, then in `<tmp>/lane` `git merge origin/main`, `git rm .agent-claim/board.toml` and a commit
+
+```console
+$ cd <tmp>/lane
+$ aco claim 1 --scope README.md
+2> ERROR: .agent-claim/board.toml was removed on this branch; restore it with git checkout origin/main -- .agent-claim/board.toml
 exit 2
 ```
 

@@ -17897,7 +17897,8 @@ _UNTRACKED_BOARD_CONFIG_ERROR = (
 )
 _MISSING_BOARD_CONFIG_ERROR = (
     "ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request "
-    "adding only .agent-claim/board.toml into the default branch first, without aco\n"
+    "adding only .agent-claim/board.toml into the default branch first, without aco "
+    "(fetch first if the default branch may already carry it)\n"
 )
 
 
@@ -17956,27 +17957,53 @@ def test_an_untrusted_board_config_refuses_every_store_command_by_name(
     assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
 
 
+@dataclass(frozen=True)
+class _AbsentPinLane:
+    """How a lane worktree without `.agent-claim/board.toml` came to be
+    (PIN-32): whether `main` gained the adoption commit after `lane` was
+    cut, how `origin` carries `main`, whether this clone's fetch of it
+    predates the adoption, and whether `lane` merged `origin/main` and then
+    ran `git rm` on the file."""
+
+    adopted: bool = True
+    trunk_resolves: bool = True
+    origin_kept: bool = True
+    fetch_is_stale: bool = False
+    merged_then_removed: bool = False
+
+
 @pytest.mark.parametrize(
-    ("adopted", "origin_kept", "trunk_resolves", "refusal"),
+    ("lane_history", "refusal"),
     [
         pytest.param(
-            True,
-            True,
-            True,
+            _AbsentPinLane(),
             "ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main "
             "tracks it; merge origin/main into this branch\n",
             id="trunk-adopted-after-the-cut",
         ),
-        pytest.param(False, True, True, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"),
         pytest.param(
-            True,
-            False,
-            True,
+            _AbsentPinLane(merged_then_removed=True),
+            "ERROR: .agent-claim/board.toml was removed on this branch; restore it with "
+            "git checkout origin/main -- .agent-claim/board.toml\n",
+            id="removed-after-merging-the-trunk",
+        ),
+        pytest.param(
+            _AbsentPinLane(adopted=False), _MISSING_BOARD_CONFIG_ERROR, id="never-adopted"
+        ),
+        pytest.param(
+            _AbsentPinLane(fetch_is_stale=True),
+            _MISSING_BOARD_CONFIG_ERROR,
+            id="adoption-not-fetched-yet",
+        ),
+        pytest.param(
+            _AbsentPinLane(origin_kept=False),
             "ERROR: cannot determine the trunk: canonical remote 'origin' is not configured\n",
             id="origin-unconfigured",
         ),
         pytest.param(
-            False, True, False, _MISSING_BOARD_CONFIG_ERROR, id="never-adopted-trunk-unresolved"
+            _AbsentPinLane(adopted=False, trunk_resolves=False),
+            _MISSING_BOARD_CONFIG_ERROR,
+            id="never-adopted-trunk-unresolved",
         ),
     ],
 )
@@ -17985,35 +18012,42 @@ def test_a_lane_cut_before_adoption_is_told_to_merge_the_trunk(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     isolated_global_git_config: Path,
-    adopted: bool,
-    origin_kept: bool,
-    trunk_resolves: bool,
+    lane_history: _AbsentPinLane,
     refusal: str,
 ) -> None:
     """Issue #520: a lane worktree whose branch was cut before the adoption
     commit lacks `.agent-claim/board.toml` although the trunk tracks it, so
-    PIN-32 refuses its merge sentence, never its adoption sentence; with no
+    PIN-32 refuses its merge sentence, never its adoption sentence; a lane
+    that merged the trunk and then removed the file is told to restore it
+    instead (issue #522). With no
     ref tracking it the adoption sentence stands -- also when the trunk does
-    not resolve, a `trunk` branch pushed without `origin/HEAD` -- and an
-    unconfigured canonical remote keeps CHECK-15's sentence. Nothing is
-    written."""
+    not resolve, a `trunk` branch pushed without `origin/HEAD`, or when this
+    clone's fetch predates the adoption, which the sentence's parenthesis
+    names (issue #522) -- and an unconfigured canonical remote keeps
+    CHECK-15's sentence. Nothing is written."""
     repository, remote = _real_repository_with_bare_remote(tmp_path)
     (repository / "README.md").write_text("hello\n")
     _real_git(repository, "add", "README.md")
     _real_git(repository, "commit", "-q", "-m", "initial")
     _real_git(repository, "branch", "lane")
-    if adopted:
+    if lane_history.adopted:
         _write_untracked_board_config(repository)
         _real_git(repository, "add", ".agent-claim/board.toml")
         _real_git(repository, "commit", "-q", "-m", "adopt aco")
-    if trunk_resolves:
+    if lane_history.trunk_resolves:
         _push_repository_trunk(repository, "origin")
     else:
         _real_git(repository, "push", "-q", "origin", "main:trunk")
-    if not origin_kept:
+    if lane_history.fetch_is_stale:
+        _real_git(repository, "update-ref", "refs/remotes/origin/main", "main~1")
+    if not lane_history.origin_kept:
         _real_git(repository, "remote", "remove", "origin")
     lane = tmp_path / "lane"
     _real_git(repository, "worktree", "add", "-q", str(lane), "lane")
+    if lane_history.merged_then_removed:
+        _real_git(lane, "merge", "-q", "origin/main")
+        _real_git(lane, "rm", "-q", ".agent-claim/board.toml")
+        _real_git(lane, "commit", "-q", "-m", "drop the pin")
     _redirect_toplevel(monkeypatch, lane)
     monkeypatch.chdir(lane)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})

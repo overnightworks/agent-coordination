@@ -73,7 +73,6 @@ from .protocol import (
 )
 
 STATE_REF = "refs/aco/state"
-DEFAULT_CANONICAL_REMOTE = "origin"
 CLAIMS_DIRECTORY = "claims"
 IDS_DIRECTORY = "ids"
 RESOURCES_DIRECTORY = "resources"
@@ -1012,7 +1011,7 @@ def read_item_files(worktree: Path, tip: ObjectId) -> Mapping[str, bytes]:
     return MappingProxyType(_read_state_archive(worktree, items_oid, tip=tip))
 
 
-def fetch_state(*, worktree: Path, remote: str = DEFAULT_CANONICAL_REMOTE) -> ClaimState:
+def fetch_state(*, worktree: Path, remote: str) -> ClaimState:
     """Read `refs/aco/state` from `remote` without ever checking it out.
 
     `EmptyState` only for a proven-absent ref (`ls-remote` exit 2). A present
@@ -1038,7 +1037,7 @@ def fetch_state(*, worktree: Path, remote: str = DEFAULT_CANONICAL_REMOTE) -> Cl
     return state
 
 
-def peek_state(*, worktree: Path, remote: str = DEFAULT_CANONICAL_REMOTE) -> ClaimState:
+def peek_state(*, worktree: Path, remote: str) -> ClaimState:
     """Read `STATE_REF` on `remote` for a caller that must not write (issue
     #298, 19.09.2026 gate finding 1; issue #405 review/gate finding, `land`'s
     read-only preflight): one of the two peeks in this module, with
@@ -1077,9 +1076,7 @@ def peek_state(*, worktree: Path, remote: str = DEFAULT_CANONICAL_REMOTE) -> Cla
     return _parse_state_tree(worktree, probed)
 
 
-def peek_state_for_reset(
-    *, worktree: Path, remote: str = DEFAULT_CANONICAL_REMOTE
-) -> ClaimState | UnreadableState:
+def peek_state_for_reset(*, worktree: Path, remote: str) -> ClaimState | UnreadableState:
     """`peek_state` for `reset` alone (issue #341): a tip whose schema this
     client does not speak comes back as its oid and version -- all the
     export and the lease need -- instead of failing the one command built
@@ -1714,7 +1711,7 @@ def commit_transition(
 def bootstrap(
     *,
     worktree: Path,
-    remote: str = DEFAULT_CANONICAL_REMOTE,
+    remote: str,
     transport: PushTransport | None = None,
 ) -> ObjectId:
     """Create `refs/aco/state` at an empty state tree if it is proven absent;
