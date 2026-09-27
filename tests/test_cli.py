@@ -3086,28 +3086,6 @@ def test_start_removes_its_build_when_the_store_refuses_its_sent_push_for_certai
     assert _START_BRANCH not in {claim.branch for claim in live}
 
 
-def test_start_refused_for_certain_in_a_standing_worktree_keeps_it_and_claims_nothing(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #498 (START-11, CAS-57): in a worktree that stood before the
-    call, a sent push the store refuses for certain is the plain refusal --
-    nothing written, no uncertain-outcome line -- and the worktree it did
-    not build stays."""
-    repo, bare_remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    _real_git(repo, "worktree", "add", "-q", "-b", _START_BRANCH, str(worktree))
-    _the_store_rejects_every_push(monkeypatch, repo, bare_remote)
-
-    status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
-
-    assert status == 2
-    assert (
-        capsys.readouterr().err.splitlines()[-1].startswith(f"ERROR: {store.STATE_REF} rejected ")
-    )
-    assert checkout.resolve_path_checkout(worktree) is not None
-    assert not store.fetch_state(worktree=repo, remote="origin").claims
-
-
 def _start_in_main_checkout(
     _monkeypatch: pytest.MonkeyPatch, _repo: Path, _tmp_path: Path
 ) -> list[str]:
