@@ -10,6 +10,7 @@ import runpy
 import shlex
 import sys
 import threading
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
@@ -2468,6 +2469,10 @@ def test_start_rebuilds_the_gone_worktree_of_its_live_claim_and_reprints_that_cl
     claim_id = _claimed_line_id(capsys.readouterr().out, "issue #314")
     _remove_the_lane_pair(repo)
 
+    def refuse_to_mint() -> uuid.UUID:
+        raise AssertionError("a resume computed a second claim id")
+
+    monkeypatch.setattr(uuid, "uuid4", refuse_to_mint)
     status = issue_claim.main(["--repo", REPOSITORY, "start", "314"])
 
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME

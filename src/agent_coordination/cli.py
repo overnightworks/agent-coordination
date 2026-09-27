@@ -5373,13 +5373,19 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
 
 
 def _start_claim_arguments(
-    parsed: argparse.Namespace, *, base: str | None = None, branch: str | None = None
+    parsed: argparse.Namespace,
+    *,
+    base: str | None = None,
+    branch: str | None = None,
+    claim_id: str | None = None,
 ) -> argparse.Namespace:
     """The `aco claim` arguments `start` claims with: this session's own
     agent as the builder, and a fresh id, exactly as a bare `aco claim`
     mints one (issue #322 review finding 1) -- `start` resumes a live claim
     by name before it ever claims, so CLAIM-15's own replay-by-claim-id
-    logic never needs to recognize a `start`-minted id as special."""
+    logic never needs to recognize a `start`-minted id as special. A
+    resume passes its live claim's own `claim_id`, so it never computes a
+    second one."""
     return argparse.Namespace(
         issue=parsed.item,
         agent=None,
@@ -5387,7 +5393,7 @@ def _start_claim_arguments(
         base=base,
         branch=branch,
         scope=parsed.scope,
-        claim_id=None,
+        claim_id=claim_id,
         out_of_order=parsed.out_of_order,
         whole=parsed.whole,
         resource=None,
@@ -5434,7 +5440,9 @@ def _rebuild_and_resume(
     the trunk after the checks -- is removed again, as a fresh build's is."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
     versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
-    checked = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
+    checked = _claim_request(
+        _start_claim_arguments(parsed, base=trunk, branch=target.branch, claim_id=resumed.claim_id)
+    )
     checkout.create_linked_worktree(
         target.path, branch=target.branch, remote=context.canonical_remote
     )
