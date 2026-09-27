@@ -217,8 +217,7 @@ def _unreadable_body_refusal(defect: ContractDefect) -> ClaimUnavailableError:
     """ITEM-52's refusal of a write whose stored body the read would set
     aside for `defect`."""
     return ClaimUnavailableError(
-        f"{body_defect_text(defect)}; stored, that body would not read back, "
-        "so nothing was written"
+        f"{body_defect_text(defect)}; stored, that body would not read back, so nothing was written"
     )
 
 
