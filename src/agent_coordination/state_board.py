@@ -43,6 +43,7 @@ from .body import (
     ContractDefect,
     ItemKind,
     Storage,
+    UnreadParent,
     body_defect_text,
     locate_agent_claim_block,
     parse_body,
@@ -144,14 +145,15 @@ class _MalformedItem:
     decodes; `title` is the record's title when it alone still reads, for
     the twin search and the board's row; `parent` is the record's parent
     when it alone still reads, so that container counts this item as an
-    open child."""
+    open child, `None` for a top-level record, and `UnreadParent.UNREAD`
+    when the record or its parent does not read."""
 
     problem: str
     defect: ContractDefect
     oid: ObjectId
     text: str = ""
     title: str | None = None
-    parent: str | None = None
+    parent: str | UnreadParent | None = UnreadParent.UNREAD
 
 
 # The defects an item file the block grammar never reached is named by
@@ -315,7 +317,7 @@ class StateRefBoard:
         self._writer = writer
         self._items: dict[str, _DecodedItem] = {}
         self._malformed: dict[str, _MalformedItem] = {}
-        self._holds_well_formed = False
+        self._holds_items = False
         for filename, content in item_files.items():
             item_id = items.item_id_from_filename(filename)
             decoded = _decode_item(item_id, content, item_oids[item_id])
@@ -343,25 +345,25 @@ class StateRefBoard:
         repair path for a malformed item every other read refuses."""
         return number in self._by_number
 
-    def require_well_formed(self) -> None:
+    def hold_well_formed(self) -> None:
         """Refuses with the lowest malformed item's own sentence and repair
-        while `items/` holds any (issue #447): a malformed item's parent,
-        state, and blockers are unknown, so what `item close` freed and a
-        `board --serve` ruling click's write would guess past it. Reads that
-        only project the board list it instead (issue #517)."""
+        while `items/` holds any, then `hold_items` through every later write
+        of this instance (issue #447): a malformed item's parent, state, and
+        blockers are unknown, so `board --serve`'s ruling click would guess
+        past it -- the one whole-board write that keeps PIN-29 "before any
+        write". Reads that only project the board list it instead (issue
+        #517)."""
         if self._malformed:
             item_id = min(self._malformed)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
+        self.hold_items()
 
-    def hold_well_formed(self) -> None:
-        """`require_well_formed` now and through every later write of this
-        instance (issue #447): each write then commits only onto the very
-        `items/` this instance read, so an item going bad after this check
-        refuses the write instead of landing beside it -- the one guard a
-        whole-board command's write (`board --serve`'s ruling click) needs
-        to keep PIN-29 "before any write"."""
-        self.require_well_formed()
-        self._holds_well_formed = True
+    def hold_items(self) -> None:
+        """Every later write of this instance commits only onto the very
+        `items/` this instance read (issue #447), so an item written or gone
+        bad after the caller's check refuses the write instead of landing
+        beside it."""
+        self._holds_items = True
 
     def _write_item(self, item_id: str, *, expected: ObjectId | None, body: str) -> ObjectId:
         return self._writer.write_item(
@@ -372,9 +374,9 @@ class StateRefBoard:
         )
 
     def _store_expected(self) -> Mapping[str, ObjectId] | None:
-        """The whole `items/` map every write of a `hold_well_formed`
+        """The whole `items/` map every write of a `hold_items`
         instance commits onto (issue #447), else `None`."""
-        if not self._holds_well_formed:
+        if not self._holds_items:
             return None
         return {
             **{held_id: held.oid for held_id, held in self._malformed.items()},
@@ -493,6 +495,22 @@ class StateRefBoard:
                 for child_id, child in self._malformed.items()
                 if child.parent == item_id
             ),
+        )
+
+    def unplaced_child_numbers(self, number: int) -> tuple[int, ...]:
+        """While `number`'s decoded item is a container, every malformed item
+        whose record or its parent does not read: `_children` cannot
+        place it, yet it may be this container's open child (issue #536,
+        ITEM-54), so a close or retype deciding with the children refuses by
+        it rather than guessing past it. No other kind takes a child
+        (ITEM-45), so any other item has none."""
+        record = self._items[self._by_number[number]].record
+        if _item_kind(record.kind) is not ItemKind.CONTAINER:
+            return ()
+        return tuple(
+            items.item_number(malformed_id)
+            for malformed_id, malformed in self._malformed.items()
+            if malformed.parent is UnreadParent.UNREAD
         )
 
     def default_branch(self) -> str:

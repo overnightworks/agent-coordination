@@ -329,12 +329,81 @@ def _item_files_with_a_malformed_item(
     return {**_item_files(), f"{item_id}.md": content}
 
 
+def _task_item(parent: str | None, title: str = "Slice A") -> bytes:
+    """An open task's file under `parent`, projected like `CHILD_A_ID`."""
+    return _state_ref_body(
+        _CHILD_A_PROJECTION, _record(title=title, state="open", kind="task", parent=parent)
+    ).encode()
+
+
 def _blank_title_item(parent: str | None = None) -> bytes:
     """The item `item new --title ""` wrote before issue #447: a complete
     `[record]` whose only defect is its empty title, under `parent`."""
-    return _state_ref_body(
-        _CHILD_A_PROJECTION, _record(title="", state="open", kind="task", parent=parent)
-    ).encode()
+    return _task_item(parent, title="")
+
+
+# An id no `items/` entry carries, named as a `parent` (PIN-16).
+DANGLING_PARENT_ID = "aco-ffffff"
+
+
+def _malformed_item_refusal_case(
+    arguments: list[str],
+    *,
+    case_id: str,
+    planted: str = MALFORMED_ID,
+    planted_under: str | None = None,
+    piped_body: str | None = None,
+) -> object:
+    """One CLI refusal row: `_item_files()` plus a blank-title item planted
+    as `planted` under `planted_under`, refused by `planted`'s repair."""
+    return pytest.param(
+        arguments,
+        piped_body,
+        _item_files_with_a_malformed_item(_blank_title_item(planted_under), planted),
+        _malformed_item_refusal(item_id=planted),
+        id=case_id,
+    )
+
+
+def _container_alone() -> dict[str, bytes]:
+    """`_item_files()`'s container without its children."""
+    return {f"{CONTAINER_ID}.md": _item_files()[f"{CONTAINER_ID}.md"]}
+
+
+def _unplaced_malformed_child_cases() -> list[object]:
+    """`item close` and `item edit --kind task` of `CONTAINER_ID`, which has
+    no readable child, beside an item whose record, or its parent, does not
+    read: its parent is unknown, so it may be the container's open child (issue
+    #536, ITEM-48, ITEM-54), and each refuses by that item's repair."""
+    unreadable_contents = {
+        "no-block": (b"no block at all\n", "has a malformed agent-claim block"),
+        "broken-toml": (
+            _task_item(CONTAINER_ID).replace(b"version = 1", b"version = = 1"),
+            "has a malformed agent-claim block",
+        ),
+        "not-utf8": (
+            _task_item(CONTAINER_ID).replace(b"Slice A", b"Slice \xff A"),
+            "is not valid UTF-8",
+        ),
+        "non-string-parent": (
+            _task_item(CONTAINER_ID).replace(f'parent = "{CONTAINER_ID}"'.encode(), b"parent = 1"),
+            "has a malformed agent-claim block",
+        ),
+    }
+    return [
+        pytest.param(
+            arguments,
+            None,
+            {**_container_alone(), f"{MALFORMED_ID}.md": content},
+            _malformed_item_refusal(problem),
+            id=f"{command}-of-a-container-over-a-{name}-item",
+        )
+        for name, (content, problem) in unreadable_contents.items()
+        for command, arguments in (
+            ("item-close", ["item", "close", CONTAINER_ID]),
+            ("edit-kind", ["item", "edit", CONTAINER_ID, "--kind", "task"]),
+        )
+    ]
 
 
 # A second open expectation line beside `EXPECTATION_TEXT` (issue #283): one
@@ -3073,11 +3142,47 @@ class TestCliStateRefForge:
         assert out == f"{header_line}\n{closed_body}"
 
     @pytest.mark.parametrize(
-        ("arguments", "planted"),
+        ("arguments", "planted", "neighbours"),
         [
-            pytest.param(["item", "new", "--title", "Fresh Item"], MALFORMED_ID, id="item-new"),
-            pytest.param(["item", "show", CHILD_B_ID], MALFORMED_ID, id="item-show-of-another"),
-            pytest.param(["item", "show", CHILD_A_ID], CONTAINER_ID, id="item-show-of-a-child"),
+            pytest.param(
+                ["item", "new", "--title", "Fresh Item"], MALFORMED_ID, _item_files(), id="item-new"
+            ),
+            pytest.param(
+                ["item", "show", CHILD_B_ID], MALFORMED_ID, _item_files(), id="item-show-of-another"
+            ),
+            pytest.param(
+                ["item", "show", CHILD_A_ID], CONTAINER_ID, _item_files(), id="item-show-of-a-child"
+            ),
+            pytest.param(
+                ["item", "close", CHILD_B_ID],
+                MALFORMED_ID,
+                _item_files(),
+                id="item-close-of-another",
+            ),
+            pytest.param(
+                ["item", "close", CONTAINER_ID],
+                MALFORMED_ID,
+                _item_files(),
+                id="item-close-of-a-container-beside-a-top-level-malformed-item",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--kind", "container"],
+                MALFORMED_ID,
+                _item_files(),
+                id="edit-kind-of-another",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_A_ID, "--kind", "container"],
+                CONTAINER_ID,
+                _item_files(),
+                id="edit-kind-of-a-child-under-a-malformed-parent",
+            ),
+            pytest.param(
+                ["item", "edit", CONTAINER_ID, "--kind", "task"],
+                MALFORMED_ID,
+                _container_alone(),
+                id="edit-kind-of-a-childless-container-beside-a-top-level-malformed-item",
+            ),
         ],
     )
     def test_a_malformed_item_leaves_every_other_item_working(
@@ -3088,45 +3193,64 @@ class TestCliStateRefForge:
         worktree: Path,
         arguments: list[str],
         planted: str,
+        neighbours: dict[str, bytes],
     ) -> None:
         """Issue #447 proof 1: an item `item new --title ""` once wrote,
-        planted by hand, no longer stops `item new` or `item show` of any
-        other item -- its own child included, whose header needs only the
-        parent's id."""
-        item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
+        planted by hand beside `neighbours`, no longer stops `item new` or
+        `item show` of any other item -- its own child included, whose
+        header needs only the parent's id -- nor, issue #536 (ITEM-53,
+        ITEM-54, PIN-29), `item close` of an item it is neither, nor the
+        parent or a child of, nor `item edit --kind` of any item it is not a
+        child of: its readable record names no parent, so no Container
+        counts it as a child."""
+        item_files = {**neighbours, f"{planted}.md": _blank_title_item()}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
         assert issue_claim.main(arguments) == 0
 
     @pytest.mark.parametrize(
-        ("arguments", "piped_body", "planted"),
+        ("arguments", "piped_body", "item_files", "refusal"),
         [
-            pytest.param(["item", "show", MALFORMED_ID], None, MALFORMED_ID, id="item-show"),
-            pytest.param(["item", "close", MALFORMED_ID], None, MALFORMED_ID, id="item-close"),
-            pytest.param(
-                ["item", "edit", MALFORMED_ID, "--size", "S"], None, MALFORMED_ID, id="edit-size"
+            _malformed_item_refusal_case(["item", "show", MALFORMED_ID], case_id="item-show"),
+            _malformed_item_refusal_case(["item", "close", MALFORMED_ID], case_id="item-close"),
+            _malformed_item_refusal_case(
+                ["item", "edit", MALFORMED_ID, "--size", "S"], case_id="edit-size"
             ),
-            pytest.param(
+            _malformed_item_refusal_case(
                 ["item", "edit", MALFORMED_ID],
-                CONTAINER_BODY,
-                MALFORMED_ID,
-                id="edit-without-a-record",
+                piped_body=CONTAINER_BODY,
+                case_id="edit-without-a-record",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "close", CHILD_A_ID],
+                planted=CONTAINER_ID,
+                case_id="item-close-of-a-child-under-a-malformed-parent",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "close", CONTAINER_ID],
+                planted_under=CONTAINER_ID,
+                case_id="item-close-of-a-container-over-a-malformed-child",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "edit", MALFORMED_ID, "--kind", "container"],
+                case_id="edit-kind-of-the-malformed-item",
+            ),
+            _malformed_item_refusal_case(
+                ["item", "edit", CONTAINER_ID, "--kind", "task"],
+                planted_under=CONTAINER_ID,
+                case_id="edit-kind-of-a-container-over-a-malformed-child",
             ),
             pytest.param(
                 ["item", "close", CHILD_A_ID],
                 None,
-                CONTAINER_ID,
-                id="item-close-of-a-child-under-a-malformed-parent",
+                {**_item_files(), f"{CHILD_A_ID}.md": _task_item(parent=DANGLING_PARENT_ID)},
+                f"item {DANGLING_PARENT_ID} is referenced as a parent but does not exist",
+                id="item-close-of-a-child-whose-parent-is-missing",
             ),
-            pytest.param(
-                ["item", "edit", CHILD_B_ID, "--kind", "container"],
-                None,
-                MALFORMED_ID,
-                id="edit-kind-beside-a-malformed-item",
-            ),
+            *_unplaced_malformed_child_cases(),
         ],
     )
-    def test_a_malformed_item_refuses_naming_its_repair_and_writes_nothing(
+    def test_an_unreadable_item_or_relative_refuses_and_writes_nothing(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
@@ -3135,13 +3259,16 @@ class TestCliStateRefForge:
         worktree: Path,
         arguments: list[str],
         piped_body: str | None,
-        planted: str,
+        item_files: dict[str, bytes],
+        refusal: str,
     ) -> None:
         """Issue #447 proof 1: every command that must read exactly the
-        malformed item, or close or retype an item beside it, refuses by its id,
-        naming `item edit` with a valid `[record]` as the repair, and
-        nothing reaches the remote."""
-        item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)
+        malformed item, or close or retype an item that is its parent or
+        child (issue #536), refuses by its id, naming `item edit` with a
+        valid `[record]` as the repair, and nothing reaches the remote.
+        Issue #536 (ITEM-53, PIN-16): `item close` of an item whose `parent`
+        no `items/` entry carries refuses PIN-16's sentence before the close
+        writes, so the item stays open rather than closing and then refusing."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
         remote_url = f"file://{bare_remote}"
@@ -3149,7 +3276,6 @@ class TestCliStateRefForge:
 
         status = issue_claim.main(arguments)
 
-        refusal = _malformed_item_refusal(item_id=planted)
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
 
@@ -3991,6 +4117,17 @@ class TestCliStateRefForge:
             "freed: none",
         ]
 
+    @pytest.mark.parametrize(
+        ("neighbours", "parent_closable"),
+        [
+            pytest.param({}, CLOSE_PARENT_NUMBER, id="last-open-child"),
+            pytest.param(
+                {f"{MALFORMED_ID}.md": b"no block\n"},
+                None,
+                id="last-readable-child-beside-an-unreadable-item",
+            ),
+        ],
+    )
     def test_item_close_json_carries_the_parent_closable_number(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -3998,18 +4135,22 @@ class TestCliStateRefForge:
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        neighbours: dict[str, bytes],
+        parent_closable: int | None,
     ) -> None:
         """Issue #348, Beweis 4 (JSON): `parent_closable` carries the same
-        number the text form's parent hint names."""
-        self._live_state_ref_checkout(
-            monkeypatch, tmp_path, bare_remote, worktree, _close_parent_scenario_item_files()
-        )
+        number the text form's parent hint names. Issue #536 (ITEM-54):
+        beside an item whose record does not read, that item counts as the
+        parent's child, so the parent's own close would refuse by it and
+        the hint names no parent rather than recommending that close."""
+        item_files = {**_close_parent_scenario_item_files(), **neighbours}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
         status = issue_claim.main(["item", "close", str(CLOSE_CHILD_NUMBER), "--json"])
 
         assert status == 0
         payload = json.loads(capsys.readouterr().out)
-        assert payload["parent_closable"] == CLOSE_PARENT_NUMBER
+        assert payload["parent_closable"] == parent_closable
 
     def test_item_close_refuses_a_second_close_with_the_closed_date_and_leaves_the_oid_unchanged(
         self,

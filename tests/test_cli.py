@@ -19854,7 +19854,7 @@ def test_item_close_prints_json_under_the_state_ref_pin(
         forge.ItemState.OPEN, "Title", "Body text.\n", False
     )
     monkeypatch.setattr(client, "close_item", lambda _number: "2026-09-16T12:00:00Z", raising=False)
-    monkeypatch.setattr(client, "require_well_formed", lambda: None, raising=False)
+    monkeypatch.setattr(client, "unplaced_child_numbers", lambda _number: (), raising=False)
     monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: client)
 
     status = issue_claim.main(["item", "close", "42", "--json"])
@@ -20064,7 +20064,7 @@ def _state_ref_item_close(
 ) -> tuple[FakeForge, list[str]]:
     client = _state_ref_item_client(tmp_path)
     monkeypatch.setattr(client, "close_item", lambda _number: "2026-09-16T12:00:00Z", raising=False)
-    monkeypatch.setattr(client, "require_well_formed", lambda: None, raising=False)
+    monkeypatch.setattr(client, "unplaced_child_numbers", lambda _number: (), raising=False)
     return client, ["item", "close", "42"]
 
 

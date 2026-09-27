@@ -93,7 +93,7 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 - [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `agent-claim` block and `[record]` refuses `item <id> has a malformed agent-claim block`, then ITEM-38's repair clause (see E-PIN-07).
 - [ ] [PIN-16] An item whose own `record.parent` names an id no `items/` entry carries refuses `item <parent-id> is referenced as a parent but does not exist`.
 - [ ] [PIN-17] An item whose own `record.blocked_by` names an id no `items/` entry carries refuses `item <blocker-id> is listed as a blocker but does not exist`.
-- [ ] [PIN-29] While PIN-14/PIN-15 refuse an item, only `item close` of another item, `item edit --kind` and a `board --serve` click refuse with the lowest id before any write (E-PIN-07); reads list it (BOARD-54).
+- [ ] [PIN-29] While PIN-14/PIN-15 refuse an item, only the `item close` and `item edit --kind` ITEM-53 and ITEM-54 name and a `board --serve` click refuse with the lowest id before any write (E-PIN-07).
 
 ## Writing a fresh state-ref item
 
@@ -257,15 +257,19 @@ exit 2
 
 ### E-PIN-07 — a hand-corrupted item file
 
-Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block, `<item-id>` another open item
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block, `<child-id>` an open item whose `record.parent` is `aco-000001`, `<item-id>` another open Task with no parent and no child and blocking no item
 
 ```console
 $ aco item show aco-000001
 2> ERROR: item aco-000001 has a malformed agent-claim block; repair it with aco item edit aco-000001 and a body whose agent-claim block carries a valid [record]
 exit 2
-$ aco item close <item-id>
+$ aco item close <child-id>
 2> ERROR: item aco-000001 has a malformed agent-claim block; repair it with aco item edit aco-000001 and a body whose agent-claim block carries a valid [record]
 exit 2
+$ aco item close <item-id>
+CLOSED <item-id>
+freed: none
+exit 0
 ```
 
 ### E-PIN-08 — editing an item
