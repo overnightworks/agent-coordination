@@ -221,11 +221,11 @@ exit 2
 
 ### E-PIN-11 — an unknown key carrying a bidi override
 
-Setup: bare-remote checkout at `/repo`, `.agent-claim/board.toml` tracked with the one line `"a‮b" = 1`
+Setup: bare-remote checkout at `/repo`, `.agent-claim/board.toml` tracked with the one line `"a\u202eb" = 1`
 
 ```console
 $ aco next
-2> ERROR: board configuration /repo/.agent-claim/board.toml has unknown top-level key a‮b
+2> ERROR: board configuration /repo/.agent-claim/board.toml has unknown top-level key a\u202eb
 exit 2
 ```
 
