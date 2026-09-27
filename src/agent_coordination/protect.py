@@ -584,9 +584,13 @@ def _protect_checkout_scope_denial(
     a link in a main checkout denies "not main" without them. Once both
     pass, each checkout's claim check runs, even after the target's
     denies or fails to read its board, store, or identity. A checkout
-    whose board configuration fails its store-free checks fails for itself
-    alone, as a failed claim check does, so the other checkout's
-    store-free or claim denial still wins over it. A target git cannot
+    whose board configuration, store, or identity cannot be read denies
+    with that failure in the same target-first order: the target's failure
+    wins over the link's denial from the same check or a later one, and
+    the link's failure yields to any denial of the target's. Only the
+    check order itself overrides that: the link's store-free denial wins
+    over a failure in the target's claim check, since no claim check runs
+    while a store-free check denies. A target git cannot
     resolve is the target's denial too, so it denies with that failure
     before the link's own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
@@ -627,8 +631,9 @@ _CheckoutOutcome = TypeVar("_CheckoutOutcome")
 def _outcome_or_failure(judge: Callable[[], _CheckoutOutcome]) -> _CheckoutOutcome | Exception:
     """`judge`'s answer for one checkout, or the failure reading that
     checkout's board, store, or identity raised: `cli`'s denial of this
-    checkout alone, held back so the other checkout is still judged and
-    its denial wins over this failure (issue #486)."""
+    checkout alone, held back so the other checkout is still judged; which
+    of the two verdicts wins follows `_protect_checkout_scope_denial`'s
+    target-first order (issue #486)."""
     try:
         return judge()
     except Exception as error:
