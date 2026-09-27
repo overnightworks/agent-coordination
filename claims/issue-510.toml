@@ -1,0 +1,8 @@
+claim_id = "e197047a5d87476cbe7147c840117c27"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "d3fd6272d2f01c3339ff6bdeb35123689393599f"
+branch = "claude/issue-510-next-advice-shell-safe"
+scope = ["specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
+opened_commit = "cfeafaaa42e44ebe84fab68623e41444c542a224"
+whole_reason = "one advice renderer and its spec, with the tests that pin it"
