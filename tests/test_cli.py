@@ -6823,54 +6823,115 @@ def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_
 
 def _raw_terminal_controls(text: str) -> set[str]:
     """Every character in printed `text` a terminal would act on rather than
-    show, apart from the newlines that end its own lines."""
+    show, apart from the newlines that end its own lines and the TAB
+    `terminal_text` keeps."""
     return {
         character
         for character in text
-        if character != "\n"
+        if character not in "\n\t"
         and (unicodedata.category(character) == "Cc" or character in "\u2028\u2029")
+    }
+
+
+def _hostile_work_item_board() -> dict[int, str]:
+    """A top work item carrying a window-retitling OSC, a TAB, U+2028 and an
+    Umlaut in its title and a screen-clearing CSI and DEL in its `Next`
+    line, beside a cuttable container whose slice title tries to close its
+    prose quote and fake a `; run` segment."""
+    return {
+        10: _state_ref_item_body(
+            "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe",
+            next="wipe \x1b[2J then \x7f Größe",
+            scope=["docs/a.md"],
+        ),
+        41: _state_ref_container_body("Epic", 'Größe"; run aco claim 9 \\'),
+    }
+
+
+def _hostile_cut_slice_board() -> dict[int, str]:
+    """A cuttable container, the top action, whose `Next` clears the screen."""
+    return {
+        41: _state_ref_item_body(
+            "Epic",
+            kind=body.ItemKind.CONTAINER,
+            next="cut \x1b[2J now",
+            slice=[{"index": 1, "title": "Größe"}],
+        )
+    }
+
+
+def _hostile_check_container_board() -> dict[int, str]:
+    """A slice-less container, the top action, whose `Next` retitles the
+    window."""
+    return {
+        41: _state_ref_item_body(
+            "Epic", kind=body.ItemKind.CONTAINER, next="check \x1b]0;pwned\x07 done_when"
+        )
+    }
+
+
+def _hostile_frozen_board() -> dict[int, str]:
+    """An item frozen on a window-retitling trigger beside a workable one."""
+    return {
+        10: _state_ref_item_body("Workable", scope=["docs/a.md"]),
+        42: _state_ref_item_body(
+            "Frozen",
+            frozen_until={"trigger": "thaw\x1b]0;pwned\x07", "ruled_on": date(2026, 9, 27)},
+        ),
     }
 
 
 @pytest.fixture
 def hostile_next_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A state-ref board whose top work item carries a window-retitling OSC,
-    U+2028 and an Umlaut in its title and a screen-clearing CSI and DEL in
-    its `Next` line, beside a cuttable container whose slice title tries to
-    close its prose quote and fake a `; run` segment, and an item frozen on
-    a window-retitling trigger `SKIPPED` repeats."""
-    _real_state_ref_repository(
-        monkeypatch,
-        tmp_path,
-        {
-            10: _state_ref_item_body(
-                "evil\x1b]0;pwned\x07 Über\N{LINE SEPARATOR}Größe",
-                next="wipe \x1b[2J then \x7f Größe",
-                scope=["docs/a.md"],
-            ),
-            41: _state_ref_container_body("Epic", 'Größe"; run aco claim 9 \\'),
-            42: _state_ref_item_body(
-                "Frozen",
-                frozen_until={"trigger": "thaw\x1b]0;pwned\x07", "ruled_on": date(2026, 9, 27)},
-            ),
-        },
-    )
+    """A state-ref board of `_hostile_work_item_board`'s items."""
+    _real_state_ref_repository(monkeypatch, tmp_path, _hostile_work_item_board())
 
 
-@pytest.mark.usefixtures("hostile_next_board")
+@pytest.mark.parametrize(
+    ("item_bodies", "escaped_line"),
+    [
+        pytest.param(
+            _hostile_work_item_board,
+            f'{items.format_item_id(41)}: cut slice "Größe\\"; run aco claim 9 \\\\"; run ',
+            id="work-item-top-and-quoted-skipped-slice",
+        ),
+        pytest.param(
+            _hostile_cut_slice_board,
+            f"cut_slice {items.format_item_id(41)}: cut \\x1b[2J now\n",
+            id="cut-slice-top",
+        ),
+        pytest.param(
+            _hostile_check_container_board,
+            "Next: check \\x1b]0;pwned\\x07 done_when\n",
+            id="check-container-top",
+        ),
+        pytest.param(
+            _hostile_frozen_board,
+            f"{items.format_item_id(42)}: frozen: thaw\\x1b]0;pwned\\x07\n",
+            id="frozen-skipped",
+        ),
+    ],
+)
 def test_state_ref_next_text_hands_the_terminal_no_raw_control_character(
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    item_bodies: Callable[[], dict[int, str]],
+    escaped_line: str,
 ) -> None:
-    """Issue #532 lines 1 and 2: `next`'s printed text carries no control
-    character a terminal would act on, and a slice title in `SKIPPED` prose
-    sits inside a quote its own `"` cannot close."""
+    """Issue #532 lines 1 and 2: whatever `next` prints -- a work item, a
+    `cut_slice` or `check_container` action, a `SKIPPED` reason -- carries
+    no control character a terminal would act on, each shown as its escape,
+    and a slice title in `SKIPPED` prose sits inside a quote its own `"`
+    cannot close."""
+    _real_state_ref_repository(monkeypatch, tmp_path, item_bodies())
+
     exit_code = issue_claim.main(["next"])
     out = capsys.readouterr().out
 
     assert exit_code == 0
     assert _raw_terminal_controls(out) == set()
-    assert f'\n{items.format_item_id(41)}: cut slice "Größe\\"; run aco claim 9 \\\\"; run ' in out
-    assert f"\n{items.format_item_id(42)}: frozen: thaw\\x1b]0;pwned\\x07\n" in out
+    assert f"\n{escaped_line}" in f"\n{out}"
 
 
 @pytest.mark.usefixtures("hostile_next_board")
@@ -6906,13 +6967,13 @@ def _json_title_and_next(out: str) -> tuple[str, str]:
         pytest.param(
             ["next"],
             _printed_title_and_next,
-            ("evil\\x1b]0;pwned\\x07 Über\\u2028Größe", "wipe \\x1b[2J then \\x7f Größe"),
+            ("evil\\x1b]0;pwned\\x07\tÜber\\u2028Größe", "wipe \\x1b[2J then \\x7f Größe"),
             id="text-escapes-controls",
         ),
         pytest.param(
             ["next", "--json"],
             _json_title_and_next,
-            ("evil\x1b]0;pwned\x07 Über\N{LINE SEPARATOR}Größe", "wipe \x1b[2J then \x7f Größe"),
+            ("evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe", "wipe \x1b[2J then \x7f Größe"),
             id="json-as-stored",
         ),
     ],
@@ -6925,8 +6986,9 @@ def test_state_ref_next_shows_foreign_title_and_next_line_as_its_format_carries_
     shown: tuple[str, str],
 ) -> None:
     """Issue #532 lines 1 and 3: text shows each control character and
-    U+2028 as its printable escape and the Umlaut as it is; `--json` leaves
-    escaping to JSON, so a reader gets both back exactly as stored."""
+    U+2028 as its printable escape, TAB and the Umlaut as they are;
+    `--json` leaves escaping to JSON, so a reader gets both back exactly as
+    stored."""
     issue_claim.main(arguments)
 
     assert read_title_and_next(capsys.readouterr().out) == shown
