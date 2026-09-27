@@ -609,7 +609,7 @@ class TestEmptyStart:
         assert adapter.list_open_board_issues() == ()
 
 
-_MALFORMED_CONTENTS = pytest.mark.parametrize(
+_MALFORMED_CONTENTS = (
     ("content", "problem"),
     [
         pytest.param(
@@ -641,7 +641,7 @@ class TestMalformedItem:
     never a read of another item, and the open board lists it by its
     defect."""
 
-    @_MALFORMED_CONTENTS
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_every_other_item_still_reads(self, content: bytes, problem: str) -> None:
         del problem
         adapter = _state_ref_board(_item_files_with_a_malformed_item(content))
@@ -650,7 +650,7 @@ class TestMalformedItem:
 
         assert (reference.state, reference.title) == (forge.ItemState.OPEN, "Slice A")
 
-    @_MALFORMED_CONTENTS
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_reading_that_item_refuses_naming_its_repair(
         self, content: bytes, problem: str
     ) -> None:
@@ -661,7 +661,7 @@ class TestMalformedItem:
 
         assert str(refusal.value) == _malformed_item_refusal(problem)
 
-    @_MALFORMED_CONTENTS
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_the_open_board_lists_it_unreadable_beside_every_other_item(
         self, content: bytes, problem: str
     ) -> None:
@@ -3120,7 +3120,7 @@ class TestCliStateRefForge:
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
 
-    @_MALFORMED_CONTENTS
+    @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
         self,
         monkeypatch: pytest.MonkeyPatch,
