@@ -94,11 +94,17 @@ def current_branch(*, directory: Path | None = None) -> str:
 DETACHED_HEAD_REFUSAL = "HEAD is detached; check out the lane branch first"
 
 
+def is_detached_head(checked_out: str) -> bool:
+    """Whether `checked_out`, a checkout's `current_branch`, names a
+    detached HEAD -- where `git branch --show-current` prints nothing."""
+    return not checked_out
+
+
 def attached_branch(checked_out: str) -> str:
     """`checked_out`, a checkout's `current_branch`, as the lane branch a
     claim is made on; a detached HEAD, which has none, refuses by name
     before any claim field is built from it (issue #526)."""
-    if not checked_out:
+    if is_detached_head(checked_out):
         raise ClaimError(DETACHED_HEAD_REFUSAL)
     return checked_out
 
@@ -1318,7 +1324,7 @@ def existing_start_worktree(path: Path, branch: str) -> bool:
     if existing is None:
         raise ClaimError(NOT_A_WORKTREE_REFUSAL)
     _refuse_foreign_worktree(path, existing)
-    if not existing.branch:
+    if is_detached_head(existing.branch):
         raise ClaimError(
             f"worktree {path} has a detached HEAD; run {_attach_command(path, branch)} first"
         )
