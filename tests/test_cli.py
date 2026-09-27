@@ -6583,6 +6583,7 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
         "_request",
         lambda arguments, **_kwargs: request(issue=299, scope=tuple(arguments.scope)),
     )
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     bash_exit_code, claim_arguments = _arguments_bash_hands_aco(claim_advice, tmp_path)
     claim_exit_code = issue_claim.main(["--repo", REPOSITORY, *claim_arguments])
 
