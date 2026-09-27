@@ -192,11 +192,33 @@ class RunContext:
         return checkout.parse_remote_location(self.canonical_remote_url)
 
     @cached_property
+    def canonical_remote_is_configured(self) -> bool:
+        """Whether the checkout configures the canonical remote at all,
+        answered once per context (issue #508) -- the one answer to that
+        question. `configured_canonical_remote` refuses on it before the
+        remote's URL, state ref, trunk, fetch and `default_branch`;
+        `recorded_default_branch`, the offline checks' read, answers `None`
+        on it instead and leaves `None` to each check's own rule. Neither
+        a remote-tracking ref a removed remote left behind nor a local
+        branch ever answers for a remote that is not there."""
+        return checkout.remote_is_configured(self.canonical_remote, directory=self.directory)
+
+    @property
+    def configured_canonical_remote(self) -> str:
+        """The canonical remote's name, refused by name when the checkout
+        does not configure it (issue #508)."""
+        if not self.canonical_remote_is_configured:
+            raise protocol.ClaimError(
+                checkout.unconfigured_trunk_remote_refusal(self.canonical_remote)
+            )
+        return self.canonical_remote
+
+    @cached_property
     def canonical_remote_url(self) -> str:
         """The canonical remote's configured URL, as git records it: the
         URL a forge target is compared against and discovered from (#310
         finding 138)."""
-        return checkout.remote_url(self.canonical_remote, directory=self.directory)
+        return checkout.remote_url(self.configured_canonical_remote, directory=self.directory)
 
     @cached_property
     def repository_id(self) -> forge.RepositoryId:
@@ -229,13 +251,13 @@ class RunContext:
         the forge's own answer under `github` (issue #484 rulings). Under
         `state-ref` it holds nothing of its own, so the fetch that drops the
         recorded default branch drops this answer with it (issue #492)."""
+        remote = self.configured_canonical_remote
         if self.config.storage is not body.Storage.STATE_REF:
             return self._forge_default_branch
         branch = self.recorded_default_branch
         if branch is None:
             raise protocol.ClaimUnavailableError(
-                "cannot resolve the default branch; "
-                f"run aco from a checkout with {self.canonical_remote}/HEAD set"
+                f"cannot resolve the default branch; run aco from a checkout with {remote}/HEAD set"
             )
         return branch
 
@@ -246,9 +268,13 @@ class RunContext:
     @cached_property
     def recorded_default_branch(self) -> str | None:
         """The canonical remote's recorded default branch in this checkout,
-        or `None` when none is recorded or it dangles (issue #490): the
-        offline checks' default branch, each check keeping its own rule for
-        `None`."""
+        or `None` when none is recorded, it dangles (issue #490), or the
+        checkout does not configure that remote, whose leftover `HEAD`
+        records nothing (issue #508): the offline checks' default branch,
+        each check keeping its own rule for `None` -- `rescope`'s names the
+        unconfigured remote itself (PROT-45)."""
+        if not self.canonical_remote_is_configured:
+            return None
         return checkout.recorded_default_branch(self.canonical_remote, directory=self.toplevel)
 
     @cached_property
@@ -280,15 +306,16 @@ class RunContext:
         return f"refs/remotes/{self.canonical_remote}/{self.default_branch}"
 
     def _fetch_canonical_remote_once(self) -> None:
-        if self._fetched_trunk_remote == self.canonical_remote:
+        remote = self.configured_canonical_remote
+        if self._fetched_trunk_remote == remote:
             return
-        checkout.fetch_remote(self.canonical_remote, directory=self.toplevel)
-        self._fetched_trunk_remote = self.canonical_remote
+        checkout.fetch_remote(remote, directory=self.toplevel)
+        self._fetched_trunk_remote = remote
         for fact in _RECORDED_HEAD_FACTS:
             self.__dict__.pop(fact, None)
 
     def _resolved_trunk_ref(self) -> str:
-        remote = self.canonical_remote
+        remote = self.configured_canonical_remote
         return checkout.trunk_ref_after(
             remote,
             checkout.recorded_head_ref(remote, directory=self.toplevel),
@@ -319,7 +346,7 @@ class RunContext:
         failed fetch raises and is not held. After a transition it holds the
         state that transition wrote (`transition`); no command fetches again
         to judge its own write (`land` releases through `fresh`)."""
-        return store.fetch_state(worktree=self.toplevel, remote=self.canonical_remote)
+        return store.fetch_state(worktree=self.toplevel, remote=self.configured_canonical_remote)
 
     def for_lane_worktree(self, worktree: Path) -> RunContext:
         """A context for a lane worktree of this checkout that writes the

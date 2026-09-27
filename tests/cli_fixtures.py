@@ -163,6 +163,14 @@ def stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: True)
 
 
+def stub_every_remote_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An in-memory store's checkout configures whichever canonical remote
+    its board names, the way its faked URL stands for that remote. A test
+    proving a remote the checkout never configured (issue #508) restores
+    `checkout.remote_is_configured`, so real git answers it."""
+    monkeypatch.setattr(checkout, "remote_is_configured", lambda _remote, **_kwargs: True)
+
+
 def _git_checkout(
     *,
     toplevel: str = "/repo",

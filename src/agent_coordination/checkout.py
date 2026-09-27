@@ -131,7 +131,7 @@ def remote_url(remote: str, *, directory: Path | None = None) -> str:
     return _git_output(["config", "--get", f"remote.{remote}.url"], directory=directory)
 
 
-def remote_is_configured(remote: str, *, directory: Path) -> bool:
+def remote_is_configured(remote: str, *, directory: Path | None) -> bool:
     """Whether the checkout at `directory` configures a remote named
     `remote` at all (issue #492): a board configuration may name a
     canonical remote this clone never added."""
@@ -712,6 +712,24 @@ DEFAULT_BRANCH_FALLBACK = frozenset({"main", "master"})
 # reader accept different risk here.
 DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
 
+# Every trunk reader's refusal prefix (issues #492, #508), one spelling
+# for each reason it names after it.
+TRUNK_UNKNOWN_REASON = "cannot determine the trunk"
+
+
+def _unconfigured_remote_detail(remote: str) -> str:
+    """The one spelling of a canonical `remote` this checkout never
+    configured (PROT-45), shared by every refusal that names it."""
+    return f"canonical remote {remote!r} is not configured"
+
+
+def unconfigured_trunk_remote_refusal(remote: str) -> str:
+    """Every trunk reader's refusal for a canonical `remote` its checkout
+    never configured (issue #508): such a remote has no branches because it
+    is not there, not because it is fresh, so neither a fetch nor a local
+    branch may stand in for its trunk."""
+    return f"{TRUNK_UNKNOWN_REASON}: {_unconfigured_remote_detail(remote)}"
+
 
 def default_branch_unknown_reason(
     remote: str, default_branch: str | None, *, directory: Path
@@ -724,7 +742,7 @@ def default_branch_unknown_reason(
     remote itself, so no such record answers for a remote that is not
     there."""
     if not remote_is_configured(remote, directory=directory):
-        return f"{DEFAULT_BRANCH_UNKNOWN_REASON}: canonical remote {remote!r} is not configured"
+        return f"{DEFAULT_BRANCH_UNKNOWN_REASON}: {_unconfigured_remote_detail(remote)}"
     if default_branch is None:
         return DEFAULT_BRANCH_UNKNOWN_REASON
     return None
@@ -815,7 +833,10 @@ def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) 
     branch at all -- a fresh or offline repository (issue #492 ruling): a
     remote that renamed its trunk to anything else refuses with the repair
     instead, since a local branch standing in for it would report an
-    unpushed local commit as landed."""
+    unpushed local commit as landed. It trusts `remote` to be configured:
+    its `RunContext` refuses one this checkout never configured before it
+    reads `recorded_head` or asks this at all (issue #508), so neither a
+    ref such a remote left behind nor a local branch answers for it."""
     if recorded_head is not None:
         return recorded_head
     remote_trunk = _first_resolving_ref(
@@ -825,14 +846,14 @@ def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) 
         return remote_trunk
     if _has_remote_tracking_branch(remote, directory=directory):
         raise ClaimError(
-            f"cannot determine the trunk: no {remote}/HEAD, {remote}/main or "
+            f"{TRUNK_UNKNOWN_REASON}: no {remote}/HEAD, {remote}/main or "
             f"{remote}/master resolves; run git remote set-head {remote} -a"
         )
     local_trunk = _first_resolving_ref(("main", "master"), directory=directory)
     if local_trunk is not None:
         return local_trunk
     raise ClaimError(
-        f"cannot determine the trunk: none of {remote}/HEAD, {remote}/main, "
+        f"{TRUNK_UNKNOWN_REASON}: none of {remote}/HEAD, {remote}/main, "
         f"{remote}/master, main or master resolves"
     )
 
@@ -1110,10 +1131,9 @@ def branch_exists(branch: str) -> bool:
     raise ClaimError(process.git_failure_detail(result))
 
 
-def fetch_remote(remote: str, *, directory: Path | None = None) -> None:
-    """Refresh `remote`'s remote-tracking refs in `directory` via `-C` when
-    given or the calling process's own cwd otherwise, failing loud with
-    git's own detail."""
+def fetch_remote(remote: str, *, directory: Path) -> None:
+    """Refresh the canonical `remote`'s remote-tracking refs in `directory`
+    via `-C` before its trunk is read, failing loud with git's own detail."""
     fetch = _git_run(["fetch", remote], directory=directory)
     if fetch.exit_status != 0:
         raise ClaimError(process.git_failure_detail(fetch))

@@ -96,6 +96,7 @@ outcome the store cannot tell keeps it and says so (START-25); an interrupt remo
 - [ ] [START-16] A live claim on the target held by a different agent or branch is never silently resumed: it falls through to the ordinary claim path, refused by CLAIM-11's own sentence (see E-START-09).
 - [ ] [START-17] A resume's own explicit `--scope` disagreeing with the live claim's stored scope refuses `live claim scope differs; release it first`, exit `2` (see E-START-10).
 - [ ] [START-22] A refusal of the claim's own checks comes before the build: no `worktree:`/`branch:` line, no worktree, no branch; exit 2 (see E-START-11).
+- [ ] [START-28] A canonical `<remote>` never configured refuses before its fetch: `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit 2, nothing built (see E-START-17).
 - [ ] [START-18] A claim refused after the build, even under its push (CAS-57), or a moved trunk (START-26) drops both: `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
 - [ ] [START-26] A build or gone-worktree rebuild standing on a trunk moved after the checks refuses `the trunk moved after start checked it; run start again`, exit 2, then removes it as START-18 says.
 - [ ] [START-25] Unknown outcome (CAS-56) keeps both, even one that stood (START-11): `the claim's push was sent, its outcome unknown; worktree <path> and branch '<branch>' kept; run start again to resume it`; exit 2.
@@ -324,3 +325,16 @@ branch: ada/issue-314-fresh-slug
 2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug and branch 'ada/issue-314-fresh-slug' this start created
 exit 2
 ```
+
+### E-START-17 -- a canonical remote the checkout never configured builds nothing
+
+Setup: as E-START-11, but the body names a scope and `.agent-claim/board.toml` names
+`canonical_remote = "hub"`, which this clone never added beside its `origin`
+
+```console
+$ aco start 314
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
+exit 2
+```
+
+`git worktree list` and `git branch --list` read afterwards exactly as before the call.
