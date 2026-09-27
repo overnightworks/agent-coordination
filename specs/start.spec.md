@@ -64,8 +64,9 @@ body, a broken item, priority or `--out-of-order`, width, a claim already held -
 fetched commit, then builds the worktree from the trunk: such a refusal builds nothing (START-22).
 Only a refusal between the build and the claim's one write -- another claim landed after the checks,
 the store could not be reached, or another fetch moved the trunk so the worktree stands on a commit
-the checks never saw -- removes what this call built (START-18); an interrupt, or a failure once the
-claim's push went out, whether or not its answer came back, removes nothing.
+the checks never saw -- or between a live claim's gone-worktree rebuild and its reprint, when another
+fetch moved the trunk under that rebuild, removes what this call built (START-18); an interrupt, or
+a failure once the claim's push went out, whether or not its answer came back, removes nothing.
 
 - [ ] [START-01] No worktree yet at `../<repo>-worktrees/issue-<n>-<slug>`: fetch, create it on `<prefix>/issue-<n>-<slug>` from the trunk, claim it, print `worktree:`/`branch:` (see E-START-01).
 - [ ] [START-02] A title with no usable slug, `--slug` omitted, refuses `no usable slug in this item's title: pass --slug explicitly`, exit 2.
@@ -91,7 +92,7 @@ claim's push went out, whether or not its answer came back, removes nothing.
 - [ ] [START-16] A live claim on the target held by a different agent or branch is never silently resumed: it falls through to the ordinary claim path, refused by CLAIM-11's own sentence (see E-START-09).
 - [ ] [START-17] A resume's own explicit `--scope` disagreeing with the live claim's stored scope refuses `live claim scope differs; release it first`, exit `2` (see E-START-10).
 - [ ] [START-22] A refusal of the claim's own checks comes before the build: no `worktree:`/`branch:` line, no worktree, no branch; exit 2 (see E-START-11).
-- [ ] [START-18] A claim refused after the build removes the worktree and branch, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
+- [ ] [START-18] A claim refused after the build, or a rebuild on a moved trunk, removes the worktree and branch, adding `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
 - [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 - [ ] [START-23] When git will not remove that worktree, the refusal and exit 2 stay and the line reads `worktree <path> and branch '<branch>' this start created kept: git failure: <reason>`.
 
