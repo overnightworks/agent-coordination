@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import shlex
 import tomllib
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -474,11 +474,10 @@ class BoardItem:
     score: int
     actionable: bool
     actionable_reason: str | None
-    # The same decided reason as `next`'s text prints it under `SKIPPED`
-    # (issue #532): every foreign span through `terminal_text`, a cut slice's
-    # title quoted by `quoted_terminal_text` so it cannot fake a `; run`
-    # segment (#310 finding 190). `actionable_reason` stays as the body holds
-    # it, for `--json` and the HTML board, which escape on their own.
+    # `actionable_reason` as `next`'s text prints it under `SKIPPED` (issue
+    # #532): through `terminal_text`. The prose itself, a cut slice's title
+    # quoted by `_quoted_prose` included (#310 finding 190), is one reason
+    # text and `--json` share; JSON and the HTML board escape on their own.
     terminal_actionable_reason: str | None
     read_state: BodyReadState
     # What this container is up for once it holds no open child (issue #503),
@@ -1478,18 +1477,14 @@ def _board_item(
         ),
     )
 
-    def reason_quoting_titles_with(quote: Callable[[str], str]) -> str | None:
-        return _actionable_reason(
-            replace(
-                actionability_facts,
-                childless_container_reason=_childless_container_reason(
-                    issue.number, childless_verdict, parsed, config.storage, quote
-                ),
-            )
+    actionable_reason = _actionable_reason(
+        replace(
+            actionability_facts,
+            childless_container_reason=_childless_container_reason(
+                issue.number, childless_verdict, parsed, config.storage
+            ),
         )
-
-    actionable_reason = reason_quoting_titles_with(_prose_quoted)
-    terminal_reason = reason_quoting_titles_with(quoted_terminal_text)
+    )
     return BoardItem(
         number=issue.number,
         title=issue.title,
@@ -1524,7 +1519,7 @@ def _board_item(
         actionable=actionable_reason is None,
         actionable_reason=actionable_reason,
         terminal_actionable_reason=(
-            None if terminal_reason is None else terminal_text(terminal_reason)
+            None if actionable_reason is None else terminal_text(actionable_reason)
         ),
         read_state=parsed.read_state,
         childless_verdict=childless_verdict,
@@ -2445,12 +2440,12 @@ def terminal_text(text: str) -> str:
     )
 
 
-def quoted_terminal_text(text: str) -> str:
+def _quoted_prose(text: str) -> str:
     """`text` inside prose as one double-quoted span (issue #532, #310
     finding 190): its own `\\` and `"` are escaped first, so a title such
     as `x"; run aco claim 9` cannot close the quote and fake a command."""
     escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{terminal_text(escaped)}"'
+    return f'"{escaped}"'
 
 
 def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
@@ -2598,15 +2593,14 @@ def _childless_container_reason(
     verdict: ChildlessContainerVerdict | None,
     parsed: ParsedBody,
     storage: Storage,
-    quote: Callable[[str], str],
 ) -> str | None:
     """What container `number`, with no open child, is up for when `SKIPPED`
     names it (issue #503) -- for a cuttable one not `next`'s first action,
-    its `cut` (issue #513), the row title shown through `quote` -- or `None`
-    for a closable one, which `close:` names."""
+    its `cut` (issue #513) -- or `None` for a closable one, which `close:`
+    names."""
     match verdict:
         case CutVerdict(title=title):
-            return _cut_slice_reason(number, storage, title, quote)
+            return _cut_slice_reason(number, storage, title)
         case UnprintableTitleVerdict(row=row):
             return (
                 f"slice row {row} title holds a line break or control character; "
@@ -2622,17 +2616,11 @@ def _childless_container_reason(
             return None
 
 
-def _prose_quoted(text: str) -> str:
-    return f'"{text}"'
-
-
-def _cut_slice_reason(
-    number: int, storage: Storage, title: str, quote: Callable[[str], str]
-) -> str:
+def _cut_slice_reason(number: int, storage: Storage, title: str) -> str:
     """The `SKIPPED` reason of a cuttable container `number` that is not
-    `next`'s first action (issue #513): its first uncut row `title`, shown
-    through `quote`, and the `cut` that row takes."""
-    return f"cut slice {quote(title)}; run {cut_command(number, storage, title)}"
+    `next`'s first action (issue #513): its first uncut row `title`, quoted
+    by `_quoted_prose`, and the `cut` that row takes."""
+    return f"cut slice {_quoted_prose(title)}; run {cut_command(number, storage, title)}"
 
 
 def _nested_container_repair(

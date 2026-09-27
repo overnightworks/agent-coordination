@@ -6935,20 +6935,20 @@ def test_state_ref_next_text_hands_the_terminal_no_raw_control_character(
 
 
 @pytest.mark.usefixtures("hostile_next_board")
-def test_state_ref_next_json_names_a_skipped_slice_title_as_stored(
+def test_state_ref_next_json_shares_the_quoted_skipped_prose_and_keeps_titles_raw(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Issue #532 line 3: the quote escaping belongs to the text only, so
-    `--json`'s `SKIPPED` reason carries the slice title exactly as stored."""
+    """Issue #532 line 3 (head ruling of 27.09.2026): the `SKIPPED` reason is
+    prose text and `--json` share, so its quoted slice title carries `"` and
+    `\\` escaped, while the item title stays exactly as stored."""
     issue_claim.main(["next", "--json"])
 
-    reasons = {
-        skipped["number"]: skipped["reason"]
-        for skipped in json.loads(capsys.readouterr().out)["skipped"]
-    }
+    payload = json.loads(capsys.readouterr().out)
+    reasons = {skipped["number"]: skipped["reason"] for skipped in payload["skipped"]}
     assert reasons[items.format_item_id(41)].startswith(
-        'cut slice "Größe"; run aco claim 9 \\"; run '
+        'cut slice "Größe\\"; run aco claim 9 \\\\"; run '
     )
+    assert payload["title"] == "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe"
 
 
 def _printed_title_and_next(out: str) -> tuple[str, str]:
