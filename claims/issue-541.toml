@@ -1,0 +1,8 @@
+claim_id = "8525f6ca46214a31bc3f61994b841f6c"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "acaff35bac2c35a40ae0ce6ba4851528bf3d6bed"
+branch = "claude/issue-541-close-hints-after-write"
+scope = ["scripts/test_budget_ratchet.txt", "specs/item.spec.md", "specs/release.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/state_board.py", "tests/test_cli.py", "tests/test_state_board.py"]
+opened_commit = "6ad486078130cdf94286714b9e65003f9c34d982"
+whole_reason = "a write's follow-up reads report hints, never failures; the item close path and its twins"
