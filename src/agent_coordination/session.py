@@ -13,9 +13,11 @@ One context stands for one directory. `for_directory` answers for another
 checkout (`start`'s freshly created worktree, `rescope`'s checkout resolved
 from its own paths); `fresh` re-reads the same
 directory from scratch (`board --serve` takes one per request, so nothing is
-held across requests); `observed_afresh` re-reads only its state-ref
-observation and the forge built from it. `protect` never builds one: it judges from its own
-payload's path.
+held across requests); `observed_afresh` drops exactly its state-ref
+observation and the forge built from it, and keeps every other fact it read
+-- toplevel, board configuration, remote, forge repository, default branch
+-- so the next ask re-reads only the state ref. `protect` never builds one:
+it judges from its own payload's path.
 """
 
 from __future__ import annotations

@@ -2991,6 +2991,7 @@ def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_def
     monkeypatch.setattr(checkout, "default_branch_name", counting_default_branch_name)
 
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    assert {kind for kind, _directory in reads} == {"remote url", "default branch"}
     assert [read for read in set(reads) if reads.count(read) > 1] == []
 
 
