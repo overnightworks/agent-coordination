@@ -91,6 +91,18 @@ def current_branch(*, directory: Path | None = None) -> str:
     return _git_output(["branch", "--show-current"], directory=directory)
 
 
+DETACHED_HEAD_REFUSAL = "HEAD is detached; check out the lane branch first"
+
+
+def attached_branch(checked_out: str) -> str:
+    """`checked_out`, a checkout's `current_branch`, as the lane branch a
+    claim is made on; a detached HEAD, which has none, refuses by name
+    before any claim field is built from it (issue #526)."""
+    if not checked_out:
+        raise ClaimError(DETACHED_HEAD_REFUSAL)
+    return checked_out
+
+
 # `git rev-parse --verify --quiet <ref>` (git(1)): exit 1 is the one
 # documented "does not resolve to a single object" outcome under `--quiet`
 # -- the same single-defined-exit contract `path_is_tracked` already reads
@@ -1304,7 +1316,7 @@ def existing_start_worktree(path: Path, branch: str) -> bool:
     if existing is None:
         raise ClaimError(NOT_A_WORKTREE_REFUSAL)
     _refuse_foreign_worktree(path, existing)
-    if existing.branch != branch:
+    if attached_branch(existing.branch) != branch:
         raise ClaimError(
             f"worktree {path} exists on branch {existing.branch!r}, not {branch!r}; "
             f"{_CHOOSE_A_DIFFERENT_WORKTREE_REPAIR}"

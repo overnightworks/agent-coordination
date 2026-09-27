@@ -25,6 +25,7 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | a worktree already sits at the computed path, clean, same branch, a live claim already on it | START-06 |
 | a worktree already sits at the computed path, clean, same branch, no live claim on it | START-11 |
 | a worktree already sits at the computed path, dirty | START-10 |
+| a worktree already sits at the computed path on a detached HEAD | START-29 |
 | the computed branch name is already taken elsewhere | START-08 |
 | a worktree at the computed path sits on a different branch | START-09 |
 | a worktree at the computed path belongs to a foreign checkout | START-13 |
@@ -89,6 +90,7 @@ outcome the store cannot tell keeps it and says so (START-25); an interrupt remo
 - [ ] [START-07] A closed target refuses `issue #<n> is closed`; a missing one refuses `issue #<n> does not exist here`; exit 2, before any worktree or branch (see E-START-03).
 - [ ] [START-08] The branch name already taken elsewhere refuses `branch '<branch>' already exists and is not this item's worktree; remove it, or pass --slug to choose a different worktree`, exit 2.
 - [ ] [START-09] A worktree at the computed path on a different branch refuses `worktree <path> exists on branch '<other>', not '<branch>'; remove it, or pass --slug to choose a different worktree`, exit 2.
+- [ ] [START-29] A worktree at the computed path on a detached HEAD refuses `HEAD is detached; check out the lane branch first`, exit 2, nothing built or claimed (see E-START-18).
 - [ ] [START-10] A worktree at the computed path with uncommitted changes refuses `worktree <path> is dirty: <paths>; commit or clean it before resuming`, exit 2 (paths named as CLM-05 names them).
 - [ ] [START-13] A worktree at the computed path that is not this repository's own -- a foreign root, this repository's own main checkout, or a different repository's worktree -- refuses by name (see E-START-05).
 - [ ] [START-14] An unsafe branch prefix refuses `agent identity '<prefix>' is not usable in a branch name: '<branch>' is not a safe Git ref`, exit `2`, before any git write (see E-START-07).
@@ -339,3 +341,17 @@ exit 2
 ```
 
 `git worktree list` and `git branch --list` read afterwards exactly as before the call.
+
+### E-START-18 -- a detached worktree at the computed path is named, never claimed
+
+Setup: bare-remote, bootstrapped, fake `gh`, issue `#314` open, title `Fresh Slug`, body
+`scope = ["src/x.py"]`, and `git worktree add --detach ../<repo>-worktrees/issue-314-fresh-slug`
+
+```console
+$ aco start 314
+2> ERROR: HEAD is detached; check out the lane branch first
+exit 2
+```
+
+`git worktree list`, `git branch --list` and `git for-each-ref refs/aco` on `origin` read
+afterwards exactly as before the call.

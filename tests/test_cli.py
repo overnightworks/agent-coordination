@@ -2296,6 +2296,42 @@ def test_a_refused_start_leaves_no_worktree_and_no_branch_behind(
     assert "removed worktree" not in err
 
 
+@pytest.mark.parametrize(
+    ("run_inside_the_worktree", "arguments"),
+    [
+        pytest.param(True, ["claim", "314", "--scope", "base.txt"], id="claim"),
+        pytest.param(False, ["start", "314"], id="start"),
+    ],
+)
+def test_a_detached_head_is_named_and_nothing_is_written(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    run_inside_the_worktree: bool,
+    arguments: list[str],
+) -> None:
+    """Issue #526 (CLM-33, START-29): `claim` in a linked worktree on a
+    detached HEAD, and `start` finding one at its computed path, refuse by
+    naming the detached HEAD -- never a claim marker field -- and write no
+    claim, worktree, or branch."""
+    repo = _start_scenario(monkeypatch, tmp_path)
+    fake = _patch_store_write(monkeypatch)
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _real_git(repo, "worktree", "add", "-q", "--detach", str(worktree))
+    caller = worktree if run_inside_the_worktree else repo
+    _redirect_toplevel(monkeypatch, caller)
+    monkeypatch.chdir(caller)
+    before = _worktrees_and_branches(repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, *arguments])
+
+    assert (status, capsys.readouterr().err) == (
+        2,
+        "ERROR: HEAD is detached; check out the lane branch first\n",
+    )
+    assert (_worktrees_and_branches(repo), fake.transitions) == (before, [])
+
+
 def _claim_lands_before_the_commit(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
     """Another agent's claim on #314 lands between `start`'s check phase and
     its one ledger write."""
