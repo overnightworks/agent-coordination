@@ -28,7 +28,8 @@ it, `<s>` an integer score.
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
-| its first uncut row's title holds a line break | NEXT-32 | NEXT-14 |
+| a title, `Next`, slice title or `SKIPPED` reason holds a control character | NEXT-37 | NEXT-11..14 |
+| its first uncut row's title holds a line break or control character | NEXT-32 | NEXT-14 |
 | a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
 | a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
 | that container is itself a child of another item | NEXT-25, NEXT-29, NEXT-33 | NEXT-14 |
@@ -51,6 +52,7 @@ it, `<s>` an integer score.
 ## A work item action
 
 - [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>`, exit `0` (see E-NEXT-01).
+- [ ] [NEXT-37] Text shows a control character but TAB, or U+2028/U+2029, in a title, `Next`, slice title or `SKIPPED` reason as its escape: `a\x1b[2J` prints as typed, `Größe` as is; `--json` unchanged.
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
 - [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope=<path>` per path of that row, with no `scope unknown`.
 - [ ] [NEXT-04] A still-proposed item adds `expectations unruled: refine before the pull`; a stale ruling adds `ruled <n> landings ago: refine again at the pull` -- never both (see E-NEXT-02).
@@ -61,7 +63,7 @@ it, `<s>` an integer score.
 - [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title=<cut title>`, exit `0` (see E-NEXT-03).
 - [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: title `Say "hi" to $HOME` prints `--title='Say "hi" to $HOME'`.
 - [ ] [NEXT-31] An advice command attaches each option's value as `--title=<quoted>` or `--scope=<quoted>`, so a value starting with `-` still reaches it: title `-draft` prints `--title=-draft`.
-- [ ] [NEXT-32] A first uncut row whose title holds a line break (LF, VT, NEL, U+2028…; trailing too) gets no `cut`; `SKIPPED` reads `slice row <i> title carries a line break; shorten it to one line` (E-NEXT-10).
+- [ ] [NEXT-32] A first uncut row whose title NEXT-37 escapes gets no `cut`; `SKIPPED` reads `slice row <i> title holds a line break or control character; make it one printable line` (E-NEXT-10).
 - [ ] [NEXT-36] An item PIN-14/PIN-15 refuses is named under `SKIPPED` as `<item-id>: body malformed: <field>: <message>`; every other item still reads, one it blocks stays blocked (see E-NEXT-11).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
@@ -73,7 +75,7 @@ it, `<s>` an integer score.
 
 - [ ] [NEXT-08] Every other unworkable item is named once under a trailing `SKIPPED` block, `<label>: <reason>`; a container `next` itself recommends cutting or closing is left out of that list.
 - [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
-- [ ] [NEXT-34] A NEXT-05 container that is not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, never `container; claim a child` (E-NEXT-10).
+- [ ] [NEXT-34] A NEXT-05 container not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, `\` and `"` in `<title>` escaped in text and `--json`; never `container; claim a child`.
 - [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED`, in text or `--json` (see E-NEXT-06).
 
 ## `parallel:`
@@ -287,7 +289,7 @@ close: none
 
 SKIPPED
 #183: cut slice "-draft"; run aco cut 183 --title=-draft
-#184: slice row 2 title carries a line break; shorten it to one line
+#184: slice row 2 title holds a line break or control character; make it one printable line
 exit 0
 ```
 

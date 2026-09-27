@@ -30,6 +30,7 @@ from .body import (
     ParsedBody,
     SliceRow,
     Storage,
+    _breaks_a_line,
     body_defect_text,
     closing_fence_delimiter,
     malformed_parsed_body,
@@ -473,6 +474,11 @@ class BoardItem:
     score: int
     actionable: bool
     actionable_reason: str | None
+    # `actionable_reason` as `next`'s text prints it under `SKIPPED` (issue
+    # #532): through `terminal_text`. The prose itself, a cut slice's title
+    # quoted by `_quoted_prose` included (#310 finding 190), is one reason
+    # text and `--json` share; JSON and the HTML board escape on their own.
+    terminal_actionable_reason: str | None
     read_state: BodyReadState
     # What this container is up for once it holds no open child (issue #503),
     # decided once here by `_childless_container_verdict` so `next`'s action
@@ -1471,7 +1477,7 @@ def _board_item(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
             ),
             childless_container_reason=_childless_container_reason(
-                issue.number, childless_verdict, parsed.scope, parsed.slices, config.storage
+                issue.number, childless_verdict, parsed, config.storage
             ),
         )
     )
@@ -1508,6 +1514,9 @@ def _board_item(
         score=_board_score(stage, unblocks_count, single_next),
         actionable=actionable_reason is None,
         actionable_reason=actionable_reason,
+        terminal_actionable_reason=(
+            None if actionable_reason is None else terminal_text(actionable_reason)
+        ),
         read_state=parsed.read_state,
         childless_verdict=childless_verdict,
         size=parsed.size,
@@ -1959,7 +1968,7 @@ def _qualifying_actions(board: Board) -> Iterator[NextAction]:
         container = item.container
         if item.kind is not ItemKind.CONTAINER or container is None or container.open_children:
             continue
-        action = _container_next_action(item, container, uncut_by_container)
+        action = _container_next_action(item, container)
         if action is not None:
             yield action
 
@@ -2119,9 +2128,7 @@ def closable_container_number(
     return parent.reference.number if isinstance(verdict, CloseVerdict) else None
 
 
-def _container_next_action(
-    item: BoardItem, container: ContainerProgress, uncut_by_container: dict[int, UncutSlices]
-) -> NextAction | None:
+def _container_next_action(item: BoardItem, container: ContainerProgress) -> NextAction | None:
     """The action a childless container qualifies for, read off its one
     `childless_verdict`, or `None` to skip it: a non-`VALID` body names its
     own finding elsewhere and is never guessed through, and a
@@ -2130,9 +2137,8 @@ def _container_next_action(
     if item.read_state is not BodyReadState.VALID:
         return None
     match item.childless_verdict:
-        case CutVerdict():
+        case CutVerdict(title=cut_title):
             next_line = item.contract.next
-            cut_title = uncut_by_container[item.number].rows[0].title
             next_step = next_line if has_further_work(next_line) else cut_title
             return CutSliceAction(item, container, next_step, cut_title)
         case CheckVerdict(next_step=next_step):
@@ -2228,6 +2234,7 @@ def board_payload(board: Board) -> dict[str, object]:
             item["freed_on"] = (
                 None if freed_on is None else freed_on.astimezone(UTC).date().isoformat()
             )
+            item.pop("terminal_actionable_reason")
             item.pop("read_state")
             item.pop("childless_verdict")
             _project_blocker_references(item, "open_blockers", repository)
@@ -2416,6 +2423,27 @@ def advice_command(*arguments: str | AdviceOption) -> str:
     return shell_command("aco", *arguments)
 
 
+def terminal_text(text: str) -> str:
+    """Foreign `text` -- a title, a `Next` line -- as it may reach a terminal
+    (issue #532): every control character but TAB, and every line or
+    paragraph separator, shown as its printable escape (ESC as `\\x1b`,
+    U+2028 as `\\u2028`), so a title can neither retitle the window nor clear
+    the screen; printable text, `Größe` included, stays as it is. Commands
+    are `shell_command`'s to render, never this owner's."""
+    return "".join(
+        character.encode("unicode_escape").decode() if _breaks_a_line(character) else character
+        for character in text
+    )
+
+
+def _quoted_prose(text: str) -> str:
+    """`text` inside prose as one double-quoted span (issue #532, #310
+    finding 190): its own `\\` and `"` are escaped first, so a title such
+    as `x"; run aco claim 9` cannot close the quote and fake a command."""
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
     """The `claim` advice for item `number` (issue #510): one `--scope` per
     path of `scope`, none at all for `()` -- the item's own body scope, which
@@ -2468,7 +2496,10 @@ CHECK_DONE_WHEN = "no open children; check done_when"
 
 @dataclass(frozen=True)
 class CutVerdict:
-    """A container with no open child whose uncut row `cut` accepts."""
+    """A container with no open child whose uncut row `cut` accepts, that
+    row titled `title`."""
+
+    title: str
 
 
 @dataclass(frozen=True)
@@ -2480,10 +2511,11 @@ class NestedRepairVerdict:
 
 
 @dataclass(frozen=True)
-class LineBreakTitleVerdict:
+class UnprintableTitleVerdict:
     """The first uncut row, the one `cut` links, has a title holding a line
-    break (issue #513): a `cut` command naming it would spread over two
-    printed lines, so only shortening that title to one line helps. `row`
+    break (issue #513) or another control character (issue #532): a `cut`
+    command naming it would spread over two printed lines or reach the
+    terminal raw, so only making that title one printable line helps. `row`
     is the index `cut --row` names that row by."""
 
     row: int
@@ -2506,14 +2538,8 @@ class CloseVerdict:
 # What a container with no open child is up for (issue #503), each verdict
 # carrying the data its own answer needs.
 ChildlessContainerVerdict = (
-    CutVerdict | NestedRepairVerdict | LineBreakTitleVerdict | CheckVerdict | CloseVerdict
+    CutVerdict | NestedRepairVerdict | UnprintableTitleVerdict | CheckVerdict | CloseVerdict
 )
-
-
-def _carries_line_break(title: str) -> bool:
-    # `splitlines` drops each line's ending -- a trailing one included, which
-    # a count of the lines would miss -- so any line break shortens the join.
-    return "".join(title.splitlines()) != title
 
 
 def _childless_container_verdict(
@@ -2524,17 +2550,17 @@ def _childless_container_verdict(
     closable parent all read this answer rather than re-deriving it. An
     uncut `[[slice]]` row is the only thing to cut (#208) -- unless the
     container is itself a child, which `cut` refuses (CUT-03), so only a
-    repair helps, or the row's title holds a line break no one-line advice
-    can carry (issue #513); with no row left, a `Next` line still naming
-    work asks for a `done_when` check, and only one naming none is
-    closable."""
+    repair helps, or the row's title holds a line break or control
+    character no printed one-line advice can carry (issues #513, #532);
+    with no row left, a `Next` line still naming work asks for a
+    `done_when` check, and only one naming none is closable."""
     if nesting_parent is not None and slices:
         return NestedRepairVerdict(nesting_parent)
     if slices:
         first = slices[0]
-        if _carries_line_break(first.title):
-            return LineBreakTitleVerdict(first.index)
-        return CutVerdict()
+        if terminal_text(first.title) != first.title:
+            return UnprintableTitleVerdict(first.index)
+        return CutVerdict(first.title)
     if has_further_work(next_line):
         return CheckVerdict(next_line)
     return CloseVerdict()
@@ -2561,8 +2587,7 @@ def childless_containers_with_uncut_rows(
 def _childless_container_reason(
     number: int,
     verdict: ChildlessContainerVerdict | None,
-    own_scope: tuple[str, ...] | None,
-    slices: tuple[SliceRow, ...],
+    parsed: ParsedBody,
     storage: Storage,
 ) -> str | None:
     """What container `number`, with no open child, is up for when `SKIPPED`
@@ -2570,17 +2595,28 @@ def _childless_container_reason(
     its `cut` (issue #513) -- or `None` for a closable one, which `close:`
     names."""
     match verdict:
-        case CutVerdict():
-            title = slices[0].title
-            return f'cut slice "{title}"; run {cut_command(number, storage, title)}'
-        case LineBreakTitleVerdict(row=row):
-            return f"slice row {row} title carries a line break; shorten it to one line"
+        case CutVerdict(title=title):
+            return _cut_slice_reason(number, storage, title)
+        case UnprintableTitleVerdict(row=row):
+            return (
+                f"slice row {row} title holds a line break or control character; "
+                "make it one printable line"
+            )
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):
-            return _nested_container_repair(number, nesting_parent, own_scope, slices, storage)
+            return _nested_container_repair(
+                number, nesting_parent, parsed.scope, parsed.slices, storage
+            )
         case _:
             return None
+
+
+def _cut_slice_reason(number: int, storage: Storage, title: str) -> str:
+    """The `SKIPPED` reason of a cuttable container `number` that is not
+    `next`'s first action (issue #513): its first uncut row `title`, quoted
+    by `_quoted_prose`, and the `cut` that row takes."""
+    return f"cut slice {_quoted_prose(title)}; run {cut_command(number, storage, title)}"
 
 
 def _nested_container_repair(
