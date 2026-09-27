@@ -356,9 +356,9 @@ class StateRefBoard:
         item, one of its children, or -- `with_parent` -- its parent is
         malformed (issue #536): a single-item write decides with those
         alone, so an unrelated malformed item never blocks it. `number` is
-        one `items/` carries: the caller has already refused any other."""
+        a readable item: the caller's own read of it has already refused
+        any other (ITEM-38)."""
         item_id = self._by_number[number]
-        self._refuse_the_lowest_malformed((item_id,))
         related = [
             child_id for child_id, child in self._malformed.items() if child.parent == item_id
         ]

@@ -139,7 +139,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 - [ ] [ITEM-37] Under `storage = "state-ref"`, an item whose file PIN-14/PIN-15 refuse never stops `item new`, nor `item show` of any other item.
 - [ ] [ITEM-42] That item's `record.title`, while it still reads as a non-empty string, joins ITEM-33's twin search as an open item's title.
-- [ ] [ITEM-53] `item close` reads only its item, that item's parent and its children, `item edit --kind` its item and that item's children; another malformed item stops neither (PIN-29).
+- [ ] [ITEM-53] `item close` refuses only while its item, its parent, or a child is malformed, `item edit --kind` only while its item or a child is; any other malformed item stops neither (PIN-29).
 - [ ] [ITEM-38] Reading that item itself (`item show`, `item close`, `item edit --size`/`--whole`/`--kind`) refuses PIN-14/PIN-15's sentence, then the repair clause of E-ITEM-10.
 - [ ] [ITEM-39] `aco item edit <id> < BODY` on that item takes BODY's complete `[record]` as the item's own, `updated_at` moved to now; BODY without a `[record]` refuses as ITEM-38 (see E-ITEM-10).
 - [ ] [ITEM-40] That `[record]`'s `parent` or `blocked_by` naming a missing item refuses PIN-16/PIN-17's sentence, a malformed one or the item itself ITEM-38's, before any write.

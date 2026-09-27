@@ -3560,9 +3560,15 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
         storage = context.config.storage
         number = parsed.item
         kind = body.ItemKind(parsed.kind)
-        target = next(
-            (issue for issue in client.list_open_board_issues() if issue.number == number), None
-        )
+        # Under state-ref the retype reads its item alone (ITEM-37/38, issue
+        # #536); the forge answers only through its open-issue list.
+        if isinstance(client, state_board.StateRefBoard):
+            target = client.open_issue(number)
+        else:
+            target = next(
+                (issue for issue in client.list_open_board_issues() if issue.number == number),
+                None,
+            )
         label = board.item_label(number, storage)
         if target is None:
             raise protocol.ClaimUnavailableError(f"{label} is not an open item")
