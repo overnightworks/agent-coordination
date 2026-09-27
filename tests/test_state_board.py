@@ -672,6 +672,28 @@ class TestMalformedItem:
             MALFORMED_NUMBER
         ]
 
+    def test_its_container_counts_it_as_an_open_child(self) -> None:
+        """Issue #517: a container whose only child is unreadable, that
+        child's `[record].parent` still reading, never reads as childless,
+        so no close or cut verdict guesses past it."""
+        unreadable_child = _state_ref_body(
+            _CHILD_A_PROJECTION, _record(title="", state="open", kind="task", parent=CONTAINER_ID)
+        )
+        container_file = f"{CONTAINER_ID}.md"
+        adapter = _state_ref_board(
+            {
+                container_file: _item_files()[container_file],
+                f"{MALFORMED_ID}.md": unreadable_child.encode(),
+            }
+        )
+
+        container = adapter.open_issue(CONTAINER_NUMBER)
+
+        assert container is not None and container.has_open_child
+        assert adapter.list_children(CONTAINER_NUMBER) == (
+            board.ChildItem(MALFORMED_NUMBER, board.ChildState.OPEN),
+        )
+
     @pytest.mark.parametrize(
         ("record", "refusal"),
         [
@@ -3058,6 +3080,12 @@ class TestCliStateRefForge:
                 CONTAINER_ID,
                 id="item-close-of-a-child-under-a-malformed-parent",
             ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--kind", "container"],
+                None,
+                MALFORMED_ID,
+                id="edit-kind-beside-a-malformed-item",
+            ),
         ],
     )
     def test_a_malformed_item_refuses_naming_its_repair_and_writes_nothing(
@@ -3072,7 +3100,7 @@ class TestCliStateRefForge:
         planted: str,
     ) -> None:
         """Issue #447 proof 1: every command that must read exactly the
-        malformed item, or close an item beside it, refuses by its id,
+        malformed item, or close or retype an item beside it, refuses by its id,
         naming `item edit` with a valid `[record]` as the repair, and
         nothing reaches the remote."""
         item_files = _item_files_with_a_malformed_item(_blank_title_item(), planted)

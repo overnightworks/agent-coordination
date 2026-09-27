@@ -1011,10 +1011,25 @@ def readable_record_title(body: str) -> str | None:
     another field leaves the block malformed (issue #447), so `item new`'s
     twin search still compares a malformed state-ref item's title; `None`
     when no valid title can be read at all."""
+    title = _readable_record(body).get("title")
+    return title.strip() if is_valid_title(title) else None
+
+
+def readable_record_parent(body: str) -> str | None:
+    """`body`'s `[record]` parent when it alone still reads -- even when
+    another field leaves the block malformed (issue #517), so a container
+    still counts a malformed state-ref child as its own; `None` when no
+    parent can be read at all."""
+    parent = _readable_record(body).get("parent")
+    return parent if isinstance(parent, str) else None
+
+
+def _readable_record(body: str) -> Mapping[str, object]:
+    """`body`'s `[record]` table as far as its block still decodes as TOML,
+    empty when it does not."""
     data = _block_data(body)
     record = data.get(RECORD_KEY) if isinstance(data, dict) else None
-    title = record.get("title") if isinstance(record, dict) else None
-    return title.strip() if is_valid_title(title) else None
+    return record if isinstance(record, dict) else {}
 
 
 @dataclass(frozen=True)

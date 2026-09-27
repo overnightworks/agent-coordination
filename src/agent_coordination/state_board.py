@@ -46,6 +46,7 @@ from .body import (
     body_defect_text,
     locate_agent_claim_block,
     parse_body,
+    readable_record_parent,
     readable_record_title,
     replace_agent_claim_block,
 )
@@ -141,13 +142,16 @@ class _MalformedItem:
     sentence `item <id> ...`; `oid` is the CAS `expected` a repairing
     `update_item_body` writes over; `text` is whatever of the file still
     decodes; `title` is the record's title when it alone still reads, for
-    the twin search and the board's row."""
+    the twin search and the board's row; `parent` is the record's parent
+    when it alone still reads, so that container counts this item as an
+    open child."""
 
     problem: str
     defect: ContractDefect
     oid: ObjectId
     text: str = ""
     title: str | None = None
+    parent: str | None = None
 
 
 # The defects an item file the block grammar never reached is named by
@@ -215,6 +219,7 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
             oid=oid,
             text=text,
             title=readable_record_title(text),
+            parent=readable_record_parent(text),
         )
     return _DecodedItem(record=items.parse_item_record(item_id, record), body=text, oid=oid)
 
@@ -383,13 +388,9 @@ class StateRefBoard:
         kind = _item_kind(record.kind)
         children_closed = children_total = None
         if kind is ItemKind.CONTAINER:
-            children = tuple(
-                child for child in self._items.values() if child.record.parent == item_id
-            )
+            children = self._children(item_id)
             children_total = len(children)
-            children_closed = sum(
-                1 for child in children if child.record.state is items.RecordState.CLOSED
-            )
+            children_closed = sum(1 for child in children if child.state is board.ChildState.CLOSED)
         return board.Issue(
             record.number,
             record.title,
@@ -456,12 +457,23 @@ class StateRefBoard:
 
     def list_children(self, number: int) -> tuple[board.ChildItem, ...]:
         item_id = self._by_number.get(number)
-        if item_id is None:
-            return ()
-        return tuple(
-            board.ChildItem(child.record.number, board.ChildState(child.record.state.value))
-            for child in self._items.values()
-            if child.record.parent == item_id
+        return () if item_id is None else self._children(item_id)
+
+    def _children(self, item_id: str) -> tuple[board.ChildItem, ...]:
+        """`item_id`'s children, an unreadable one whose `[record].parent`
+        still names it counted open (issue #517): its state may not read, so
+        its container never reads as childless past it."""
+        return (
+            *(
+                board.ChildItem(child.record.number, board.ChildState(child.record.state.value))
+                for child in self._items.values()
+                if child.record.parent == item_id
+            ),
+            *(
+                board.ChildItem(items.item_number(child_id), board.ChildState.OPEN)
+                for child_id, child in self._malformed.items()
+                if child.parent == item_id
+            ),
         )
 
     def default_branch(self) -> str:

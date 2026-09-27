@@ -3547,6 +3547,11 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
         if _stdin_is_a_regular_file():
             raise protocol.ClaimUnavailableError(ITEM_EDIT_KIND_STDIN_REFUSAL)
         client = context.forge_writer
+        # A malformed item's parent is unknown (issue #447), so it might be
+        # this container's open child: the retype holds the store well formed
+        # through its write rather than guessing past it (issue #517).
+        if isinstance(client, state_board.StateRefBoard):
+            client.hold_well_formed()
         storage = context.config.storage
         number = parsed.item
         kind = body.ItemKind(parsed.kind)
