@@ -1,0 +1,8 @@
+claim_id = "ded447d20f3542e5a38f1343c92d19d6"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "297d8c5bbb75c65f2a4081c22eae39d0870fe947"
+branch = "claude/issue-486-symlink-both-checkouts"
+scope = ["scripts/test_budget_ratchet.txt", "specs/protect.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/protect.py", "tests/test_checkout.py", "tests/test_protect.py"]
+opened_commit = "30b62017b018c1e8c285d5016aeef3c3f0061fc1"
+whole_reason = "ein Schreibzugriff durch einen Symlink muss auch dort erlaubt sein, wo die Bytes landen"
