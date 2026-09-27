@@ -18,6 +18,14 @@ GIT_ALLOW_PROTOCOL_ENV = "GIT_ALLOW_PROTOCOL"
 LOCAL_PROTOCOLS_ONLY = "file"
 
 
-@pytest.fixture(autouse=True)
-def _allow_only_local_git_remotes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(GIT_ALLOW_PROTOCOL_ENV, LOCAL_PROTOCOLS_ONLY)
+_guard = pytest.MonkeyPatch()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Configure runs before collection, so module imports and fixtures of every
+    # scope already see the guard, as do xdist workers started from this process.
+    _guard.setenv(GIT_ALLOW_PROTOCOL_ENV, LOCAL_PROTOCOLS_ONLY)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    _guard.undo()

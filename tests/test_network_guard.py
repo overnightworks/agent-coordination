@@ -16,9 +16,10 @@ from pathlib import Path
 
 import pytest
 from cli_fixtures import _real_git, _real_repository_with_bare_remote
-from network_guard import GIT_ALLOW_PROTOCOL_ENV
+from network_guard import GIT_ALLOW_PROTOCOL_ENV, LOCAL_PROTOCOLS_ONLY
 
 _PROJECT_CONFIGURATION = Path(__file__).parent.parent / "pyproject.toml"
+_ALLOWED_PROTOCOLS_WHILE_COLLECTING = os.environ.get(GIT_ALLOW_PROTOCOL_ENV)
 
 
 def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.CompletedProcess[str]:
@@ -33,6 +34,10 @@ def _push_to(tmp_path: Path, remote_url: Callable[[Path], str]) -> subprocess.Co
         text=True,
         check=False,
     )
+
+
+def test_the_guard_already_holds_while_test_modules_are_collected() -> None:
+    assert _ALLOWED_PROTOCOLS_WHILE_COLLECTING == LOCAL_PROTOCOLS_ONLY
 
 
 @pytest.mark.parametrize(
