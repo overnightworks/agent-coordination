@@ -8,9 +8,11 @@ rootless collection puts `tests/` on `sys.path`, so a plain
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -100,9 +102,54 @@ def fetched_once_then_read(calls: list[tuple[str, Path]]) -> dict[Path, bool]:
     }
 
 
-def _real_git(repository: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+_OPERATOR_GIT_ROUTES = ("GIT_PROXY_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT")
+
+
+@cache
+def _repository_selecting_git_variables() -> frozenset[str]:
+    """Git's own list of the variables that select a repository (`GIT_DIR`,
+    `GIT_WORK_TREE`, ...), whose local configuration could rewrite a URL or
+    set a proxy."""
+    local_variables = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, check=True
+    )
+    return frozenset(local_variables.stdout.split())
+
+
+def sealed_git_environment() -> dict[str, str]:
+    """The inherited environment without any route or seed the operator
+    configured (#530, #534): no proxy, no operator repository, git
+    configuration or template, and an ssh that reads no config file, so a
+    remote a test names is the remote git dials and a repository it
+    initializes carries no operator hook or URL rewrite."""
+    operator_git_variables = _repository_selecting_git_variables() | set(_OPERATOR_GIT_ROUTES)
+    inherited = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.lower().endswith("_proxy")
+        and not name.startswith("GIT_CONFIG")
+        and name not in operator_git_variables
+    }
+    return inherited | {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_SSH_COMMAND": f"ssh -F {os.devnull} -o BatchMode=yes",
+        # An empty value is git's empty template, which `init.templateDir` cannot override.
+        "GIT_TEMPLATE_DIR": "",
+        "LC_ALL": "C",
+    }
+
+
+def _real_git(
+    repository: Path, *arguments: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", *arguments], cwd=repository, check=True, capture_output=True, text=True
+        ["git", *arguments],
+        cwd=repository,
+        env=sealed_git_environment(),
+        check=check,
+        capture_output=True,
+        text=True,
     )
 
 

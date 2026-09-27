@@ -9,6 +9,7 @@ rules = [
   "Be economical with turns: read whole files once, batch shell commands, and never re-read what has already been read.",
   "Before any test run, read /proc/loadavg; above 18 wait a minute and retry; never run the full suite, a full coverage run, or -n auto.",
   "Run only the named test modules or -k selections that prove the change, with PYTEST_XDIST_AUTO_NUM_WORKERS=4; CI on the pushed branch is the gate.",
+  "Run every probe as a test under `tests/` inside the claim scope; never import test modules from a file outside `tests/`.",
   "Sync the environment once with uv sync --locked --group dev --python 3.12, then run every command through uv run --locked from the worktree root.",
   "Confirm every line added or changed in src/ is covered before reporting; CI requires 100% coverage on Python 3.12.",
   "Keep exactly one expression that can raise inside every pytest.raises block; hoist every construction, fake, and type wrapper into named locals first.",
@@ -61,6 +62,7 @@ rules = [
   "Stay inside the lane's own worktree, branch, and scope; never widen it to fix an unrelated finding.",
   "Before every commit, compare `git status --porcelain` with the claim scope `aco brief <n>` prints; restore or remove any path outside it and report it instead of committing. Write repository files with Edit, Write or apply_patch, or with a checked tool such as ruff or uv; never with an interpreter script or `python -c`.",
   "Leave a follow-up finding to its owning item; fix only what the review marked blocking.",
+  "Run every probe as a test under `tests/` inside the claim scope; never import test modules from a file outside `tests/`.",
   "Ask for a delta re-check after the fix batch instead of a fresh full review.",
 ]
 checks = [
