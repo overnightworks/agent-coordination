@@ -631,14 +631,29 @@ def _refuse_unknown_config_keys(raw: dict[str, object], path: Path) -> None:
         raise protocol.ClaimError(f"board configuration {path} has unknown top-level key {named}")
 
 
+def _unreadable_config(path: Path, error: Exception) -> protocol.ClaimError:
+    return protocol.ClaimError(f"cannot read board configuration {path}: {error}")
+
+
 def load_config(path: Path = CONFIG_PATH) -> BoardConfig:
     if not path.exists():
         return BoardConfig()
     try:
-        with path.open("rb") as stream:
-            raw = tomllib.load(stream)
-    except (OSError, tomllib.TOMLDecodeError) as error:
-        raise protocol.ClaimError(f"cannot read board configuration {path}: {error}") from error
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise _unreadable_config(path, error) from error
+    return parse_config(text, path)
+
+
+def parse_config(text: str, path: Path) -> BoardConfig:
+    """`text` validated as the board configuration at `path` -- the one
+    validator both this checkout's own file (`load_config`) and a pull
+    request head's copy of it (`aco land`'s LANDCMD-22, issue #505) pass
+    through, so the two can never disagree about what a valid pin is."""
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise _unreadable_config(path, error) from error
     _refuse_unknown_config_keys(raw, path)
     _refuse_unpinned_body_contract(raw, path)
     return BoardConfig(

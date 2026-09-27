@@ -17126,54 +17126,79 @@ _UNTRACKED_BOARD_CONFIG_ERROR = (
     "ERROR: .agent-claim/board.toml is not tracked in this checkout, so its "
     "storage pin cannot be trusted: git add -f .agent-claim/board.toml\n"
 )
+_MISSING_BOARD_CONFIG_ERROR = (
+    "ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request "
+    "adding only .agent-claim/board.toml into the default branch first, without aco\n"
+)
 
 
+def _write_untracked_board_config(toplevel: Path) -> None:
+    (toplevel / ".agent-claim").mkdir()
+    (toplevel / ".agent-claim" / "board.toml").write_text("")
+
+
+@pytest.mark.parametrize(
+    ("config_on_disk", "refusal"),
+    [
+        pytest.param(False, _MISSING_BOARD_CONFIG_ERROR, id="missing"),
+        pytest.param(True, _UNTRACKED_BOARD_CONFIG_ERROR, id="present-untracked"),
+    ],
+)
 @pytest.mark.parametrize(
     "arguments",
     [
         pytest.param(["bootstrap"], id="bootstrap"),
         pytest.param(["board", "--json"], id="board"),
         pytest.param(["claim", "1", "--scope", "README.md"], id="claim-ahead-of-clm-01"),
+        pytest.param(["--repo", REPOSITORY, "land", "12"], id="land"),
     ],
 )
-def test_untracked_board_config_refuses_every_store_command_by_name(
+def test_an_untrusted_board_config_refuses_every_store_command_by_name(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     arguments: list[str],
+    config_on_disk: bool,
+    refusal: str,
 ) -> None:
-    """Issue #315: an absent, untracked, or ignored `.agent-claim/board.toml`
-    no longer reads as `storage = "github"`'s silent default -- `bootstrap`
-    (which never resolves a forge) and `board` (which does, through
-    `RunContext.forge`) both refuse by the same sentence, naming the repair,
-    before either does any other work. `claim` in the main checkout on
-    `main` refuses it ahead of CLM-01, since only the configuration names
-    the canonical remote whose recorded default branch CLM-01 judges
-    (CLM-30, issue #490)."""
-    repository, _remote = _real_repository_with_bare_remote(tmp_path)
+    """Issues #315 and #505: a `.agent-claim/board.toml` that is not tracked
+    never reads as `storage = "github"`'s silent default -- every store
+    command, `land` included, refuses before any other work and writes
+    nothing. A file present but untracked or ignored names the `git add -f`
+    repair (PIN-01); a file absent altogether names the one-time adoption
+    instead (PIN-32). `claim` in the main checkout on `main` refuses it
+    ahead of CLM-01, since only the configuration names the canonical remote
+    whose recorded default branch CLM-01 judges (CLM-30, issue #490)."""
+    repository, remote = _real_repository_with_bare_remote(tmp_path)
     (repository / "README.md").write_text("hello\n")
     _real_git(repository, "add", "README.md")
     _real_git(repository, "commit", "-q", "-m", "initial")
     _push_repository_trunk(repository, "origin")
+    if config_on_disk:
+        _write_untracked_board_config(repository)
+    _redirect_toplevel(monkeypatch, repository)
     monkeypatch.chdir(repository)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(arguments)
 
-    captured = capsys.readouterr()
-    assert status == 2
-    assert captured.err == _UNTRACKED_BOARD_CONFIG_ERROR
+    assert (status, capsys.readouterr().err) == (2, refusal)
+    assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
 
 
 @pytest.mark.parametrize("item", ["5", "16777216"], ids=["in-the-id-space", "past-the-id-space"])
 def test_untracked_board_config_refuses_item_show_in_its_own_json_envelope(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], item: str
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    item: str,
 ) -> None:
     """ITEM-17 (#469 review finding 2): an untracked pin is `item show`'s own
     `precondition_failed` refusal under `--json` whatever number it names --
     PIN-31's guard reads no pin it cannot trust, so it never takes the
     refusal from the command."""
+    _write_untracked_board_config(tmp_path)
     monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: False)
 
     status = issue_claim.main(["item", "show", item, "--json"])

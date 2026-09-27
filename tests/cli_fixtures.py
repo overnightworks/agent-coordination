@@ -154,7 +154,7 @@ def stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     file, so a real `git ls-files` check would otherwise always read "not
     tracked" here. The untracked/ignored refusal is its own axis, proven by
     `checkout.path_is_tracked`'s own tests in `test_checkout.py` and by
-    `test_cli.py`'s `test_untracked_board_config_refuses_every_store_command_by_name`,
+    `test_cli.py`'s `test_an_untrusted_board_config_refuses_every_store_command_by_name`,
     which overrides this stub back to `False`. Each caller wraps this in its
     own `@pytest.fixture(autouse=True)` (never placed here itself, matching
     `conftest.py`'s "everything but git-toplevel isolation stays local to its
