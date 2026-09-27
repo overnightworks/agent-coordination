@@ -14489,7 +14489,9 @@ def _release_merged_of_an_open_item(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     """`release --merged` of the cleanup scenario with issue #72 still
     open, so a release that reached its forge writes would close it."""
     argv = _release_merged_with_cleanup(monkeypatch, tmp_path)
-    github.GitHubForge(github.repository_id(REPOSITORY)).closed_issues.discard(WORK_ITEM_ISSUE)
+    client = github.GitHubForge(github.repository_id(REPOSITORY))
+    assert isinstance(client, FakeForge)
+    client.closed_issues.discard(WORK_ITEM_ISSUE)
     return argv
 
 
