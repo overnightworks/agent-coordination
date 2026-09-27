@@ -37,7 +37,7 @@ included.
 |---|---|---|---|
 | no `--json`, `--html`, or `--serve` given | BOARD-44 | BOARD-44 | BOARD-44 |
 | unsupported canonical-remote host | BOARD-02, BOARD-43 | BOARD-02 | BOARD-02 |
-| canonical remote never configured | BOARD-53, BOARD-43 | BOARD-53 | — |
+| canonical remote never configured | BOARD-53, BOARD-43 | BOARD-53 | BOARD-53 |
 | `.agent-claim/board.toml` absent | PIN-32 (cited) | PIN-32 (cited) | PIN-32 (cited) |
 | `.agent-claim/board.toml` present but untracked or ignored | PIN-01 (cited) | PIN-01 (cited) | PIN-01 (cited) |
 | `--repo` under `storage = "state-ref"` | BOARD-42, BOARD-43 | BOARD-42 | — |
