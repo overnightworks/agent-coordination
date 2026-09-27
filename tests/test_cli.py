@@ -3068,8 +3068,8 @@ def test_start_removes_its_build_when_the_store_refuses_its_sent_push_for_certai
     """Issue #498 (START-18, CAS-57): the claim's push was sent and
     rejected, and the store's re-read found nothing of it written -- a rival
     claim landed first, or the store rejected every retry -- so the refusal
-    is certain: the worktree and branch `start` built go, and the conflict
-    names the item the way the board's storage does."""
+    is certain: the worktree and branch `start` built go, and a rival's
+    conflict names the item the way the board's storage does."""
     repo, bare_remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     arrange(monkeypatch, repo, bare_remote)
 
@@ -7913,9 +7913,10 @@ def test_a_pinned_claim_refuses_once_its_item_closes_between_its_rejection_and_r
             rf"^item '{item_id}' was written since it was read "
             rf"\(expected {open_oid}, found '{closed_oid}'\); re-read and retry$"
         ),
-    ):
+    ) as raised:
         store.commit_transition(observed=observed, subject=subject, intent=claim, transport=racer)
 
+    assert type(raised.value) is protocol.ClaimUnavailableError
     refetched = store.fetch_state(worktree=worktree, remote=str(bare_remote))
     assert refetched.items[item_id] == closed_oid
     assert not refetched.claims

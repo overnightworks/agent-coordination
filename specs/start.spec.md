@@ -98,7 +98,7 @@ outcome the store cannot tell keeps it and says so (START-25); an interrupt remo
 - [ ] [START-22] A refusal of the claim's own checks comes before the build: no `worktree:`/`branch:` line, no worktree, no branch; exit 2 (see E-START-11).
 - [ ] [START-18] A claim refused after the build, even under its push (CAS-57), or a moved trunk (START-26) drops both: `removed worktree <path> and branch '<branch>' this start created`; exit 2 (see E-START-15).
 - [ ] [START-26] A build or gone-worktree rebuild standing on a trunk moved after the checks refuses `the trunk moved after start checked it; run start again`, exit 2, then removes it as START-18 says.
-- [ ] [START-25] A push of unknown outcome (CAS-56) keeps both, even pre-built: `the claim's push was sent, its outcome unknown; worktree <path> and branch '<branch>' kept; run start again to resume it`; exit 2.
+- [ ] [START-25] A push of unknown outcome (CAS-56) keeps both, even one that stood: `the claim's push was sent, its outcome unknown; worktree <path> and branch '<branch>' kept; run start again to resume it`; exit 2.
 - [ ] [START-27] A `state-ref` item closed or edited after the checks read it refuses CAS-20's sentence (CAS-59), no claim, and the build goes (START-18), before or under the claim's push; see E-START-16.
 - [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 - [ ] [START-23] When git will not remove that worktree, the refusal and exit 2 stay and the line reads `worktree <path> and branch '<branch>' this start created kept: git failure: <reason>`.
