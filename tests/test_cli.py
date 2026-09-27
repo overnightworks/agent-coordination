@@ -2330,10 +2330,15 @@ _REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start cr
             "branch '{branch}' kept: git failure: error: branch not fully merged",
             id="git-keeps-the-branch",
         ),
-        pytest.param(_trunk_moves_after_the_fetch, "claim base ", _REMOVED_BOTH, id="trunk-moved"),
+        pytest.param(
+            _trunk_moves_after_the_fetch,
+            "the trunk moved after start checked it; run start again\n",
+            _REMOVED_BOTH,
+            id="trunk-moved",
+        ),
         pytest.param(
             _trunk_moves_while_a_gone_worktree_is_rebuilt,
-            "claim base ",
+            "the trunk moved after start checked it; run start again\n",
             _REMOVED_BOTH,
             id="trunk-moved-under-a-rebuild",
         ),
@@ -2854,6 +2859,7 @@ def test_start_under_state_ref_claims_the_worktree_it_builds(
 
 
 _SEAM_FAILURE = "fatal: not a git repository"
+_PUSH_TIMED_OUT = "git timed out while reading the claim state store"
 
 
 @pytest.mark.parametrize(
@@ -2874,22 +2880,29 @@ _SEAM_FAILURE = "fatal: not a git repository"
             id="answer-lost-and-its-search-fails",
         ),
         pytest.param(
-            protocol.ClaimError("git timed out while reading the claim state store"),
+            protocol.ClaimError(_PUSH_TIMED_OUT),
             True,
             None,
-            "git timed out while reading the claim state store",
+            _PUSH_TIMED_OUT,
             id="push-times-out-after-landing",
         ),
         pytest.param(
-            protocol.ClaimError("git timed out while reading the claim state store"),
+            protocol.ClaimError(_PUSH_TIMED_OUT),
             False,
             None,
-            "git timed out while reading the claim state store",
+            _PUSH_TIMED_OUT,
             id="push-times-out-before-the-remote-records-it",
+        ),
+        pytest.param(
+            protocol.PushRejectedError("! [remote rejected] (failed to lock)"),
+            False,
+            None,
+            f"{store.STATE_REF} rejected ",
+            id="store-rejects-every-push",
         ),
     ],
 )
-def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_claims_push(
+def test_start_keeps_its_worktree_once_the_claims_push_was_sent_and_a_rerun_resumes_it(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
@@ -2898,12 +2911,12 @@ def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_cla
     failing_seam: str | None,
     reported: str,
 ) -> None:
-    """Issue #479 (head ruling 1c): once the claim's push was sent, a
-    failure the write still raises -- its lineage stamp, the search for a
-    push whose answer was lost, a push that timed out -- is reported, never
-    treated as a refusal: the worktree and branch the claim may name stay,
-    even while a timed-out push is not yet on the remote, which may still
-    record it after any read (issue #480 review finding 2)."""
+    """Issue #479 (head ruling, START-25): once the claim's push was sent,
+    only the store knows whether it was written, so any failure the write
+    still raises -- its lineage stamp, the search for a push whose answer
+    was lost, a push that timed out before or after it landed, a store that
+    rejected every push -- keeps the worktree and branch, says the outcome
+    is uncertain, and the next `start` resumes whichever outcome it finds."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     landed: list[protocol.ObjectId] = []
     real_push = store.GitPushTransport.push
@@ -2922,49 +2935,33 @@ def test_start_under_state_ref_keeps_its_worktree_when_a_failure_follows_the_cla
         if push_answer is not None:
             raise push_answer
 
-    monkeypatch.setattr(store.GitPushTransport, "push", push_and_note)
-    if failing_seam is not None:
-        real_seam = getattr(store, failing_seam)
+    with monkeypatch.context() as failing:
+        failing.setattr(store.GitPushTransport, "push", push_and_note)
+        if failing_seam is not None:
+            real_seam = getattr(store, failing_seam)
 
-        def seam_fails_once_landed(*arguments: object, **keywords: object) -> object:
-            if landed:
-                raise protocol.ClaimError(_SEAM_FAILURE)
-            return real_seam(*arguments, **keywords)
+            def seam_fails_once_landed(*arguments: object, **keywords: object) -> object:
+                if landed:
+                    raise protocol.ClaimError(_SEAM_FAILURE)
+                return real_seam(*arguments, **keywords)
 
-        monkeypatch.setattr(store, failing_seam, seam_fails_once_landed)
+            failing.setattr(store, failing_seam, seam_fails_once_landed)
 
-    status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
-
-    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
-    assert (status, capsys.readouterr().err) == (2, f"ERROR: {reported}\n")
-    monkeypatch.undo()
-    live = store.fetch_state(worktree=repo, remote="origin").claims
-    assert (protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH) in live) is lands
-    assert checkout.resolve_path_checkout(worktree) is not None
-
-
-def test_start_under_state_ref_removes_its_build_when_the_store_rejects_every_push_unwritten(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #479 review (START-18): a store that rejects every push of the
-    claim without the ref ever moving -- missing push rights, a stale lock --
-    wrote nothing, so `start` refuses and removes the worktree and branch it
-    built."""
-    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
-
-    def rejected(_transport: store.GitPushTransport, **_arguments: object) -> None:
-        raise protocol.PushRejectedError("! [remote rejected] (failed to lock)")
-
-    monkeypatch.setattr(store.GitPushTransport, "push", rejected)
-
-    status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
+        status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
     worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
     err = capsys.readouterr().err
-    assert (status, worktree.exists()) == (2, False)
-    assert err.startswith(f"ERROR: {store.STATE_REF} rejected ")
-    assert err.endswith(_REMOVED_BOTH.format(worktree=worktree, branch=_START_BRANCH) + "\n")
-    assert store.fetch_state(worktree=repo, remote="origin").claims == {}
+    assert status == 2
+    assert err.startswith(f"ERROR: {reported}")
+    assert err.endswith(
+        f"\nthe claim's push was sent, its outcome unknown; worktree {worktree} and "
+        f"branch '{_START_BRANCH}' kept; run start again to resume it\n"
+    )
+    claim_key = protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)
+    assert (claim_key in store.fetch_state(worktree=repo, remote="origin").claims) is lands
+
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    assert claim_key in store.fetch_state(worktree=repo, remote="origin").claims
 
 
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
@@ -18422,23 +18419,24 @@ def _start_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedR
     """Every read is of the caller's checkout, here the main one: once as
     the command's own, once resolved as the main checkout whose context the
     claim's checks run on once the trunk is fetched (issue #479, #322 review
-    finding 2), which observes the state ref afresh (CAS-55); the width gate
+    finding 2), which observes the state ref afresh (CAS-55) while holding
+    that checkout's one board configuration read (#472); the width gate
     measures the fetched trunk's own tree and asks no toplevel for a scope
     entry that is no tree in it."""
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     return _CountedRun(
         ["start", "314", "--scope", "src/x.py"],
         toplevel_reads={None: 1, repo: 1},
-        config_reads={repo: 2},
+        config_reads={repo: 1},
         observations={repo: 2},
     )
 
 
 def _start_refused_push_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    """A `start` whose store rejects every push of its claim unwritten
-    reads exactly what a successful one does: deciding to remove its build
-    observes the state ref no third time (issue #480 review finding 3,
-    CAS-53, CAS-55)."""
+    """A `start` whose store rejects every push of its claim reads exactly
+    what a successful one does: the store alone answers whether its push
+    was written, so keeping the build observes the state ref no third time
+    (issue #480 review finding 3, CAS-53, CAS-55, START-25)."""
     run = _start_command(monkeypatch, tmp_path)
 
     def rejected(_transport: store.GitPushTransport, **_arguments: object) -> None:

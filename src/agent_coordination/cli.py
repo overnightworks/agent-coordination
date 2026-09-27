@@ -5126,28 +5126,16 @@ def _print_claim_checks(plan: _ClaimPlan, *, as_json: bool) -> None:
 @dataclass
 class _WitnessedPush:
     """The store's own `git push`, remembering that one was sent (issue
-    #479): the remote may have accepted it even when its answer never came
-    back -- a lost response the store's own search then fails to settle, a
-    timeout -- or `store.commit_transition` may fail after it landed, writing
-    its lineage stamp. Such a claim may be written, so `start` never undoes
-    the worktree that claim names."""
+    #479): the remote may accept a push even when its answer never comes
+    back, and a timed-out push may land after any read, so only the store
+    ever judges whether its claim was written. Once a push was sent,
+    `start` never undoes the worktree that claim may name (START-25)."""
 
     sent: bool = False
 
     def push(self, *, worktree: Path, remote: str, ref: str, new_oid: protocol.ObjectId) -> None:
         self.sent = True
         store.GitPushTransport().push(worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
-
-    def may_have_written(self, error: protocol.ClaimError) -> bool:
-        """Whether the write that failed with `error` may have left its claim
-        in the store: never before a push was sent; after one, unless the
-        store itself settled every push as unwritten -- each rejected and
-        its search finding it absent, then the retry budget spent or the
-        intent refused on that settled state, the only
-        `ClaimUnavailableError` a transition raises once it pushed. No read
-        of the store here could settle more: a timed-out push may still land
-        after it (issue #480 review findings 2 and 3)."""
-        return self.sent and not isinstance(error, protocol.ClaimUnavailableError)
 
 
 def _committed_claim(
@@ -5450,7 +5438,8 @@ def _rebuild_and_resume(
     checked against the fetched trunk first, then the worktree is built
     again from that trunk and the claim reprinted, never a second one
     minted. A worktree that stands on another commit -- another fetch moved
-    the trunk after the checks -- is removed again, as a fresh build's is."""
+    the trunk after the checks -- is removed again, as a fresh build's is
+    (START-18)."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
     versioning = _checked_start_resume(resumed, parsed, context=context, revision=trunk)
     checked = _claim_request(
@@ -5461,6 +5450,7 @@ def _rebuild_and_resume(
     )
     _print_start_target(target)
     try:
+        _require_the_checked_trunk(target, trunk)
         checkout._validate_checkout(checked, directory=target.path)
     except protocol.ClaimError as error:
         return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
@@ -5473,21 +5463,20 @@ def _check_build_and_claim(
 ) -> int:
     """Fetch the trunk, run `claim`'s check phase against that one commit,
     then build the worktree from the trunk and run the commit phase (issue
-    #479). Only a refusal between the build and the write removes the build
-    again: the new worktree failing `claim`'s own checkout preconditions
-    (the trunk moved under another fetch meanwhile), or the ledger refusing
-    the write -- a claim that landed after the checks, a store it cannot
-    reach or that rejected every push unwritten. An interrupt or an
-    unexpected error is no refusal, and a failure once the claim may have
-    been written leaves the worktree standing with the claim that may name
-    it."""
+    #479). Only a refusal between the build and the claim's push removes
+    the build again: the trunk moved under another fetch meanwhile, the new
+    worktree failing `claim`'s own checkout preconditions, or the ledger
+    refusing the write before it pushed -- a claim that landed after the
+    checks, a store it cannot reach. Once the push was sent the store alone
+    knows whether the claim was written, so a failure after it keeps the
+    worktree and says the outcome is uncertain (START-25). An interrupt or
+    an unexpected error is no refusal."""
     trunk = checkout.fetched_trunk(context.canonical_remote)
-    # A second context of the main checkout, never the one whose observation
-    # the item-existence read already holds: the fetch above may take a
-    # while, and the claim must read the item as it stands once the fetch is
-    # done, not the snapshot that read took (issue #322 review finding 2,
-    # CAS-55).
-    check_context = context.for_directory(context.toplevel, is_toplevel=True)
+    # The main checkout observed afresh, never the observation the
+    # item-existence read already holds: the fetch above may take a while,
+    # and the claim must read the item as it stands once the fetch is done,
+    # not the snapshot that read took (issue #322 review finding 2, CAS-55).
+    check_context = context.observed_afresh()
     check_session = _WriteSession(forge=_LazyForge(check_context), release_branch=None)
     requested = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
     plan = _checked_claim(requested, check_session, revision=trunk)
@@ -5501,19 +5490,44 @@ def _check_build_and_claim(
     _print_claim_checks(plan, as_json=False)
     push = _WitnessedPush()
     try:
+        _require_the_checked_trunk(target, trunk)
         checkout._validate_checkout(requested, directory=target.path)
         # Written from the built worktree, so the lane's own lineage stamp
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(plan, worktree=target.path, transport=push)
-    except _ClaimConflictError as error:
-        # The store raises a conflict only from a state its own search just
-        # showed every push of this call absent from: nothing was written.
-        return _refuse_built_start(ClaimReason.CLAIM_CONFLICT, error, target)
     except protocol.ClaimError as error:
-        if push.may_have_written(error):
-            raise
-        return _refuse_built_start(ClaimReason.UNAVAILABLE, error, target)
+        if push.sent:
+            return _report_uncertain_start_claim(error, target)
+        reason = (
+            ClaimReason.CLAIM_CONFLICT
+            if isinstance(error, _ClaimConflictError)
+            else ClaimReason.UNAVAILABLE
+        )
+        return _refuse_built_start(reason, error, target)
     return _report_claim(plan, claimed, claims, as_json=False)
+
+
+def _require_the_checked_trunk(target: _StartTarget, trunk: str) -> None:
+    """Refuse a worktree built on another commit than the trunk `start`
+    checked: another fetch moved the trunk between the checks and the
+    build, so rerunning `start` checks the trunk as it stands now."""
+    if checkout.head_commit(target.path) != trunk:
+        raise protocol.ClaimUnavailableError(
+            "the trunk moved after start checked it; run start again"
+        )
+
+
+def _report_uncertain_start_claim(error: protocol.ClaimError, target: _StartTarget) -> int:
+    """A claim write that failed after its push was sent: the store alone
+    knows whether the claim landed, so the worktree it may name stays, and
+    the next `start` resumes whichever it finds (START-25)."""
+    status = _refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
+    print(
+        f"the claim's push was sent, its outcome unknown; worktree {target.path} and "
+        f"branch '{target.branch}' kept; run start again to resume it",
+        file=sys.stderr,
+    )
+    return status
 
 
 def _refuse_built_start(

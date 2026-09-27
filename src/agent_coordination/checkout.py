@@ -600,11 +600,17 @@ def _dirty_paths(status: str) -> tuple[str, ...]:
     return tuple(line[3:] for line in status.splitlines() if line)
 
 
+def head_commit(directory: Path | None = None) -> str:
+    """The commit `directory`'s checkout stands on, or the calling
+    process's own cwd's when omitted."""
+    return _git_output(["rev-parse", "HEAD"], directory=directory)
+
+
 def _validate_checkout(request: ClaimRequest, *, directory: Path | None = None) -> None:
     """`claim`'s own preconditions against `directory` via `-C` when given
     (issue #322: `start`'s own resolved worktree, never a process-wide
     `os.chdir`) or the calling process's own cwd otherwise."""
-    head = _git_output(["rev-parse", "HEAD"], directory=directory)
+    head = head_commit(directory)
     if head != request.base:
         raise ClaimError(
             f"claim base {request.base} does not match checkout HEAD {head}; "

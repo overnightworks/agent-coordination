@@ -13,7 +13,8 @@ One context stands for one directory. `for_directory` answers for another
 checkout (`start`'s freshly created worktree, `rescope`'s checkout resolved
 from its own paths); `fresh` re-reads the same
 directory from scratch (`board --serve` takes one per request, so nothing is
-held across requests). `protect` never builds one: it judges from its own
+held across requests); `observed_afresh` re-reads only its state-ref
+observation. `protect` never builds one: it judges from its own
 payload's path.
 """
 
@@ -113,6 +114,18 @@ class RunContext:
         """The same directory with nothing read yet (`board --serve`'s
         per-request context)."""
         return RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
+
+    def observed_afresh(self) -> RunContext:
+        """The same directory still holding the toplevel and board
+        configuration this context read, with its observation of
+        `refs/aco/state` -- and the forge built from it -- dropped, so the
+        next ask fetches the state ref again (`start` once its trunk fetch
+        is done, CAS-55) without reading those static facts twice."""
+        child = self.fresh()
+        for fact in ("toplevel", "config"):
+            if fact in vars(self):
+                setattr(child, fact, vars(self)[fact])
+        return child
 
     @cached_property
     def toplevel(self) -> Path:
