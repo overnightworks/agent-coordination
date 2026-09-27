@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "f714af6b20ecd998f923079db9b42cf30373ea7d"
 branch = "claude/issue-503-next-honest-verdicts"
-scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/cut.spec.md", "specs/item.spec.md", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "src/agent_coordination/forge.py", "src/agent_coordination/github.py", "src/agent_coordination/state_board.py", "tests/board_fixtures.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_state_board.py"]
+scope = ["scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "scripts/vulture_whitelist.py", "specs/cut.spec.md", "specs/item.spec.md", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "src/agent_coordination/forge.py", "src/agent_coordination/github.py", "src/agent_coordination/state_board.py", "tests/board_fixtures.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_state_board.py"]
 opened_commit = "337dcc2fa05a8e449a9c19fecd563ade130c05d8"
 whole_reason = "next rät nur, was ein Befehl ausführen kann, und schließt nie offene Arbeit"
