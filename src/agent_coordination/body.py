@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re
 import tomllib
-import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -1419,27 +1418,16 @@ def missing_or_empty_sections(contract: Contract) -> tuple[str, ...]:
     return tuple(name for name, value in contract_fields(contract) if not value)
 
 
-# Characters that end a line although `unicodedata` files them as separators
-# rather than controls (category Zl/Zp).
-_LINE_SEPARATORS = frozenset({"\u2028", "\u2029"})
-
-
-def _breaks_a_line(character: str) -> bool:
-    return character != "\t" and (
-        unicodedata.category(character) == "Cc" or character in _LINE_SEPARATORS
-    )
-
-
 def _slice_title_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, ...]:
     """The rule wherever a body's shape is judged -- `body --check`,
     `check`, `item new`/`item edit` (issue #517 line 2): a slice title is
     one line, since `next` prints it inside a runnable `cut`, so every
-    control character but TAB and every line or paragraph separator is a
-    defect. `board` and `next` keep reading a body stored before this rule,
-    and `next` names such a row instead of printing its `cut`."""
+    `protocol.is_display_control` character is a defect (issue #538).
+    `board` and `next` keep reading a body stored before this rule, and
+    `next` names such a row instead of printing its `cut`."""
     defects: list[ContractDefect] = []
     for position, row in enumerate(slices):
-        breaking = next((character for character in row.title if _breaks_a_line(character)), None)
+        breaking = next(filter(protocol.is_display_control, row.title), None)
         if breaking is not None:
             field = f"slice[{position}].title"
             defects.append(

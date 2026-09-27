@@ -14,7 +14,6 @@ import subprocess
 import sys
 import threading
 import tomllib
-import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -6732,6 +6731,16 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     assert tuple(claim.scope for claim in claimed.values()) == (top_level_scope or row_scope,)
 
 
+# Issue #538: display controls a slice title refuses beside the Cc set --
+# the bidi override and isolate and the zero-width space -- with the code
+# point BODY-63 names.
+_BIDI_AND_ZERO_WIDTH_CONTROLS = (
+    ("\N{RIGHT-TO-LEFT OVERRIDE}", "U+202E"),
+    ("\N{LEFT-TO-RIGHT ISOLATE}", "U+2066"),
+    ("\N{ZERO WIDTH SPACE}", "U+200B"),
+)
+
+
 def _state_ref_container_body(title: str, *slice_titles: str, parent: int | None = None) -> str:
     rows = [{"index": index, "title": row} for index, row in enumerate(slice_titles, start=1)]
     return _state_ref_item_body(title, kind=body.ItemKind.CONTAINER, parent=parent, slice=rows)
@@ -6790,8 +6799,21 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
         "Retitle\x1b]0;pwned\x07",
         "Clear\x1b[2J",
         "Rubout\x7f",
+        *(f"Flip{control}side" for control, _codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS),
     ],
-    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF", "OSC-BEL", "CSI", "DEL"],
+    ids=[
+        "LF",
+        "CR",
+        "FF",
+        "NEL",
+        "LS",
+        "PS",
+        "trailing-LF",
+        "OSC-BEL",
+        "CSI",
+        "DEL",
+        *(codepoint for _control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS),
+    ],
 )
 def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_a_cut(
     monkeypatch: pytest.MonkeyPatch,
@@ -6822,25 +6844,37 @@ def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_
 
 
 def _raw_terminal_controls(text: str) -> set[str]:
-    """Every character in printed `text` a terminal would act on rather than
-    show, apart from the newlines that end its own lines and the TAB
-    `terminal_text` keeps."""
-    return {
-        character
-        for character in text
-        if character not in "\n\t"
-        and (unicodedata.category(character) == "Cc" or character in "\u2028\u2029")
+    """Every character of issue #538's ruled display-control set in printed
+    `text`, apart from the newlines that end its own lines: C0 but TAB, DEL,
+    C1, U+2028/2029, the bidi controls and the zero-width characters, by
+    code point -- stated here rather than asked of
+    `protocol.is_display_control`, so a narrowed predicate cannot narrow
+    this check with it."""
+    ruled_code_points = {
+        *(code_point for code_point in range(0x00, 0x20) if code_point not in {0x09, 0x0A}),
+        *range(0x7F, 0xA0),
+        0x2028,
+        0x2029,
+        0x200E,
+        0x200F,
+        *range(0x202A, 0x202F),
+        *range(0x2066, 0x206A),
+        *range(0x200B, 0x200E),
+        0xFEFF,
     }
+    return {character for character in text if ord(character) in ruled_code_points}
 
 
 def _hostile_work_item_board() -> dict[int, str]:
-    """A top work item carrying a window-retitling OSC, a TAB, U+2028 and an
-    Umlaut in its title and a screen-clearing CSI and DEL in its `Next`
-    line, beside a cuttable container whose slice title tries to close its
-    prose quote and fake a `; run` segment."""
+    """A top work item carrying a window-retitling OSC, a TAB, U+2028, an
+    Umlaut, a bidi override (RLO), a bidi isolate (LRI), a zero-width space,
+    a C1 CSI and an NBSP in its title and a screen-clearing CSI and DEL in
+    its `Next` line, beside a cuttable container whose slice title tries to
+    close its prose quote and fake a `; run` segment."""
     return {
         10: _state_ref_item_body(
-            "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe",
+            "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe\N{RIGHT-TO-LEFT OVERRIDE}RLO"
+            "\N{LEFT-TO-RIGHT ISOLATE}LRI\N{ZERO WIDTH SPACE}ZWSP\x9bCSI\N{NO-BREAK SPACE}NBSP",
             next="wipe \x1b[2J then \x7f Größe",
             scope=["docs/a.md"],
         ),
@@ -6966,13 +7000,22 @@ def _json_title_and_next(out: str) -> tuple[str, str]:
         pytest.param(
             ["next"],
             _printed_title_and_next,
-            ("evil\\x1b]0;pwned\\x07\tÜber\\u2028Größe", "wipe \\x1b[2J then \\x7f Größe"),
+            (
+                "evil\\x1b]0;pwned\\x07\tÜber\N{REVERSE SOLIDUS}u2028Größe"
+                "\N{REVERSE SOLIDUS}u202eRLO\N{REVERSE SOLIDUS}u2066LRI"
+                "\N{REVERSE SOLIDUS}u200bZWSP\\x9bCSI\N{NO-BREAK SPACE}NBSP",
+                "wipe \\x1b[2J then \\x7f Größe",
+            ),
             id="text-escapes-controls",
         ),
         pytest.param(
             ["next", "--json"],
             _json_title_and_next,
-            ("evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe", "wipe \x1b[2J then \x7f Größe"),
+            (
+                "evil\x1b]0;pwned\x07\tÜber\N{LINE SEPARATOR}Größe\N{RIGHT-TO-LEFT OVERRIDE}RLO"
+                "\N{LEFT-TO-RIGHT ISOLATE}LRI\N{ZERO WIDTH SPACE}ZWSP\x9bCSI\N{NO-BREAK SPACE}NBSP",
+                "wipe \x1b[2J then \x7f Größe",
+            ),
             id="json-as-stored",
         ),
     ],
@@ -6984,8 +7027,9 @@ def test_state_ref_next_shows_foreign_title_and_next_line_as_its_format_carries_
     read_title_and_next: Callable[[str], tuple[str, str]],
     shown: tuple[str, str],
 ) -> None:
-    """Issue #532 lines 1 and 3: text shows each control character and
-    U+2028 as its printable escape, TAB and the Umlaut as they are;
+    """Issues #532 lines 1 and 3, #538 line 2: text shows each control
+    character, U+2028, RLO, LRI and ZWSP as its printable escape, TAB, NBSP
+    and the Umlaut as they are;
     `--json` leaves escaping to JSON, so a reader gets both back exactly as
     stored."""
     issue_claim.main(arguments)
@@ -10957,12 +11001,36 @@ def test_cli_claim_replay_without_scope_takes_the_live_claims_own_stored_scope(
     assert client.requests == 0
 
 
-def test_cli_lane_claim_without_scope_refuses_by_name(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("scope_arguments", "refusal"),
+    [
+        pytest.param([], issue_claim.LANE_CLAIM_SCOPE_REQUIRED, id="no-scope"),
+        *(
+            pytest.param(
+                ["--scope", scope_path], protocol.SCOPE_ENTRIES_MUST_BE_CANONICAL, id=control_id
+            )
+            for scope_path, control_id in (
+                ("docs/a\N{RIGHT-TO-LEFT OVERRIDE}b.md", "RLO"),
+                ("docs/a\N{LEFT-TO-RIGHT ISOLATE}b.md", "LRI"),
+                ("docs/a\N{ZERO WIDTH SPACE}b.md", "ZWSP"),
+                ("docs/\x9b2J.md", "C1-CSI"),
+                ("docs/a\tb.md", "TAB"),
+            )
+        ),
+    ],
+)
+def test_cli_lane_claim_refuses_a_missing_or_display_control_scope_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scope_arguments: list[str],
+    refusal: str,
 ) -> None:
     """Issue #337 proof 3: lane mode has no item to derive a scope from, so
-    `required=True`'s removal from `--scope` never reaches it -- omitting it
-    still refuses, by name, and forge-free like every other lane claim."""
+    omitting `--scope` still refuses, by name, and forge-free like every
+    other lane claim. Issue #538 line 3: a `--scope` path holding a
+    character `next` would escape, or a TAB, which `next` keeps but a path
+    refuses (CLAIM-20), refuses with the scope grammar's own sentence before
+    any write."""
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
     git_values = {("branch", "--show-current"): "docs/lane-cleanup"}
@@ -10971,10 +11039,12 @@ def test_cli_lane_claim_without_scope_refuses_by_name(
     )
     _forbid_forge_resolution(monkeypatch)
 
-    status = issue_claim.main(["claim", "--base", BASE, "--branch", "docs/lane-cleanup"])
+    status = issue_claim.main(
+        ["claim", "--base", BASE, "--branch", "docs/lane-cleanup", *scope_arguments]
+    )
 
     assert status == 2
-    assert capsys.readouterr().err == f"ERROR: {issue_claim.LANE_CLAIM_SCOPE_REQUIRED}\n"
+    assert capsys.readouterr().err == f"ERROR: {refusal}\n"
 
 
 def test_cli_claim_replay_reports_the_matching_live_claim_after_an_interrupted_response(
@@ -15922,6 +15992,15 @@ def _toml_syntax_error(text: str) -> str:
             ".agent-claim/board.toml has unknown top-level key bad\\nkey, esc\\x1b[31m",
             id="invalid-control-characters-escaped",
         ),
+        pytest.param(
+            '"a\N{RIGHT-TO-LEFT OVERRIDE}b\N{LEFT-TO-RIGHT ISOLATE}c\N{ZERO WIDTH SPACE}d'
+            '\x9be\tf\N{NO-BREAK SPACE}g" = 1\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml has unknown top-level key a\N{REVERSE SOLIDUS}u202eb"
+            "\N{REVERSE SOLIDUS}u2066c\N{REVERSE SOLIDUS}u200bd\\x9be\tf\N{NO-BREAK SPACE}g",
+            id="invalid-display-controls-escaped-as-next-shows-them",
+        ),
     ],
 )
 def test_land_refuses_a_head_that_changes_its_governing_board_config_before_any_write(
@@ -17761,6 +17840,15 @@ def test_body_check_names_a_body_with_no_recognized_block_as_malformed(
             "(ruling, ruled_on), not both",
             id="default-and-ruling",
         ),
+        *(
+            pytest.param(
+                f'{MINIMAL_BLOCK_TOML}\n[[slice]]\nindex = 1\ntitle = "Flip{control}side"\n',
+                f"slice[0].title: slice[0].title of row 1 holds {codepoint}; "
+                "a slice title stays on one line",
+                id=f"slice-title-{codepoint}",
+            )
+            for control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS
+        ),
     ],
 )
 def test_body_check_names_defects_with_checks_own_sentences(
@@ -19416,6 +19504,17 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
             )
             for case, title in (("empty_title", ""), ("whitespace_title", "   "))
         ),
+        *(
+            pytest.param(
+                complete_contract("Ship it.", slice=slice_entries(f"Flip{control}side")),
+                ("--title", "Write the docs"),
+                (),
+                f"ERROR: body malformed: slice[0].title: slice[0].title of row 1 holds "
+                f"{codepoint}; a slice title stays on one line\n",
+                id=f"slice_title_{codepoint}",
+            )
+            for control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS
+        ),
     ],
 )
 def test_item_new_on_github_refuses_before_creating_anything(
@@ -19428,8 +19527,10 @@ def test_item_new_on_github_refuses_before_creating_anything(
     err: str,
 ) -> None:
     """Issue #444 proof 1 / issue #447 proof 2: an invalid body (the same
-    check `aco check <n>` applies), a possible twin, a parent that is no open
-    container, `--origin`, or a blank `--title` refuses with exit 2 and creates no issue at all."""
+    check `aco check <n>` applies, a slice title holding a display control
+    included), a possible twin, a parent that is no open container,
+    `--origin`, or a blank `--title` refuses with exit 2 and creates no
+    issue at all."""
     client = _item_new_github_client(monkeypatch, tmp_path, piped_body)
     client.recently_closed_issues = closed
 

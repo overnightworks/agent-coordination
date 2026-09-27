@@ -5986,12 +5986,9 @@ def _land_truncated_check_name(name: str) -> str:
 def _land_bounded_refusal(sentence: str) -> str:
     """`sentence` as one bounded refusal line: a pull request's own text
     (a check name, a head's board configuration key) may carry a newline or
-    a terminal escape, so every character that does not print is shown
-    escaped (`\\n`, `\\x1b`) before the length cap applies (issue #505)."""
-    printable = "".join(
-        character if character.isprintable() else character.encode("unicode_escape").decode()
-        for character in sentence
-    )
+    a terminal escape, so it is shown as `next` shows foreign text (`\\n`,
+    `\\x1b`) before the length cap applies (issues #505, #538)."""
+    printable = board.terminal_text(sentence)
     if len(printable) <= LAND_REFUSAL_SENTENCE_LENGTH_LIMIT:
         return printable
     return printable[: LAND_REFUSAL_SENTENCE_LENGTH_LIMIT - 1] + "…"

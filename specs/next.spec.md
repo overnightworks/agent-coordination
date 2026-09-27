@@ -16,7 +16,14 @@ overlap grammar `aco claim`'s own cost line already defines
 owns the `--json` envelope itself (OUT-nn: key order, `ok`, `message`)
 that wraps NEXT-11..13's own action fields. `<n>` is an
 item number, `<label>` an item as `specs/landing-grammar.spec.md` prints
-it, `<s>` an integer score.
+it, `<s>` an integer score. A *display control* -- the one set this file
+owns, which `next` escapes (NEXT-37), `aco land`'s refusal escapes
+(`specs/land.spec.md`), a slice title refuses (`specs/body-block.spec.md`,
+BODY-63) and a scope path refuses (`specs/claim-record.spec.md`, CLAIM-20)
+-- is every control character but TAB (C0, DEL and C1), the line and paragraph
+separators U+2028/U+2029, the bidi controls U+200E, U+200F, U+202A..U+202E
+and U+2066..U+2069, and the zero-width characters U+200B..U+200D and
+U+FEFF; NBSP and every other printable space are text.
 
 ## Behavior table
 
@@ -28,7 +35,7 @@ it, `<s>` an integer score.
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
-| a title, `Next`, slice title or `SKIPPED` reason holds a control character | NEXT-37 | NEXT-11..14 |
+| a title, `Next`, slice title or `SKIPPED` reason holds a display control | NEXT-37 | NEXT-11..14 |
 | its first uncut row's title holds a line break or control character | NEXT-32 | NEXT-14 |
 | a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
 | a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
@@ -52,7 +59,7 @@ it, `<s>` an integer score.
 ## A work item action
 
 - [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>`, exit `0` (see E-NEXT-01).
-- [ ] [NEXT-37] Text shows a control character but TAB, or U+2028/U+2029, in a title, `Next`, slice title or `SKIPPED` reason as its escape: `a\x1b[2J` prints as typed, `Größe` as is; `--json` unchanged.
+- [ ] [NEXT-37] Text shows each display control in a title, `Next`, slice title or `SKIPPED` reason as its escape: `a\x1b[2J` prints as typed; TAB, NBSP and `Größe` as is; `--json` unchanged.
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
 - [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope=<path>` per path of that row, with no `scope unknown`.
 - [ ] [NEXT-04] A still-proposed item adds `expectations unruled: refine before the pull`; a stale ruling adds `ruled <n> landings ago: refine again at the pull` -- never both (see E-NEXT-02).
