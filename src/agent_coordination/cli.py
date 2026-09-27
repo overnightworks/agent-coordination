@@ -3512,7 +3512,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
         _print_item_close_result(result, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
-        named = protocol.ClaimError(error.named(board.item_labeller(body.Storage.STATE_REF)))
+        named = _named_refusal(error, body.Storage.STATE_REF)
         return _refuse(ItemReason.PRECONDITION_FAILED, named, as_json=as_json)
 
 
@@ -3678,11 +3678,12 @@ def _transition_subject(
 
 
 def _claim_intent_from_request(
-    request: protocol.ClaimRequest, operation_id: str
+    request: protocol.ClaimRequest, operation_id: str, item_pin: protocol.ItemPin | None
 ) -> protocol.ClaimIntent:
     """`_request`'s validated `ClaimRequest`, converted to the store's own
     intent (issue #176, §1: `ClaimRequest` stays the CLI-facing input,
-    `ClaimIntent` is what `apply` actually consumes)."""
+    `ClaimIntent` is what `apply` actually consumes), pinned to `item_pin`
+    when the claim's checks judged a state-ref item open (issue #496)."""
     resource_name = None
     resource_value = None
     if request.resource is not None:
@@ -3700,7 +3701,23 @@ def _claim_intent_from_request(
         whole_reason=request.whole_reason,
         resource_name=resource_name,
         resource_value=resource_value,
+        item_pin=item_pin,
     )
+
+
+def _claimed_item_pin(
+    identity: protocol.ClaimIdentity, observed: protocol.ClaimState, storage: body.Storage
+) -> protocol.ItemPin | None:
+    """The state-ref item a claim's checks judged open, pinned to its blob in
+    `observed`, the observation those checks read (issue #496). `None` for a
+    lane, and under `github`, whose forge holds the item's state while the
+    ledger holds no fact of it; `None` too for an item `observed` lacks,
+    which the checks already refuse as missing."""
+    if storage is not body.Storage.STATE_REF or not isinstance(identity, protocol.IssueIdentity):
+        return None
+    item_id = items.format_item_id(identity.issue)
+    oid = observed.items.get(item_id)
+    return None if oid is None else protocol.ItemPin(item_id, oid)
 
 
 def _matching_store_claim(
@@ -5005,36 +5022,21 @@ def _cmd_claim(
         return _refuse(ClaimReason.TARGET_INVALID, error, as_json=as_json)
     except _ClaimBodyInvalidError as error:
         return _refuse(ClaimReason.BODY_INVALID, error, as_json=as_json)
-    except _ClaimConflictError as error:
-        return _refuse(ClaimReason.CLAIM_CONFLICT, error, as_json=as_json)
+    except protocol.ClaimConflictError as error:
+        # `apply()`'s own conflict, met on the observed state or by the
+        # claim's write (CLM-25), whether or not its push was sent; a
+        # transport, git, lineage, or retry-exhaustion failure is another
+        # `ClaimError` and falls to `unavailable` below (CLM-27).
+        named = _named_refusal(error, session.context.config.storage)
+        return _refuse(ClaimReason.CLAIM_CONFLICT, named, as_json=as_json)
     except protocol.ClaimError as error:
         return _refuse(ClaimReason.UNAVAILABLE, error, as_json=as_json)
 
 
-class _ClaimConflictError(protocol.ClaimError):
-    """`apply()`'s own `protocol.ClaimConflictError` -- identity already
-    claimed, claim id already consumed, or a resource conflict -- rewrapped
-    (`_named_claim_conflict`) where `_checked_claim` runs `apply` on the
-    observed state and around the claim's `RunContext.transition` in
-    `_committed_claim` (issue #406, CLM-25; issue #479) so `--json` can
-    choose `claim_conflict` by type. A transport, git, lineage, or
-    retry-exhaustion failure from the commit is a different
-    `protocol.ClaimError` and passes through unwrapped to `_cmd_claim`'s
-    `unavailable` catch-all (CLM-27)."""
-
-
-class _SentClaimConflictError(_ClaimConflictError, protocol.SentWriteError):
-    """A named claim conflict met only after the claim's push was sent: still
-    `claim_conflict` for `claim`, still a sent write for `start` (START-25)."""
-
-
-def _named_claim_conflict(
-    error: protocol.ClaimConflictError, storage: body.Storage
-) -> _ClaimConflictError:
-    named = error.named(board.item_labeller(storage))
-    if isinstance(error, protocol.SentWriteError):
-        return _SentClaimConflictError(named)
-    return _ClaimConflictError(named)
+def _named_refusal(error: protocol.ClaimError, storage: body.Storage) -> protocol.ClaimError:
+    """`error` as a report prints it: naming its item the way `storage`'s
+    board does (issue #471)."""
+    return protocol.ClaimError(error.named(board.item_labeller(storage)))
 
 
 def _claim_write(
@@ -5153,13 +5155,14 @@ def _checked_claim(
         checks=checks,
         target_issue=target_issue,
         replayed=replayed,
-        intent=_claim_intent_from_request(requested, uuid.uuid4().hex),
+        intent=_claim_intent_from_request(
+            requested,
+            uuid.uuid4().hex,
+            _claimed_item_pin(requested.identity, observed, storage),
+        ),
     )
     if replayed is None and not plan.refused:
-        try:
-            protocol.apply(observed, plan.intent)
-        except protocol.ClaimConflictError as error:
-            raise _named_claim_conflict(error, storage) from error
+        protocol.apply(observed, plan.intent)
     return plan
 
 
@@ -5177,12 +5180,9 @@ def _committed_claim(
     if plan.replayed is not None:
         return plan.replayed, tuple(plan.observed.claims.values())
     requested = plan.requested
-    try:
-        new_state = writer.transition(
-            _transition_subject("claim", requested.identity, requested.branch), plan.intent
-        )
-    except protocol.ClaimConflictError as error:
-        raise _named_claim_conflict(error, plan.storage) from error
+    new_state = writer.transition(
+        _transition_subject("claim", requested.identity, requested.branch), plan.intent
+    )
     claimed = new_state.claims[protocol.claim_key(requested.identity, requested.branch)]
     return claimed, tuple(new_state.claims.values())
 
@@ -5506,7 +5506,11 @@ def _check_build_and_claim(
     check_context = context.observed_afresh()
     check_session = _WriteSession(forge=_LazyForge(check_context), release_branch=None)
     requested = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
-    plan = _checked_claim(requested, check_session, revision=trunk)
+    storage = check_context.config.storage
+    try:
+        plan = _checked_claim(requested, check_session, revision=trunk)
+    except protocol.ClaimConflictError as error:
+        raise _named_refusal(error, storage) from error
     if plan.refused:
         _refuse_claim(False, plan.target_issue, plan.checks)
         return 2
@@ -5521,14 +5525,14 @@ def _check_build_and_claim(
         # and fetch anchor start at its claim (CAS-09).
         claimed, claims = _committed_claim(plan, check_context.for_lane_worktree(target.path))
     except protocol.SentWriteError as error:
-        return _report_uncertain_start_claim(error, target)
+        return _report_uncertain_start_claim(_named_refusal(error, storage), target)
     except protocol.ClaimError as error:
         reason = (
             ClaimReason.CLAIM_CONFLICT
-            if isinstance(error, _ClaimConflictError)
+            if isinstance(error, protocol.ClaimConflictError)
             else ClaimReason.UNAVAILABLE
         )
-        return _refuse_built_start(reason, error, target)
+        return _refuse_built_start(reason, _named_refusal(error, storage), target)
     return _report_claim(plan, claimed, claims, as_json=False)
 
 
@@ -5552,7 +5556,7 @@ def _validate_built_worktree(
         ) from error
 
 
-def _report_uncertain_start_claim(error: protocol.SentWriteError, target: _StartTarget) -> int:
+def _report_uncertain_start_claim(error: protocol.ClaimError, target: _StartTarget) -> int:
     """A claim write that failed after its push was sent: the store alone
     knows whether the claim landed, so the worktree it may name stays, and
     the next `start` resumes whichever it finds (START-25)."""

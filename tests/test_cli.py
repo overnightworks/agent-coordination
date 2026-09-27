@@ -2761,9 +2761,13 @@ def test_start_refuses_a_malformed_body_before_no_scope(
     )
 
 
-def _state_ref_item_body(title: str, **block_fields: object) -> str:
-    """An open state-ref task titled `title`, plus whichever further block
-    fields (`scope`, `expectation`) the scenario needs."""
+def _state_ref_item_body(
+    title: str, *, closed_at: str | None = None, **block_fields: object
+) -> str:
+    """A state-ref task titled `title`, open unless it was closed at
+    `closed_at`, plus whichever further block fields (`scope`,
+    `expectation`) the scenario needs."""
+    closure = {} if closed_at is None else {"state": "closed", "closed_at": closed_at}
     data: dict[str, object] = {
         "version": 1,
         "now": "Ship it.",
@@ -2777,6 +2781,7 @@ def _state_ref_item_body(title: str, **block_fields: object) -> str:
             "blocked_by": [],
             "created_at": "2026-09-10T00:00:00Z",
             "updated_at": "2026-09-10T00:00:00Z",
+            **closure,
         },
         **block_fields,
     }
@@ -3033,6 +3038,92 @@ def test_start_keeps_its_worktree_when_a_rival_claim_lands_under_its_sent_push(
     kept = checkout.resolve_path_checkout(worktree)
     assert kept is not None
     assert (kept.kind, kept.branch) == (checkout.CheckoutKind.LINKED_WORKTREE, _START_BRANCH)
+
+
+def _start_in_main_checkout(
+    _monkeypatch: pytest.MonkeyPatch, _repo: Path, _tmp_path: Path
+) -> list[str]:
+    return ["start", "314", "--scope", "src/x.py"]
+
+
+def _claim_in_lane_worktree(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, tmp_path: Path
+) -> list[str]:
+    worktree = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", "-b", "codex/issue-314-lane", str(worktree))
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    return ["claim", "314", "--scope", "src/x.py"]
+
+
+def _close_real_item(
+    repo: Path, remote: Path, *, issue: int, open_oid: protocol.ObjectId
+) -> protocol.ObjectId:
+    """Closes item `issue` on the real ref, as `item close` writes it."""
+    item_id = items.format_item_id(issue)
+    closed = _state_ref_item_body("Fresh Slug Title", closed_at="2026-09-11T00:00:00Z")
+    closed_oid = store.hash_blob(repo, closed.encode())
+    store.commit_transition(
+        observed=fresh_observation(repo, remote),
+        subject=store.TransitionSubject(f"write item {item_id}"),
+        intent=protocol.ItemCloseIntent(
+            protocol.ItemWriteIntent(
+                item_id=item_id,
+                expected=open_oid,
+                new_oid=closed_oid,
+                operation_id=f"close-op-{issue}",
+            ),
+            protocol.IssueIdentity(issue),
+        ),
+    )
+    return closed_oid
+
+
+@pytest.mark.parametrize(
+    "arrange", [_start_in_main_checkout, _claim_in_lane_worktree], ids=["start", "claim"]
+)
+def test_a_claim_whose_item_closes_under_its_rejected_push_refuses_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path, Path], list[str]],
+) -> None:
+    """Issue #496 proof 2: the item is closed after the claim's checks judged
+    it open, so the claim's first push is rejected; the retry re-reads the
+    ref, finds the item's blob no longer the one checked, and refuses with
+    CAS-20's sentence -- no live claim ever stands on the closed item."""
+    repo, bare_remote, open_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    argv = arrange(monkeypatch, repo, tmp_path)
+    real_push = store.GitPushTransport.push
+    close_pending = [True]
+    closed_oids: list[protocol.ObjectId] = []
+
+    def close_lands_first(
+        transport: store.GitPushTransport,
+        *,
+        worktree: Path,
+        remote: str,
+        ref: str,
+        new_oid: protocol.ObjectId,
+    ) -> None:
+        if close_pending:
+            close_pending.clear()
+            closed_oids.append(_close_real_item(repo, bare_remote, issue=314, open_oid=open_oid))
+        real_push(transport, worktree=worktree, remote=remote, ref=ref, new_oid=new_oid)
+
+    monkeypatch.setattr(store.GitPushTransport, "push", close_lands_first)
+
+    status = issue_claim.main(argv)
+
+    [closed_oid] = closed_oids
+    assert status == 2
+    assert capsys.readouterr().err.startswith(
+        f"ERROR: item '{items.format_item_id(314)}' was written since it was read "
+        f"(expected {open_oid}, found '{closed_oid}'); re-read and retry\n"
+    )
+    refetched = store.fetch_state(worktree=repo, remote="origin")
+    assert not refetched.claims
+    assert refetched.items[items.format_item_id(314)] == closed_oid
 
 
 @pytest.mark.parametrize("canonical_remote", ["origin", "hub"])
@@ -7637,6 +7728,90 @@ def test_item_close_refuses_a_claim_that_lands_between_its_first_attempt_and_the
     refetched = store.fetch_state(worktree=worktree, remote=str(bare_remote))
     assert refetched.items[item_id] == open_oid
     assert protocol.claim_key(protocol.IssueIdentity(10), "") in refetched.claims
+
+
+def _claim_pinned_to_item(issue: int, open_oid: protocol.ObjectId) -> protocol.ClaimIntent:
+    return protocol.ClaimIntent(
+        identity=protocol.IssueIdentity(issue),
+        agent="Codex Sol",
+        role="builder",
+        base=protocol.ObjectId("c" * 40),
+        branch=f"codex/issue-{issue}-pinned",
+        scope=("src",),
+        claim_id=protocol.ClaimId(f"claim-{issue}"),
+        operation_id=f"claim-op-{issue}",
+        item_pin=protocol.ItemPin(items.format_item_id(issue), open_oid),
+    )
+
+
+def test_a_pinned_claim_refuses_once_its_item_closes_between_its_rejection_and_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #496 proof 1: a close lands after the claim's checks read the
+    item open and before its first push, so that push is rejected; the retry
+    applies the claim to the fresh state, finds the item's blob no longer
+    the pinned one, and refuses with CAS-20's sentence as a sent write -- the
+    item stays closed and no claim is written."""
+    worktree, bare_remote = _reset_repository(monkeypatch, tmp_path)
+    _use_real_store(monkeypatch)
+    store.bootstrap(worktree=worktree, remote=str(bare_remote))
+    open_oid = _land_real_item(worktree, bare_remote, issue=10, content=b"open\n")
+    item_id = items.format_item_id(10)
+    closed_oid = store.hash_blob(worktree, b"closed\n")
+    close = protocol.ItemCloseIntent(
+        protocol.ItemWriteIntent(
+            item_id=item_id, expected=open_oid, new_oid=closed_oid, operation_id="close-op-10"
+        ),
+        protocol.IssueIdentity(10),
+    )
+    racer = _RaceOnceTransport(
+        lambda: store.commit_transition(
+            observed=fresh_observation(worktree, bare_remote),
+            subject=store.TransitionSubject(f"write item {item_id}"),
+            intent=close,
+        )
+    )
+    subject = store.ClaimTransitionSubject("claim issue 10", item="10")
+    claim = _claim_pinned_to_item(10, open_oid)
+
+    observed = fresh_observation(worktree, bare_remote)
+    with pytest.raises(
+        protocol.SentWriteError,
+        match=(
+            rf"^item '{item_id}' was written since it was read "
+            rf"\(expected {open_oid}, found '{closed_oid}'\); re-read and retry$"
+        ),
+    ):
+        store.commit_transition(observed=observed, subject=subject, intent=claim, transport=racer)
+
+    refetched = store.fetch_state(worktree=worktree, remote=str(bare_remote))
+    assert refetched.items[item_id] == closed_oid
+    assert not refetched.claims
+
+
+def test_a_pinned_claim_on_an_unchanged_open_item_lands_past_an_unrelated_racer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #496 proof 1: a racer that leaves the item's blob untouched
+    rejects the claim's first push as before, and the retry lands the claim
+    with its pin intact."""
+    worktree, bare_remote = _reset_repository(monkeypatch, tmp_path)
+    _use_real_store(monkeypatch)
+    store.bootstrap(worktree=worktree, remote=str(bare_remote))
+    open_oid = _land_real_item(worktree, bare_remote, issue=10, content=b"open\n")
+    racer = _RaceOnceTransport(lambda: _unrelated_racer_commit(worktree, bare_remote))
+    claim = _claim_pinned_to_item(10, open_oid)
+
+    new_state = store.commit_transition(
+        observed=fresh_observation(worktree, bare_remote),
+        subject=store.ClaimTransitionSubject("claim issue 10", item="10"),
+        intent=claim,
+        transport=racer,
+    )
+
+    key = protocol.claim_key(protocol.IssueIdentity(10), claim.branch)
+    assert key in new_state.claims
+    assert key in store.fetch_state(worktree=worktree, remote=str(bare_remote)).claims
 
 
 def test_landing_intent_refuses_a_stale_item_oid_without_writing_anything(

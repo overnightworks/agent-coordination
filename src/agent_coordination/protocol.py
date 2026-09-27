@@ -950,10 +950,26 @@ def parse_schema_toml(content: str, *, tip: ObjectId) -> ClaimState:
 
 
 @dataclass(frozen=True)
+class ItemPin:
+    """The item blob a claim's checks judged open (issue #496): `oid` is
+    `items/<item_id>.md`'s blob in the very observation those checks read."""
+
+    item_id: str
+    oid: ObjectId
+
+
+@dataclass(frozen=True)
 class ClaimIntent:
     """A `claim` transition: adds `claims/<key>.toml`, `ids/<claim_id>`, and
     maybe creates or updates `resources/<name>.toml`. Any role may claim;
-    identity and resource uniqueness are enforced by `apply` itself."""
+    identity and resource uniqueness are enforced by `apply` itself.
+
+    `item_pin`, when set, must still name the item's current blob, checked
+    by `apply` on every attempt: a close -- or any other write -- that lands
+    between a rejected push and its retry refuses the claim instead of
+    leaving a live claim on an item nobody checked (issue #496). Only a
+    state-ref item has one; under `github` the forge holds the item's state
+    and the ledger no fact of it."""
 
     identity: ClaimIdentity
     agent: str
@@ -966,6 +982,7 @@ class ClaimIntent:
     whole_reason: str | None = None
     resource_name: str | None = None
     resource_value: int | None = None
+    item_pin: ItemPin | None = None
 
 
 @dataclass(frozen=True)
@@ -1212,6 +1229,8 @@ def _apply_claim_intent(state: ClaimState, intent: ClaimIntent) -> ClaimState:
             f"claim id {intent.claim_id!r} is already on this ledger, active or "
             "released; release it, then claim again with a fresh claim id"
         )
+    if intent.item_pin is not None:
+        _require_item_unwritten(state, intent.item_pin.item_id, intent.item_pin.oid)
     blocked_by = blocking_claims(tuple(state.claims.values()), intent)
     if blocked_by:
         raise ClaimConflictError(naming=partial(_claimed_by_sentence, intent, blocked_by[0]))
@@ -1291,17 +1310,25 @@ def _apply_release_intent(state: ClaimState, intent: ReleaseIntent) -> ClaimStat
 ITEMS_WRITTEN_SINCE_CHECKED = "items/ was written since this write checked it; re-read and retry"
 
 
+def _require_item_unwritten(state: ClaimState, item_id: str, read: ObjectId) -> None:
+    """Refuses unless `items/<item_id>.md` is still the blob `read` a caller
+    judged it by (CAS-20): an item write's own CAS, and a claim's item pin."""
+    current = state.items.get(item_id)
+    if current != read:
+        raise ClaimUnavailableError(
+            f"item {item_id!r} was written since it was read "
+            f"(expected {read}, found {current!r}); re-read and retry"
+        )
+
+
 def _apply_item_write_intent(state: ClaimState, intent: ItemWriteIntent) -> ClaimState:
     if state.tip is None:
         raise ClaimError(MISSING_STATE_REF)
-    current = state.items.get(intent.item_id)
-    if current != intent.expected:
-        if intent.expected is None:
+    if intent.expected is None:
+        if intent.item_id in state.items:
             raise ClaimUnavailableError(f"item {intent.item_id!r} already exists")
-        raise ClaimUnavailableError(
-            f"item {intent.item_id!r} was written since it was read "
-            f"(expected {intent.expected}, found {current!r}); re-read and retry"
-        )
+    else:
+        _require_item_unwritten(state, intent.item_id, intent.expected)
     if intent.store_expected is not None and dict(state.items) != dict(intent.store_expected):
         raise ClaimUnavailableError(ITEMS_WRITTEN_SINCE_CHECKED)
     new_items = {**state.items, intent.item_id: intent.new_oid}
