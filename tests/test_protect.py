@@ -2660,6 +2660,10 @@ def _bash_move_into_payload(destination: Path) -> dict[str, object]:
     return _bash_payload(f"mv {destination.parent / 'note.txt'} {destination}")
 
 
+def _bash_rm_rf_contents_payload(directory: Path) -> dict[str, object]:
+    return _bash_payload(f"rm -rf {directory}/")
+
+
 _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute directory"
 
 
@@ -2679,7 +2683,15 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         ("{scratch}", _write_target_payload, "repo/into-guarded-worktree.md", 2, "claim first", 1),
         ("{scratch}", _bash_copy_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
         ("{scratch}", _bash_move_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
-        ("{scratch}", _bash_rm_target_payload, "repo/into-guarded-directory", 0, None, 0),
+        ("{scratch}", _bash_rm_target_payload, "repo/into-guarded-directory", 2, "not main", 0),
+        (
+            "{scratch}",
+            _bash_rm_rf_contents_payload,
+            "repo/into-guarded-directory",
+            2,
+            "not main",
+            0,
+        ),
         ("{scratch}", _write_target_payload, "repo/into-own-readme.md", 0, None, 0),
         ("{scratch}", _write_target_payload, "repo/into-outside.md", 0, None, 0),
         (
@@ -2739,7 +2751,8 @@ _MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute dir
         "file-symlink-into-a-guarded-worktree",
         "bash-cp-into-a-directory-symlink-into-a-guarded-checkout",
         "bash-mv-into-a-directory-symlink-into-a-guarded-checkout",
-        "bash-rm-of-a-directory-symlink-into-a-guarded-checkout-allows",
+        "bash-rm-of-a-directory-symlink-into-a-guarded-checkout",
+        "bash-rm-rf-through-a-directory-symlink-into-a-guarded-checkout",
         "file-symlink-into-its-own-checkout-allows",
         "file-symlink-outside-every-repository-allows",
         "file-symlink-from-a-guarded-worktree-into-the-throwaway-checkout",

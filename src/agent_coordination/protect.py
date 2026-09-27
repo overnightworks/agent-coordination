@@ -363,17 +363,16 @@ class _LinkOperation(StrEnum):
     WRITE = "write"
     """Every file tool and every other recognized pattern: lands wherever
     the link points."""
-    MOVE = "move"
-    """`mv`: renames a file link itself -- as a source or as the file
-    destination it replaces -- but moves into a directory link's target; a
-    directory link it names is read as that destination, erring closed."""
-    REMOVE = "remove"
-    """`rm`: removes the link itself, never its target."""
+    REMOVE_OR_RENAME = "remove or rename"
+    """`rm` and `mv`: remove or rename a file link itself -- as `mv`'s
+    source or the file destination it replaces -- never its target. A
+    directory link they name is judged where it lands, erring closed:
+    `rm -rf link/` empties its target and `mv x link` moves into it, and
+    the operand `hook_input` recognizes never says which one is `mv`'s
+    destination (issue #483 review findings)."""
 
     def writes_through(self, link: Path) -> bool:
-        if self is _LinkOperation.MOVE:
-            return link.is_dir()
-        return self is _LinkOperation.WRITE
+        return self is _LinkOperation.WRITE or link.is_dir()
 
 
 def _resolved_path_checkout(
@@ -392,8 +391,8 @@ def _resolved_path_checkout(
     writes through it: such a write still lands in whichever checkout its
     target lies in (issue #483 review findings: a throwaway repository's
     file link, or a directory link `cp` or `mv` writes into, reaching a
-    guarded one); an operation on the link itself never touches the target,
-    so it stays where the link lies. A guarded
+    guarded one); `rm` or `mv` of a file link itself never touches the
+    target, so it stays where the link lies. A guarded
     link's own directory wins, so no link can move a write out of the gate
     that directory already imposes; without `ACO_PROTECT_UNGUARDED` every
     repository is guarded, so the target is never even resolved (issue #483
@@ -677,8 +676,8 @@ def _protect_bash_cwd(payload: dict[str, object]) -> str | None:
 
 
 _LINK_OPERATION_BY_PATTERN = {
-    hook_input.PATTERN_REMOVE: _LinkOperation.REMOVE,
-    hook_input.PATTERN_MOVE: _LinkOperation.MOVE,
+    hook_input.PATTERN_REMOVE: _LinkOperation.REMOVE_OR_RENAME,
+    hook_input.PATTERN_MOVE: _LinkOperation.REMOVE_OR_RENAME,
 }
 
 
