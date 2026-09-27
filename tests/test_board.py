@@ -2857,7 +2857,7 @@ PARENT_ISSUE_REFERENCE = board.IssueReference(REPOSITORY, 79)
         ),
     ],
 )
-def test_closable_container_number_decides_by_kind_open_children_and_uncut_rows(
+def test_closable_container_number_decides_by_kind_children_uncut_rows_next_line_and_body_shape(
     kind: ItemKind,
     children: tuple[board.ChildItem, ...],
     body: str,
