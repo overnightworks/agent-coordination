@@ -54,9 +54,11 @@ from cli_fixtures import (
     _stub_one_git_call,
     arrange_scope_width,
     count_context_reads,
+    fetched_once_then_read,
     main_exit_code,
     run_context_over,
     stub_board_config_tracked,
+    trunk_git_calls,
 )
 from github_fixtures import LANDING_BRANCH, MERGE_COMMIT_SHA, WORK_ITEM_ISSUE
 
@@ -85,11 +87,15 @@ from agent_coordination.session import RunContext
 
 GitHubForge = github.GitHubForge
 
-# Captured before the autouse `_stub_trunk_landings` fixture (below) ever
+# Captured before the autouse `_stub_trunk` fixture (below) ever
 # monkeypatches `checkout.trunk_landings` to `()`: the atomic-landing tests
 # (issue #359) need the real first-parent walk against a real repository,
-# the same way `test_checkout.py`'s own `_LIVE_TRUNK_LANDINGS` does.
+# the same way `test_checkout.py`'s own `_LIVE_TRUNK_LANDINGS` does. A test
+# on a real repository (`_redirect_toplevel`) resolves and fetches its trunk
+# for real as well (issue #488).
 _LIVE_TRUNK_LANDINGS = checkout.trunk_landings
+_LIVE_TRUNK_REF_AFTER = checkout.trunk_ref_after
+_LIVE_FETCH_REMOTE = checkout.fetch_remote
 
 LANDED = protocol.MergedRelease(12)
 
@@ -1847,7 +1853,9 @@ def _redirect_toplevel(monkeypatch: pytest.MonkeyPatch, toplevel: Path) -> None:
     repository this test built itself (issue #322), taking precedence over
     the module's autouse `_isolate_git_toplevel` fake -- every other real
     git call `start`'s own worktree creation runs still reaches real git,
-    unlike a fully faked `checkout._git_output`."""
+    unlike a fully faked `checkout._git_output`, and the trunk is resolved
+    and fetched for real there, undoing the autouse `_stub_trunk` (issue
+    #488)."""
     real_git_output = checkout._git_output
 
     def fake(arguments: list[str], *, directory: Path | None = None) -> str:
@@ -1856,6 +1864,8 @@ def _redirect_toplevel(monkeypatch: pytest.MonkeyPatch, toplevel: Path) -> None:
         return real_git_output(arguments, directory=directory)
 
     monkeypatch.setattr(checkout, "_git_output", fake)
+    monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
+    monkeypatch.setattr(checkout, "fetch_remote", _LIVE_FETCH_REMOTE)
 
 
 def _start_scenario(
@@ -2288,15 +2298,15 @@ def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -
 def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     """Another push moves the trunk after `start` fetched and checked it,
     so the worktree it builds stands on a commit it never checked."""
-    real_fetched_trunk = checkout.fetched_trunk
+    real_trunk_commit = checkout.trunk_commit
 
-    def fetch_then_the_trunk_moves(remote: str) -> str:
-        trunk = real_fetched_trunk(remote)
+    def check_then_the_trunk_moves(trunk: str, *, directory: Path) -> str:
+        checked = real_trunk_commit(trunk, directory=directory)
         _real_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
         _real_git(repo, "push", "-q", "origin", "HEAD:main")
-        return trunk
+        return checked
 
-    monkeypatch.setattr(checkout, "fetched_trunk", fetch_then_the_trunk_moves)
+    monkeypatch.setattr(checkout, "trunk_commit", check_then_the_trunk_moves)
 
 
 def _trunk_moves_while_a_gone_worktree_is_rebuilt(
@@ -2974,8 +2984,11 @@ def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_def
     """Issue #479 (CAS-55): the claim's checks observe the state ref again
     once the trunk fetch is done, while the canonical remote and default
     branch the run already read stay held -- one read of each per
-    directory `start` works in."""
-    _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    directory `start` works in. Issue #488 proof 3: counted at the git
+    launcher, each directory fetches its trunk once and reads the recorded
+    `HEAD` after that fetch."""
+    repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    trunk_calls = trunk_git_calls(monkeypatch, "origin")
     remote_url, default_branch_name = checkout.remote_url, checkout.default_branch_name
     reads: list[tuple[str, Path | None]] = []
 
@@ -2993,6 +3006,7 @@ def test_start_observes_the_state_ref_afresh_without_rereading_its_remote_or_def
     assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
     assert {kind for kind, _directory in reads} == {"remote url", "default branch"}
     assert [read for read in set(reads) if reads.count(read) > 1] == []
+    assert fetched_once_then_read(trunk_calls) == {repo.resolve(): True}
 
 
 def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
@@ -3007,10 +3021,10 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
     wrongly let the claim through."""
     repo, remote, seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     item_id = items.format_item_id(314)
-    real_fetched_trunk = checkout.fetched_trunk
+    real_fetch_remote = checkout.fetch_remote
 
-    def fetch_trunk_then_advance_item(remote: str) -> str:
-        trunk = real_fetched_trunk(remote)
+    def fetch_trunk_then_advance_item(remote: str, *, directory: Path | None = None) -> None:
+        real_fetch_remote(remote, directory=directory)
         advanced = _state_ref_item_body("Fresh Slug Title", scope=["mismatched/path.py"]).encode()
         advanced_oid = store.hash_blob(repo, advanced)
         store.commit_transition(
@@ -3024,10 +3038,9 @@ def test_start_under_state_ref_checks_the_item_as_it_stands_after_the_fetch(
                 operation_id="item-op-314-race",
             ),
         )
-        return trunk
 
     remote_path = remote
-    monkeypatch.setattr(checkout, "fetched_trunk", fetch_trunk_then_advance_item)
+    monkeypatch.setattr(checkout, "fetch_remote", fetch_trunk_then_advance_item)
 
     status = issue_claim.main(["start", "314", "--scope", "src/x.py"])
 
@@ -5837,7 +5850,7 @@ def test_board_reads_priority_configuration_from_the_checkout_root(
     projected = issue_claim._board(run_context_over(client), ())
 
     assert [item.number for item in projected.items] == [21, 20]
-    assert observed == [["rev-parse", "--show-toplevel"]]
+    assert ["rev-parse", "--show-toplevel"] in observed
 
 
 def test_next_names_a_cuttable_container_slice(
@@ -7730,11 +7743,14 @@ def _patch_release_session(
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: agent})
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
     _patch_store_write(monkeypatch, *(_store_claim_from_request(claimed) for claimed in standing))
+    trunk_head = ("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
     if forbid_git:
 
         def git(arguments: list[str], **_kwargs: object) -> str:
             if tuple(arguments) == ("rev-parse", "--show-toplevel"):
                 return "/repo"
+            if tuple(arguments) == trunk_head:
+                return "refs/remotes/origin/main"
             pytest.fail("explicit --claim-id must not inspect checkout branch")
 
         monkeypatch.setattr(checkout, "_git_output", git)
@@ -7742,6 +7758,7 @@ def _patch_release_session(
     git_values = {
         ("branch", "--show-current"): branch or "",
         ("rev-parse", "--show-toplevel"): "/repo",
+        trunk_head: "refs/remotes/origin/main",
     }
     monkeypatch.setattr(
         checkout, "_git_output", lambda arguments, **_kwargs: git_values[tuple(arguments)]
@@ -8550,12 +8567,19 @@ def _default_open_issue_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-# A PR checkout has no origin/main, so the live function would fail loud in CI;
-# tests of trunk_landings itself (tests/test_checkout.py) call
-# _LIVE_TRUNK_LANDINGS.
+# A test's toplevel is a scratch directory with no trunk (`conftest.py`'s
+# `_isolate_git_toplevel`), so the live trunk reads would fail loud; tests of
+# the trunk itself (tests/test_checkout.py, tests/test_session.py) and the
+# real-repository scenarios here (`_redirect_toplevel`) read it live.
 @pytest.fixture(autouse=True)
-def _stub_trunk_landings(monkeypatch: pytest.MonkeyPatch) -> None:
+def _stub_trunk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(
+        checkout,
+        "trunk_ref_after",
+        lambda remote, _recorded_head, **_kwargs: f"refs/remotes/{remote}/main",
+    )
+    monkeypatch.setattr(checkout, "fetch_remote", lambda *_args, **_kwargs: None)
 
 
 @pytest.fixture(autouse=True)
@@ -13597,6 +13621,7 @@ def _refused_trailer_repository(
     _real_git(repo, "add", "work.txt")
     _real_git(repo, "commit", "-q", "-m", "refused landing", "-m", trailer)
     _push_repository_trunk(repo, "origin")
+    _redirect_toplevel(monkeypatch, repo)
     monkeypatch.chdir(repo)
     return repo
 
@@ -13667,9 +13692,9 @@ def test_check_sha_refuses_a_trailer_number_past_the_id_space_only_under_state_r
     classification and never prints an id `aco` cannot take back; under
     `storage = "github"` the same trailer names a forge issue and declares
     as before."""
-    if pin_state_ref:
-        _write_state_ref_pin(tmp_path)
     repo = _refused_trailer_repository(monkeypatch, tmp_path, trailer)
+    if pin_state_ref:
+        _write_state_ref_pin(repo)
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["check", sha])
@@ -13696,8 +13721,8 @@ def test_release_merged_by_sha_refuses_a_contradictory_trailer(
     refuses the same contradictory trailer by the same defect sentence,
     exit `2`, before any write -- `_landed_commit_by_sha`'s own
     `ClassificationDefect` branch."""
-    _write_state_ref_pin(tmp_path)
     repo = _refused_trailer_repository(monkeypatch, tmp_path, trailer)
+    _write_state_ref_pin(repo)
     sha = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["release", "20", "--agent", "Codex Sol", "--merged", sha])
@@ -13810,6 +13835,20 @@ def test_release_merged_removes_a_clean_merged_lane_worktree_and_branch(
     assert not worktree.exists()
     assert checkout.branch_exists(_CLEANUP_BRANCH) is False
     assert "worktree: removed\n" in capsys.readouterr().out
+
+
+def test_release_merged_under_github_fetches_its_trunk_once_for_verification_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #488 proof 3: the merge-commit verification and the worktree
+    cleanup's merged check ask the same fetched trunk, so the run fetches
+    once and reads the recorded `HEAD` after it."""
+    worktree = _release_cleanup_scenario(monkeypatch, tmp_path)
+    trunk_calls = trunk_git_calls(monkeypatch, "origin")
+
+    assert issue_claim.main(["--repo", REPOSITORY, "release", "72", "--merged", "12"]) == 0
+    assert not worktree.exists()
+    assert fetched_once_then_read(trunk_calls) == {(tmp_path / "repo").resolve(): True}
 
 
 def test_release_merged_json_carries_the_worktree_cleanup_outcome(
@@ -14646,9 +14685,10 @@ def test_land_release_routing_reuses_the_verified_classification_for_a_fresh_mer
     -- never a read of anything, pull request body included."""
     work_item = board.WorkItemClassification(board.IssueReference(REPOSITORY, 72))
     no_item = board.NoItemClassification(board.NoItemKind.DOCS)
+    context = run_context_over(FakeForge())
 
-    assert issue_claim._land_release_routing(work_item, MERGE_COMMIT_SHA, REPOSITORY) == 72
-    assert issue_claim._land_release_routing(no_item, MERGE_COMMIT_SHA, REPOSITORY) is None
+    assert issue_claim._land_release_routing(work_item, MERGE_COMMIT_SHA, context) == 72
+    assert issue_claim._land_release_routing(no_item, MERGE_COMMIT_SHA, context) is None
 
 
 def test_land_release_routing_reads_the_merge_commit_trailer_for_a_rerun(
@@ -14665,8 +14705,9 @@ def test_land_release_routing_reads_the_merge_commit_trailer_for_a_rerun(
         (),
     )
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: (landing,))
+    context = run_context_over(FakeForge())
 
-    assert issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, REPOSITORY) is None
+    assert issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, context) is None
 
 
 def test_land_release_routing_refuses_a_rerun_with_no_usable_merge_commit_trailer(
@@ -14677,9 +14718,10 @@ def test_land_release_routing_refuses_a_rerun_with_no_usable_merge_commit_traile
     `Work-Item:` nor a `No-Item:` trailer -- never a bare re-read of the
     pull request's own body."""
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
+    context = run_context_over(FakeForge())
 
     with pytest.raises(ClaimError, match="carries no `Work-Item:` or `No-Item:` trailer"):
-        issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, REPOSITORY)
+        issue_claim._land_release_routing(None, MERGE_COMMIT_SHA, context)
 
 
 def test_land_rerun_recovers_release_routing_after_the_body_changed(
@@ -14758,8 +14800,8 @@ def test_release_branch_selects_a_lane_claim_without_checking_out_that_branch(
     """`--branch` selects the same lane claim `claim --branch` would (issue
     #250), but -- unlike `claim`'s own `--branch` -- never inspects the
     checkout branch at all: `forbid_git` fails the test the moment anything
-    but `rev-parse --show-toplevel` reaches git, so a deleted or foreign
-    worktree can never block this release."""
+    but `rev-parse --show-toplevel` or the trunk's recorded `HEAD` reaches
+    git, so a deleted or foreign worktree can never block this release."""
     standing = request("mine", "Ada", issue=None, branch=LANE_BRANCH, scope=("docs",))
     client = FakeForge()
     if outcome_flags[0] == "--merged":
@@ -14789,8 +14831,9 @@ def test_release_branch_selects_a_coordinator_override_from_another_checkout(
     """The headline scenario (issue #250): naming the lane's own `--branch`
     alongside `--claim-id` for a coordinator-override abandon works from any
     checkout, not only one on the lane branch -- `forbid_git` fails the test
-    the moment anything but `rev-parse --show-toplevel` reaches git, so a
-    checkout left on another branch entirely can never block this release."""
+    the moment anything but `rev-parse --show-toplevel` or the trunk's
+    recorded `HEAD` reaches git, so a checkout left on another branch
+    entirely can never block this release."""
     standing = request(
         "mine", "Ada", issue=None, branch=LANE_BRANCH, role="reviewer", scope=("docs",)
     )
@@ -15421,6 +15464,7 @@ def _check_sha(
     `ref -> sha` resolver over it (issue #359)."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo = _check_trunk_repository(tmp_path)
+    _redirect_toplevel(monkeypatch, repo)
     monkeypatch.chdir(repo)
     return repo, lambda ref: _real_git(repo, "rev-parse", ref).stdout.strip()
 
@@ -16370,13 +16414,18 @@ def test_untracked_board_config_refuses_item_show_in_its_own_json_envelope(
     _assert_json_refusal_object(captured.err, captured.out, reason="precondition_failed")
 
 
-def _scratch_lane_repository(tmp_path: Path) -> tuple[Path, str, str]:
+def _scratch_lane_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, str, str]:
     """A repository with a base commit on `main` and a lane branch one commit
     ahead of it -- `brief`'s own real reads (`rev-parse --verify`, `diff
     --name-only`) run against real git history here, never a hand-typed
-    `_git_output` fake."""
-    repository = tmp_path / "repo"
-    repository.mkdir()
+    `_git_output` fake. It is the isolated toplevel itself (`conftest.py`'s
+    `_isolate_git_toplevel`), so the run's context resolves its trunk -- the
+    local `main`, since no remote was ever fetched -- in the lane's own
+    repository (issue #488)."""
+    monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
+    repository = tmp_path
     _real_git(repository, "init", "-q", "-b", "main")
     _real_git(repository, "config", "user.name", "Test")
     _real_git(repository, "config", "user.email", "test@example.com")
@@ -16412,7 +16461,7 @@ def _brief_claim(
 def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    repository, base, tip = _scratch_lane_repository(tmp_path)
+    repository, base, tip = _scratch_lane_repository(monkeypatch, tmp_path)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
         forge.ItemState.OPEN, "Brief", "The item's own body."
@@ -16444,7 +16493,7 @@ def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
 def test_cli_brief_reports_no_active_claim_with_empty_tip_and_touched_files(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    repository, _base, _tip = _scratch_lane_repository(tmp_path)
+    repository, _base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
         forge.ItemState.OPEN, "Brief", "No claim yet."
@@ -16471,7 +16520,7 @@ def test_cli_brief_reports_no_active_claim_with_empty_tip_and_touched_files(
 def test_cli_brief_reports_branch_not_found_when_the_claim_branch_is_gone(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    repository, base, _tip = _scratch_lane_repository(tmp_path)
+    repository, base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "Gone lane.")
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
@@ -16507,7 +16556,7 @@ def test_cli_brief_refuses_when_the_lane_tip_read_fails_outright(
     one documented "does not resolve" outcome; any other nonzero exit --
     here, a simulated broken git -- is a tool failure, not a missing
     branch, and must refuse instead of printing `branch not found`."""
-    repository, base, _tip = _scratch_lane_repository(tmp_path)
+    repository, base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "Broken git.")
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
@@ -16533,7 +16582,7 @@ def test_cli_brief_json_names_a_failing_item_read_unavailable(
     """BRIEF-19 (issue #432): the item read is a forge call like any other,
     so a failure there is this command's own `unavailable`. It used to escape
     the handler and leave a `--json` caller with an empty stdout."""
-    repository, base, _tip = _scratch_lane_repository(tmp_path)
+    repository, base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
     monkeypatch.setattr(client, "item_reference", _unreadable_item_reference)
@@ -16556,7 +16605,7 @@ def test_cli_brief_json_names_a_failing_item_read_unavailable(
 def test_cli_brief_json_prints_one_object_with_body_claim_tip_and_touched(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    repository, base, tip = _scratch_lane_repository(tmp_path)
+    repository, base, tip = _scratch_lane_repository(monkeypatch, tmp_path)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
         forge.ItemState.OPEN, "Brief", "The item's own body."
@@ -16630,7 +16679,7 @@ def test_cli_brief_touched_lists_only_the_lane_own_change_after_a_trunk_pull(
     """Issue #468: a path another lane landed on trunk, pulled into this
     lane by a merge, is not this lane's change -- TOUCHED diffs from the
     merge base with trunk, never from the claim's base."""
-    repository, base, _tip = _scratch_lane_repository(tmp_path)
+    repository, base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     _land_on_trunk_and_pull_into_lane(repository, "b.py")
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "Pulled.")
@@ -16666,7 +16715,7 @@ def test_cli_brief_refuses_naming_the_trunk_when_no_trunk_resolves(
     """Issue #468 BRIEF-20: with no remote and no local `main` or `master`,
     TOUCHED has no trunk to diff from, so `brief` refuses by naming every
     trunk candidate it tried."""
-    repository, base, _tip = _scratch_lane_repository(tmp_path)
+    repository, base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     _real_git(repository, "branch", "-m", "main", "trunk")
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(forge.ItemState.OPEN, "Brief", "No trunk.")
@@ -16692,20 +16741,17 @@ _REAL_PATH_IS_TRACKED = checkout.path_is_tracked
 def _write_repository_agent_claim_configs(
     toplevel: Path, *, brief_content: str = _DEFAULT_BRIEF_TOML, brief_tracked: bool = True
 ) -> None:
-    """`.agent-claim/board.toml` and `.agent-claim/brief.toml`, both inside a
-    real, initialized git repository at `toplevel`, the resolved checkout
-    toplevel -- under this suite's autouse `_isolate_git_toplevel`
-    (`tests/conftest.py`), that root is `tmp_path`, never the scratch lane
-    repository nested inside it. `board.toml` is always tracked for real, the
-    same proof `test_checkout.py`'s `_tracked_board_config` gives its own
+    """`.agent-claim/board.toml` and `.agent-claim/brief.toml`, both inside
+    the scratch lane repository at `toplevel` (`_scratch_lane_repository`),
+    the resolved checkout toplevel. `board.toml` is always tracked for real,
+    the same proof `test_checkout.py`'s `_tracked_board_config` gives its own
     tracked-file gate: `_LazyForge` reads it (`_board_config`) on every
     happy-path `--step` scenario below, so it must genuinely exist in the
     index rather than lean on the module's blanket `stub_board_config_tracked`
-    (issue #324 review). `brief_tracked=False` leaves `brief.toml` on disk
-    outside git's index, for the genuine untracked-file refusal."""
-    _real_git(toplevel, "init", "-q", "-b", "main")
-    _real_git(toplevel, "config", "user.name", "Test")
-    _real_git(toplevel, "config", "user.email", "test@example.com")
+    (issue #324 review). Staged, never committed, so the lane's own change
+    since trunk stays exactly its one commit. `brief_tracked=False` leaves
+    `brief.toml` on disk outside git's index, for the genuine untracked-file
+    refusal."""
     agent_claim = toplevel / ".agent-claim"
     agent_claim.mkdir(exist_ok=True)
     (agent_claim / "board.toml").write_text("")
@@ -16713,7 +16759,6 @@ def _write_repository_agent_claim_configs(
     (agent_claim / "brief.toml").write_text(brief_content)
     if brief_tracked:
         _real_git(toplevel, "add", board.BRIEF_CONFIG_PATH.as_posix())
-    _real_git(toplevel, "commit", "-q", "-m", "add .agent-claim configs")
 
 
 def _brief_step_scenario(
@@ -16728,8 +16773,8 @@ def _brief_step_scenario(
     gate once the brief.toml check passes (issue #324 review). Returns
     `(base, tip)`; the repository itself is only `monkeypatch.chdir`-ed into,
     never asserted on."""
-    repository, base, tip = _scratch_lane_repository(tmp_path)
-    _write_repository_agent_claim_configs(tmp_path, brief_content=content)
+    repository, base, tip = _scratch_lane_repository(monkeypatch, tmp_path)
+    _write_repository_agent_claim_configs(repository, brief_content=content)
     monkeypatch.setattr(checkout, "path_is_tracked", _REAL_PATH_IS_TRACKED)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
@@ -16879,12 +16924,10 @@ def test_cli_brief_step_refuses_with_no_usable_brief_config(
     tracked-file requirement `_board_config` enforces for `board.toml`'s
     storage pin), proven against the real `path_is_tracked` rather than a
     hand-rolled stub."""
-    repository, _base, _tip = _scratch_lane_repository(tmp_path)
+    repository, _base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     monkeypatch.setattr(checkout, "path_is_tracked", _REAL_PATH_IS_TRACKED)
     if brief_toml_present:
-        _write_repository_agent_claim_configs(tmp_path, brief_tracked=False)
-    else:
-        _real_git(tmp_path, "init", "-q", "-b", "main")
+        _write_repository_agent_claim_configs(repository, brief_tracked=False)
 
     def unused(_self: FakeForge, _number: int) -> forge.ItemReference:
         pytest.fail("brief --step must refuse before reading the item's body")

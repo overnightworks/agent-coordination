@@ -42,6 +42,39 @@ def _stub_one_git_call(
     monkeypatch.setattr(checkout, "_git_run", fake)
 
 
+def trunk_git_calls(monkeypatch: pytest.MonkeyPatch, remote: str) -> list[tuple[str, Path]]:
+    """Every `fetch <remote>` and every read of `<remote>`'s recorded `HEAD`
+    the one git launcher runs from here on, in order, each keyed by the
+    directory git ran in (issue #488): a count at the launcher sees every
+    trunk reader, whichever function asked."""
+    watched = {
+        ("fetch", remote): "fetch",
+        ("symbolic-ref", "--quiet", f"refs/remotes/{remote}/HEAD"): "recorded head",
+    }
+    calls: list[tuple[str, Path]] = []
+    launch = checkout._git_run
+
+    def counting(arguments: list[str], *, directory: Path | None = None) -> process.CapturedResult:
+        kind = watched.get(tuple(arguments))
+        if kind is not None:
+            calls.append((kind, (directory or Path.cwd()).resolve()))
+        return launch(arguments, directory=directory)
+
+    monkeypatch.setattr(checkout, "_git_run", counting)
+    return calls
+
+
+def fetched_once_then_read(calls: list[tuple[str, Path]]) -> dict[Path, bool]:
+    """Per directory that fetched in `calls` (`trunk_git_calls`): whether it
+    fetched exactly once and read the recorded `HEAD` after that fetch."""
+    fetched = {directory for kind, directory in calls if kind == "fetch"}
+    return {
+        directory: calls.count(("fetch", directory)) == 1
+        and ("recorded head", directory) in calls[calls.index(("fetch", directory)) :]
+        for directory in fetched
+    }
+
+
 def _real_git(repository: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *arguments], cwd=repository, check=True, capture_output=True, text=True
