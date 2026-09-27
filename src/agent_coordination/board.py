@@ -30,6 +30,7 @@ from .body import (
     ParsedBody,
     SliceRow,
     Storage,
+    _breaks_a_line,
     body_defect_text,
     closing_fence_delimiter,
     malformed_parsed_body,
@@ -2416,6 +2417,27 @@ def advice_command(*arguments: str | AdviceOption) -> str:
     return shell_command("aco", *arguments)
 
 
+def terminal_text(text: str) -> str:
+    """Foreign `text` -- a title, a `Next` line -- as it may reach a terminal
+    (issue #532): every control character but TAB, and every line or
+    paragraph separator, shown as its printable escape (ESC as `\\x1b`,
+    U+2028 as `\\u2028`), so a title can neither retitle the window nor clear
+    the screen; printable text, `Größe` included, stays as it is. Commands
+    are `shell_command`'s to render, never this owner's."""
+    return "".join(
+        character.encode("unicode_escape").decode() if _breaks_a_line(character) else character
+        for character in text
+    )
+
+
+def quoted_terminal_text(text: str) -> str:
+    """`text` inside prose as one double-quoted span (issue #532, #310
+    finding 190): its own `\\` and `"` are escaped first, so a title such
+    as `x"; run aco claim 9` cannot close the quote and fake a command."""
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{terminal_text(escaped)}"'
+
+
 def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
     """The `claim` advice for item `number` (issue #510): one `--scope` per
     path of `scope`, none at all for `()` -- the item's own body scope, which
@@ -2480,10 +2502,11 @@ class NestedRepairVerdict:
 
 
 @dataclass(frozen=True)
-class LineBreakTitleVerdict:
+class UnprintableTitleVerdict:
     """The first uncut row, the one `cut` links, has a title holding a line
-    break (issue #513): a `cut` command naming it would spread over two
-    printed lines, so only shortening that title to one line helps. `row`
+    break (issue #513) or another control character (issue #532): a `cut`
+    command naming it would spread over two printed lines or reach the
+    terminal raw, so only making that title one printable line helps. `row`
     is the index `cut --row` names that row by."""
 
     row: int
@@ -2506,14 +2529,8 @@ class CloseVerdict:
 # What a container with no open child is up for (issue #503), each verdict
 # carrying the data its own answer needs.
 ChildlessContainerVerdict = (
-    CutVerdict | NestedRepairVerdict | LineBreakTitleVerdict | CheckVerdict | CloseVerdict
+    CutVerdict | NestedRepairVerdict | UnprintableTitleVerdict | CheckVerdict | CloseVerdict
 )
-
-
-def _carries_line_break(title: str) -> bool:
-    # `splitlines` drops each line's ending -- a trailing one included, which
-    # a count of the lines would miss -- so any line break shortens the join.
-    return "".join(title.splitlines()) != title
 
 
 def _childless_container_verdict(
@@ -2524,16 +2541,16 @@ def _childless_container_verdict(
     closable parent all read this answer rather than re-deriving it. An
     uncut `[[slice]]` row is the only thing to cut (#208) -- unless the
     container is itself a child, which `cut` refuses (CUT-03), so only a
-    repair helps, or the row's title holds a line break no one-line advice
-    can carry (issue #513); with no row left, a `Next` line still naming
-    work asks for a `done_when` check, and only one naming none is
-    closable."""
+    repair helps, or the row's title holds a line break or control
+    character no printed one-line advice can carry (issues #513, #532);
+    with no row left, a `Next` line still naming work asks for a
+    `done_when` check, and only one naming none is closable."""
     if nesting_parent is not None and slices:
         return NestedRepairVerdict(nesting_parent)
     if slices:
         first = slices[0]
-        if _carries_line_break(first.title):
-            return LineBreakTitleVerdict(first.index)
+        if terminal_text(first.title) != first.title:
+            return UnprintableTitleVerdict(first.index)
         return CutVerdict()
     if has_further_work(next_line):
         return CheckVerdict(next_line)
@@ -2572,9 +2589,13 @@ def _childless_container_reason(
     match verdict:
         case CutVerdict():
             title = slices[0].title
-            return f'cut slice "{title}"; run {cut_command(number, storage, title)}'
-        case LineBreakTitleVerdict(row=row):
-            return f"slice row {row} title carries a line break; shorten it to one line"
+            command = cut_command(number, storage, title)
+            return f"cut slice {quoted_terminal_text(title)}; run {command}"
+        case UnprintableTitleVerdict(row=row):
+            return (
+                f"slice row {row} title holds a line break or control character; "
+                "make it one printable line"
+            )
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):

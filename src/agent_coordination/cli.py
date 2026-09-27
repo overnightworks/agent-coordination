@@ -2148,9 +2148,10 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
     """The action-specific lines `_next` prints before `parallel:`/`close:`."""
     if isinstance(action, board.WorkItemAction):
         item = action.item
+        label = board.item_label(item.number, storage)
         lines = [
-            f"{board.item_label(item.number, storage)} score {item.score}: {item.title}",
-            f"Next: {item.next_step}",
+            f"{label} score {item.score}: {board.terminal_text(item.title)}",
+            f"Next: {board.terminal_text(str(item.next_step))}",
             f"Run: {_next_action_command(action, storage)}",
         ]
         if action.scope is None:
@@ -2162,13 +2163,13 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
     container_label = board.item_label(action.container.number, storage)
     if isinstance(action, board.CutSliceAction):
         return [
-            f"cut_slice {container_label}: {action.next_step}",
+            f"cut_slice {container_label}: {board.terminal_text(action.next_step)}",
             f"Next: {_next_action_command(action, storage)}",
         ]
     if isinstance(action, board.CheckContainerAction):
         return [
             f"check_container {container_label}: {board.CHECK_DONE_WHEN}",
-            f"Next: {action.next_step}",
+            f"Next: {board.terminal_text(action.next_step)}",
         ]
     progress = action.container_progress
     return [

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import tomllib
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -6786,19 +6787,23 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
             for line_break in ("\n", "\r", "\f", "\u0085", "\u2028", "\u2029")
         ),
         "Line one\n",
+        "Retitle\x1b]0;pwned\x07",
+        "Clear\x1b[2J",
+        "Rubout\x7f",
     ],
-    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF"],
+    ids=["LF", "CR", "FF", "NEL", "LS", "PS", "trailing-LF", "OSC-BEL", "CSI", "DEL"],
 )
-def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
+def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_a_cut(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     title: str,
 ) -> None:
-    """Issues #513 line 2 and #517 line 3: a first uncut row whose title,
-    stored before `item edit` refused it, holds any character that splits a
-    line would split the printed `cut` over two lines, so `next` prints no
-    `cut` for it and names the row to shorten instead."""
+    """Issues #513 line 2, #517 line 3 and #532 line 2: a first uncut row
+    whose title, stored before `item edit` refused it, holds a line break or
+    another control character would split the printed `cut` over two lines
+    or hand it to the terminal raw, so `next` prints no `cut` for it and
+    names the row to fix instead."""
     _real_state_ref_repository(
         monkeypatch,
         tmp_path,
@@ -6810,10 +6815,98 @@ def test_state_ref_next_names_a_slice_title_with_a_line_break_instead_of_a_cut(
 
     assert exit_code == 3
     assert (
-        f"\n{items.format_item_id(50)}: slice row 1 title carries a line break; "
-        "shorten it to one line\n"
+        f"\n{items.format_item_id(50)}: slice row 1 title holds a line break or control "
+        "character; make it one printable line\n"
     ) in out
     assert "cut" not in out
+
+
+def _raw_terminal_controls(text: str) -> set[str]:
+    """Every character in printed `text` a terminal would act on rather than
+    show, apart from the newlines that end its own lines."""
+    return {
+        character
+        for character in text
+        if character != "\n"
+        and (unicodedata.category(character) == "Cc" or character in "\u2028\u2029")
+    }
+
+
+@pytest.fixture
+def hostile_next_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A state-ref board whose top work item carries a window-retitling OSC,
+    U+2028 and an Umlaut in its title and a screen-clearing CSI and DEL in
+    its `Next` line, beside a cuttable container whose slice title tries to
+    close its prose quote and fake a `; run` segment."""
+    _real_state_ref_repository(
+        monkeypatch,
+        tmp_path,
+        {
+            10: _state_ref_item_body(
+                "evil\x1b]0;pwned\x07 Über\N{LINE SEPARATOR}Größe",
+                next="wipe \x1b[2J then \x7f Größe",
+                scope=["docs/a.md"],
+            ),
+            41: _state_ref_container_body("Epic", 'Größe"; run aco claim 9 \\'),
+        },
+    )
+
+
+@pytest.mark.usefixtures("hostile_next_board")
+def test_state_ref_next_text_hands_the_terminal_no_raw_control_character(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #532 lines 1 and 2: `next`'s printed text carries no control
+    character a terminal would act on, and a slice title in `SKIPPED` prose
+    sits inside a quote its own `"` cannot close."""
+    exit_code = issue_claim.main(["next"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert _raw_terminal_controls(out) == set()
+    assert f'\n{items.format_item_id(41)}: cut slice "Größe\\"; run aco claim 9 \\\\"; run ' in out
+
+
+def _printed_title_and_next(out: str) -> tuple[str, str]:
+    action_line, next_line = out.splitlines()[:2]
+    return action_line.split(": ", 1)[1], next_line.removeprefix("Next: ")
+
+
+def _json_title_and_next(out: str) -> tuple[str, str]:
+    payload = json.loads(out)
+    return payload["title"], payload["next"]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "read_title_and_next", "shown"),
+    [
+        pytest.param(
+            ["next"],
+            _printed_title_and_next,
+            ("evil\\x1b]0;pwned\\x07 Über\\u2028Größe", "wipe \\x1b[2J then \\x7f Größe"),
+            id="text-escapes-controls",
+        ),
+        pytest.param(
+            ["next", "--json"],
+            _json_title_and_next,
+            ("evil\x1b]0;pwned\x07 Über\N{LINE SEPARATOR}Größe", "wipe \x1b[2J then \x7f Größe"),
+            id="json-as-stored",
+        ),
+    ],
+)
+@pytest.mark.usefixtures("hostile_next_board")
+def test_state_ref_next_shows_foreign_title_and_next_line_as_its_format_carries_them(
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+    read_title_and_next: Callable[[str], tuple[str, str]],
+    shown: tuple[str, str],
+) -> None:
+    """Issue #532 lines 1 and 3: text shows each control character and
+    U+2028 as its printable escape and the Umlaut as it is; `--json` leaves
+    escaping to JSON, so a reader gets both back exactly as stored."""
+    issue_claim.main(arguments)
+
+    assert read_title_and_next(capsys.readouterr().out) == shown
 
 
 def test_state_ref_next_claim_in_a_skipped_reason_runs_past_a_higher_ranked_item(
