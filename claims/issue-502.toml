@@ -1,0 +1,8 @@
+claim_id = "efd9fd4fcfb746b48c50bdf4b0049448"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "f714af6b20ecd998f923079db9b42cf30373ea7d"
+branch = "claude/issue-502-no-abbrev"
+scope = ["scripts/test_budget_ratchet.txt", "specs/output.spec.md", "specs/reset.spec.md", "src/agent_coordination/cli.py", "tests/cli_fixtures.py", "tests/test_cli.py"]
+opened_commit = "431ac3ca5aae7322b945f32344be3d2c2b1ab06e"
+whole_reason = "keine abgekürzten Optionen mehr, damit ein zerstörender Befehl nie durch eine Abkürzung ausgelöst wird"
