@@ -14,7 +14,6 @@ import subprocess
 import sys
 import threading
 import tomllib
-import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
@@ -6845,16 +6844,25 @@ def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_
 
 
 def _raw_terminal_controls(text: str) -> set[str]:
-    """Every character in printed `text` a terminal would act on rather than
-    show, apart from the newlines that end its own lines and TAB: every
-    control and format character and the line and paragraph separators --
-    stated here rather than asked of `protocol.is_display_control`, so a
-    narrowed predicate cannot narrow this check with it."""
-    return {
-        character
-        for character in text
-        if character not in "\n\t" and unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}
+    """Every character of issue #538's ruled display-control set in printed
+    `text`, apart from the newlines that end its own lines: C0 but TAB, DEL,
+    C1, U+2028/2029, the bidi controls and the zero-width characters, by
+    code point -- stated here rather than asked of
+    `protocol.is_display_control`, so a narrowed predicate cannot narrow
+    this check with it."""
+    ruled_code_points = {
+        *(code_point for code_point in range(0x00, 0x20) if code_point not in {0x09, 0x0A}),
+        *range(0x7F, 0xA0),
+        0x2028,
+        0x2029,
+        0x200E,
+        0x200F,
+        *range(0x202A, 0x202F),
+        *range(0x2066, 0x206A),
+        *range(0x200B, 0x200E),
+        0xFEFF,
     }
+    return {character for character in text if ord(character) in ruled_code_points}
 
 
 def _hostile_work_item_board() -> dict[int, str]:
