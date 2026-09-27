@@ -1,0 +1,8 @@
+claim_id = "56139aa9dacc434d9e88b5e6209701da"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "99e35fa70fc692e0bb907e18fc6076f572ee8d3f"
+branch = "claude/issue-540-terminal-safe-printers"
+scope = ["scripts/test_budget_ratchet.txt", "specs/claim.spec.md", "specs/next.spec.md", "specs/release.spec.md", "specs/rulings.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "src/agent_coordination/session.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_protocol.py"]
+opened_commit = "71291f6a085a8a354f66f9f405acb176593f5ab0"
+whole_reason = "four one-line printers routed through the one terminal-safe owner, and the ruled set's three additions"
