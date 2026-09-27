@@ -27,8 +27,10 @@ it, `<s>` an integer score.
 | no actionable item at all | NEXT-01 | NEXT-01 |
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
-| a container qualifies to be cut | NEXT-05, NEXT-27 | NEXT-12 |
-| that container is itself a child of another item | NEXT-25, NEXT-29 | NEXT-14 |
+| a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
+| its first uncut row's title holds a line break | NEXT-32 | NEXT-14 |
+| a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
+| that container is itself a child of another item | NEXT-25, NEXT-29, NEXT-33 | NEXT-14 |
 | a childless container has no further `Next` work | NEXT-07 | NEXT-13 |
 | that same container still names further work | NEXT-06 | NEXT-13 |
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
@@ -39,6 +41,7 @@ it, `<s>` an integer score.
 | a candidate names no scope of its own | NEXT-17 | NEXT-15 |
 | a closable container or recovery item, any rank | NEXT-18, NEXT-19, NEXT-28 | NEXT-14 |
 | neither exists | NEXT-20 | NEXT-14 |
+| any item under `storage = "state-ref"` | its id, as labels print it | NEXT-35 |
 
 ## No actionable item
 
@@ -48,23 +51,27 @@ it, `<s>` an integer score.
 
 - [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>`, exit `0` (see E-NEXT-01).
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
-- [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope <path>` per path of that row, with no `scope unknown`.
+- [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope=<path>` per path of that row, with no `scope unknown`.
 - [ ] [NEXT-04] A still-proposed item adds `expectations unruled: refine before the pull`; a stale ruling adds `ruled <n> landings ago: refine again at the pull` -- never both (see E-NEXT-02).
 - [ ] [NEXT-23] A scopeless, sliceless item still qualifies as this action (`scope unknown`, NEXT-03); `claim`/`start`'s own precedence check reads a narrower rule (`specs/claim.spec.md` CLM-23).
 
 ## A container's own action
 
-- [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title <cut title>`, exit `0` (see E-NEXT-03).
-- [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: title `Say "hi" to $HOME` prints `--title 'Say "hi" to $HOME'`.
+- [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title=<cut title>`, exit `0` (see E-NEXT-03).
+- [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: title `Say "hi" to $HOME` prints `--title='Say "hi" to $HOME'`.
+- [ ] [NEXT-31] An advice command attaches each option's value as `--title=<quoted>` or `--scope=<quoted>`, so a value starting with `-` still reaches it: title `-draft` prints `--title=-draft`.
+- [ ] [NEXT-32] A first uncut row whose title holds a line break gets no `cut`; `SKIPPED` reads `slice row <i> title carries a line break; shorten it to one line` (E-NEXT-10).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
 - [ ] [NEXT-25] A childless container with an uncut row that is a child of any item -- any type, open or closed, any repository -- never gets `cut_slice` (CUT-03); `SKIPPED` names its repair (E-NEXT-09).
-- [ ] [NEXT-29] That repair for one row claims as the retyped item's `Run:` will (NEXT-03): bare with a top-level `scope`, else `--scope <path>` per row path, else `--scope <paths>` (E-NEXT-09).
+- [ ] [NEXT-29] That repair for one row claims as the retyped item's `Run:` will (NEXT-03): bare with a top-level `scope`, else `--scope=<path>` per row path, else `--scope <paths>` (E-NEXT-09).
+- [ ] [NEXT-33] Every claim a `SKIPPED` reason names ends `--out-of-order <reason>`, since a skipped item is never the first action; `<reason>`, like `<paths>`, is for the agent to fill in.
 
 ## `RECOVERY` and `SKIPPED`
 
 - [ ] [NEXT-08] Every other unworkable item is named once under a trailing `SKIPPED` block, `<label>: <reason>`; a container `next` itself recommends cutting or closing is left out of that list.
 - [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
+- [ ] [NEXT-34] A NEXT-05 container that is not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, never `container; claim a child` (E-NEXT-10).
 - [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED`, in text or `--json` (see E-NEXT-06).
 
 ## `parallel:`
@@ -89,6 +96,7 @@ it, `<s>` an integer score.
 - [ ] [NEXT-13] A close or check proposal's `reason` is `"close_container"` or `"check_container"` (`ok: true`), adding `number`, `closed`, `total`, `next_step` (`null` on close), never `command`.
 - [ ] [NEXT-14] The object always carries `recovery` (`{number, title, step}` each), `skipped` (`{number, reason}` each), and `close` (a bare number array), independent of `reason`.
 - [ ] [NEXT-15] `parallel` always carries `first_scope_unknown`, `candidates` (`{number, scope}` each, uncapped), and `scope_unknown` (a bare number array).
+- [ ] [NEXT-35] Under `storage = "state-ref"` each item these fields name, `number` included, is the `aco-xxxxxx` id the text prints, a string in place of the bare number.
 - [ ] [NEXT-24] `--json` on a dispatched refusal (BOARD-02, BOARD-42) prints OUT-nn's envelope with the sentence as `message` and `reason` from the table below, exit `2` (see E-NEXT-08).
 
 `reason`, by which refusal fired:
@@ -154,7 +162,7 @@ Setup: bare-remote, fake `gh`, container `#181`, no open child, one `[[slice]]` 
 ```console
 $ aco next
 cut_slice #181: Scheibe C
-Next: aco cut 181 --title 'Scheibe C'
+Next: aco cut 181 --title='Scheibe C'
 parallel: none
 scope unknown: none
 close: none
@@ -226,7 +234,7 @@ Setup: bare-remote, fake `gh`, container `#181` as in E-NEXT-03
 
 ```console
 $ aco next --json
-{"ok": true, "reason": "cut_slice", "number": 181, "title": "Epic", "slice": "Scheibe C", "cut_title": "Scheibe C", "command": "aco cut 181 --title 'Scheibe C'", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": false, "candidates": [], "scope_unknown": []}, "close": []}
+{"ok": true, "reason": "cut_slice", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": false, "candidates": [], "scope_unknown": []}, "close": [], "number": 181, "title": "Epic", "slice": "Scheibe C", "cut_title": "Scheibe C", "command": "aco cut 181 --title='Scheibe C'"}
 exit 0
 ```
 
@@ -254,11 +262,29 @@ close: none
 
 SKIPPED
 #298: container; claim a child
-#299: nested container, which cut refuses; run aco item edit 299 --kind task and claim it with aco claim 299 --scope docs/z.md
+#299: nested container, which cut refuses; run aco item edit 299 --kind task and claim it with aco claim 299 --scope=docs/z.md --out-of-order <reason>
 exit 3
 $ aco cut 299 --title "Scheibe Z"
 2> ERROR: #299 is itself a child of example/agent-coordination#298; nested containers are not supported
 exit 2
 ```
 
-The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; the named claim then claims the row's paths, and once retyped `next`'s own `Run:` line names that same claim (NEXT-30). A container naming its own top-level `scope` ends the reason `claim it with aco claim 299` instead, the claim that derives that scope (NEXT-03); a row without a `scope` of its own, under a container without one, ends it `claim it with aco claim 299 --scope <paths>`. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
+The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; the named claim then claims the row's paths past any higher-ranked free item (NEXT-33), and once retyped `next`'s own `Run:` line names that same claim without `--out-of-order <reason>` (NEXT-30). A container naming its own top-level `scope` ends the reason `claim it with aco claim 299 --out-of-order <reason>` instead, the claim that derives that scope (NEXT-03); a row without a `scope` of its own, under a container without one, ends it `claim it with aco claim 299 --scope <paths> --out-of-order <reason>`. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
+
+### E-NEXT-10 — a second cuttable container, and a row title holding a line break
+
+Setup: bare-remote, fake `gh`, containers `#181`, `#183` and `#184`, each with no open child; `#181`'s row is `Scheibe C` and `#183`'s `-draft`, both with `scope = ["docs/c.md"]`; `#184`'s row 2 is titled `Zeile eins`, a line break, `Zeile zwei`
+
+```console
+$ aco next
+cut_slice #181: Scheibe C
+Next: aco cut 181 --title='Scheibe C'
+parallel: none
+scope unknown: none
+close: none
+
+SKIPPED
+#183: cut slice "-draft"; run aco cut 183 --title=-draft
+#184: slice row 2 title carries a line break; shorten it to one line
+exit 0
+```
