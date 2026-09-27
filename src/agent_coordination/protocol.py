@@ -1221,6 +1221,8 @@ def _apply_claim_intent(state: ClaimState, intent: ClaimIntent) -> ClaimState:
         # refuse instead of silently creating `refs/aco/state` as a side
         # effect (issue #176 slice-review finding 1).
         raise ClaimError(MISSING_STATE_REF)
+    if intent.item_pin is not None:
+        _require_item_unwritten(state, intent.item_pin.item_id, intent.item_pin.oid)
     live = _live_claim_by_id(state, intent.claim_id)
     if intent.claim_id in state.consumed_ids:
         if live is not None and _claim_matches_intent(live[1], intent):
@@ -1229,8 +1231,6 @@ def _apply_claim_intent(state: ClaimState, intent: ClaimIntent) -> ClaimState:
             f"claim id {intent.claim_id!r} is already on this ledger, active or "
             "released; release it, then claim again with a fresh claim id"
         )
-    if intent.item_pin is not None:
-        _require_item_unwritten(state, intent.item_pin.item_id, intent.item_pin.oid)
     blocked_by = blocking_claims(tuple(state.claims.values()), intent)
     if blocked_by:
         raise ClaimConflictError(naming=partial(_claimed_by_sentence, intent, blocked_by[0]))

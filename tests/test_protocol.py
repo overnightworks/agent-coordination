@@ -441,6 +441,33 @@ def test_apply_item_close_intent_refuses_while_the_item_is_claimed() -> None:
 
 
 @pytest.mark.parametrize(
+    "items_after_the_claim",
+    [
+        pytest.param({_LANDING_ITEM_ID: _LANDING_ITEM_NEW_OID}, id="edited"),
+        pytest.param({}, id="gone"),
+    ],
+)
+def test_apply_claim_intent_replaying_its_own_claim_refuses_once_its_pinned_item_changed(
+    items_after_the_claim: dict[str, protocol.ObjectId],
+) -> None:
+    """Issue #496 / CAS-59: the item pin is checked on every attempt, the
+    retry of a claim whose own earlier push already landed included -- its
+    consumed claim id does not let it past an item written since."""
+    pinned = replace(
+        _claim_intent(), item_pin=protocol.ItemPin(_LANDING_ITEM_ID, _LANDING_ITEM_OID)
+    )
+    claimed = protocol.apply(
+        replace(_STATE_WITH_TIP, items={_LANDING_ITEM_ID: _LANDING_ITEM_OID}), pinned
+    )
+
+    with pytest.raises(
+        protocol.ClaimUnavailableError,
+        match=rf"^item '{_LANDING_ITEM_ID}' was written since it was read ",
+    ):
+        protocol.apply(replace(claimed, items=items_after_the_claim), pinned)
+
+
+@pytest.mark.parametrize(
     ("held", "conflicting_identity", "forge_sentence", "named_sentence"),
     [
         pytest.param(
