@@ -14924,19 +14924,25 @@ def _leave_hub_refs_without_a_url(monkeypatch: pytest.MonkeyPatch, repo: Path) -
     _real_git(repo, "config", "--remove-section", "remote.hub")
 
 
-def _leave_hub_a_global_prune_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+def _leave_hub_never_added(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, _isolated_global_config: Path
+) -> None:
+    _leave_hub_unconfigured(monkeypatch, repo)
+
+
+def _leave_hub_a_global_prune_line(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, isolated_global_config: Path
+) -> None:
     """A global `[remote "hub"] prune = true` makes git list `hub` though
-    no configuration gives it a URL, written into the isolated global
-    configuration `isolated_global_git_config` points git at -- never a
-    file outside this test's own directory, which may be the operator's."""
+    no configuration gives it a URL, written only into the file
+    `isolated_global_git_config` returned -- never the operator's own."""
     _leave_hub_refs_without_a_url(monkeypatch, repo)
-    global_config = Path(os.environ["GIT_CONFIG_GLOBAL"])
-    if not global_config.is_relative_to(repo.parent):
-        pytest.fail(f"{global_config} is not this test's isolated_global_git_config")
-    global_config.write_text('[remote "hub"]\n\tprune = true\n')
+    isolated_global_config.write_text('[remote "hub"]\n\tprune = true\n')
 
 
-def _leave_hub_a_local_fetch_line(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+def _leave_hub_a_local_fetch_line(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, _isolated_global_config: Path
+) -> None:
     """A local `remote.hub.fetch` without `remote.hub.url`."""
     _leave_hub_refs_without_a_url(monkeypatch, repo)
     _real_git(repo, "config", "remote.hub.fetch", "+refs/heads/*:refs/remotes/hub/*")
@@ -14988,7 +14994,6 @@ def _reset_confirmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[st
     return [*_reset_dry_run(monkeypatch, tmp_path), "--confirm"]
 
 
-@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize(
     ("arrange", "expected_out"),
     [
@@ -15012,7 +15017,7 @@ def _reset_confirmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[st
 @pytest.mark.parametrize(
     "unconfigure_hub",
     [
-        pytest.param(_leave_hub_unconfigured, id="never-added"),
+        pytest.param(_leave_hub_never_added, id="never-added"),
         pytest.param(_leave_hub_a_global_prune_line, id="global-prune-without-url"),
         pytest.param(_leave_hub_a_local_fetch_line, id="local-fetch-without-url"),
     ],
@@ -15021,9 +15026,10 @@ def test_every_command_names_a_canonical_remote_with_no_url_configured(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    isolated_global_git_config: Path,
     arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
     expected_out: str,
-    unconfigure_hub: Callable[[pytest.MonkeyPatch, Path], None],
+    unconfigure_hub: Callable[[pytest.MonkeyPatch, Path, Path], None],
 ) -> None:
     """Issue #508 proof 1, against real git: the board names `hub`, which
     this clone never added, so `start`, `release --merged`, `board`,
@@ -15038,7 +15044,7 @@ def test_every_command_names_a_canonical_remote_with_no_url_configured(
     BOOT-04, RESET-18)."""
     argv = arrange(monkeypatch, tmp_path)
     repo = tmp_path / "repo"
-    unconfigure_hub(monkeypatch, repo)
+    unconfigure_hub(monkeypatch, repo, isolated_global_git_config)
     refs_before = _real_git(repo, "for-each-ref").stdout
     claims_before = store.fetch_state(worktree=repo, remote="hub").claims
     client = github.GitHubForge(github.repository_id(REPOSITORY))
