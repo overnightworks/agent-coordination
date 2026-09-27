@@ -42,7 +42,9 @@ from test_cli import (
     _assert_json_refusal_object,
     _lane,
     _patch_store_write,
+    _real_state_ref_start_scenario,
     _single_item_board_environment,
+    _state_ref_item_body,
 )
 from test_state_board import (
     _blank_title_item,
@@ -176,9 +178,8 @@ def _request(
 
 
 @dataclass
-class ServedBoard:
+class ServedServer:
     server: board_serve.BoardServer
-    client: FakeForge
 
     def get(
         self, *, token: str | None, refused: str | None = None, reload: bool = False
@@ -197,22 +198,34 @@ class ServedBoard:
         return _request(self.server, "POST", "/rule", body=urlencode(fields))
 
 
+@dataclass
+class ServedBoard(ServedServer):
+    client: FakeForge
+
+
 @contextmanager
-def _serving(client: FakeForge) -> Iterator[ServedBoard]:
-    parsed = issue_claim._parser().parse_args(["--repo", REPOSITORY, "board", "--serve"])
+def _bound_server(repo: forge.RepositoryId | None) -> Iterator[ServedServer]:
+    """A real `board --serve` of `repo` (`None`: the checkout's own, as a
+    state-ref run names it), running on its own thread until the block ends."""
+    parsed = issue_claim._parser().parse_args(["board", "--serve"])
     session = issue_claim._WriteSession(
-        forge=issue_claim._LazyForge(issue_claim._run_context(github.repository_id(parsed.repo))),
-        release_branch=None,
+        forge=issue_claim._LazyForge(issue_claim._run_context(repo)), release_branch=None
     )
     server = issue_claim._board_server(parsed, session)
     thread = threading.Thread(target=server.httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        yield ServedBoard(server, client)
+        yield ServedServer(server)
     finally:
         server.httpd.shutdown()
         server.httpd.server_close()
         thread.join(timeout=5)
+
+
+@contextmanager
+def _serving(client: FakeForge) -> Iterator[ServedBoard]:
+    with _bound_server(github.repository_id(REPOSITORY)) as bound:
+        yield ServedBoard(bound.server, client)
 
 
 @pytest.fixture
@@ -422,16 +435,58 @@ def test_the_reload_link_redirects_so_a_later_plain_refresh_does_not_rebuild(
     assert "Renamed item" not in plain_body
 
 
-def _served_request(served: ServedBoard, request: str) -> None:
+@dataclass(frozen=True)
+class _CountedServe:
+    """One storage's served board for the per-request count: the repository
+    its run names, the checkout every read lands in, the item a click
+    rules, and whether that click observes `refs/aco/state` (issue #477) --
+    a state-ref click builds its board from its own request's observation,
+    a github one writes the forge alone."""
+
+    repo: forge.RepositoryId | None
+    checkout: Path
+    item: int
+    ruling_observes: bool
+
+
+def _github_served_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedServe:
+    _served_board_environment(monkeypatch, tmp_path)
+    return _CountedServe(
+        github.repository_id(REPOSITORY), tmp_path, SERVED_ITEM, ruling_observes=False
+    )
+
+
+def _state_ref_served_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedServe:
+    """The real state-ref checkout `start` is proven on, its item #314 given
+    the open line a click rules, its `origin` named as `test_cli.py`'s own
+    autouse stub names it."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda _remote, **_kwargs: f"git@github.com:{REPOSITORY}.git"
+    )
+    monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
+    repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    rulable = _state_ref_item_body("Rulable", expectation=[proposed_expectation(OPEN_LINE_TEXT)])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(rulable))
+    assert issue_claim.main(["item", "edit", "314"]) == 0
+    return _CountedServe(None, repo, 314, ruling_observes=True)
+
+
+def _served_request(served: ServedServer, request: str, item: int) -> None:
     token = served.server.token
     if request == "post":
-        served.post_rule(
-            {"t": token, "item": str(SERVED_ITEM), "line": "1", "outcome": "yes", "note": ""}
-        )
+        served.post_rule({"t": token, "item": str(item), "line": "1", "outcome": "yes", "note": ""})
     else:
         served.get(token=token, reload=request == "reload")
 
 
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_github_served_board, id="github"),
+        pytest.param(_state_ref_served_board, id="state-ref"),
+    ],
+)
 @pytest.mark.parametrize(
     ("requests", "reads_made"),
     [
@@ -442,6 +497,7 @@ def _served_request(served: ServedBoard, request: str) -> None:
 def test_every_request_reads_the_repository_through_its_own_fresh_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], _CountedServe],
     requests: tuple[str, ...],
     reads_made: tuple[str, ...],
 ) -> None:
@@ -450,24 +506,27 @@ def test_every_request_reads_the_repository_through_its_own_fresh_context(
     context of its own, never one another request built. A request that
     needs the repository -- a rebuild or a ruling click -- reads it through
     that child exactly once, and one the held page answers reads nothing.
-    A rebuild also observes `refs/aco/state` exactly once (issue #477); a
-    ruling click writes the forge alone and never observes it.
+    The startup build and every rebuild also observe `refs/aco/state`
+    exactly once (issue #477, CAS-53); so does a ruling click under
+    `state-ref`, while under `github` a click writes the forge alone and
+    never observes it.
     A context memoised across requests would leave the second of two
     reloads reading nothing; one built only to rebuild or click would leave
     the cached first GET without a child."""
-    client = _served_board_environment(monkeypatch, tmp_path)
+    served = arrange(monkeypatch, tmp_path)
     reads = count_context_reads(monkeypatch)
     children = _record_fresh_contexts(monkeypatch)
+    rebuild: CountedReads = ({None: 1}, {served.checkout: 1}, {served.checkout: 1})
     expected_by_kind: dict[str, CountedReads] = {
-        "rebuild": ({None: 1}, {tmp_path: 1}, {tmp_path: 1}),
-        "ruling": ({None: 1}, {tmp_path: 1}, {}),
+        "rebuild": rebuild,
+        "ruling": rebuild if served.ruling_observes else (rebuild[0], rebuild[1], {}),
         "held": ({}, {}, {}),
     }
 
-    with _serving(client) as served:
+    with _bound_server(served.repo) as server:
         counted = [(reads.drain(), len(children))]
         for request in requests:
-            _served_request(served, request)
+            _served_request(server, request, served.item)
             counted.append((reads.drain(), len(children)))
 
     expected_reads = [expected_by_kind[kind] for kind in ("rebuild", *reads_made)]

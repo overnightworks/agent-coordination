@@ -2229,7 +2229,9 @@ def test_start_refuses_a_malformed_body_before_no_scope(
     )
 
 
-def _state_ref_item_body(title: str, *, scope: list[str] | None = None) -> str:
+def _state_ref_item_body(title: str, **block_fields: object) -> str:
+    """An open state-ref task titled `title`, plus whichever further block
+    fields (`scope`, `expectation`) the scenario needs."""
     data: dict[str, object] = {
         "version": 1,
         "now": "Ship it.",
@@ -2244,9 +2246,8 @@ def _state_ref_item_body(title: str, *, scope: list[str] | None = None) -> str:
             "created_at": "2026-09-10T00:00:00Z",
             "updated_at": "2026-09-10T00:00:00Z",
         },
+        **block_fields,
     }
-    if scope is not None:
-        data["scope"] = scope
     return f"Prose.\n\n```agent-claim\n{body.render_block(data)}```\n"
 
 
