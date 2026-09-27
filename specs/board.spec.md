@@ -18,7 +18,7 @@ that page writes is `specs/rule.spec.md`'s (RULE-01..09);
 `specs/output.spec.md` owns the `--json` envelope itself (OUT-nn: key
 order, `ok`, `message`) that wraps BOARD-11's own top-level keys.
 `--serve`'s own request/response wire contract is not specified here beyond
-the held page, its age, and its rebuilds (BOARD-46..51). `board`'s own ranking, scoring, and per-item
+the held page, its age, and its rebuilds (BOARD-46..52). `board`'s own ranking, scoring, and per-item
 field semantics (`score`, `priority_bucket`, `age_days`, ...) are
 pre-existing, untouched behaviour this lane does not re-derive into
 criteria; each item's own `actionable`/`actionable_reason` fields are the
@@ -56,7 +56,7 @@ included.
 | an already-ruled `[[expectation]]` line | — | BOARD-36, BOARD-37, BOARD-38 | BOARD-36, BOARD-37, BOARD-38 |
 | `--new-token` given without `--serve` | BOARD-39, BOARD-43 | BOARD-39 | — |
 | the token file's own content, or its directory's mode | — | — | BOARD-40, BOARD-41 |
-| a repeated page request, a ruling click, or the reload link | — | — | BOARD-46, BOARD-47, BOARD-48, BOARD-50, BOARD-51 |
+| a repeated page request, a ruling click, or the reload link | — | — | BOARD-46, BOARD-47, BOARD-48, BOARD-50, BOARD-51, BOARD-52 |
 | a client hanging up mid-response | — | — | BOARD-49 |
 
 ## No output mode
@@ -130,6 +130,7 @@ does, before either reads a single issue -- cited there, not restated.
 - [ ] [BOARD-49] A client that hangs up mid-response leaves stderr empty; any other request error still prints its traceback.
 - [ ] [BOARD-50] The reload link's request rebuilds, then redirects (`303`) to the plain URL, no `reload` field, so a later plain refresh serves the held page without rebuilding (see E-BOARD-18).
 - [ ] [BOARD-51] A rebuild PIN-29 refuses (`specs/storage-pin.spec.md`) keeps the page last built and shows PIN-29's sentence beside its age.
+- [ ] [BOARD-52] A refused rebuild, an unreachable remote included, keeps its refusal: a reload still redirects (`303`), and each request shows the held page with it until a rebuild succeeds (see E-BOARD-19).
 
 ## Never
 
@@ -253,7 +254,7 @@ http://127.0.0.1:<port>/?t=<token>
 
 The line above is the whole of this transcript: `--serve` then blocks in
 its request loop, so no further line is printed until it is stopped.
-What a request to that URL returns is BOARD-46..51's (see E-BOARD-18).
+What a request to that URL returns is BOARD-46..52's (see E-BOARD-18).
 
 ### E-BOARD-08 — a ruled line moves into its item's `Themen` entry
 
@@ -357,3 +358,19 @@ $ curl -s 'http://127.0.0.1:<port>/?t=<token>'
 A request to the link's URL rebuilds the page, then answers `303` with
 `Location: /?t=<token>` -- no `reload` field, so a later plain refresh of
 that address does not rebuild -- and the redirected `GET` shows `vor 0h 0m`.
+
+### E-BOARD-19 — a reload with the remote unreachable keeps the held page
+
+Setup: bare-remote, a running `aco board --serve` whose page was built two
+minutes ago, then `origin` made unreachable
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:<port>/?t=<token>&reload=1'
+303
+```
+
+`Location` is `/?t=<token>`. The redirected `GET`, and every plain one
+until a rebuild succeeds, answers `200` with the held page, `vor 0h 2m`,
+and beside it the sentence
+`cannot reach origin refs/aco/state: auth or transport failure (ls-remote exited 128): <git's detail>`;
+stderr stays empty. A reload once `origin` answers again rebuilds.

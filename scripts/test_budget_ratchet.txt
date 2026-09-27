@@ -84,3 +84,5 @@
 # budget: issue #474 needs one real-worktree proof that rescope --add admits a file in a not-yet-existing directory and protect then allows writing it; a two-command round trip across rescope and protect, not a data variant of the single-command rescope or protect families [RESC-18, PROT-39]
 
 # budget: issue #477 needs one proof that a RunContext holds a successful observation of refs/aco/state and never a failed one -- a fetch-failure-then-retry sequence on one context, not a data variant of the per-command read-count family, which drives whole commands [CAS-53]
+
+# budget: issue #481 needs one real-server proof that a reload refused by an unreachable remote still redirects to the held page naming the refusal and rebuilds once the remote answers -- a refuse-then-recover sequence, not a data variant of the single-reload tests [BOARD-52]

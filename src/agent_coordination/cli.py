@@ -7104,32 +7104,39 @@ class _ServedBoardCache:
     lifetime would never show a later write."""
 
     built: tuple[board_html.BoardPage, datetime] | None = None
+    refusal: str | None = None
     stale: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def held(
         self, context: RunContext, *, reload: bool
     ) -> tuple[board_html.BoardPage, datetime, str | None]:
-        """The held page, when it was built, and PIN-29's refusal when the
-        rebuild it needed met one (issue #447): rebuilt through `context`
-        first when nothing is held yet, it is stale, or `reload` asks -- a
-        request the held page answers never reads `context` at all. A
-        refused rebuild keeps the last page built, so the served page names
-        the malformed item beside that page's age instead of failing the
-        request; only a first build has no page to keep, and raises."""
+        """The held page, when it was built, and the refusal the last rebuild
+        met, if any (issues #447, #481): rebuilt through `context` first when
+        nothing is held yet, it is stale, or `reload` asks -- a request the
+        held page answers never reads `context` at all. A refused rebuild --
+        PIN-29's malformed item or an unreachable remote alike -- keeps the
+        last page built and its refusal until a later rebuild succeeds, so
+        every request in between, the reload's own redirect target
+        included, shows that page with the sentence beside its age instead
+        of failing; only a first build has no page to keep, and raises."""
         with self.lock:
-            if self.built is None or self.stale or reload:
-                try:
-                    self.built = (
-                        _board_page(_ReadSession(forge=_LazyForge(context))),
-                        datetime.now(UTC),
-                    )
-                except protocol.MalformedStateTreeError as refusal:
-                    if self.built is None:
-                        raise
-                    return (*self.built, str(refusal))
-                self.stale = False
-            return (*self.built, None)
+            built = self.built
+            if built is None or self.stale or reload:
+                built = self._rebuild(context)
+            return (*built, self.refusal)
+
+    def _rebuild(self, context: RunContext) -> tuple[board_html.BoardPage, datetime]:
+        try:
+            self.built = (_board_page(_ReadSession(forge=_LazyForge(context))), datetime.now(UTC))
+        except protocol.ClaimError as refusal:
+            if self.built is None:
+                raise
+            self.refusal = str(refusal)
+            return self.built
+        self.refusal = None
+        self.stale = False
+        return self.built
 
     def discard(self) -> None:
         with self.lock:
