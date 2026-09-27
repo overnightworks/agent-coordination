@@ -39,6 +39,7 @@ from .body import (
 )
 
 DEFAULT_PRIORITY_LABELS = ("security", "data", "ci", "product", "ux", "cleanup")
+DEFAULT_CANONICAL_REMOTE = "origin"
 CONFIG_PATH = Path(".agent-claim/board.toml")
 IDEA_REFINEMENT_STEP = "Problem neu prüfen und Item verfeinern"
 RULING_OLD_AFTER_LANDINGS = 10
@@ -404,10 +405,9 @@ class BoardConfig:
     priority_labels: tuple[str, ...] = DEFAULT_PRIORITY_LABELS
     idea_label: str | None = None
     # The remote `refs/aco/state` lives on (issue #176, §1); every store and
-    # import refusal is phrased in its terms. The store's own default is
-    # already "origin" (`store.DEFAULT_CANONICAL_REMOTE`) -- this is the one
-    # place a repository overrides it.
-    canonical_remote: str = "origin"
+    # import refusal is phrased in its terms. The store takes it from every
+    # caller, so this default is its one owner (issue #522).
+    canonical_remote: str = DEFAULT_CANONICAL_REMOTE
     # Which adapter owns this repository's board and item data (issue #248):
     # `RunContext.repository_id` resolves the one the pin names, never
     # guessed from the remote's own host. `github` is the default -- every
@@ -608,7 +608,7 @@ def _refuse_unpinned_body_contract(raw: dict[str, object], path: Path) -> None:
 def _validated_canonical_remote(raw: dict[str, object], path: Path) -> str:
     canonical_remote_raw = raw.get("canonical_remote")
     if canonical_remote_raw is None:
-        return "origin"
+        return DEFAULT_CANONICAL_REMOTE
     if (
         isinstance(canonical_remote_raw, str)
         and canonical_remote_raw.strip() == canonical_remote_raw

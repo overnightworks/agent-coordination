@@ -54,8 +54,10 @@ aco release 42 --merged 57
 
 Adoption is the one step outside the claim protocol: until this checkout
 carries `.agent-claim/board.toml`, every store command refuses and names
-this step (`specs/storage-pin.spec.md`, PIN-32),
-so the commit adding it -- that file alone -- lands without a claim.
+its repair (`specs/storage-pin.spec.md`, PIN-32): this step when the last
+fetched trunk lacks the file, merging that trunk when only this branch
+predates it, and restoring the file when this branch removed it itself.
+The commit adding it -- that file alone -- lands without a claim.
 `bootstrap` creates the state ref once per repository; every other command
 here reads or writes it. `specs/bootstrap.spec.md` owns `bootstrap`;
 `specs/claim.spec.md` and `specs/release.spec.md` own `claim` and `release`.
