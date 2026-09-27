@@ -3213,6 +3213,32 @@ class TestCliStateRefForge:
             f"ERROR: {_malformed_item_refusal(problem, CHILD_A_ID)}\n",
         )
 
+    def test_board_html_names_an_unreadable_child_inside_its_readable_containers_topic(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #517 line 4 (BOARD-54): `Slice A` turned unreadable while
+        its `[record].parent` still names the container, so `board --html`
+        prints its reason inside that container's topic, beside its part."""
+        item_files = _item_files_with_a_malformed_item(
+            _blank_title_item(parent=CONTAINER_ID), CHILD_A_ID
+        )
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        unreadable_reason = next_out.split(f"\n{CHILD_A_ID}: ", 1)[1].split("\n", 1)[0]
+
+        html_exit_code = issue_claim.main(["board", "--html"])
+
+        after_container_title = capsys.readouterr().out.split(f"{CONTAINER_ID} Epic</strong>", 1)[1]
+        container_topic = after_container_title.split("<strong>", 1)[0]
+        assert html_exit_code == 0
+        assert f'<span class="problem">{html.escape(unreadable_reason)}</span>' in container_topic
+
     def test_item_edit_with_a_valid_record_repairs_a_malformed_item(
         self,
         monkeypatch: pytest.MonkeyPatch,
