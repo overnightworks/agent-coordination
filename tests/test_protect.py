@@ -3348,10 +3348,11 @@ def test_protect_and_rescope_name_a_canonical_remote_that_has_config_lines_but_n
     capsys: pytest.CaptureFixture[str],
     refusal_of: Callable[[pytest.MonkeyPatch, pytest.CaptureFixture[str], Path], tuple[int, str]],
 ) -> None:
-    """Issue #512 line 1 (PROT-45, RESC-20): a `remote.upstream.fetch` line
-    without a URL, beside a `HEAD` the remote left behind, is still no
-    configured canonical remote -- `protect` and `rescope` name it rather
-    than judging its branch."""
+    """Issues #512 line 1 and #516 line 2 (PROT-45, RESC-21): a
+    `remote.upstream.fetch` line without a URL, beside a `HEAD` the remote
+    left behind, is still no configured canonical remote -- `protect` and
+    `rescope` name it in every command's own sentence rather than judging
+    its branch."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

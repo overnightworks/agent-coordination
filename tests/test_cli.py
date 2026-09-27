@@ -14770,11 +14770,16 @@ def _bootstrap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
     return ["bootstrap"]
 
 
-def _reset_confirmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
-    """`reset --confirm` against the real store, which would export, delete
-    and bootstrap once it reaches its remote (issue #516)."""
+def _reset_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    """`reset` against the real store, which reads its remote's state ref
+    first (issue #516)."""
     _start_scenario(monkeypatch, tmp_path)
-    return ["reset", "--confirm", "--export-dir", str(tmp_path)]
+    return ["reset", "--export-dir", str(tmp_path)]
+
+
+def _reset_confirmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    """`reset --confirm`, which would also export, delete and bootstrap."""
+    return [*_reset_dry_run(monkeypatch, tmp_path), "--confirm"]
 
 
 @pytest.mark.usefixtures("isolated_global_git_config")
@@ -14782,6 +14787,7 @@ def _reset_confirmed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[st
     ("arrange", "expected_out"),
     [
         pytest.param(_bootstrap, "", id="bootstrap"),
+        pytest.param(_reset_dry_run, "", id="reset"),
         pytest.param(_reset_confirmed, "", id="reset-confirm"),
         pytest.param(_start_on_github, "", id="start"),
         pytest.param(_release_merged_of_an_open_item, "", id="release-merged"),
@@ -14821,7 +14827,7 @@ def test_every_command_names_a_canonical_remote_with_no_url_configured(
     REL-39). A `hub` git lists only through a URL-less config line, its
     refs left behind, is not configured either (issue #512), and `claim`
     names it before its checkout check (CHECK-15, BOARD-53, CLM-32).
-    `bootstrap` and `reset --confirm` refuse in that same sentence rather
+    `bootstrap` and `reset`, confirmed or not, refuse in that same sentence rather
     than in git's own transport detail, writing no state ref (issue #516,
     BOOT-04, RESET-18)."""
     argv = arrange(monkeypatch, tmp_path)

@@ -17,6 +17,7 @@ those IDs rather than restating them. `<sha>` is the runner's own commit id.
 |---|---|
 | `.agent-claim/board.toml` absent | PIN-32 |
 | `.agent-claim/board.toml` present but untracked or ignored | PIN-01 |
+| the canonical remote has no URL configured | BOOT-04 |
 | ref absent, proven (`ls-remote` exit 2) | CAS-02 |
 | ref present, valid schema | CAS-01 |
 | ref previously observed by this worktree, now absent | CAS-12 |
@@ -39,6 +40,10 @@ those IDs rather than restating them. `<sha>` is the runner's own commit id.
 This command defines no `--json`, so its own sink never invents an error object from one.
 
 - [ ] [BOOT-01] A store-level refusal reaching `aco bootstrap` prints only `ERROR: <sentence>` on stderr, exit `2`; stdout stays empty (see E-BOOT-03).
+
+## A canonical remote with no URL configured
+
+- [ ] [BOOT-04] A canonical `<remote>` with no URL configured refuses `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, before any ref is read or written (see E-BOOT-05).
 
 ## Never
 
@@ -87,5 +92,15 @@ $ aco bootstrap --ledger 5
 2>            {bootstrap,reset,status,board,rulings,next,claim,release,rescope,cut,ask,rule,check,body,brief,item,protect,register,run,login,_run-at-login}
 2>            ...
 2> aco: error: unrecognized arguments: --ledger 5
+exit 2
+```
+
+### E-BOOT-05 -- a canonical remote with no URL configured is named
+
+Setup: bare-remote, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, which this clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
+
+```console
+$ aco bootstrap
+2> ERROR: cannot determine the trunk: canonical remote 'hub' is not configured
 exit 2
 ```

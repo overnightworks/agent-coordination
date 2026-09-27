@@ -86,7 +86,7 @@ spec would cite REL-03 rather than restate it.
 - [ ] [REL-16] `release --merged <pr>`'s forge verification runs before any write; it is `specs/landing-grammar.spec.md`'s grammar (LAND-29..39, LAND-49/50, LAND-55, LAND-62..64, LAND-66/67), nothing added.
 - [ ] [REL-37] Under `storage = "github"`, that verification walks `<remote>/<branch>` for the forge's default branch `<branch>` once the canonical remote `<remote>` is fetched, as `aco land` does.
 - [ ] [REL-38] Under `storage = "github"`, the release's board report and its worktree cleanup (REL-25, REL-29) walk that same `<remote>/<branch>`.
-- [ ] [REL-39] A canonical `<remote>` never configured refuses before any write: `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-REL-18).
+- [ ] [REL-39] A canonical `<remote>` with no URL configured refuses before any write: `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2` (see E-REL-18).
 - [ ] [REL-17] `release --merged` under `storage = "state-ref"` reads `<sha|empty>` against the local trunk walk, never a pull request or forge (LAND-47, LAND-52, LAND-56, LAND-59, `specs/landing-grammar.spec.md`).
 - [ ] [REL-23] `release` never reads the released item's own body contract, unlike issue-mode `claim` (`specs/body-block.spec.md` BODY-52).
 
@@ -389,10 +389,11 @@ $ aco release 42 --merged 57 --json
 exit 0
 ```
 
-### E-REL-18 — a canonical remote the checkout never configured
+### E-REL-18 — a canonical remote with no URL configured
 
 Setup: as E-REL-17, but `.agent-claim/board.toml` names `canonical_remote = "hub"`, which this
-clone never added beside its `origin`
+clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such
+as a local `remote.hub.fetch`
 
 ```console
 $ aco release 42 --merged 57

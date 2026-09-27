@@ -13,7 +13,8 @@ refusal (CLAIM-37), that a rescope replaces only the scope while
 `claim_id`, `base` and age keep counting (CLAIM-49), and one claim's own
 `--json` field order (CLAIM-69); `specs/protect.spec.md` owns the checkout
 resolver's `relative payload path`, `not in a repository`, `no commit on
-this branch` and `default branch unknown` sentences (PROT-09..11, PROT-13)
+this branch` and `default branch unknown` sentences (PROT-09..11, PROT-13),
+the sentence naming a canonical remote with no URL configured (PROT-45),
 and the sentences for a path no claim can ever cover (PROT-14, PROT-42,
 PROT-43) that `rescope` shares verbatim, `protect`'s own docstring names the
 sharing; `specs/claim.spec.md` owns the issueless-lane branch refusal
@@ -35,6 +36,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 | shared main checkout, branch known | RESC-03 | RESC-03 | RESC-03 | — |
 | on the repository's own trunk branch | RESC-04 | RESC-04 | RESC-04 | — |
 | default branch cannot be resolved | PROT-13 | PROT-13 | PROT-13 | — |
+| canonical remote has no URL configured | RESC-21 | RESC-21 | RESC-21 | — |
 | the path is below a file or a dangling symlink, or the checkout root | RESC-19 | RESC-19 | — | — |
 | the path resolves outside the checkout | RESC-05 | RESC-05 | — | — |
 | no live claim on this identity/branch | RESC-14 | RESC-14 | RESC-14 | — |
@@ -55,6 +57,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 - [ ] [RESC-02] A resolved checkout with an empty current branch refuses `rescope requires a non-empty current branch; check out the claim branch, or pass an issue number`, exit `2`.
 - [ ] [RESC-03] Sharing main's git dir, rescope refuses `build claims require a linked isolated worktree checkout; run this command from this claim's own worktree on '<branch>', not the primary checkout`, exit `2`.
 - [ ] [RESC-20] RESC-03, RESC-04 and PROT-13 judge the default branch the resolved checkout's canonical remote records, after its board configuration (PIN-01/PIN-32) is read.
+- [ ] [RESC-21] A canonical `<remote>` with no URL configured refuses PROT-45's `cannot determine the trunk: canonical remote '<remote>' is not configured`, exit `2`, before RESC-03/RESC-04 (see E-RESC-06).
 - [ ] [RESC-04] On the repository's own trunk branch, rescope refuses `build claims require an isolated non-main worktree branch; run this command from this claim's own worktree, not the primary checkout`, exit `2`.
 - [ ] [RESC-05] A `--add`/`--drop` path resolving outside the resolved checkout refuses `<flag> path '<path>' is outside the resolved checkout <toplevel>`, exit `2`.
 - [ ] [RESC-18] A `--add`/`--drop` path whose directories do not exist yet resolves its checkout from the nearest existing ancestor, as `protect` judges it (PROT-39); outside every repository it refuses PROT-10.
@@ -153,5 +156,19 @@ exit 2
 $ aco rescope 42 --add <worktree> --json
 2> ERROR: <worktree> is the checkout root itself
 {"ok": false, "reason": "invalid_usage", "message": "<worktree> is the checkout root itself"}
+exit 2
+```
+
+### E-RESC-06 — a canonical remote with no URL configured is named, as `protect` does
+
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, the tracked `.agent-claim/board.toml` naming `canonical_remote = "upstream"`, `upstream` only a URL-less `remote.upstream.fetch` line
+
+```console
+$ aco rescope 42 --add <worktree>/README.md
+2> ERROR: cannot determine the trunk: canonical remote 'upstream' is not configured
+exit 2
+$ aco rescope 42 --add <worktree>/README.md --json
+2> ERROR: cannot determine the trunk: canonical remote 'upstream' is not configured
+{"ok": false, "reason": "unavailable", "message": "cannot determine the trunk: canonical remote 'upstream' is not configured"}
 exit 2
 ```
