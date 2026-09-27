@@ -63,7 +63,7 @@ an item as `specs/landing-grammar.spec.md` names it: `#<n>` under
 - [ ] [CLAIM-61] A claim file whose `claim_id` is not a claim id refuses `claim file issue-42.toml at <oid> has an invalid claim id`, exit `2`.
 - [ ] [CLAIM-62] A claim file whose `base` or `opened_commit` is not a 40-character lowercase commit id refuses `claim file issue-42.toml at <oid> has a malformed commit id`, exit `2`.
 - [ ] [CLAIM-63] A claim file that is not valid TOML refuses `malformed claim file issue-42.toml at <oid>: <reason>`, exit `2`; a `whole_reason` that is not text refuses `field 'whole_reason' must be text`.
-- [ ] [CLAIM-70] A claim file whose `scope` holds a path CLAIM-20 refuses fails the state read with `claim file issue-42.toml at <oid> has an invalid scope: <CLAIM-20 sentence>`, exit `2`; no legacy record is kept.
+- [ ] [CLAIM-70] A claim file whose `scope` holds a path CLAIM-20 refuses fails the state read with `claim file issue-42.toml at <oid> has an invalid scope: <CLAIM-20 sentence>`, exit `2`; the file stays on the ref.
 
 ## A hand-corrupted claim key
 
