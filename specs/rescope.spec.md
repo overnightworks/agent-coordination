@@ -14,7 +14,8 @@ refusal (CLAIM-37), that a rescope replaces only the scope while
 `--json` field order (CLAIM-69); `specs/protect.spec.md` owns the checkout
 resolver's `relative payload path`, `not in a repository`, `no commit on
 this branch` and `default branch unknown` sentences (PROT-09..11, PROT-13)
-that `rescope` shares verbatim, `protect`'s own docstring names the
+and the sentences for a path no claim can ever cover (PROT-14, PROT-42,
+PROT-43) that `rescope` shares verbatim, `protect`'s own docstring names the
 sharing; `specs/claim.spec.md` owns the issueless-lane branch refusal
 (CLM-07) `_resolved_identity` shares with `rescope` too. This file cites
 those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
@@ -28,11 +29,13 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 | a relative entry, anywhere in either list | RESC-01 | RESC-01 | — | — |
 | the path's directories do not exist yet | RESC-18 | RESC-18 | — | — |
 | resolved checkout is outside every repository | PROT-10 | PROT-10 | PROT-10 | — |
+| the path is inside a git directory itself | PROT-43 | PROT-43 | — | — |
 | resolved checkout has no commit yet | PROT-11 | PROT-11 | PROT-11 | — |
 | current branch is empty | RESC-02 | RESC-02 | RESC-02 | — |
 | shared main checkout, branch known | RESC-03 | RESC-03 | RESC-03 | — |
 | on the repository's own trunk branch | RESC-04 | RESC-04 | RESC-04 | — |
 | default branch cannot be resolved | PROT-13 | PROT-13 | PROT-13 | — |
+| the path is below a file or a dangling symlink, or the checkout root | RESC-19 | RESC-19 | — | — |
 | the path resolves outside the checkout | RESC-05 | RESC-05 | — | — |
 | no live claim on this identity/branch | RESC-14 | RESC-14 | RESC-14 | — |
 | a different agent than the claimant | CLAIM-37 | CLAIM-37 | CLAIM-37 | — |
@@ -54,6 +57,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 - [ ] [RESC-04] On the repository's own trunk branch, rescope refuses `build claims require an isolated non-main worktree branch; run this command from this claim's own worktree, not the primary checkout`, exit `2`.
 - [ ] [RESC-05] A `--add`/`--drop` path resolving outside the resolved checkout refuses `<flag> path '<path>' is outside the resolved checkout <toplevel>`, exit `2`.
 - [ ] [RESC-18] A `--add`/`--drop` path whose directories do not exist yet resolves its checkout from the nearest existing ancestor, as `protect` judges it (PROT-39); outside every repository it refuses PROT-10.
+- [ ] [RESC-19] A `--add`/`--drop` path below a file or a dangling symlink, or naming the checkout root, refuses PROT-42's or PROT-14's own sentence, exit `2`, as `protect` denies it (see E-RESC-05).
 
 ## Selecting the live claim
 
@@ -72,9 +76,9 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 
 ## `--json`'s own `reason` vocabulary
 
-- [ ] [RESC-15] A malformed `--add`/`--drop` value (RESC-01, RESC-05..09) reports `reason: "invalid_usage"` under `--json`.
+- [ ] [RESC-15] A malformed `--add`/`--drop` value (RESC-01, RESC-05..09, RESC-19) reports `reason: "invalid_usage"` under `--json`.
 - [ ] [RESC-16] No live claim to rescope (RESC-14), a foreign claimant (CLAIM-37), or a wide combined scope (RESC-10) reports `reason: "precondition_failed"` under `--json` (see E-RESC-04).
-- [ ] [RESC-17] Every other refusal the handler raises -- an unresolved checkout (RESC-02..04, PROT-10, PROT-11, PROT-13) or a corrupted record -- reports `reason: "unavailable"` (a missing identity: OUT-05).
+- [ ] [RESC-17] Every other refusal the handler raises -- an unresolved checkout (RESC-02..04, PROT-10/11/13/43) or a corrupted record -- reports `reason: "unavailable"` (a missing identity: OUT-05).
 
 ## Never
 
@@ -134,5 +138,19 @@ Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, no live c
 $ aco rescope 42 --add <worktree>/AGENTS.md --json
 2> ERROR: issue #42 has no active build claim
 {"ok": false, "reason": "precondition_failed", "message": "issue #42 has no active build claim"}
+exit 2
+```
+
+### E-RESC-05 — a path no claim can ever cover names why, as `protect` does
+
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, a tracked `README.md`, already `aco claim 42 --scope README.md`
+
+```console
+$ aco rescope 42 --add <worktree>/README.md/x.py
+2> ERROR: <worktree>/README.md/x.py cannot exist: <worktree>/README.md is a file
+exit 2
+$ aco rescope 42 --add <worktree> --json
+2> ERROR: <worktree> is the checkout root itself
+{"ok": false, "reason": "invalid_usage", "message": "<worktree> is the checkout root itself"}
 exit 2
 ```

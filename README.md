@@ -233,6 +233,18 @@ main checkout, so no operator is needed. Claude Code reads hooks at session
 start; whether an edit also applies mid-session depends on its version
 (unverified here), and the next session start always picks it up.
 
+Throwaway repositories: `ACO_PROTECT_UNGUARDED` names directories, separated
+like `PATH`, whose repositories `protect` never judges -- a tester's scratch
+checkouts. Set it in the environment the hook runs in, for example
+`ACO_PROTECT_UNGUARDED=/tmp/claude-1000` for the session scratchpads rather
+than all of `/tmp`, so a clone of a real repository elsewhere in `/tmp` stays
+guarded. Unset or empty, every repository is judged. The match is on the
+repository itself (its common git directory), not on where a worktree lies:
+a linked worktree of a guarded repository placed inside that directory still
+needs a claim, and a write through a symlink into a guarded checkout is judged
+there. An entry that is not an existing absolute directory denies every write
+in a checkout, except the ignored `settings.local.json` that repairs it.
+
 ## Configuration
 
 `.agent-claim/board.toml` defines exactly five top-level keys; any other key
