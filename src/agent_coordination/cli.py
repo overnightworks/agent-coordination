@@ -930,7 +930,7 @@ def _add_run_at_login_parser(commands: argparse._SubParsersAction) -> None:
 # subcommands ahead of `_COMMAND_TABLE`, `protect` and the workspace
 # commands are forge-free and never reach `_dispatch` at all. `status` and
 # `body` are the same story (`_read_status_body_or_dispatch`, ahead of
-# `_dispatch`'s own `_LazyForge`) but `aco --help` must still list all
+# `_dispatch`) but `aco --help` must still list all
 # eight in their original places, so `_subparser_build_order` below weaves
 # them back into position rather than appending them after every table
 # entry.
@@ -2890,7 +2890,7 @@ def _cmd_body(parsed: argparse.Namespace, context: RunContext) -> int:
     """`body --check` is forge-free (issue #262), the same way `status` and
     `bootstrap` are (issue #245): it reads stdin only, never an issue, a
     live claim, a filesystem path, or the forge's own `blocked_by`
-    relation, so it never resolves a `_LazyForge` at all (`main` dispatches
+    relation, so it never asks the `RunContext` for its forge (`main` dispatches
     it outside `_dispatch`, exactly like `status`). It still reads the
     repository's own storage pin (issue #287): `[record]` is a known key
     under `storage = "state-ref"` and an unknown one under
@@ -3138,7 +3138,7 @@ def _state_ref_board(context: RunContext) -> state_board.StateRefBoard:
     """`context`'s own forge as the state-ref board, for an item command
     that has already refused every other storage pin: under `state-ref`
     `_build_forge` builds exactly `_state_ref_forge`'s board, so the cast is
-    honest, not a suppression -- the same narrowing `_LazyForge.writer`
+    honest, not a suppression -- the same narrowing `RunContext.forge_writer`
     performs for the generic writing surface."""
     return cast(state_board.StateRefBoard, context.forge)
 
@@ -3227,7 +3227,7 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     if defects:
         return _refuse_item_body_invalid(defects, as_json=parsed.json)
     new_body = _item_new_body(parsed, raw_body)
-    client = _LazyForge(context).writer()
+    client = context.forge_writer
     open_issues = client.list_open_board_issues()
     storage = context.config.storage
     if parsed.parent is not None:
@@ -3378,7 +3378,7 @@ def _cmd_item_edit_size(parsed: argparse.Namespace, context: RunContext) -> int:
     as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
-        client = _LazyForge(context).writer()
+        client = context.forge_writer
         _require_update_item_body(client, command=ITEM_EDIT_SIZE_COMMAND)
         number = parsed.item
         storage = context.config.storage
@@ -3419,7 +3419,7 @@ def _cmd_item_edit_whole(parsed: argparse.Namespace, context: RunContext) -> int
     envelope as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
-        client = _LazyForge(context).writer()
+        client = context.forge_writer
         _require_update_item_body(client, command=ITEM_EDIT_WHOLE_COMMAND)
         number = parsed.item
         storage = context.config.storage
@@ -3797,45 +3797,6 @@ def _protect() -> int:
 
 def _optional_issue_number(value: int | None) -> int | None:
     return None if value is None else int(value)
-
-
-@dataclass(frozen=True)
-class _LazyForge:
-    """This command's forge, read through its `RunContext` (issue #457):
-    resolved and Erwartung-6-checked the first time anything calls it, held
-    by the context after that, and never touched at all by a command that
-    never calls it (issue #245) -- `status`, `protect`, `bootstrap`, and a
-    lane `claim`/`rescope`/`release` never resolve a repository or invoke
-    `gh` because none of them ever does."""
-
-    context: RunContext
-
-    def __call__(self) -> forge.ForgeReader:
-        return self.context.forge
-
-    def writer(self) -> forge.ForgeWriter:
-        """The same resolved forge, narrowed to its writing surface (issue
-        #248, #283). The cast is honest, not a suppression: every adapter
-        this tool builds -- `github.GitHubForge`, `state_board.StateRefBoard`
-        (its `ItemWriter` injected by `_state_ref_forge`), and every test
-        fake standing in for either -- already implements the full
-        `ForgeWriter` surface, an unsupported operation as a method raising
-        `forge.ForgeUnsupportedError`, checked at each call site by
-        `capability()`, never by `isinstance`.
-        """
-        return cast(forge.ForgeWriter, self())
-
-
-@dataclass(frozen=True)
-class _WriteSession:
-    """What a dispatched write subcommand needs beyond its parsed arguments."""
-
-    forge: _LazyForge
-    release_branch: str | None
-
-    @property
-    def context(self) -> RunContext:
-        return self.forge.context
 
 
 def _rescope_location(add: list[str] | None, drop: list[str] | None) -> Path:
@@ -4278,7 +4239,7 @@ def _brief_json(composition: _BriefComposition) -> int:
 def _brief_config(toplevel: Path) -> board.BriefConfig | None:
     """`.agent-claim/brief.toml`'s own content, read only when the file is
     actually tracked by git (issue #324) -- the same tracked-file
-    requirement `session.board_config` enforces for `board.toml`'s storage pin, so
+    requirement `board_config` enforces for `board.toml`'s storage pin, so
     an ignored or not-yet-added file never quietly answers for the
     repository. `None` either when it is untracked or when `load_brief_config`
     finds no such file at all."""
@@ -4705,7 +4666,7 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
     return 0
 
 
-def _cmd_rescope(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_rescope(parsed: argparse.Namespace, context: RunContext) -> int:
     """`rescope`'s own `--json` refusals (issue #406, `RescopeReason`):
     `_rescope_write`'s two typed exceptions choose `invalid_usage`/
     `precondition_failed`; every other `protocol.ClaimError` -- an
@@ -4713,7 +4674,7 @@ def _cmd_rescope(parsed: argparse.Namespace, session: _WriteSession) -> int:
     falls to `unavailable`, matching `ask`/`rule`/`brief`'s own catch-all."""
     as_json = parsed.json
     try:
-        return _rescope_write(parsed, session.context)
+        return _rescope_write(parsed, context)
     except _RescopeInvalidUsageError as error:
         return _refuse(RescopeReason.INVALID_USAGE, error, as_json=as_json)
     except _RescopePreconditionError as error:
@@ -4815,7 +4776,7 @@ def _item_whole(
 
 
 def _whole_from_item_body(
-    session: _WriteSession,
+    context: RunContext,
     identity: protocol.ClaimIdentity,
     *,
     open_by_number: Mapping[int, board.Issue] | None,
@@ -4836,8 +4797,8 @@ def _whole_from_item_body(
     number = identity.issue
 
     def resolve() -> str | None:
-        client = session.forge()
-        storage = session.context.config.storage
+        client = context.forge
+        storage = context.config.storage
         return _item_whole(client, open_by_number or {}, number, storage=storage)
 
     return resolve
@@ -4846,7 +4807,7 @@ def _whole_from_item_body(
 def _resolved_claim_request(
     requested: protocol.ClaimRequest,
     observed: protocol.ClaimState,
-    session: _WriteSession,
+    context: RunContext,
     storage: body.Storage,
 ) -> tuple[protocol.ClaimRequest, dict[int, board.Issue] | None]:
     """`requested` with its scope filled in for an issue-mode claim that
@@ -4869,7 +4830,7 @@ def _resolved_claim_request(
     live = observed.claims.get(protocol.claim_key(identity, requested.branch))
     if live is not None:
         return replace(requested, scope=live.scope), None
-    client = session.forge()
+    client = context.forge
     open_by_number = {issue.number: issue for issue in client.list_open_board_issues()}
     item_scope = _item_scope(client, open_by_number, identity.issue, storage=storage)
     if item_scope is None:
@@ -4948,19 +4909,19 @@ class _ClaimTargetContext:
 
 
 def _claim_target_checks(
-    session: _WriteSession,
+    context: RunContext,
     requested: protocol.ClaimRequest,
     observed: protocol.ClaimState,
-    context: _ClaimTargetContext,
+    target: _ClaimTargetContext,
 ) -> tuple[tuple[SliceCheck, ...], int | None, protocol.ActiveClaim | None]:
     """`_cmd_claim`'s slice-rule checks against its own target issue,
     `()`/`None`/`None` for a lane claim -- there is no target issue to
     check against. A replayed claim (`_matching_store_claim`) skips the
     forge and the checks entirely, since an interrupted retry was already
-    accepted once. A fresh issue claim reuses `context.open_by_number` when
+    accepted once. A fresh issue claim reuses `target.open_by_number` when
     deriving the scope already fetched it (issue #337), so this never
     re-fetches the open board a second time, then runs the mismatch and
-    slice-rule gates against it. `session.forge()` -- built and
+    slice-rule gates against it. `context.forge` -- built and
     Erwartung-6-checked on this first call (issue #245) -- runs only on
     this fresh-claim path, never for a lane claim or a replay."""
     if not isinstance(requested.identity, protocol.IssueIdentity):
@@ -4969,32 +4930,32 @@ def _claim_target_checks(
     replayed = _matching_store_claim(observed, requested)
     if replayed is not None:
         return (), target_issue, replayed
-    client = session.forge()
-    open_by_number = context.open_by_number
+    client = context.forge
+    open_by_number = target.open_by_number
     if open_by_number is None:
         open_by_number = {issue.number: issue for issue in client.list_open_board_issues()}
-    _reject_scope_mismatch(open_by_number, target_issue, requested.scope, context.storage)
+    _reject_scope_mismatch(open_by_number, target_issue, requested.scope, target.storage)
     projected = _board(
-        session.context,
+        context,
         tuple(observed.claims.values()),
         issues=tuple(open_by_number.values()),
-        history=_ClaimHistory(ages=_claim_ages(context.worktree, observed)),
+        history=_ClaimHistory(ages=_claim_ages(target.worktree, observed)),
     )
     checks = _slice_rule_checks(
         BoardReferenceLookup(client, client.repository.path, open_by_number),
         target_issue,
         projected,
         requested.out_of_order_reason,
-        context.storage,
+        target.storage,
     )
     return checks, target_issue, replayed
 
 
-def _cmd_claim(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_claim(parsed: argparse.Namespace, context: RunContext) -> int:
     try:
-        return _claim_write(parsed, session)
+        return _claim_write(parsed, context)
     except protocol.ClaimError as error:
-        return _refuse_claim_error(error, session.context, as_json=parsed.json)
+        return _refuse_claim_error(error, context, as_json=parsed.json)
 
 
 def _refuse_claim_error(error: protocol.ClaimError, context: RunContext, *, as_json: bool) -> int:
@@ -5034,7 +4995,7 @@ def _named_refusal(error: protocol.ClaimError, storage: body.Storage) -> protoco
 
 
 def _claim_write(
-    parsed: argparse.Namespace, session: _WriteSession, *, worktree: Path | None = None
+    parsed: argparse.Namespace, context: RunContext, *, worktree: Path | None = None
 ) -> int:
     """`claim` made in the session's own checkout, or in `worktree` when
     given (`start` claiming in a lane worktree that already stands, issue
@@ -5043,18 +5004,16 @@ def _claim_write(
     own board configuration -- the main checkout's."""
 
     def default_branch() -> str | None:
-        return session.context.recorded_default_branch
+        return context.recorded_default_branch
 
     if worktree is None:
-        requested = _request(
-            parsed, default_branch=default_branch, directory=session.context.directory
-        )
-        plan = _checked_claim(requested, session)
-        writer = session.context
+        requested = _request(parsed, default_branch=default_branch, directory=context.directory)
+        plan = _checked_claim(requested, context)
+        writer = context
     else:
         requested = _request(parsed, default_branch=default_branch, directory=worktree)
-        plan = _checked_claim(requested, session, revision=requested.base)
-        writer = session.context.for_lane_worktree(worktree)
+        plan = _checked_claim(requested, context, revision=requested.base)
+        writer = context.for_lane_worktree(worktree)
     if plan.refused:
         _refuse_claim(parsed.json, plan.target_issue, plan.checks)
         return 2
@@ -5084,7 +5043,7 @@ class _ClaimPlan:
 
 
 def _checked_claim(
-    requested: protocol.ClaimRequest, session: _WriteSession, *, revision: str | None = None
+    requested: protocol.ClaimRequest, context: RunContext, *, revision: str | None = None
 ) -> _ClaimPlan:
     """`claim`'s check phase: every refusal a claim meets before its one
     ledger write -- the scope's shape and width, the store, the target's
@@ -5095,7 +5054,6 @@ def _checked_claim(
     session's own checkout is not the one claimed in (`start`'s fetched
     trunk before its worktree exists, or the HEAD of a lane worktree that
     already stands); the session's own checkout otherwise."""
-    context = session.context
     if isinstance(requested.identity, protocol.LaneIdentity) and not requested.scope:
         raise protocol.ClaimUnavailableError(LANE_CLAIM_SCOPE_REQUIRED)
     open_by_number: dict[int, board.Issue] | None = None
@@ -5111,7 +5069,7 @@ def _checked_claim(
             requested.scope,
             requested.whole_reason,
             context=context,
-            whole_from_body=_whole_from_item_body(session, requested.identity, open_by_number=None),
+            whole_from_body=_whole_from_item_body(context, requested.identity, open_by_number=None),
             revision=revision,
         )
         requested = replace(requested, whole_reason=effective_whole)
@@ -5126,20 +5084,20 @@ def _checked_claim(
         observed = context.observation
         _require_state_ref(observed)
         storage = context.config.storage
-        requested, open_by_number = _resolved_claim_request(requested, observed, session, storage)
+        requested, open_by_number = _resolved_claim_request(requested, observed, context, storage)
         versioning, effective_whole = _scope_versioning(
             requested.scope,
             requested.whole_reason,
             context=context,
             whole_from_body=_whole_from_item_body(
-                session, requested.identity, open_by_number=open_by_number
+                context, requested.identity, open_by_number=open_by_number
             ),
             revision=revision,
         )
         requested = replace(requested, whole_reason=effective_whole)
     worktree = context.toplevel
     checks, target_issue, replayed = _claim_target_checks(
-        session, requested, observed, _ClaimTargetContext(storage, worktree, open_by_number)
+        context, requested, observed, _ClaimTargetContext(storage, worktree, open_by_number)
     )
     plan = _ClaimPlan(
         requested=requested,
@@ -5362,7 +5320,7 @@ def _start_branch_and_slug(parsed: argparse.Namespace, context: RunContext) -> t
     return branch, slug
 
 
-def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_start(parsed: argparse.Namespace, context: RunContext) -> int:
     """Checks, then builds (issue #479): a worktree already standing -- the
     caller's own lane, or a prior `start`'s at the computed path -- is
     claimed in place; otherwise the claim is checked against the freshly
@@ -5371,7 +5329,7 @@ def _cmd_start(parsed: argparse.Namespace, session: _WriteSession) -> int:
     read the main checkout's own board configuration, never a lane
     worktree's the caller stands in or claims in: a lane may be changing
     its `board.toml`."""
-    caller = session.context
+    caller = context
     main_context = caller.for_directory(
         checkout.main_checkout_root(toplevel=caller.toplevel), is_toplevel=True
     )
@@ -5445,9 +5403,8 @@ def _claim_in_start_worktree(
     _print_start_target(target)
     # The main checkout's one observation, the same snapshot the lookup above
     # read (CAS-53): nothing fetched since.
-    claim_session = _WriteSession(forge=_LazyForge(context), release_branch=None)
     try:
-        return _claim_write(_start_claim_arguments(parsed), claim_session, worktree=target.path)
+        return _claim_write(_start_claim_arguments(parsed), context, worktree=target.path)
     except protocol.UncertainWriteError as error:
         named = _named_refusal(error, context.config.storage)
         return _report_uncertain_start_claim(named, target)
@@ -5506,11 +5463,10 @@ def _check_build_and_claim(
     # and the claim must read the item as it stands once the fetch is done,
     # not the snapshot that read took (issue #322 review finding 2, CAS-55).
     check_context = context.observed_afresh()
-    check_session = _WriteSession(forge=_LazyForge(check_context), release_branch=None)
     requested = _claim_request(_start_claim_arguments(parsed, base=trunk, branch=target.branch))
     storage = check_context.config.storage
     try:
-        plan = _checked_claim(requested, check_session, revision=trunk)
+        plan = _checked_claim(requested, check_context, revision=trunk)
     except protocol.ClaimConflictError as error:
         raise _named_refusal(error, storage) from error
     if plan.refused:
@@ -5618,7 +5574,9 @@ def _resolve_release_claimant(
     return _ResolvedRelease(selected, resolved_role)
 
 
-def _cmd_release(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_release(
+    parsed: argparse.Namespace, context: RunContext, release_branch: str | None
+) -> int:
     """`release`'s own `--json` envelope (issue #425): every refusal this
     function or `_cmd_release_landed` raises -- REL-01's own usage errors
     excepted, which the parser reports as `invalid_usage` before either ever
@@ -5626,25 +5584,24 @@ def _cmd_release(parsed: argparse.Namespace, session: _WriteSession) -> int:
     `precondition_failed`, rather than escaping the envelope entirely."""
     as_json = parsed.json
     try:
-        return _release_transition(parsed, session)
+        return _release_transition(parsed, context, release_branch)
     except protocol.ClaimError as error:
         return _refuse(ReleaseReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
-def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _release_transition(
+    parsed: argparse.Namespace, context: RunContext, release_branch: str | None
+) -> int:
     issue = _optional_issue_number(parsed.issue)
-    identity = _resolved_identity(issue, session.release_branch or "")
-    context = session.context
+    identity = _resolved_identity(issue, release_branch or "")
     storage = context.config.storage
     if parsed.merged is not None and storage is body.Storage.STATE_REF:
-        return _cmd_release_landed(parsed, session, identity, storage)
+        return _cmd_release_landed(parsed, context, identity, storage, release_branch)
     merged = None if parsed.merged is None else _github_pull_request_number(parsed.merged)
     outcome = _release_outcome(merged, parsed.abandoned)
     observed = context.observation
     _require_state_ref(observed)
-    resolved = _resolve_release_claimant(
-        parsed, observed, identity, session.release_branch, storage
-    )
+    resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     client: github.GitHubForge | None = None
     if isinstance(outcome, protocol.MergedRelease):
         # Authorization above gates every forge read and write here (issue
@@ -5652,9 +5609,9 @@ def _release_transition(parsed: argparse.Namespace, session: _WriteSession) -> i
         # never reaches the forge at all, so it can neither verify, comment
         # on, nor close a pull request's issue. `storage` is already proven
         # `github` here (the `state-ref` branch above returned), so this
-        # cast is honest, not a suppression: `_LazyForge.__call__` builds
+        # cast is honest, not a suppression: `_build_forge` builds
         # exactly a `github.GitHubForge` for every other storage pin.
-        client = cast(github.GitHubForge, session.forge())
+        client = cast(github.GitHubForge, context.forge)
         pending_close = _verify_merged_release(context, client, identity, outcome)
         if pending_close is not None:
             # Runs before the release transition below (issue #359 R1): a
@@ -6137,8 +6094,7 @@ def _land_release(
         json=False,
         repo=parsed.repo,
     )
-    release_session = _WriteSession(forge=_LazyForge(context.fresh()), release_branch=branch)
-    _release_transition(release_parsed, release_session)
+    _release_transition(release_parsed, context.fresh(), branch)
 
 
 def _land_is_own_repository(toplevel: Path) -> bool:
@@ -6155,7 +6111,7 @@ def _land_is_own_repository(toplevel: Path) -> bool:
     return isinstance(project, dict) and project.get("name") == LAND_SELF_PACKAGE_NAME
 
 
-def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
+def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
     """`aco land <pr>` (issue #405): preflight every ruled precondition
     read-only, merge with a pinned head sha and a commit message this tool
     composes itself, delete the merged branch, fast-forward this checkout's
@@ -6169,14 +6125,13 @@ def _cmd_land(parsed: argparse.Namespace, session: _WriteSession) -> None:
     check placed only there left a rerun free to delete the branch and
     fast-forward -- and `_cmd_release` free to close the item -- on a bare
     `--coordinator-override` with no coordinator role behind it."""
-    context = session.context
     toplevel = context.toplevel
     config = context.config
     if config.storage is not body.Storage.GITHUB:
         raise protocol.ClaimUnavailableError(LAND_GITHUB_ONLY_REFUSAL)
     if parsed.coordinator_override:
         protocol._require_coordinator_override(parsed.role)
-    client = cast(github.GitHubForge, session.forge())
+    client = cast(github.GitHubForge, context.forge)
     number = parsed.pull_request
     repository = client.repository.path
     detail = client.landing(number)
@@ -6251,9 +6206,10 @@ def _landed_commit(
 
 def _cmd_release_landed(
     parsed: argparse.Namespace,
-    session: _WriteSession,
+    context: RunContext,
     identity: protocol.ClaimIdentity,
     storage: body.Storage,
+    release_branch: str | None,
 ) -> int:
     """`release --merged <sha|empty>` under `storage = "state-ref"` (issue
     #359, LAND-47/LAND-52): the trunk walk (`checkout.trunk_landings`,
@@ -6267,7 +6223,6 @@ def _cmd_release_landed(
             "--merged under storage = state-ref requires an issue number; "
             "an issue-less lane has no item to close"
         )
-    context = session.context
     trunk_ref = context.trunk_ref
     landings = checkout.trunk_landings(trunk_ref, TRUNK_LANDING_DEPTH, directory=context.toplevel)
     commit = _landed_commit(
@@ -6284,9 +6239,7 @@ def _cmd_release_landed(
     worktree = context.toplevel
     observed = context.observation
     _require_state_ref(observed)
-    resolved = _resolve_release_claimant(
-        parsed, observed, identity, session.release_branch, storage
-    )
+    resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     new_oid = store.hash_blob(worktree, write.content)
     outcome = protocol.LandedRelease(commit=protocol.ObjectId(commit))
     intent = protocol.LandingIntent(
@@ -6913,14 +6866,14 @@ def _refuse_partial_write(
     return 2
 
 
-def _cmd_cut(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_cut(parsed: argparse.Namespace, context: RunContext) -> int:
     """`cut`'s own `--json` envelope (issue #425): a partial write reports
     through `_refuse_partial_write`'s own structured shape; every other
     refusal past the parser is `precondition_failed`, matching this
     command's single generic refusal bucket."""
     as_json = parsed.json
     try:
-        client = session.forge.writer()
+        client = context.forge_writer
         number = int(parsed.issue)
         for operation in (
             forge.ForgeOperation.CREATE_CHILD,
@@ -6931,7 +6884,7 @@ def _cmd_cut(parsed: argparse.Namespace, session: _WriteSession) -> int:
                 raise protocol.ClaimUnavailableError(
                     f"this forge cannot {operation.value}; cut the slice by hand"
                 )
-        config = _load_board_config(client, session.context)
+        config = _load_board_config(client, context)
         open_issues = client.list_open_board_issues()
         target = _cut_target(client, open_issues, number, config.storage)
         return _cut_slice(client, target, open_issues, parsed, config)
@@ -7065,7 +7018,7 @@ def rule_item(
     still has open; raises `protocol.ClaimError` by name for every refusal
     (already ruled, out of range, a bad outcome, a malformed or missing
     item), which both callers turn into their own by-name response."""
-    client = _LazyForge(context).writer()
+    client = context.forge_writer
     current_body, config = _require_writable_target(client, context, number, command="rule")
     ruled_on = datetime.now(UTC).date()
     new_body = body.rule_expectation(current_body, line, ruling, ruled_on, note=note)
@@ -7096,26 +7049,24 @@ def _rule_item_reason(error: _RuleItemError) -> RuleReason:
     return RuleReason.LINE_OUT_OF_RANGE
 
 
-def _rule_expectation_line(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _rule_expectation_line(parsed: argparse.Namespace, context: RunContext) -> int:
     """`rule`'s own work, every refusal raised by name for `_cmd_rule` to
     report."""
     number = int(parsed.item)
-    ruled_line, open_remaining = rule_item(
-        session.context, number, parsed.line, parsed.ruling, parsed.note
-    )
-    storage = session.context.config.storage
+    ruled_line, open_remaining = rule_item(context, number, parsed.line, parsed.ruling, parsed.note)
+    storage = context.config.storage
     _emit_rule_result(number, ruled_line, open_remaining, storage, as_json=parsed.json)
     return 0
 
 
-def _cmd_rule(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_rule(parsed: argparse.Namespace, context: RunContext) -> int:
     """`rule`'s own `--json` refusals (issue #396), for the whole command and
     not only its first steps (issue #432): the body write inside the shared
     ruling path can fail like any other forge call, and a failure there names
     this command's own `unavailable` rather than escaping the envelope."""
     as_json = parsed.json
     try:
-        return _rule_expectation_line(parsed, session)
+        return _rule_expectation_line(parsed, context)
     except (
         _TargetUnavailableError,
         _InvalidTargetError,
@@ -7191,7 +7142,7 @@ class _ServedBoardCache:
             self.stale = True
 
 
-def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_serve.BoardServer:
+def _board_server(parsed: argparse.Namespace, context: RunContext) -> board_serve.BoardServer:
     """`board --serve`'s bound, listening server (issue #280), built but not
     yet run: a loopback page built through `_board_page` and held in
     `_ServedBoardCache` between requests (issue #440), and writes through
@@ -7207,7 +7158,7 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
     check that could bind. Split from `_cmd_board_serve`'s own
     `serve_forever` loop so a test can bind a real ephemeral port and drive
     it without blocking."""
-    client = session.forge.writer()
+    client = context.forge_writer
     token_holder: list[str] = []
     cache = _ServedBoardCache()
 
@@ -7219,7 +7170,7 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
         return token
 
     def render_page(refused: str | None, reload: bool) -> str:
-        page, built_at, store_refusal = cache.held(session.context.fresh(), reload=reload)
+        page, built_at, store_refusal = cache.held(context.fresh(), reload=reload)
         notices = dict.fromkeys(
             sentence for sentence in (refused, store_refusal) if sentence is not None
         )
@@ -7242,8 +7193,8 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
         # snapshot cannot see an item that went bad while it ran, and a
         # preflight alone could not see one going bad before the write.
         try:
-            request_context = session.context.fresh()
-            clicked = _LazyForge(request_context).writer()
+            request_context = context.fresh()
+            clicked = request_context.forge_writer
             if isinstance(clicked, state_board.StateRefBoard):
                 clicked.hold_well_formed()
             rule_item(request_context, item, line, ruling, note)
@@ -7257,14 +7208,14 @@ def _board_server(parsed: argparse.Namespace, session: _WriteSession) -> board_s
     # (issue #447) stop the server before any token write or ruling click;
     # the first `GET` then serves this very page instead of building again.
     # No request exists yet, so it reads through the run's own context.
-    cache.held(session.context, reload=False)
+    cache.held(context, reload=False)
     return board_serve.start(
         port=parsed.port, resolve_token=resolve_token, render_page=render_page, rule_item=post_rule
     )
 
 
-def _cmd_board_serve(parsed: argparse.Namespace, session: _WriteSession) -> int:
-    server = _board_server(parsed, session)
+def _cmd_board_serve(parsed: argparse.Namespace, context: RunContext) -> int:
+    server = _board_server(parsed, context)
     print(server.url, flush=True)
     try:
         server.httpd.serve_forever()
@@ -7357,7 +7308,7 @@ def _ask_expectation_reason(
     return AskReason.INVALID_EXPECTATION
 
 
-def _append_expectation_card(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _append_expectation_card(parsed: argparse.Namespace, context: RunContext) -> int:
     """`ask`'s own work, every refusal raised by name for `_cmd_ask` to
     report: the picture file is read before the forge is ever resolved, so a
     missing one refuses before the item body is fetched."""
@@ -7365,9 +7316,9 @@ def _append_expectation_card(parsed: argparse.Namespace, session: _WriteSession)
     card = body.ExpectationCardFields(
         question=parsed.question, example=parsed.example, picture=picture
     )
-    client = session.forge.writer()
+    client = context.forge_writer
     number = int(parsed.item)
-    current_body, config = _require_writable_target(client, session.context, number, command="ask")
+    current_body, config = _require_writable_target(client, context, number, command="ask")
     new_body = body.append_expectation(current_body, parsed.text, parsed.default, card=card)
     index = len(body.expectation_lines(new_body, storage=config.storage))
     client.update_item_body(number, new_body)
@@ -7378,14 +7329,14 @@ def _append_expectation_card(parsed: argparse.Namespace, session: _WriteSession)
     return 0
 
 
-def _cmd_ask(parsed: argparse.Namespace, session: _WriteSession) -> int:
+def _cmd_ask(parsed: argparse.Namespace, context: RunContext) -> int:
     """`ask`'s own `--json` refusals (issue #396), for the whole command and
     not only its first steps (issue #432): the body write this command ends
     with can fail like any other forge call, and a failure there names this
     command's own `unavailable` rather than escaping the envelope."""
     as_json = parsed.json
     try:
-        return _append_expectation_card(parsed, session)
+        return _append_expectation_card(parsed, context)
     except _PictureFileError as error:
         return _refuse(AskReason.INVALID_PICTURE, error, as_json=as_json)
     except (_TargetUnavailableError, _InvalidTargetError) as error:
@@ -7673,46 +7624,36 @@ def _reset_state(parsed: argparse.Namespace, context: RunContext) -> int:
     return 0
 
 
-class _CommandSession(StrEnum):
-    """The session kind `_dispatch` builds before a command's handler runs."""
-
-    READ = "read"
-    WRITE = "write"
-    FORGE_FREE = "forge_free"
-
-
 @dataclass(frozen=True)
 class _CommandEntry:
-    """One command's parser builder, session kind, and handler (issue #372:
-    one table instead of a `_SUBPARSER_BUILDERS`/`_READ_HANDLERS`/
-    `_WRITE_HANDLERS`/`_FORGE_FREE_COMMANDS` quartet keyed by the same
-    names)."""
+    """One command's parser builder and handler (issue #372: one table
+    instead of a `_SUBPARSER_BUILDERS`/`_READ_HANDLERS`/`_WRITE_HANDLERS`/
+    `_FORGE_FREE_COMMANDS` quartet keyed by the same names). Every handler
+    takes the parsed arguments and the run's `RunContext`; `release` also
+    takes the branch `_dispatch` read before it started."""
 
     add_parser: Callable[[argparse._SubParsersAction], None]
-    session: _CommandSession
     handler: Callable[..., int | None]
 
 
 _COMMAND_TABLE: dict[str, _CommandEntry] = {
     "bootstrap": _CommandEntry(
-        _add_bootstrap_parser,
-        _CommandSession.FORGE_FREE,
-        lambda _parsed, context: _bootstrap_state(context),
+        _add_bootstrap_parser, lambda _parsed, context: _bootstrap_state(context)
     ),
-    "reset": _CommandEntry(_add_reset_parser, _CommandSession.FORGE_FREE, _reset_state),
-    "board": _CommandEntry(_add_board_parser, _CommandSession.READ, _cmd_board),
-    "rulings": _CommandEntry(_add_rulings_parser, _CommandSession.READ, _cmd_rulings),
-    "next": _CommandEntry(_add_next_parser, _CommandSession.READ, _cmd_next),
-    "start": _CommandEntry(_add_start_parser, _CommandSession.WRITE, _cmd_start),
-    "claim": _CommandEntry(_add_claim_parser, _CommandSession.WRITE, _cmd_claim),
-    "release": _CommandEntry(_add_release_parser, _CommandSession.WRITE, _cmd_release),
-    "land": _CommandEntry(_add_land_parser, _CommandSession.WRITE, _cmd_land),
-    "rescope": _CommandEntry(_add_rescope_parser, _CommandSession.WRITE, _cmd_rescope),
-    "cut": _CommandEntry(_add_cut_parser, _CommandSession.WRITE, _cmd_cut),
-    "ask": _CommandEntry(_add_ask_parser, _CommandSession.WRITE, _cmd_ask),
-    "rule": _CommandEntry(_add_rule_parser, _CommandSession.WRITE, _cmd_rule),
-    "check": _CommandEntry(_add_check_parser, _CommandSession.READ, _cmd_check),
-    "brief": _CommandEntry(_add_brief_parser, _CommandSession.READ, _cmd_brief),
+    "reset": _CommandEntry(_add_reset_parser, _reset_state),
+    "board": _CommandEntry(_add_board_parser, _cmd_board),
+    "rulings": _CommandEntry(_add_rulings_parser, _cmd_rulings),
+    "next": _CommandEntry(_add_next_parser, _cmd_next),
+    "start": _CommandEntry(_add_start_parser, _cmd_start),
+    "claim": _CommandEntry(_add_claim_parser, _cmd_claim),
+    "release": _CommandEntry(_add_release_parser, _cmd_release),
+    "land": _CommandEntry(_add_land_parser, _cmd_land),
+    "rescope": _CommandEntry(_add_rescope_parser, _cmd_rescope),
+    "cut": _CommandEntry(_add_cut_parser, _cmd_cut),
+    "ask": _CommandEntry(_add_ask_parser, _cmd_ask),
+    "rule": _CommandEntry(_add_rule_parser, _cmd_rule),
+    "check": _CommandEntry(_add_check_parser, _cmd_check),
+    "brief": _CommandEntry(_add_brief_parser, _cmd_brief),
 }
 
 
@@ -7755,21 +7696,16 @@ def _dispatch(parsed: argparse.Namespace, context: RunContext) -> int:
     if parsed.command == "item":
         return _dispatch_item(parsed, context)
     entry = _COMMAND_TABLE[parsed.command]
-    if entry.session is _CommandSession.FORGE_FREE:
-        result = entry.handler(parsed, context)
-        return 0 if result is None else result
-    forge_accessor = _LazyForge(context)
-    if parsed.command == "board" and parsed.serve:
-        # `board --serve` writes through a click (issue #280), so it needs
-        # the writer session even though its own name reads like every
-        # other `board` output mode.
-        result = _cmd_board_serve(parsed, _WriteSession(forge=forge_accessor, release_branch=None))
-    elif entry.session is _CommandSession.READ:
-        result = entry.handler(parsed, context)
+    if parsed.command == "release":
+        # The release branch is dispatch data, read before the command
+        # starts, never a repository fact the context would hold (#418).
+        result = entry.handler(parsed, context, release_branch)
+    elif parsed.command == "board" and parsed.serve:
+        # `board --serve` writes through a click (issue #280), so it runs
+        # its own handler rather than `board`'s read-only output modes.
+        result = _cmd_board_serve(parsed, context)
     else:
-        result = entry.handler(
-            parsed, _WriteSession(forge=forge_accessor, release_branch=release_branch)
-        )
+        result = entry.handler(parsed, context)
     return 0 if result is None else result
 
 
@@ -7885,8 +7821,8 @@ def _local_operation(parsed: argparse.Namespace) -> int:
 
 def _read_status_body_or_dispatch(parsed: argparse.Namespace, context: RunContext) -> int:
     """`status` and `body` are forge-free (issue #245, #262): both are
-    resolved here, ahead of `_dispatch`'s own `_LazyForge`, so neither ever
-    resolves one."""
+    resolved here, ahead of `_dispatch`, and neither ever asks the
+    `RunContext` for its forge."""
     if parsed.command == "status":
         return _cmd_status(parsed, context)
     if parsed.command == "body":

@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import cached_property
 from pathlib import Path
+from typing import cast
 
 from . import board, body, checkout, forge, github, protocol, store
 
@@ -291,6 +292,18 @@ class RunContext:
     @cached_property
     def forge(self) -> forge.ForgeReader:
         return self._build_forge(self)
+
+    @property
+    def forge_writer(self) -> forge.ForgeWriter:
+        """The same resolved forge, narrowed to its writing surface (issue
+        #248, #283). The cast is honest, not a suppression: every adapter
+        this tool builds -- `github.GitHubForge`, `state_board.StateRefBoard`
+        (its `ItemWriter` injected by `_state_ref_forge`), and every test
+        fake standing in for either -- already implements the full
+        `ForgeWriter` surface, an unsupported operation as a method raising
+        `forge.ForgeUnsupportedError`, checked at each call site by
+        `capability()`, never by `isinstance`."""
+        return cast(forge.ForgeWriter, self.forge)
 
     @cached_property
     def observation(self) -> protocol.ClaimState:
