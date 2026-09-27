@@ -461,19 +461,76 @@ def resolve_path_checkout(directory: Path) -> PathCheckout | None:
     A git failure on an existing `directory` is "outside every repository"
     only when no repository marker sits in it or any of its ancestors
     either; below one, the failure is raised instead (issue #448 review
-    finding: `protect` allows a `None` path unjudged, so a missing git, or a
-    path inside a git directory itself -- a checkout's `.git/` or a bare
-    repository -- must never read as "no repository here"). A `directory`
-    that does not exist yet is never inside a repository -- `git -C` cannot
-    even enter it -- so it stays `None` whatever sits above it, even an
-    outer checkout's `.git`.
+    finding: `protect` allows a `None` path unjudged, so a missing git must
+    never read as "no repository here"). Inside a git directory itself -- a
+    checkout's `.git/` or a bare repository -- the failure is raised as
+    `inside_git_directory_reason`'s sentence rather than git's own
+    localized text (issue #483). A `directory` that does not exist yet is
+    never inside a repository -- `git -C` cannot even enter it -- so it
+    stays `None` whatever sits above it, even an outer checkout's `.git`.
     """
     try:
         return _resolve_checkout(directory)
-    except ClaimError:
-        if directory.is_dir() and _has_repository_marker_above(directory):
-            raise
+    except ClaimError as error:
+        if directory.is_dir():
+            _refuse_a_failure_inside_a_repository(directory, error)
         return None
+
+
+def _refuse_a_failure_inside_a_repository(directory: Path, error: ClaimError) -> None:
+    """Raises `error` -- or, inside a git directory itself, its own sentence
+    -- when `directory` sits inside a repository, so the git failure on it
+    can never read as "outside every repository"."""
+    git_directory = _enclosing_git_directory(directory)
+    if git_directory is not None:
+        raise ClaimError(inside_git_directory_reason(git_directory)) from error
+    if _has_repository_marker_above(directory):
+        raise error
+
+
+def inside_git_directory_reason(git_directory: Path) -> str:
+    return f"not a checkout: {git_directory} is a git directory"
+
+
+def resolve_named_path_checkout(path: Path) -> PathCheckout | None:
+    """The checkout an absolute path a caller names belongs to -- the one
+    resolver `protect` and `rescope` share for a payload path or an
+    `--add`/`--drop` entry (issue #483). A directory that is itself a
+    checkout root resolves as that checkout (PROT-36): a nested checkout's
+    own root, whose parent sits inside an outer repository, must not have
+    the outer checkout answer for it, and a root whose parent sits outside
+    every repository is still judged as that checkout's own root (PROT-14).
+    Any other directory resolves from its parent first and from itself only
+    as a fallback; a file -- existing or not yet written -- from its
+    nearest existing ancestor directory (PROT-39). `path` is normalized
+    lexically first (`os.path.normpath`, no symlink resolution), so
+    `nested/../nested` or `nested/.` reach the comparison the way `nested`
+    does."""
+    path = Path(os.path.normpath(path))
+    if not path.is_dir():
+        return resolve_nearest_existing_checkout(path.parent)
+    self_checkout = resolve_path_checkout(path)
+    if self_checkout is not None and self_checkout.toplevel == path:
+        return self_checkout
+    return resolve_path_checkout(path.parent) or self_checkout
+
+
+def unscopable_path_reason(absolute_path: str, *, toplevel: Path) -> str | None:
+    """Why `absolute_path`, inside the checkout at `toplevel`, can never be a
+    scope entry, or `None` when it can -- the one sentence `protect` denies
+    with and `rescope` refuses with (issue #483). Below a file or a
+    dangling symlink the path can never exist; the checkout root itself is
+    the whole checkout, not a path in it."""
+    path = Path(os.path.normpath(absolute_path))
+    directory = _nearest_existing_directory(path.parent)
+    if directory != path.parent:
+        blocker = directory / path.parent.relative_to(directory).parts[0]
+        if os.path.lexists(blocker):
+            kind = "file" if blocker.exists() else "dangling symlink"
+            return f"{path} cannot exist: {blocker} is a {kind}"
+    if path.resolve() == toplevel:
+        return f"{path} is the checkout root itself"
+    return None
 
 
 def resolve_nearest_existing_checkout(directory: Path) -> PathCheckout | None:
@@ -499,17 +556,26 @@ def _nearest_existing_directory(directory: Path) -> Path:
     return directory
 
 
+def _enclosing_git_directory(directory: Path) -> Path | None:
+    """`directory` or its closest ancestor that is a git directory itself --
+    a bare repository, or a checkout's own `.git/` -- or `None`. Judged on
+    the symlink-resolved path, the one git's own discovery walks."""
+    resolved = directory.resolve()
+    return next(
+        (candidate for candidate in (resolved, *resolved.parents) if _is_git_directory(candidate)),
+        None,
+    )
+
+
 def _has_repository_marker_above(directory: Path) -> bool:
-    """Whether `directory` or any ancestor is a git directory itself (a bare
-    repository, or a checkout's own `.git/`) or holds a `.git` marker: a
-    `.git` file (a linked worktree's) or a `.git` git directory (a main
+    """Whether `directory` or any ancestor holds a `.git` marker: a `.git`
+    file (a linked worktree's) or a `.git` git directory (a main
     checkout's) -- a stray empty `.git` directory is no repository to git
     either. Judged on the symlink-resolved path, the one git's own
     discovery walks."""
     resolved = directory.resolve()
     return any(
-        _is_git_directory(candidate) or _is_repository_marker(candidate / ".git")
-        for candidate in (resolved, *resolved.parents)
+        _is_repository_marker(candidate / ".git") for candidate in (resolved, *resolved.parents)
     )
 
 

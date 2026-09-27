@@ -1184,23 +1184,27 @@ def test_protect_denies_not_main_for_a_custom_or_unresolved_default_branch(
     _assert_protect_decision(capsys, decision="deny", reason=expected_reason)
 
 
+def _checkout_root_reason(root: Path) -> str:
+    return f"{root} is the checkout root itself"
+
+
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
-def test_protect_path_resolving_to_the_checkout_root_denies_path_required(
+def test_protect_path_resolving_to_the_checkout_root_denies_naming_the_root(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     payload_for: Callable[[Path], dict[str, object]],
 ) -> None:
-    """`PATH_REQUIRED` fires when the payload path's own checkout resolves
+    """PROT-14 fires when the payload path's own checkout resolves
     (issue #314 repeat gate, finding 2 fallout: the pre-fix fake answered
     any directory, including one genuinely outside `work`, with `work`'s own
     checkout -- masking that this scenario needs a *real* descendant of the
     checkout, not an outside path, to reach this denial at all) but the path
     itself resolves to exactly the checkout root: `work/subdir/..` queries
     git from the real descendant `work/subdir`, so the checkout resolves
-    fine, while the full path resolves to `work` itself -- a repository-
-    relative scope entry of `"."`, which `protocol.valid_scope` refuses. A
-    Bash-recognized path runs the identical gate (issue #380)."""
+    fine, while the full path resolves to `work` itself, named in the
+    sentence `rescope` refuses it with too (issue #483). A Bash-recognized
+    path runs the identical gate (issue #380)."""
     _isolate_protect_home(monkeypatch, tmp_path)
     work = tmp_path / "work"
     _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
@@ -1208,7 +1212,7 @@ def test_protect_path_resolving_to_the_checkout_root_denies_path_required(
     _forbid_github_construction(monkeypatch)
 
     assert _protect_main(monkeypatch, payload_for(work / "subdir" / "..")) == 2
-    _assert_protect_decision(capsys, decision="deny", reason="path required")
+    _assert_protect_decision(capsys, decision="deny", reason=_checkout_root_reason(work))
 
 
 @pytest.mark.parametrize(
@@ -1543,7 +1547,7 @@ def test_protect_bash_denies_deleting_a_linked_worktrees_own_root(
         )
         == 2
     )
-    _assert_protect_decision(capsys, decision="deny", reason="path required")
+    _assert_protect_decision(capsys, decision="deny", reason=_checkout_root_reason(worktree))
 
 
 def test_protect_bash_judges_an_ordinary_directory_by_its_own_checkout(
@@ -1629,7 +1633,7 @@ def test_protect_denies_deleting_a_nested_worktrees_own_root(
     own root's *parent* directory sits inside another, outer git checkout
     must still be judged by its own checkout -- resolved directly from the
     root itself, before the outer checkout's parent-first lookup ever gets
-    a say -- so deleting it still denies `path required` (PROT-14) rather
+    a say -- so deleting it still denies naming that root (PROT-14) rather
     than the outer checkout's own scope silently authorizing it. Proven for
     both a payload path (`Write`, the accepted Edit-family behaviour change
     this round) and a Bash-recognized one (`rm`), since both share the same
@@ -1650,7 +1654,7 @@ def test_protect_denies_deleting_a_nested_worktrees_own_root(
         payload["cwd"] = str(outer)
 
     assert _protect_main(monkeypatch, payload) == 2
-    _assert_protect_decision(capsys, decision="deny", reason="path required")
+    _assert_protect_decision(capsys, decision="deny", reason=_checkout_root_reason(nested))
 
 
 @pytest.mark.parametrize(
@@ -2498,7 +2502,7 @@ def test_judge_denies_a_path_resolving_to_the_checkout_root_before_reading_the_s
     """PROT-14 fires from the checkout gate alone, before the store's own
     canonical remote is ever resolved (`_no_canonical_remote_call` fails the
     test if it is): a payload path that resolves to exactly the checkout
-    root denies `path required`, the same reason as no path at all."""
+    root denies naming that root."""
     branch = "codex/issue-9-widget"
     worktree = _judge_worktree(tmp_path, branch=branch)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
@@ -2506,7 +2510,10 @@ def test_judge_denies_a_path_resolving_to_the_checkout_root_before_reading_the_s
 
     verdict = protect.judge(payload, canonical_remote_for=_no_canonical_remote_call)
 
-    assert _judge_decision_and_reason(verdict) == (protect.Decision.DENY, "path required")
+    assert _judge_decision_and_reason(verdict) == (
+        protect.Decision.DENY,
+        _checkout_root_reason(worktree),
+    )
 
 
 def _real_main_checkout_with_session_settings(tmp_path: Path) -> Path:
@@ -2590,3 +2597,317 @@ def test_protect_judges_a_file_in_a_not_yet_existing_directory_by_its_checkout(
 
     assert _protect_main(monkeypatch, payload_for(worktree / relative)) == status
     _assert_protect_decision(capsys, decision="deny" if reason else "allow", reason=reason)
+
+
+def _bash_rm_rf_target_payload(target: Path) -> dict[str, object]:
+    return {"toolName": "Bash", "toolInput": {"command": f"rm -rf {target}"}}
+
+
+def _unguarded_scratchpad(tmp_path: Path) -> Path:
+    """A tester's scratchpad (issue #483): a throwaway main checkout with
+    its own bare remote (`repo`, `remote.git`) and a linked worktree of it
+    on a feature branch (`lane`), a linked worktree of a guarded
+    repository placed inside it (`guarded-worktree`), a directory symlink
+    into that guarded repository's main checkout (`guarded-link`), file
+    symlinks from the throwaway checkout and its worktree into that main
+    checkout (`repo/into-guarded.md`, `lane/into-guarded.md`), one from
+    the throwaway checkout into the guarded worktree
+    (`repo/into-guarded-worktree.md`), one from the throwaway checkout into
+    its own git directory (`repo/into-own-git`), into its own README
+    (`repo/into-own-readme.md`), and to a file outside every repository
+    (`repo/into-outside.md`), one from the guarded worktree into the
+    throwaway checkout (`guarded-worktree/into-throwaway.md`), a directory
+    symlink from the throwaway checkout into a directory of the guarded main checkout
+    (`repo/into-guarded-directory`), and a dangling directory
+    symlink outside every repository into a directory of that main checkout
+    not created yet (`dangling`)."""
+    guarded, _worktree = _protect_real_repo_with_worktree(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    throwaway = _real_main_checkout_with_session_settings(scratch)
+    _real_git(
+        guarded,
+        "worktree",
+        "add",
+        "-q",
+        str(scratch / "guarded-worktree"),
+        "-b",
+        "codex/issue-9-guarded",
+    )
+    _real_git(throwaway, "worktree", "add", "-q", str(scratch / "lane"), "-b", "codex/issue-9-lane")
+    (scratch / "guarded-link").symlink_to(guarded, target_is_directory=True)
+    for link in (throwaway / "into-guarded.md", scratch / "lane" / "into-guarded.md"):
+        link.symlink_to(guarded / "README.md")
+    (throwaway / "into-guarded-worktree.md").symlink_to(scratch / "guarded-worktree" / "README.md")
+    (throwaway / "into-own-git").symlink_to(throwaway / ".git" / "description")
+    (throwaway / "into-own-readme.md").symlink_to(throwaway / "README.md")
+    outside = _file_outside_every_repository(tmp_path)
+    outside.write_text("outside\n")
+    (throwaway / "into-outside.md").symlink_to(outside)
+    (scratch / "guarded-worktree" / "into-throwaway.md").symlink_to(throwaway / "README.md")
+    (throwaway / "into-guarded-directory").symlink_to(
+        guarded / ".agent-claim", target_is_directory=True
+    )
+    (scratch / "dangling").symlink_to(guarded / "newdir", target_is_directory=True)
+    return scratch
+
+
+def _bash_copy_into_payload(destination: Path) -> dict[str, object]:
+    return _bash_payload(f"cp {destination.parent / 'note.txt'} {destination}")
+
+
+def _bash_move_into_payload(destination: Path) -> dict[str, object]:
+    return _bash_payload(f"mv {destination.parent / 'note.txt'} {destination}")
+
+
+def _bash_rm_rf_contents_payload(directory: Path) -> dict[str, object]:
+    return _bash_payload(f"rm -rf {directory}/")
+
+
+_MALFORMED_ENTRY_REASON = "ACO_PROTECT_UNGUARDED: {entry} is not an absolute directory"
+
+
+@pytest.mark.parametrize(
+    ("unguarded", "payload_for", "target", "status", "reason", "store_reads"),
+    [
+        (None, _write_target_payload, "repo/README.md", 2, "not main", 0),
+        (None, _write_target_payload, "dangling/file.md", 2, "not main", 0),
+        (None, _write_target_payload, "repo/into-own-git", 2, "not main", 0),
+        ("{scratch}", _write_target_payload, "repo/README.md", 0, None, 0),
+        ("{scratch}", _bash_rm_target_payload, "repo/README.md", 0, None, 0),
+        ("{scratch}", _bash_rm_rf_target_payload, "repo", 0, None, 0),
+        ("{scratch}", _write_target_payload, "guarded-worktree/src/x.py", 2, "claim first", 1),
+        ("{scratch}", _write_target_payload, "guarded-link/README.md", 2, "not main", 0),
+        ("{scratch}", _write_target_payload, "repo/into-guarded.md", 2, "not main", 0),
+        ("{scratch}", _write_target_payload, "lane/into-guarded.md", 2, "not main", 0),
+        ("{scratch}", _write_target_payload, "repo/into-guarded-worktree.md", 2, "claim first", 1),
+        ("{scratch}", _bash_copy_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
+        ("{scratch}", _bash_move_into_payload, "repo/into-guarded-directory", 2, "not main", 0),
+        ("{scratch}", _bash_rm_target_payload, "repo/into-guarded-directory", 2, "not main", 0),
+        (
+            "{scratch}",
+            _bash_rm_rf_contents_payload,
+            "repo/into-guarded-directory",
+            2,
+            "not main",
+            0,
+        ),
+        ("{scratch}", _write_target_payload, "repo/into-own-readme.md", 0, None, 0),
+        ("{scratch}", _write_target_payload, "repo/into-outside.md", 0, None, 0),
+        (
+            "{scratch}",
+            _write_target_payload,
+            "guarded-worktree/into-throwaway.md",
+            2,
+            "path required",
+            0,
+        ),
+        (
+            "scratch",
+            _write_target_payload,
+            "repo/README.md",
+            2,
+            _MALFORMED_ENTRY_REASON.format(entry="scratch"),
+            0,
+        ),
+        (
+            f"{{scratch}}/missing{os.pathsep}{{scratch}}",
+            _write_target_payload,
+            "repo/README.md",
+            2,
+            _MALFORMED_ENTRY_REASON.format(entry="{scratch}/missing"),
+            0,
+        ),
+        (
+            f"{{scratch}}{os.pathsep}",
+            _write_target_payload,
+            "repo/README.md",
+            2,
+            _MALFORMED_ENTRY_REASON.format(entry=""),
+            0,
+        ),
+        (
+            os.pathsep,
+            _write_target_payload,
+            "repo/README.md",
+            2,
+            _MALFORMED_ENTRY_REASON.format(entry=""),
+            0,
+        ),
+        ("scratch", _write_target_payload, "repo/.claude/settings.local.json", 0, None, 0),
+        ("scratch", _write_target_payload, "notes.md", 0, None, 0),
+    ],
+    ids=[
+        "unset-guards-the-throwaway-checkout",
+        "unset-judges-a-write-below-a-dangling-directory-symlink-by-its-target",
+        "unset-judges-a-file-symlink-into-its-own-git-directory-by-its-checkout",
+        "write-allows",
+        "bash-rm-allows",
+        "bash-rm-rf-of-the-root-allows",
+        "guarded-worktree-inside-still-needs-a-claim",
+        "directory-symlink-into-a-guarded-checkout",
+        "file-symlink-into-a-guarded-checkout",
+        "file-symlink-from-a-throwaway-worktree-into-a-guarded-checkout",
+        "file-symlink-into-a-guarded-worktree",
+        "bash-cp-into-a-directory-symlink-into-a-guarded-checkout",
+        "bash-mv-into-a-directory-symlink-into-a-guarded-checkout",
+        "bash-rm-of-a-directory-symlink-into-a-guarded-checkout",
+        "bash-rm-rf-through-a-directory-symlink-into-a-guarded-checkout",
+        "file-symlink-into-its-own-checkout-allows",
+        "file-symlink-outside-every-repository-allows",
+        "file-symlink-from-a-guarded-worktree-into-the-throwaway-checkout",
+        "relative-entry-fails-closed",
+        "missing-entry-fails-closed",
+        "empty-trailing-entry-fails-closed",
+        "only-empty-entries-fail-closed",
+        "malformed-variable-keeps-session-settings-writable",
+        "malformed-variable-leaves-outside-paths-alone",
+    ],
+)
+def test_protect_unguarded_directories_exempt_only_the_repositories_they_hold(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    unguarded: str | None,
+    payload_for: Callable[[Path], dict[str, object]],
+    target: str,
+    status: int,
+    reason: str | None,
+    store_reads: int,
+) -> None:
+    """PROT-40/PROT-41 (issue #483): a repository whose common git directory
+    sits in an `ACO_PROTECT_UNGUARDED` directory allows every write, root
+    deletion included, without reading the store; a guarded repository
+    reached from inside it -- its linked worktree, a directory symlink, a
+    file symlink, from the throwaway checkout or its worktree -- is still
+    judged by that guarded checkout; and an entry that is not an existing
+    absolute directory denies every path in a checkout except the session's
+    own ignored settings. The session has an identity only where the verdict
+    reads the store, so every other row proves it decides without one."""
+    scratch = _unguarded_scratchpad(tmp_path)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"} if store_reads else None)
+    if unguarded is not None:
+        monkeypatch.setenv(protect.PROTECT_UNGUARDED_ENV, unguarded.format(scratch=scratch))
+    fetches: list[Path] = []
+
+    def fetch_state(*, worktree: Path, remote: str) -> protocol.ClaimState:
+        fetches.append(worktree)
+        return protocol.ClaimState(tip=protocol.ObjectId(BASE), claims={})
+
+    monkeypatch.setattr(store, "fetch_state", fetch_state)
+
+    assert _protect_main(monkeypatch, payload_for(scratch / target)) == status
+    _assert_protect_decision(
+        capsys,
+        decision="deny" if reason else "allow",
+        reason=reason.format(scratch=scratch) if reason else None,
+    )
+    assert len(fetches) == store_reads
+
+
+def test_protect_denies_path_required_for_a_worktree_symlink_leading_outside_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A write through a file symlink inside the worktree whose target lies
+    outside it names no scope entry of that checkout, so it denies `path
+    required` before the store is read -- unlike the paths no claim can ever
+    cover, which name their own sentence (issue #483)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    _main, worktree = _protect_real_repo_with_worktree(tmp_path)
+    link = worktree / "docs" / "outside.md"
+    link.symlink_to(_file_outside_every_repository(tmp_path))
+    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
+
+    assert _protect_main(monkeypatch, _write_target_payload(link)) == 2
+    _assert_protect_decision(capsys, decision="deny", reason=protect.PATH_REQUIRED)
+
+
+def _path_below_a_file(_main: Path, worktree: Path) -> tuple[Path, str]:
+    path = worktree / "README.md" / "x.py"
+    return path, f"{path} cannot exist: {worktree / 'README.md'} is a file"
+
+
+def _path_below_a_dangling_symlink(_main: Path, worktree: Path) -> tuple[Path, str]:
+    link = worktree / "dangling"
+    link.symlink_to(worktree.parent / "nowhere", target_is_directory=True)
+    path = link / "deep" / "x.py"
+    return path, f"{path} cannot exist: {link} is a dangling symlink"
+
+
+def _the_checkout_root(_main: Path, worktree: Path) -> tuple[Path, str]:
+    return worktree, _checkout_root_reason(worktree)
+
+
+def _path_in_a_bare_repository(main: Path, _worktree: Path) -> tuple[Path, str]:
+    hook = _hook_in_a_bare_repository(main.parent)
+    return hook, f"not a checkout: {hook.parent.parent.resolve()} is a git directory"
+
+
+def _path_in_a_checkouts_git_directory(main: Path, _worktree: Path) -> tuple[Path, str]:
+    git_directory = main / ".git"
+    return (
+        git_directory / "info" / "x",
+        f"not a checkout: {git_directory.resolve()} is a git directory",
+    )
+
+
+def _protect_refusal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], path: Path
+) -> tuple[int, str]:
+    status = _protect_main(monkeypatch, _write_target_payload(path))
+    captured = capsys.readouterr()
+    assert captured.err == f"{json.loads(captured.out)['reason']}\n"
+    return status, captured.err.removesuffix("\n")
+
+
+def _rescope_refusal(
+    _monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], path: Path
+) -> tuple[int, str]:
+    status = issue_claim.main(["rescope", "72", "--add", str(path)])
+    return status, capsys.readouterr().err.removeprefix("ERROR: ").removesuffix("\n")
+
+
+def _store_must_not_be_read(*, worktree: Path, remote: str) -> protocol.ClaimState:
+    raise AssertionError(f"store read for {worktree} on {remote}")
+
+
+@pytest.mark.parametrize(
+    "refusal_of", [_protect_refusal, _rescope_refusal], ids=["protect", "rescope"]
+)
+@pytest.mark.parametrize(
+    "build_case",
+    [
+        _path_below_a_file,
+        _path_below_a_dangling_symlink,
+        _the_checkout_root,
+        _path_in_a_bare_repository,
+        _path_in_a_checkouts_git_directory,
+    ],
+    ids=["below-a-file", "below-a-dangling-symlink", "checkout-root", "bare-repository", "dot-git"],
+)
+def test_protect_and_rescope_refuse_a_path_no_claim_can_cover_with_one_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    refusal_of: Callable[[pytest.MonkeyPatch, pytest.CaptureFixture[str], Path], tuple[int, str]],
+    build_case: Callable[[Path, Path], tuple[Path, str]],
+) -> None:
+    """PROT-14, PROT-42, PROT-43 and RESC-19 (issue #483, #310 findings 110,
+    111, 112, 115): a path below a file or a dangling symlink, the checkout
+    root itself, and a path inside a git directory are refused by `protect`
+    and `rescope` with the same sentence, before the store is read."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    _use_real_path_is_tracked(monkeypatch)
+    main, worktree = _protect_real_repo_with_worktree(tmp_path)
+    path, sentence = build_case(main, worktree)
+    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
+
+    assert refusal_of(monkeypatch, capsys, path) == (2, sentence)

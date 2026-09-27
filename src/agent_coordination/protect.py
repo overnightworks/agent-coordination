@@ -357,61 +357,95 @@ def _protect_not_main_denial(path_checkout: checkout.PathCheckout) -> str | None
     return None
 
 
+class _LinkOperation(StrEnum):
+    """What a write does to a symlink it names as its own path."""
+
+    WRITE = "write"
+    """Every file tool and every other recognized pattern: lands wherever
+    the link points."""
+    REMOVE_OR_RENAME = "remove or rename"
+    """`rm` and `mv`: remove or rename a file link itself -- as `mv`'s
+    source or the file destination it replaces -- never its target. A
+    directory link they name is judged where it lands, erring closed:
+    `rm -rf link/` empties its target and `mv x link` moves into it, and
+    the operand `hook_input` recognizes never says which one is `mv`'s
+    destination (issue #483 review findings)."""
+
+    def writes_through(self, link: Path) -> bool:
+        return self is _LinkOperation.WRITE or link.is_dir()
+
+
 def _resolved_path_checkout(
-    absolute_path: str, *, writes_through_file_symlink: bool
+    absolute_path: str, *, operation: _LinkOperation
 ) -> checkout.PathCheckout | None:
     """The checkout `absolute_path` belongs to, or `None` when it sits
     outside every repository (PROT-32: not aco's to judge, issue #448) --
     resolved from the path itself (issue #314), never from the hook
     process's cwd, so the same absolute path yields the same verdict from
-    any cwd. A file path -- existing or not yet written -- is resolved from
-    its nearest existing ancestor directory: an Edit's new file may sit in a
-    directory that does not exist yet either, and resolving that missing
-    directory would read as "outside every repository" and allow a write
-    into a checkout unjudged (issue #448 drive finding). A directory is
-    resolved as itself first when it is itself a checkout root -- a
-    nested checkout's own root, whose parent directory happens to sit inside
-    an outer repository, would otherwise have the outer checkout answer for
-    it (PROT-36) -- then from its parent, and from itself only as a
-    fallback: a path that names a checkout root exactly (its parent sits
-    outside every repository) is still judged by that checkout (issue #380
-    delta, gate finding: `rm -rf ../<repo>-worktrees/issue-1-x` must not
-    bypass the gate this way); PROT-14 then denies it as the checkout root
-    itself. `absolute_path` is normalized lexically first
-    (`os.path.normpath`, no symlink resolution): a lexically equivalent
-    payload like `nested/../nested` or `nested/.` must reach this comparison
-    the same way `nested` does (issue #380 delta, gate finding).
-    `writes_through_file_symlink` is `_file_checkout`'s own."""
+    any cwd, through the resolver `rescope` shares (issue #483). A path
+    outside every repository by its own directory is judged where a write
+    to it lands (`_landing_checkout_outside_every_repository`).
+
+    A symlink in an unguarded repository (PROT-40) -- to a file or a
+    directory -- is judged by its target's checkout when the `operation`
+    writes through it: such a write still lands in whichever checkout its
+    target lies in (issue #483 review findings: a throwaway repository's
+    file link, or a directory link `cp` or `mv` writes into, reaching a
+    guarded one); `rm` or `mv` of a file link itself never touches the
+    target, so it stays where the link lies. A guarded
+    link's own directory wins, so no link can move a write out of the gate
+    that directory already imposes; without `ACO_PROTECT_UNGUARDED` every
+    repository is guarded, so the target is never even resolved (issue #483
+    review finding: its failure must not outrank the link's own gate)."""
     path = Path(os.path.normpath(absolute_path))
-    if not path.is_dir():
-        return _file_checkout(path, writes_through_file_symlink=writes_through_file_symlink)
-    self_checkout = checkout.resolve_path_checkout(path)
-    if self_checkout is not None and self_checkout.toplevel == path:
-        return self_checkout
-    return checkout.resolve_path_checkout(path.parent) or self_checkout
-
-
-def _file_checkout(
-    path: Path, *, writes_through_file_symlink: bool
-) -> checkout.PathCheckout | None:
-    """The checkout a file path belongs to: its own directory's first, and
-    -- only when that sits outside every repository and the operation
-    `writes_through_file_symlink` -- its symlink-resolved target's. A write
-    through a file symlink outside every repository still lands in whichever
-    checkout its target lies in, so it is judged by that checkout rather
-    than allowed as outside (issue #448 review finding: a
-    `~/.claude/CLAUDE.md` link into a main checkout); an operation on the
-    link itself -- `rm` or `mv` of it -- never touches the target, so it
-    stays outside (issue #448 review finding). The link's own directory
-    wins whenever it is in a checkout, so no link can move a write out of
-    the gate that directory already imposes."""
-    own_checkout = checkout.resolve_nearest_existing_checkout(path.parent)
-    if own_checkout is not None or not writes_through_file_symlink:
+    own_checkout = checkout.resolve_named_path_checkout(path)
+    if own_checkout is None:
+        return _landing_checkout_outside_every_repository(path, operation=operation)
+    if (
+        not _names_unguarded_directories()
+        or not path.is_symlink()
+        or not operation.writes_through(path)
+    ):
         return own_checkout
+    target_checkout = checkout.resolve_named_path_checkout(Path(os.path.realpath(path)))
+    if _leaves_unguarded_for_guarded(own_checkout, target_checkout):
+        return target_checkout
+    return own_checkout
+
+
+def _landing_checkout_outside_every_repository(
+    path: Path, *, operation: _LinkOperation
+) -> checkout.PathCheckout | None:
+    """The checkout a write to `path`, whose own directory sits outside
+    every repository, still lands in, or `None` when it lands outside every
+    repository too. Any symlink on the way -- the file itself or an
+    ancestor directory, a dangling one included -- carries the write into
+    its target's checkout (issue #448 review finding: a
+    `~/.claude/CLAUDE.md` link into a main checkout; issue #483 review
+    finding: `mkdir -p` makes a dangling ancestor's target real before the
+    write), so that checkout judges it. An operation on the link itself --
+    `rm` or `mv` of it -- never touches the target, so it stays outside. A
+    directory here lies outside every repository wherever it resolves:
+    its own checkout was already resolved through its links."""
+    if path.is_dir() or not operation.writes_through(path):
+        return None
     target = Path(os.path.realpath(path))
     if target == path:
         return None
     return checkout.resolve_nearest_existing_checkout(target.parent)
+
+
+def _leaves_unguarded_for_guarded(
+    own_checkout: checkout.PathCheckout, target_checkout: checkout.PathCheckout | None
+) -> bool:
+    """Whether a symlink in `own_checkout` points into another,
+    guarded checkout while its own is unguarded (PROT-40) -- the one case
+    the link's own checkout cannot answer for its write. Only a link that
+    crosses into another checkout reads `ACO_PROTECT_UNGUARDED`, so a
+    malformed value never outranks PROT-38 for a link within one."""
+    if target_checkout is None or target_checkout.toplevel == own_checkout.toplevel:
+        return False
+    return _is_unguarded(own_checkout) and not _is_unguarded(target_checkout)
 
 
 def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None:
@@ -441,6 +475,62 @@ def _is_ignored_session_setting(relative: str, path_checkout: checkout.PathCheck
     )
 
 
+PROTECT_UNGUARDED_ENV = "ACO_PROTECT_UNGUARDED"
+
+
+def _unguarded_setting() -> str:
+    """`ACO_PROTECT_UNGUARDED` as the session set it, unparsed; empty when
+    unset, which names no unguarded directory at all."""
+    return os.environ.get(PROTECT_UNGUARDED_ENV, "")
+
+
+def _names_unguarded_directories() -> bool:
+    """Whether the session set `ACO_PROTECT_UNGUARDED` to anything at all;
+    unset or empty, every repository is guarded."""
+    return bool(_unguarded_setting())
+
+
+def _unguarded_directories() -> tuple[Path, ...]:
+    """The directories `ACO_PROTECT_UNGUARDED` names (`os.pathsep`-separated,
+    issue #483), symlink-resolved; unset or empty names none. Any other
+    entry that is not an existing absolute directory -- an empty one
+    between separators included -- fails closed (PROT-41), raised for
+    `cli`'s deny frame like a missing identity: a typo must never silently
+    guard nothing, nor exempt whatever a relative entry happens to meet."""
+    if not _names_unguarded_directories():
+        return ()
+    entries = _unguarded_setting().split(os.pathsep)
+    for entry in entries:
+        if not (os.path.isabs(entry) and os.path.isdir(entry)):
+            raise protocol.ClaimError(
+                f"{PROTECT_UNGUARDED_ENV}: {entry} is not an absolute directory"
+            )
+    return tuple(Path(entry).resolve() for entry in entries)
+
+
+def _is_unguarded(path_checkout: checkout.PathCheckout) -> bool:
+    """Whether the repository `path_checkout` belongs to sits at or below an
+    `ACO_PROTECT_UNGUARDED` directory (PROT-40) -- a tester's throwaway
+    repository in its scratchpad. Matched on the repository's common git
+    directory, never the checkout's own path: a linked worktree of a
+    guarded repository is never exempted by where the worktree itself
+    lies."""
+    common_directory = path_checkout.common_directory.resolve()
+    return any(common_directory.is_relative_to(directory) for directory in _unguarded_directories())
+
+
+def _is_exempt(relative: str | None, path_checkout: checkout.PathCheckout) -> bool:
+    """Whether a path inside a checkout allows unjudged: an ignored session
+    setting (PROT-38) or a path in an unguarded repository (PROT-40) --
+    `path_checkout` already being the target's own for a write through a
+    symlink out of one (`_resolved_path_checkout`). The session
+    setting is weighed first, so a malformed `ACO_PROTECT_UNGUARDED`
+    (PROT-41) never locks the session out of the file that repairs it."""
+    if relative is not None and _is_ignored_session_setting(relative, path_checkout):
+        return True
+    return _is_unguarded(path_checkout)
+
+
 _ProtectMissDenialBuilder = Callable[[protocol.ClaimState, checkout.PathCheckout, str, str], str]
 
 
@@ -457,7 +547,7 @@ def _hook_session_agent() -> str:
 def _protect_checkout_scope_denial(
     raw_path: str,
     *,
-    writes_through_file_symlink: bool,
+    operation: _LinkOperation,
     context: _ProtectContext,
     miss_denial: _ProtectMissDenialBuilder,
 ) -> str | None:
@@ -471,22 +561,25 @@ def _protect_checkout_scope_denial(
     A path outside every repository allows before anything else is read
     (PROT-32, issue #448): the session's memory, scratchpad, and `/tmp` are
     not aco's to judge; so does an ignored session setting under `.claude/`
-    (PROT-38), in any checkout, the main one included. Agent identity
+    (PROT-38), in any checkout, the main one included, and any path in a
+    repository `ACO_PROTECT_UNGUARDED` exempts (PROT-40). A path no claim
+    could ever cover denies with `rescope`'s own sentence for it before the
+    store is read (PROT-14, PROT-42, PROT-43). Agent identity
     resolves last, only once a checkout, a relative scope entry, and a live
     state are in hand (PROT-08, issue #448): a write that never gets that
     far never needed an identity, so a session without one is gated only
     where a claim could answer for it.
     `miss_denial` builds each caller's own scope-miss sentence from the
     state, checkout, agent, and relative scope entry now in hand."""
-    path_checkout = _resolved_path_checkout(
-        raw_path, writes_through_file_symlink=writes_through_file_symlink
-    )
+    path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
-    if relative is not None and _is_ignored_session_setting(relative, path_checkout):
+    if _is_exempt(relative, path_checkout):
         return None
-    denial = _protect_checkout_denial(path_checkout)
+    denial = _protect_checkout_denial(path_checkout) or checkout.unscopable_path_reason(
+        raw_path, toplevel=path_checkout.toplevel
+    )
     if denial is not None:
         return denial
     if relative is None:
@@ -532,7 +625,7 @@ def _protect_path_denial(
         )
 
     return _protect_checkout_scope_denial(
-        raw_path, writes_through_file_symlink=True, context=context, miss_denial=miss_denial
+        raw_path, operation=_LinkOperation.WRITE, context=context, miss_denial=miss_denial
     )
 
 
@@ -591,10 +684,10 @@ def _protect_bash_cwd(payload: dict[str, object]) -> str | None:
     return cwd if isinstance(cwd, str) and cwd else None
 
 
-# `rm` removes a symlink and `mv` renames one -- as a source or as the file
-# destination it replaces -- without ever opening its target; every other
-# recognized pattern may write through it.
-_LINK_ITSELF_PATTERNS = frozenset({hook_input.PATTERN_REMOVE, hook_input.PATTERN_MOVE})
+_LINK_OPERATION_BY_PATTERN = {
+    hook_input.PATTERN_REMOVE: _LinkOperation.REMOVE_OR_RENAME,
+    hook_input.PATTERN_MOVE: _LinkOperation.REMOVE_OR_RENAME,
+}
 
 
 def _protect_bash_path_denial(
@@ -615,7 +708,7 @@ def _protect_bash_path_denial(
         return None
     return _protect_checkout_scope_denial(
         raw_path,
-        writes_through_file_symlink=pattern not in _LINK_ITSELF_PATTERNS,
+        operation=_LINK_OPERATION_BY_PATTERN.get(pattern, _LinkOperation.WRITE),
         context=context,
         miss_denial=lambda _state, _path_checkout, _agent, relative: (
             f"{pattern} {relative} outside claim scope"

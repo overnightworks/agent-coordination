@@ -12,11 +12,13 @@ owns the board-configuration precondition (PIN-01) every store command
 shares -- this file cites those IDs rather than restating them. `aco rescope`
 shares `protect`'s own checkout resolver and relative-path grammar (the
 `relative payload path`, `not in a repository`, and `no commit on this
-branch` sentences) but is otherwise a different lane's own spec; those
-sentences are documented here, where `not in a repository` is `rescope`'s
-refusal alone -- `protect` allows such a path (PROT-32).
-`<path>` is the payload's own absolute file path; `<remote>` is the
-canonical remote name.
+branch` sentences, and the sentences for a path no claim can ever cover,
+PROT-14, PROT-42 and PROT-43) but is otherwise a different lane's own spec;
+those sentences are documented here, where `not in a repository` is
+`rescope`'s refusal alone -- `protect` allows such a path (PROT-32).
+`<path>` is the payload's own absolute file path, lexically normalized;
+`<remote>` is the canonical remote name; `<git-directory>` is a bare
+repository or a checkout's own `.git` directory, symlink-resolved.
 
 ## Behavior table
 
@@ -30,10 +32,14 @@ canonical remote name.
 | payload path not absolute | PROT-09 | PROT-09 | PROT-09 (each path) | PROT-31 (allow) | — |
 | path's directory outside every repository | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | — |
 | path's directories do not exist yet | PROT-39 | PROT-39 | PROT-39 | PROT-39 | — |
+| path inside a git directory itself | PROT-43 | PROT-43 | PROT-43 | PROT-43 | — |
 | an ignored file under the checkout's `.claude/` | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | — |
+| `ACO_PROTECT_UNGUARDED` names a malformed entry | PROT-41 | PROT-41 | PROT-41 | PROT-41 | — |
+| the path's repository sits in an unguarded directory | PROT-40 (allow) | PROT-40 (allow) | PROT-40 (allow) | PROT-40 (allow) | — |
 | checkout has no commit yet | PROT-11 | PROT-11 | PROT-11 | PROT-11 | — |
 | shared main checkout, or on the default branch | PROT-12 | PROT-12 | PROT-12 | PROT-12 | — |
 | default branch cannot be resolved | PROT-13 | PROT-13 | PROT-13 | PROT-13 | — |
+| path below a file or a dangling symlink | PROT-42 | PROT-42 | PROT-42 | PROT-42 | — |
 | path resolves to exactly the checkout root | PROT-14 | PROT-14 | PROT-14 | PROT-14 | — |
 | board-configuration precondition fails | PROT-29 | PROT-29 | PROT-29 | PROT-29 | — |
 | a store fetch failure | PROT-15 | PROT-15 | PROT-15 | PROT-15 | — |
@@ -109,10 +115,24 @@ session; a new gated tool joins both the table and that matcher.
 - [ ] [PROT-11] A checkout with no commit yet (an unborn branch) denies `no commit on this branch`.
 - [ ] [PROT-12] The shared main checkout, or a linked worktree on the repository's own resolved default branch, denies `not main` (see E-PROT-03).
 - [ ] [PROT-13] A checkout whose default branch cannot be resolved at all denies `default branch unknown`, never falling back to a `main`/`master` guess.
-- [ ] [PROT-14] A payload path that resolves to exactly the checkout root denies `path required`, the same reason as no path at all.
+- [ ] [PROT-14] A payload path that resolves to exactly the checkout root denies `<path> is the checkout root itself`, the sentence `rescope` refuses it with (see E-PROT-14).
 - [ ] [PROT-38] A path under the checkout's own `.claude/` that git ignores allows in any checkout, main included, before identity or the store is read (see E-PROT-12).
 - [ ] [PROT-39] A path whose directories do not exist yet is judged by the checkout of its nearest existing ancestor, never allowed as outside every repository (PROT-32).
 - [ ] [PROT-36] A payload path naming a nested checkout's own root is judged by that checkout, never by an outer one its parent directory sits inside, before PROT-14 denies it.
+- [ ] [PROT-42] A path below a file denies `<path> cannot exist: <file> is a file`; below a dangling symlink, `<path> cannot exist: <link> is a dangling symlink` (see E-PROT-14).
+- [ ] [PROT-43] A path inside a bare repository or a checkout's own `.git` directory denies `not a checkout: <git-directory> is a git directory`, never git's own error text (see E-PROT-14).
+
+## Unguarded repositories
+
+`ACO_PROTECT_UNGUARDED` names directories, separated like `PATH`, whose
+repositories a tester may write freely -- a scratchpad of throwaway
+checkouts. The match is on the repository's own common git directory, so a
+worktree's own location never exempts it; unset or empty, every repository
+is judged. Any other value is read entry by entry, so an empty entry
+between separators is malformed like any other (PROT-41).
+
+- [ ] [PROT-40] A path whose repository's git directory, symlink-resolved, sits at or below an `ACO_PROTECT_UNGUARDED` directory allows after PROT-38, before PROT-11, reading no identity or store (see E-PROT-13).
+- [ ] [PROT-41] An `ACO_PROTECT_UNGUARDED` entry not an existing absolute directory denies `ACO_PROTECT_UNGUARDED: <entry> is not an absolute directory` for a path in a checkout, after PROT-38 (see E-PROT-13).
 
 ## The live claim state
 
@@ -212,9 +232,11 @@ than a bare `claim first`.
 
 ## Never
 
-- `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, or a path outside every repository, touches `store.fetch_state` zero times.
+- `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, a path no claim can ever cover (PROT-14, PROT-42, PROT-43), a path outside every repository, or one in an unguarded repository, touches `store.fetch_state` zero times.
+- `protect` never exempts a guarded repository through an unguarded directory: its linked worktree placed there, a directory symlink into it, or a write through a file symlink from an unguarded repository into it is judged by the guarded checkout it lands in, never by the link's own (PROT-40).
 - `protect` never allows a write through a file symlink outside every repository as outside when its target lies in a checkout: that checkout judges the write (PROT-12 in a main checkout). A recognized `rm` or `mv` of the link itself never touches its target and stays outside (PROT-32).
-- `protect` never reads a git failure as outside every repository: a path below a `.git` file, a `.git` directory, or inside a git directory itself (a bare repository, a checkout's own `.git/`) denies when git cannot tell which checkout it is, with that failure's text (PROT-17).
+- `protect` never reads a git failure as outside every repository: a path below a `.git` file or a `.git` directory denies when git cannot tell which checkout it is, with that failure's text (PROT-17); inside a git directory itself, PROT-43's sentence.
+- `protect` never reads a git failure as an unguarded repository: PROT-40 weighs only a checkout git has resolved.
 - `protect` never opens `.claude/` by its name alone: a tracked file there, or an untracked one git does not ignore, is judged like any other path (PROT-12 in the main checkout).
 - The escape exists so a session can switch off a misconfigured hook in its own ignored `settings.local.json` without the operator; no claim can cover a file that never reaches a commit.
 - `protect` never defaults an unrecognized tool name to allowed: PROT-06 fails closed instead.
@@ -371,5 +393,37 @@ exit 0
 $ echo '{"tool_name": "Edit", "tool_input": {"file_path": "<main>/.claude/settings.json"}}' | aco protect
 {"decision": "deny", "reason": "not main"}
 2> not main
+exit 2
+```
+
+### E-PROT-13 -- an unguarded scratchpad repository writes freely, a malformed entry fails closed
+
+Setup: a throwaway main checkout `/tmp/scratch/play` with one commit, no live claim, `ACO_AGENT` unset
+
+```console
+$ echo '{"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/scratch/play"}}' | ACO_PROTECT_UNGUARDED=/tmp/scratch aco protect
+exit 0
+$ echo '{"tool_name": "Write", "tool_input": {"file_path": "/tmp/scratch/play/notes.md"}}' | ACO_PROTECT_UNGUARDED=scratch aco protect
+{"decision": "deny", "reason": "ACO_PROTECT_UNGUARDED: scratch is not an absolute directory"}
+2> ACO_PROTECT_UNGUARDED: scratch is not an absolute directory
+exit 2
+```
+
+### E-PROT-14 -- a path no claim can ever cover names why
+
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, a tracked `README.md`, a bare repository `/srv/served.git`
+
+```console
+$ echo '{"tool_name": "Write", "tool_input": {"file_path": "<worktree>/README.md/x.py"}}' | aco protect
+{"decision": "deny", "reason": "<worktree>/README.md/x.py cannot exist: <worktree>/README.md is a file"}
+2> <worktree>/README.md/x.py cannot exist: <worktree>/README.md is a file
+exit 2
+$ echo '{"tool_name": "Bash", "tool_input": {"command": "rm -rf <worktree>"}}' | aco protect
+{"decision": "deny", "reason": "<worktree> is the checkout root itself"}
+2> <worktree> is the checkout root itself
+exit 2
+$ echo '{"tool_name": "Write", "tool_input": {"file_path": "/srv/served.git/hooks/pre-receive"}}' | aco protect
+{"decision": "deny", "reason": "not a checkout: /srv/served.git is a git directory"}
+2> not a checkout: /srv/served.git is a git directory
 exit 2
 ```
