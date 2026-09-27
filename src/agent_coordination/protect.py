@@ -565,8 +565,8 @@ def _protect_checkout_scope_denial(
     `miss_denial` builds each caller's own scope-miss sentence from the
     state, checkout, agent, and relative scope entry now in hand.
 
-    A write through a symlink into another checkout runs the chain in both
-    checkouts, the target's first (issue #486): either denial denies, and
+    A write through a symlink the path itself names into another checkout
+    runs the chain in both checkouts, the target's first (issue #486): either denial denies, and
     the target's wins when both do, so neither checkout's claim answers
     for the other's bytes. The target is judged even where the link's own
     checkout would deny without the store, so there the target's store

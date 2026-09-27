@@ -33,7 +33,7 @@ repository or a checkout's own `.git` directory, symlink-resolved.
 | path's directory outside every repository | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | PROT-32 (allow) | — |
 | path's directories do not exist yet | PROT-39 | PROT-39 | PROT-39 | PROT-39 | — |
 | path inside a git directory itself | PROT-43 | PROT-43 | PROT-43 | PROT-43 | — |
-| a write through a symlink into another checkout | PROT-44 | PROT-44 | PROT-44 | PROT-44 | — |
+| a write through a symlink the path names into another checkout | PROT-44 | PROT-44 | PROT-44 | PROT-44 | — |
 | an ignored file under the checkout's `.claude/` | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | PROT-38 (allow) | — |
 | `ACO_PROTECT_UNGUARDED` names a malformed entry | PROT-41 | PROT-41 | PROT-41 | PROT-41 | — |
 | the path's repository sits in an unguarded directory | PROT-40 (allow) | PROT-40 (allow) | PROT-40 (allow) | PROT-40 (allow) | — |
@@ -64,11 +64,12 @@ checkout, its live state, and a repository-relative path are already in
 hand: a write that never gets that far -- outside every repository, in the
 main checkout, or a Bash command naming no pattern -- never needed an
 identity at all, so a session without one is stopped only where a claim
-could answer for it. A write through a symlink into another checkout is
-the one exception (PROT-44): the target's checkout is judged first, even
-where the link's own would deny without the store, so the target's store
-read and identity come first -- a link in a main checkout into a claimed
-worktree needs an identity before it denies "not main".
+could answer for it. A write through a symlink the path names into
+another checkout is the one exception (PROT-44): the target's checkout is
+judged first, even where the link's own would deny without the store, so
+the target's store read and identity come first -- a link in a main
+checkout into a claimed worktree needs an identity before it denies "not
+main".
 
 ## The verdict's output
 
@@ -126,7 +127,7 @@ session; a new gated tool joins both the table and that matcher.
 - [ ] [PROT-36] A payload path naming a nested checkout's own root is judged by that checkout, never by an outer one its parent directory sits inside, before PROT-14 denies it.
 - [ ] [PROT-42] A path below a file denies `<path> cannot exist: <file> is a file`; below a dangling symlink, `<path> cannot exist: <link> is a dangling symlink` (see E-PROT-14).
 - [ ] [PROT-43] A path inside a bare repository or a checkout's own `.git` directory denies `not a checkout: <git-directory> is a git directory`, never git's own error text (see E-PROT-14).
-- [ ] [PROT-44] A write through a symlink into another checkout is judged in both; either denial denies, the target's when both do -- PROT-43 for a target in another repository's git directory included. `rm` or `mv` of a file link itself stays the link's checkout's.
+- [ ] [PROT-44] A write through a file link, or a directory link the path ends in, into another checkout is judged in both, the target's first; its denial wins when both deny.
 
 ## Unguarded repositories
 
@@ -238,9 +239,9 @@ than a bare `claim first`.
 
 ## Never
 
-- `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, a path no claim can ever cover (PROT-14, PROT-42, PROT-43), a path outside every repository, or one in an unguarded repository, touches `store.fetch_state` zero times -- except where a write through a symlink into another checkout is judged in the target's checkout first (PROT-44), whose store read comes before the link's own deny.
+- `protect` never reads the store for a verdict the checkout resolves alone: a "not main", "no commit on this branch", "relative payload path", or "path required" deny, a path no claim can ever cover (PROT-14, PROT-42, PROT-43), a path outside every repository, or one in an unguarded repository, touches `store.fetch_state` zero times -- except where a write through a symlink the path names into another checkout is judged in the target's checkout first (PROT-44), whose store read comes before the link's own deny.
 - `protect` never exempts a guarded repository through an unguarded directory: its linked worktree placed there, a directory symlink into it, or a write through a file symlink from an unguarded repository into it is judged by the guarded checkout it lands in too, never by the link's own alone (PROT-40, PROT-44).
-- `protect` never lets a claim in one checkout authorize a write through a symlink whose bytes land in another: a link in a claimed worktree into a main checkout, a nested one included, denies `not main` (PROT-44).
+- `protect` never lets a claim in one checkout authorize a write through a symlink whose bytes land in another: a link in a claimed worktree into a main checkout, a nested one included, denies `not main`, and one into another repository's git directory PROT-43's sentence (PROT-44). A recognized `rm` or `mv` of a file link itself never touches its target and stays the link's checkout's; a directory link earlier in the path is followed by git, so only its target's checkout judges the write.
 - `protect` never allows a write through a file symlink outside every repository as outside when its target lies in a checkout: that checkout judges the write (PROT-12 in a main checkout). A recognized `rm` or `mv` of the link itself never touches its target and stays outside (PROT-32).
 - `protect` never reads a git failure as outside every repository: a path below a `.git` file or a `.git` directory denies when git cannot tell which checkout it is, with that failure's text (PROT-17); inside a git directory itself, PROT-43's sentence.
 - `protect` never reads a git failure as an unguarded repository: PROT-40 weighs only a checkout git has resolved.
