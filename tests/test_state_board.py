@@ -4284,15 +4284,10 @@ class TestCliStateRefForge:
         assert _run_ok(["status", child_id], capsys).strip() == f"UNCLAIMED issue {child_id}"
 
         close_out = _run_ok(["item", "close", child_id], capsys)
-        # `child_id` was `container_id`'s only child and the container's own
-        # block carries no `[[slice]]` row, so this close leaves it freshly
-        # closable (issue #348) -- named by the same parent hint `release
-        # --merged` prints.
-        assert close_out.splitlines() == [
-            f"CLOSED {child_id}",
-            "freed: none",
-            f"parent {container_id}: no open children — close it",
-        ]
+        # `child_id` was `container_id`'s only child, but the container's own
+        # `Next` line still names work, so the parent hint
+        # `release --merged` shares never offers to close it (issue #503).
+        assert close_out.splitlines() == [f"CLOSED {child_id}", "freed: none"]
 
         asked_text = "Does the runbook still hold without a forge?"
         asked_out = _run_ok(["ask", container_id, "--text", asked_text], capsys)
