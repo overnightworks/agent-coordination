@@ -1,8 +1,0 @@
-claim_id = "d36dc5cb36eb4cadbcc3fab077961a77"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "32c33b098112052c64c53f4e220622aa85a02077"
-branch = "claude/issue-483-protect-unguarded"
-scope = ["README.md", "scripts/similar_methods_exemptions.txt", "scripts/test_budget_ratchet.txt", "specs/protect.spec.md", "specs/rescope.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/protect.py", "tests/conftest.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_protect.py"]
-opened_commit = "b7ad484d284f70a585656b866ef702adf642bac4"
-whole_reason = "der gemeinsame Pfad-Auflöser von protect und rescope: ausgenommene Wegwerf-Repositorys und ehrliche Sätze für unmögliche Pfade"
