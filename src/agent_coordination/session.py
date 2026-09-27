@@ -70,7 +70,7 @@ def _absent_board_config_refusal(toplevel: Path) -> str:
     adoption and only needs the trunk merged in (issue #520). Otherwise --
     including a trunk that does not resolve, which tracks nothing -- the
     repository was never adopted (issue #505)."""
-    remote = store.DEFAULT_CANONICAL_REMOTE
+    remote = board.BoardConfig().canonical_remote
     unconfigured = checkout.unconfigured_remote_refusal(remote, directory=toplevel)
     if unconfigured is not None:
         return unconfigured
