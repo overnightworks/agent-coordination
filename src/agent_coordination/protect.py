@@ -566,37 +566,49 @@ def _protect_checkout_scope_denial(
     state, checkout, agent, and relative scope entry now in hand.
 
     A write through a symlink the path itself names into another checkout
-    runs the chain in both checkouts, the target's first (issue #486): either denial denies, and
-    the target's wins when both do, so neither checkout's claim answers
-    for the other's bytes. The target is judged even where the link's own
-    checkout would deny without the store, so there the target's store
-    read and identity come first. A target git cannot resolve is the
-    target's denial too, so it denies with that failure before the link's
-    own checkout is judged."""
+    is judged in both checkouts, the target's first (issue #486): either
+    denial denies, and the target's wins when both do, so neither
+    checkout's claim answers for the other's bytes. Both checkouts'
+    store-free checks run before either store or the identity is read, so
+    a link in a main checkout denies "not main" without them. A target git
+    cannot resolve is the target's denial too, so it denies with that
+    failure before the link's own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
     link_target = _link_target_in_another_checkout(raw_path, path_checkout, operation=operation)
-    if link_target is not None:
-        target_denial = _protect_resolved_path_denial(
-            *link_target, context=context, miss_denial=miss_denial
-        )
-        if target_denial is not None:
-            return target_denial
-    return _protect_resolved_path_denial(
-        raw_path, path_checkout, context=context, miss_denial=miss_denial
-    )
+    judged = (link_target,) if link_target is not None else ()
+    store_free_outcomes = [
+        _protect_store_free_outcome(judged_path, judged_checkout)
+        for judged_path, judged_checkout in (*judged, (raw_path, path_checkout))
+    ]
+    for outcome in store_free_outcomes:
+        if isinstance(outcome, str):
+            return outcome
+    for outcome in store_free_outcomes:
+        if isinstance(outcome, _ClaimQuestion):
+            denial = _protect_claim_denial(outcome, context=context, miss_denial=miss_denial)
+            if denial is not None:
+                return denial
+    return None
 
 
-def _protect_resolved_path_denial(
-    raw_path: str,
-    path_checkout: checkout.PathCheckout,
-    *,
-    context: _ProtectContext,
-    miss_denial: _ProtectMissDenialBuilder,
-) -> str | None:
-    """`_protect_checkout_scope_denial`'s chain for `raw_path` in the one
-    checkout `path_checkout` that judges it."""
+@dataclass(frozen=True, slots=True)
+class _ClaimQuestion:
+    """A write path the store-free checks left for a live claim to answer:
+    its checkout and its repository-relative scope entry."""
+
+    path_checkout: checkout.PathCheckout
+    relative: str
+
+
+def _protect_store_free_outcome(
+    raw_path: str, path_checkout: checkout.PathCheckout
+) -> str | _ClaimQuestion | None:
+    """What `path_checkout` alone says about a write to `raw_path` before
+    any store or identity is read: `None` when it is exempt, a denial when
+    the checkout or the path already rules the write out, otherwise the
+    `_ClaimQuestion` a live claim must answer."""
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
     if _is_exempt(relative, path_checkout):
         return None
@@ -607,16 +619,24 @@ def _protect_resolved_path_denial(
         return denial
     if relative is None:
         return PATH_REQUIRED
-    state, denial = _protect_cached_claim_state_or_denial(path_checkout, context=context)
+    return _ClaimQuestion(path_checkout=path_checkout, relative=relative)
+
+
+def _protect_claim_denial(
+    question: _ClaimQuestion, *, context: _ProtectContext, miss_denial: _ProtectMissDenialBuilder
+) -> str | None:
+    """Whether a live claim of this session covers `question`'s path,
+    reading the store and then the identity."""
+    state, denial = _protect_cached_claim_state_or_denial(question.path_checkout, context=context)
     if state is None:
         return denial
     agent = _hook_session_agent()
     return _protect_scope_denial(
         state,
         agent=agent,
-        branch=path_checkout.branch,
-        relative=relative,
-        miss_denial=miss_denial(state, path_checkout, agent, relative),
+        branch=question.path_checkout.branch,
+        relative=question.relative,
+        miss_denial=miss_denial(state, question.path_checkout, agent, question.relative),
     )
 
 

@@ -2861,15 +2861,8 @@ def _symlinks_across_checkouts(tmp_path: Path) -> None:
             "not main",
             0,
         ),
-        (_write_target_payload, "claimed/repo/into-worktree.md", "Ada", 2, "not main", 1),
-        (
-            _write_target_payload,
-            "claimed/repo/into-worktree.md",
-            None,
-            2,
-            protect.MISSING_HOOK_IDENTITY,
-            1,
-        ),
+        (_write_target_payload, "claimed/repo/into-worktree.md", "Ada", 2, "not main", 0),
+        (_write_target_payload, "claimed/repo/into-worktree.md", None, 2, "not main", 0),
         (
             _write_target_payload,
             f"{_CLAIMED_WORKTREE}/src/into-nested-git",
@@ -2935,9 +2928,9 @@ def test_protect_judges_a_write_through_a_symlink_by_the_link_and_the_target_che
     another repository's, or a nested, main checkout, and a claim covering
     the target never opens a link in a main checkout. A target outside
     every repository, and `rm` of the link itself, stay the link's
-    checkout's alone. The target's checkout is judged first, even where the
-    link's own would deny without the store, so its store read and identity
-    come first; every row without an identity proves its verdict needs none."""
+    checkout's alone. Both checkouts' store-free checks run before either
+    store is read, so a store-free denial in either reads no store; every
+    row without an identity proves its verdict needs none."""
     _symlinks_across_checkouts(tmp_path)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: agent} if agent else None)
     claim = _protect_active_claim("Ada", scope=("src",), branch="codex/issue-72-widget")
