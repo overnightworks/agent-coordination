@@ -19491,6 +19491,17 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
             )
             for case, title in (("empty_title", ""), ("whitespace_title", "   "))
         ),
+        *(
+            pytest.param(
+                complete_contract("Ship it.", slice=slice_entries(f"Flip{control}side")),
+                ("--title", "Write the docs"),
+                (),
+                f"ERROR: body malformed: slice[0].title: slice[0].title of row 1 holds "
+                f"{codepoint}; a slice title stays on one line\n",
+                id=f"slice_title_{codepoint}",
+            )
+            for control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS
+        ),
     ],
 )
 def test_item_new_on_github_refuses_before_creating_anything(
@@ -19503,8 +19514,10 @@ def test_item_new_on_github_refuses_before_creating_anything(
     err: str,
 ) -> None:
     """Issue #444 proof 1 / issue #447 proof 2: an invalid body (the same
-    check `aco check <n>` applies), a possible twin, a parent that is no open
-    container, `--origin`, or a blank `--title` refuses with exit 2 and creates no issue at all."""
+    check `aco check <n>` applies, a slice title holding a display control
+    included), a possible twin, a parent that is no open container,
+    `--origin`, or a blank `--title` refuses with exit 2 and creates no
+    issue at all."""
     client = _item_new_github_client(monkeypatch, tmp_path, piped_body)
     client.recently_closed_issues = closed
 
