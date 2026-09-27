@@ -13925,11 +13925,23 @@ def _release_merged_with_cleanup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     return ["--repo", REPOSITORY, "release", "72", "--merged", "12"]
 
 
+def _land(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _land_scenario(monkeypatch, tmp_path)
+    return ["--repo", REPOSITORY, "land", "12"]
+
+
+def _land_rerun(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+    _land_with_its_release_failing_once(monkeypatch, tmp_path)
+    return ["--repo", REPOSITORY, "land", "12"]
+
+
 @pytest.mark.parametrize(
     "arrange",
     [
         pytest.param(_start_under_state_ref, id="start"),
         pytest.param(_release_merged_with_cleanup, id="release-merged-verification-and-cleanup"),
+        pytest.param(_land, id="land-fast-forward-and-release"),
+        pytest.param(_land_rerun, id="land-rerun-fast-forward-routing-and-release"),
     ],
 )
 def test_a_command_fetches_its_trunk_once_and_reads_the_recorded_head_after_the_fetch(
@@ -13939,8 +13951,9 @@ def test_a_command_fetches_its_trunk_once_and_reads_the_recorded_head_after_the_
 ) -> None:
     """Issue #488 proof 3, counted at the git launcher: every trunk reader
     of one run -- `start`'s claim check and build, `release --merged`'s
-    merge-commit verification and its worktree cleanup -- asks the same
-    fetched trunk, so its directory fetches once and reads the recorded
+    merge-commit verification and its worktree cleanup, `land`'s
+    fast-forward, a rerun's routing and its delegated release -- asks the
+    same fetched trunk, so its directory fetches once and reads the recorded
     `HEAD` after that fetch."""
     argv = arrange(monkeypatch, tmp_path)
     trunk_calls = trunk_git_calls(monkeypatch, "origin")
@@ -14542,7 +14555,7 @@ def _break_fetch(monkeypatch: pytest.MonkeyPatch, _client: FakeForge) -> None:
 def _break_fast_forward_merge(monkeypatch: pytest.MonkeyPatch, _client: FakeForge) -> None:
     _stub_one_git_call(
         monkeypatch,
-        ["merge", "--ff-only", "origin/main"],
+        ["merge", "--ff-only", "refs/remotes/origin/main"],
         exit_status=1,
         stderr="fatal: Not possible to fast-forward, aborting.",
     )
@@ -14581,14 +14594,12 @@ def test_land_reports_incomplete_follow_up_for_every_post_merge_step(
     assert len(client.merge_calls) == 1
 
 
-def _land_merged_pending_release(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> tuple[Path, FakeForge]:
-    """A pull request `aco land` already merged once, its own delegated
-    `release --merged` blocked by a failing close (issue #405 Beweis 2): the
-    shared rerun setup both the plain recovery proof and the release-routing
-    recovery proof resume from, `close_landed_item` restored to real once
-    this returns so the caller's own rerun can succeed."""
+def _land_with_its_release_failing_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, FakeForge, int]:
+    """One `aco land` of pull request 12 whose delegated `release --merged`
+    a failing close blocked, and its exit code: the merge stands, and
+    `close_landed_item` is restored to real so a rerun can succeed."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     real_close = client.close_landed_item
 
@@ -14596,8 +14607,19 @@ def _land_merged_pending_release(
         raise ClaimError("forge unreachable (simulated)")
 
     monkeypatch.setattr(client, "close_landed_item", failing_close)
-
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+    monkeypatch.setattr(client, "close_landed_item", real_close)
+    return repo, client, status
+
+
+def _land_merged_pending_release(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> tuple[Path, FakeForge]:
+    """A pull request `aco land` already merged once, its own delegated
+    `release --merged` blocked by a failing close (issue #405 Beweis 2): the
+    shared rerun setup both the plain recovery proof and the release-routing
+    recovery proof resume from."""
+    repo, client, status = _land_with_its_release_failing_once(monkeypatch, tmp_path)
 
     assert status == 2
     merge_commit = client.landings[12].merge_commit
@@ -14608,8 +14630,6 @@ def _land_merged_pending_release(
     )
     assert len(client.merge_calls) == 1
     assert client.closed_issues == set()
-
-    monkeypatch.setattr(client, "close_landed_item", real_close)
     return repo, client
 
 

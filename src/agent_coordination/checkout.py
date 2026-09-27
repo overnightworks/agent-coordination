@@ -758,12 +758,12 @@ def is_default_branch(branch: str, *, directory: Path | None = None) -> bool:
     return branch in DEFAULT_BRANCH_FALLBACK
 
 
-def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> str:
+def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> None:
     """`land`'s own precondition (issue #405): the checkout at `directory`
     (or the calling process's own cwd) must already sit on the repository's
     default branch with nothing uncommitted, since `land` fast-forwards that
-    exact branch in place once its merge succeeds -- returns the default
-    branch name once proven; raises the ruled refusal otherwise."""
+    exact branch in place once its merge succeeds -- raises the ruled
+    refusal otherwise."""
     branch = default_branch_name(directory=directory)
     if branch is None:
         raise ClaimError(DEFAULT_BRANCH_UNKNOWN_REASON)
@@ -771,7 +771,6 @@ def refuse_unclean_default_branch_checkout(*, directory: Path | None = None) -> 
     dirty = _git_output(["status", "--porcelain"], directory=directory)
     if current != branch or dirty:
         raise ClaimError(f"land must run from a clean checkout of the default branch {branch!r}")
-    return branch
 
 
 def trunk_ref_after(remote: str, recorded_head: str | None, *, directory: Path) -> str:
@@ -921,16 +920,15 @@ def trunk_landings(trunk: str, depth: int, *, directory: Path) -> tuple[TrunkLan
     )
 
 
-def fast_forward_default_branch(remote: str, branch: str, *, directory: Path | None = None) -> None:
-    """`land`'s own step once its merge succeeds (issue #405): fetch
-    `remote` then fast-forward the checkout's local `branch` to the fresh
-    trunk tip it just fetched. `--ff-only` refuses loud rather than
-    rewriting history if the local branch somehow diverged -- never true in
-    the ordinary case, since `refuse_unclean_default_branch_checkout`
-    already proved this exact checkout clean and on this exact branch
-    before the merge ever ran."""
-    fetch_remote(remote, directory=directory)
-    result = _git_run(["merge", "--ff-only", f"{remote}/{branch}"], directory=directory)
+def fast_forward_default_branch(trunk: str, *, directory: Path | None = None) -> None:
+    """`land`'s own step once its merge succeeds (issue #405): fast-forward
+    the checkout's local default branch to `trunk`, the ref its run fetched
+    (`RunContext.fetched_trunk_ref`, issue #488). `--ff-only` refuses loud
+    rather than rewriting history if the local branch somehow diverged --
+    never true in the ordinary case, since
+    `refuse_unclean_default_branch_checkout` already proved this exact
+    checkout clean and on the default branch before the merge ever ran."""
+    result = _git_run(["merge", "--ff-only", trunk], directory=directory)
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
 

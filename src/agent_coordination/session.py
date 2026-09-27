@@ -121,8 +121,12 @@ class RunContext:
 
     def fresh(self) -> RunContext:
         """The same directory with nothing read yet (`board --serve`'s
-        per-request context)."""
-        return RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
+        per-request context, `land`'s delegated release). The run's trunk
+        fetch is no read and carries over, so the fresh context resolves
+        the trunk anew without fetching it a second time (issue #488)."""
+        child = RunContext(self.repo, build_forge=self._build_forge, directory=self.directory)
+        child._trunk_fetched = self._trunk_fetched
+        return child
 
     def observed_afresh(self) -> RunContext:
         """The same directory still holding every static fact this context
