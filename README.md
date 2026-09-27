@@ -42,12 +42,20 @@ compatibility). The exact tree shape, versioning, and transport contract are
 ## Quick start
 
 ```bash
+# adopt once, without aco: a pull request adding only this file, merged into main
+mkdir .agent-claim && touch .agent-claim/board.toml
+git add -f .agent-claim/board.toml && git commit -m "adopt aco"
+# once that commit is on main
 aco bootstrap
 aco status
 aco claim 42 --agent "Ada" --scope src/widget.py
 aco release 42 --merged 57
 ```
 
+Adoption is the one step outside the claim protocol: until the default
+branch carries `.agent-claim/board.toml`, every command that reads the
+state ref refuses and names this step (`specs/storage-pin.spec.md`, PIN-32),
+so the commit adding it -- that file alone -- lands without a claim.
 `bootstrap` creates the state ref once per repository; every other command
 here reads or writes it. `specs/bootstrap.spec.md` owns `bootstrap`;
 `specs/claim.spec.md` and `specs/release.spec.md` own `claim` and `release`.
@@ -103,7 +111,8 @@ refusals.
 
 A repository with a `file://` remote and no GitHub coordinates entirely out
 of `refs/aco/state`: pin `storage = "state-ref"`, and items live as files
-instead of issues.
+instead of issues. The pin's own commit is the adoption step, pushed to
+`main` directly and without aco.
 
 ```bash
 git init --bare -b main /srv/aco/repo.git
