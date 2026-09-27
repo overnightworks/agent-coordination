@@ -384,33 +384,39 @@ def _resolved_path_checkout(
     process's cwd, so the same absolute path yields the same verdict from
     any cwd, through the resolver `rescope` shares (issue #483). A path
     outside every repository by its own directory is judged where a write
-    to it lands (`_landing_checkout_outside_every_repository`).
-
-    A symlink in an unguarded repository (PROT-40) -- to a file or a
-    directory -- is judged by its target's checkout when the `operation`
-    writes through it: such a write still lands in whichever checkout its
-    target lies in (issue #483 review findings: a throwaway repository's
-    file link, or a directory link `cp` or `mv` writes into, reaching a
-    guarded one); `rm` or `mv` of a file link itself never touches the
-    target, so it stays where the link lies. A guarded
-    link's own directory wins, so no link can move a write out of the gate
-    that directory already imposes; without `ACO_PROTECT_UNGUARDED` every
-    repository is guarded, so the target is never even resolved (issue #483
-    review finding: its failure must not outrank the link's own gate)."""
+    to it lands (`_landing_checkout_outside_every_repository`). A symlink
+    inside a checkout resolves as the link's own checkout here; the one its
+    write lands in is `_link_target_in_another_checkout`'s."""
     path = Path(os.path.normpath(absolute_path))
     own_checkout = checkout.resolve_named_path_checkout(path)
     if own_checkout is None:
         return _landing_checkout_outside_every_repository(path, operation=operation)
-    if (
-        not _names_unguarded_directories()
-        or not path.is_symlink()
-        or not operation.writes_through(path)
-    ):
-        return own_checkout
-    target_checkout = checkout.resolve_named_path_checkout(Path(os.path.realpath(path)))
-    if _leaves_unguarded_for_guarded(own_checkout, target_checkout):
-        return target_checkout
     return own_checkout
+
+
+def _link_target_in_another_checkout(
+    absolute_path: str, link_checkout: checkout.PathCheckout, *, operation: _LinkOperation
+) -> tuple[str, checkout.PathCheckout] | None:
+    """The target a write through the symlink `absolute_path` lands at and
+    that target's checkout, when the `operation` writes through the link
+    and the target lies in a checkout other than `link_checkout` (issue
+    #486: a claim in one checkout must never authorize bytes landing in
+    another). `None` for a path that is no symlink, for `rm` or `mv` of a
+    file link itself, which never touches the target, and for a target
+    in the link's own checkout, its own repository's git directory, or
+    outside every repository -- the link's own checkout answers for those
+    alone. Raises git's own failure for a target no checkout can be
+    resolved for, another repository's git directory among them."""
+    path = Path(os.path.normpath(absolute_path))
+    if not path.is_symlink() or not operation.writes_through(path):
+        return None
+    target = os.path.realpath(path)
+    if Path(target).is_relative_to(link_checkout.common_directory.resolve()):
+        return None
+    target_checkout = checkout.resolve_named_path_checkout(Path(target))
+    if target_checkout is None or target_checkout.toplevel == link_checkout.toplevel:
+        return None
+    return target, target_checkout
 
 
 def _landing_checkout_outside_every_repository(
@@ -433,19 +439,6 @@ def _landing_checkout_outside_every_repository(
     if target == path:
         return None
     return checkout.resolve_nearest_existing_checkout(target.parent)
-
-
-def _leaves_unguarded_for_guarded(
-    own_checkout: checkout.PathCheckout, target_checkout: checkout.PathCheckout | None
-) -> bool:
-    """Whether a symlink in `own_checkout` points into another,
-    guarded checkout while its own is unguarded (PROT-40) -- the one case
-    the link's own checkout cannot answer for its write. Only a link that
-    crosses into another checkout reads `ACO_PROTECT_UNGUARDED`, so a
-    malformed value never outranks PROT-38 for a link within one."""
-    if target_checkout is None or target_checkout.toplevel == own_checkout.toplevel:
-        return False
-    return _is_unguarded(own_checkout) and not _is_unguarded(target_checkout)
 
 
 def _protect_checkout_denial(path_checkout: checkout.PathCheckout) -> str | None:
@@ -521,9 +514,9 @@ def _is_unguarded(path_checkout: checkout.PathCheckout) -> bool:
 
 def _is_exempt(relative: str | None, path_checkout: checkout.PathCheckout) -> bool:
     """Whether a path inside a checkout allows unjudged: an ignored session
-    setting (PROT-38) or a path in an unguarded repository (PROT-40) --
-    `path_checkout` already being the target's own for a write through a
-    symlink out of one (`_resolved_path_checkout`). The session
+    setting (PROT-38) or a path in an unguarded repository (PROT-40) -- a
+    write through a symlink out of one is still judged by its target's
+    checkout too (`_link_target_in_another_checkout`). The session
     setting is weighed first, so a malformed `ACO_PROTECT_UNGUARDED`
     (PROT-41) never locks the session out of the file that repairs it."""
     if relative is not None and _is_ignored_session_setting(relative, path_checkout):
@@ -570,10 +563,65 @@ def _protect_checkout_scope_denial(
     far never needed an identity, so a session without one is gated only
     where a claim could answer for it.
     `miss_denial` builds each caller's own scope-miss sentence from the
-    state, checkout, agent, and relative scope entry now in hand."""
+    state, checkout, agent, and relative scope entry now in hand.
+
+    A write through a symlink the path itself names into another checkout
+    is judged in both checkouts, the target's first (issue #486): either
+    denial denies, and the target's wins when both do, so neither
+    checkout's claim answers for the other's bytes. Both checkouts'
+    store-free checks run before either store or the identity is read, so
+    a link in a main checkout denies "not main" without them. Once both
+    pass, each checkout's claim check runs, even after the target's
+    denies or fails to read its board, store, or identity. A target git
+    cannot resolve is the target's denial too, so it denies with that
+    failure before the link's own checkout is judged."""
     path_checkout = _resolved_path_checkout(raw_path, operation=operation)
     if path_checkout is None:
         return None
+    link_target = _link_target_in_another_checkout(raw_path, path_checkout, operation=operation)
+    judged = (link_target,) if link_target is not None else ()
+    store_free_outcomes = [
+        _protect_store_free_outcome(judged_path, judged_checkout)
+        for judged_path, judged_checkout in (*judged, (raw_path, path_checkout))
+    ]
+    for outcome in store_free_outcomes:
+        if isinstance(outcome, str):
+            return outcome
+    claim_verdicts: list[str | Exception | None] = []
+    for question in store_free_outcomes:
+        if not isinstance(question, _ClaimQuestion):
+            continue
+        # A failed board, store, or identity read is `cli`'s denial of this
+        # checkout alone: held back so the other checkout's claim check
+        # still runs, and so a target denial still wins over a link failure.
+        try:
+            claim_verdicts.append(
+                _protect_claim_denial(question, context=context, miss_denial=miss_denial)
+            )
+        except Exception as error:
+            claim_verdicts.append(error)
+    verdict = next((verdict for verdict in claim_verdicts if verdict is not None), None)
+    if isinstance(verdict, Exception):
+        raise verdict
+    return verdict
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimQuestion:
+    """A write path the store-free checks left for a live claim to answer:
+    its checkout and its repository-relative scope entry."""
+
+    path_checkout: checkout.PathCheckout
+    relative: str
+
+
+def _protect_store_free_outcome(
+    raw_path: str, path_checkout: checkout.PathCheckout
+) -> str | _ClaimQuestion | None:
+    """What `path_checkout` alone says about a write to `raw_path` before
+    any store or identity is read: `None` when it is exempt, a denial when
+    the checkout or the path already rules the write out, otherwise the
+    `_ClaimQuestion` a live claim must answer."""
     relative = checkout.relative_scope_entry(raw_path, toplevel=path_checkout.toplevel)
     if _is_exempt(relative, path_checkout):
         return None
@@ -584,16 +632,24 @@ def _protect_checkout_scope_denial(
         return denial
     if relative is None:
         return PATH_REQUIRED
-    state, denial = _protect_cached_claim_state_or_denial(path_checkout, context=context)
+    return _ClaimQuestion(path_checkout=path_checkout, relative=relative)
+
+
+def _protect_claim_denial(
+    question: _ClaimQuestion, *, context: _ProtectContext, miss_denial: _ProtectMissDenialBuilder
+) -> str | None:
+    """Whether a live claim of this session covers `question`'s path,
+    reading the store and then the identity."""
+    state, denial = _protect_cached_claim_state_or_denial(question.path_checkout, context=context)
     if state is None:
         return denial
     agent = _hook_session_agent()
     return _protect_scope_denial(
         state,
         agent=agent,
-        branch=path_checkout.branch,
-        relative=relative,
-        miss_denial=miss_denial(state, path_checkout, agent, relative),
+        branch=question.path_checkout.branch,
+        relative=question.relative,
+        miss_denial=miss_denial(state, question.path_checkout, agent, question.relative),
     )
 
 
