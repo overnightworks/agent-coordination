@@ -8,14 +8,15 @@ argument shape, its forge-freedom, and how a failure reaches its sink. The
 ref's own idempotency, the tree it writes, and every transport and lineage
 refusal it can hit are `specs/ref-store-cas.spec.md`'s own facts (CAS-01,
 CAS-02, CAS-04, CAS-05, CAS-12); `specs/storage-pin.spec.md` owns the
-untracked-pin refusal every store command shares (PIN-01). This file cites
+absent- and untracked-pin refusals every store command shares (PIN-01/PIN-32). This file cites
 those IDs rather than restating them. `<sha>` is the runner's own commit id.
 
 ## Behavior table
 
 | state \ trigger | `aco bootstrap` |
 |---|---|
-| `.agent-claim/board.toml` untracked, absent, or ignored | PIN-01 |
+| `.agent-claim/board.toml` absent | PIN-32 |
+| `.agent-claim/board.toml` present but untracked or ignored | PIN-01 |
 | ref absent, proven (`ls-remote` exit 2) | CAS-02 |
 | ref present, valid schema | CAS-01 |
 | ref previously observed by this worktree, now absent | CAS-12 |

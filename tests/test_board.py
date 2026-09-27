@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -2101,9 +2102,22 @@ def test_board_configuration_requires_unique_ordered_labels(tmp_path: Path) -> N
         board.load_config(config_path)
 
 
-def test_board_configuration_fails_loud_on_unparsable_toml(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "write_unreadable",
+    [
+        pytest.param(lambda path: path.write_text("this is not valid toml =\n"), id="unparsable"),
+        pytest.param(lambda path: path.write_bytes(b"\xff\n"), id="not-utf-8"),
+        pytest.param(
+            lambda path: path.write_bytes(b'storage = "github"\r'), id="bare-carriage-return"
+        ),
+        pytest.param(lambda path: path.mkdir(), id="a-directory"),
+    ],
+)
+def test_board_configuration_fails_loud_on_an_unreadable_file(
+    tmp_path: Path, write_unreadable: Callable[[Path], object]
+) -> None:
     config_path = tmp_path / "board.toml"
-    config_path.write_text("this is not valid toml =\n")
+    write_unreadable(config_path)
 
     with pytest.raises(ClaimError, match=f"cannot read board configuration {config_path}"):
         board.load_config(config_path)

@@ -15,7 +15,8 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 
 | pin state \ trigger | any store command | `item new` | `item edit` / `item close` | `release --merged` | an id argument |
 |---|---|---|---|---|---|
-| `.agent-claim/board.toml` untracked, absent, or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
+| `.agent-claim/board.toml` absent | PIN-32 | PIN-32 | PIN-32 | PIN-32 | — |
+| `.agent-claim/board.toml` present but untracked or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
 | `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08, PIN-31 |
@@ -34,7 +35,8 @@ including the surviving refusal, is `specs/landing-grammar.spec.md`'s own
 
 ## The pin and its precondition
 
-- [ ] [PIN-01] Any store command with an untracked, absent, or ignored `<path>` refuses `<path> is not tracked in this checkout, so its storage pin cannot be trusted: git add -f <path>` (E-PIN-01).
+- [ ] [PIN-32] A store command with no `<path>` at all refuses `<path> does not exist in this checkout; merge a pull request adding only <path> into the default branch first, without aco` (E-PIN-32).
+- [ ] [PIN-01] Any store command with a present but untracked or ignored `<path>` refuses `<path> is not tracked in this checkout, so its storage pin cannot be trusted: git add -f <path>` (E-PIN-01).
 - [ ] [PIN-02] A tracked `.agent-claim/board.toml` naming no `storage` key pins `storage = "github"`, the default every existing repository already reads.
 - [ ] [PIN-03] A tracked `.agent-claim/board.toml` naming a `storage` value outside `github`/`state-ref` refuses `board configuration <path> storage must be 'github' or 'state-ref'` (see E-PIN-02).
 
@@ -110,6 +112,16 @@ Setup: bare-remote, `.agent-claim/board.toml` present on disk but never `git add
 ```console
 $ aco status
 2> ERROR: .agent-claim/board.toml is not tracked in this checkout, so its storage pin cannot be trusted: git add -f .agent-claim/board.toml
+exit 2
+```
+
+### E-PIN-32 — an absent pin names its one-time adoption
+
+Setup: bare-remote, no `.agent-claim/board.toml` in the checkout at all
+
+```console
+$ aco claim 1 --scope README.md
+2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco
 exit 2
 ```
 
