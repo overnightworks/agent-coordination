@@ -1,0 +1,8 @@
+claim_id = "5ced3d1db4c741f9b4cdf71afb0ea2a2"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "c746b573ebb6e476a7969fcc79dfddebc7d18133"
+branch = "claude/issue-550-unplaced-entries"
+scope = ["scripts/test_budget_ratchet.txt", "specs/item.spec.md", "specs/next.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "src/agent_coordination/state_board.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_state_board.py"]
+opened_commit = "57cd56f1f028bd9f8efc6613d69d1edcd79c78d6"
+whole_reason = "the narrow item reads skip non-item entries, and one child predicate for board and refusal"
