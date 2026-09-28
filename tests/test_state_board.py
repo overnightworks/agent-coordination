@@ -785,7 +785,7 @@ class TestMalformedItem:
             ),
             pytest.param(
                 _record(title="Repaired", state="open", kind="task", blocked_by=("aco-ffffff",)),
-                "item aco-ffffff is listed as a blocker but does not exist",
+                f"item {MALFORMED_ID} lists blocker aco-ffffff, which does not exist",
                 id="missing-blocker",
             ),
             pytest.param(
@@ -966,7 +966,8 @@ class TestStateRefBoardMethods:
         adapter = _state_ref_board({f"{CHILD_B_ID}.md": body.encode()})
 
         with pytest.raises(
-            MalformedStateTreeError, match="is listed as a blocker but does not exist"
+            MalformedStateTreeError,
+            match=f"^item {CHILD_B_ID} lists blocker aco-999999, which does not exist$",
         ):
             adapter.list_board_dependencies(CHILD_B_NUMBER)
 
@@ -3801,7 +3802,7 @@ class TestCliStateRefForge:
             pytest.param(
                 ["item", "edit", EDIT_TARGET_ID],
                 _edit_target_body(blocked_by=("aco-ffffff",)),
-                "item aco-ffffff is listed as a blocker but does not exist",
+                f"item {EDIT_TARGET_ID} lists blocker aco-ffffff, which does not exist",
                 id="unknown-blocker",
             ),
             pytest.param(
@@ -4070,7 +4071,7 @@ class TestCliStateRefForge:
     @pytest.mark.parametrize(
         ("unrelated_blocked_by", "refusal"),
         [
-            (("aco-ffffff",), "item aco-ffffff is listed as a blocker but does not exist"),
+            (("aco-ffffff",), "item aco-000010 lists blocker aco-ffffff, which does not exist"),
             (
                 (CLOSE_TARGET_ID, CLOSE_TARGET_ID),
                 f"item aco-000010 lists blocker {CLOSE_TARGET_ID} more than once",

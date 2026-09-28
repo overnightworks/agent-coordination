@@ -7216,10 +7216,23 @@ def _brief_config_with_foreign_step_key(
     return _brief_step_under_brief_config(monkeypatch, tmp_path, f"[build]\n{key} = 1\n")
 
 
+def _brief_config_with_foreign_rule_and_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> list[str]:
+    entry = json.dumps(_FOREIGN_MULTI_LINE_TEXT, ensure_ascii=False)
+    content = f"[build]\nrules = [{entry}]\nchecks = [{entry}]\n"
+    return _brief_step_under_brief_config(monkeypatch, tmp_path, content)
+
+
 @pytest.mark.parametrize(
     ("arrange", "shown_as"),
     [
         pytest.param(_brief_of_foreign_body, "{block}\n\nProse.\n", id="brief"),
+        pytest.param(
+            _brief_config_with_foreign_rule_and_check,
+            "\nRULES\n{line}\n\nCHECKS\n{line}\n",
+            id="brief-step-rules-and-checks",
+        ),
         pytest.param(_item_show_of_foreign_body, "{block}\n\nProse.\n", id="item-show"),
         pytest.param(
             _brief_config_with_foreign_top_level_key,
@@ -7243,8 +7256,9 @@ def test_body_and_brief_config_printers_show_foreign_text_as_next_escapes_it(
     """Issue #544 lines 1-3: `brief` and `item show` print a stored body
     with ESC, RLO and U+2060 as their printable escapes while its line
     feeds, TAB and Umlauts stay; the brief configuration's unknown-key
-    refusals escape the line feed too, as every one-line printer does
-    (BRIEF-23, ITEM-56, BRIEF-24)."""
+    refusals and `brief --step`'s rules and checks escape the line feed
+    too, as every one-line printer does (BRIEF-23, ITEM-56, BRIEF-24;
+    issue #548 line 1, BRIEF-25)."""
     block = "Hallo\\x1b[2J Welt\tÜber\\u202eRLO\n\\u2060WJ Größe"
     line = "Hallo\\x1b[2J Welt\tÜber\\u202eRLO\\n\\u2060WJ Größe"
     arguments = arrange(monkeypatch, tmp_path)
@@ -7297,21 +7311,31 @@ def test_brief_config_unknown_key_json_refusal_carries_the_escaped_key(
     assert json.loads(captured.out) == refusal
 
 
-@pytest.mark.parametrize("command", [["brief"], ["item", "show"]], ids=["brief", "item-show"])
-def test_body_printers_json_keeps_the_stored_body_as_stored(
+@pytest.mark.parametrize(
+    ("arrange", "key"),
+    [
+        pytest.param(_brief_of_foreign_body, "body", id="brief"),
+        pytest.param(_item_show_of_foreign_body, "body", id="item-show"),
+        pytest.param(_brief_config_with_foreign_rule_and_check, "rules", id="brief-step-rules"),
+        pytest.param(_brief_config_with_foreign_rule_and_check, "checks", id="brief-step-checks"),
+    ],
+)
+def test_foreign_text_printers_json_keep_the_foreign_lines_as_stored(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    command: list[str],
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+    key: str,
 ) -> None:
-    """Issue #544 line 2: `--json` leaves a body's escaping to JSON, so a
-    reader gets the foreign lines back exactly as stored (BRIEF-23,
-    ITEM-56)."""
-    item, stored = _foreign_body_item(monkeypatch, tmp_path)
+    """Issue #544 line 2, issue #548 line 1: `--json` leaves a body's, a
+    rule's and a check's escaping to JSON, so a reader gets the foreign
+    lines back exactly as stored (BRIEF-23, ITEM-56, BRIEF-25): in the
+    body, or as one whole `rules`/`checks` entry."""
+    arguments = arrange(monkeypatch, tmp_path)
 
-    issue_claim.main([*command, item, "--json"])
+    issue_claim.main([*arguments, "--json"])
 
-    assert json.loads(capsys.readouterr().out)["body"] == stored
+    assert _FOREIGN_MULTI_LINE_TEXT in json.loads(capsys.readouterr().out)[key]
 
 
 def test_state_ref_next_claim_in_a_skipped_reason_runs_past_a_higher_ranked_item(
@@ -8600,7 +8624,10 @@ def test_release_merged_closes_and_releases_atomically_under_the_state_ref_pin(
 @pytest.mark.parametrize(
     ("unrelated_blocked_by", "refusal"),
     [
-        (("aco-ffffff",), "item aco-ffffff is listed as a blocker but does not exist"),
+        (
+            ("aco-ffffff",),
+            f"item {_UNRELATED_LANDING_ITEM_ID} lists blocker aco-ffffff, which does not exist",
+        ),
         (
             ("aco-00000b", "aco-00000b"),
             f"item {_UNRELATED_LANDING_ITEM_ID} lists blocker aco-00000b more than once",

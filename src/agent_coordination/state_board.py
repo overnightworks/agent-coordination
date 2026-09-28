@@ -120,10 +120,23 @@ NO_LANDINGS_YET = (
     "#230 slice 6 adds merge-commit-derived landings"
 )
 NO_BARE_ISSUE = "a state-ref item is created by aco item new, never as a bare forge issue"
-# PIN-16/PIN-17's sentences, completing `item <id> ...`.
-_PARENT_MISSING = "is referenced as a parent but does not exist"
-_BLOCKER_MISSING = "is listed as a blocker but does not exist"
 _BLOCKER_ITSELF = "is listed as its own blocker"
+
+
+def _unknown_item_sentence(item_id: str) -> str:
+    return f"item {item_id} does not exist"
+
+
+def _missing_parent_sentence(parent_id: str) -> str:
+    """PIN-16's sentence."""
+    return f"item {parent_id} is referenced as a parent but does not exist"
+
+
+def _missing_blocker_sentence(item_id: str, blocker_id: str) -> str:
+    """PIN-17's sentence, naming the item that lists the missing blocker
+    as ITEM-43's names the one repeating it, so the repair needs no
+    search (issue #548)."""
+    return f"item {item_id} lists blocker {blocker_id}, which does not exist"
 
 
 def _repeated_blocker_sentence(item_id: str, blocker_id: str) -> str:
@@ -391,14 +404,18 @@ class StateRefBoard:
 
     def _decoded(self, number: int) -> _DecodedItem | None:
         item_id = self._by_number.get(number)
-        return None if item_id is None else self._related(item_id, missing="does not exist")
+        return (
+            None
+            if item_id is None
+            else self._related(item_id, missing=_unknown_item_sentence(item_id))
+        )
 
     def _related(self, item_id: str, *, missing: str) -> _DecodedItem:
         """`item_id`'s decoded item, or a refusal by name: a malformed one
-        names its repair (issue #447), an unknown one completes `item <id>`
-        with `missing`."""
+        names its repair (issue #447), an unknown one refuses the sentence
+        `missing`."""
         if not self._carries(item_id):
-            raise MalformedStateTreeError(f"item {item_id} {missing}")
+            raise MalformedStateTreeError(missing)
         malformed = self._malformed.get(item_id)
         if malformed is not None:
             raise _malformed_item_refusal(item_id, malformed)
@@ -463,7 +480,7 @@ class StateRefBoard:
             return None
         parent_id = decoded.record.parent
         if not self._carries(parent_id):
-            raise MalformedStateTreeError(f"item {parent_id} {_PARENT_MISSING}")
+            raise MalformedStateTreeError(_missing_parent_sentence(parent_id))
         return items.item_number(parent_id)
 
     def parent_issue(self, number: int) -> board.ParentIssue | None:
@@ -586,18 +603,19 @@ class StateRefBoard:
         decoded = self._decoded(number)
         if decoded is None:
             return ()
+        item_id = items.format_item_id(number)
         dependencies: list[board.IssueDependency] = []
         named: set[str] = set()
         for blocker_id in decoded.record.blocked_by:
             if blocker_id in named:
-                raise MalformedStateTreeError(
-                    _repeated_blocker_sentence(items.format_item_id(number), blocker_id)
-                )
+                raise MalformedStateTreeError(_repeated_blocker_sentence(item_id, blocker_id))
             named.add(blocker_id)
             if blocker_id in self._malformed:
                 dependencies.append(self._unreadable_blocker(blocker_id))
                 continue
-            blocker = self._related(blocker_id, missing=_BLOCKER_MISSING)
+            blocker = self._related(
+                blocker_id, missing=_missing_blocker_sentence(item_id, blocker_id)
+            )
             closed_at = None
             if blocker.record.closed_at is not None:
                 closed_at = datetime.fromisoformat(blocker.record.closed_at).astimezone(UTC)
@@ -715,7 +733,7 @@ class StateRefBoard:
         `update_item_body` writes; `updated_at` moves to now, every other
         byte stays."""
         item_id = self._by_number[number]
-        current = self._related(item_id, missing="does not exist")
+        current = self._related(item_id, missing=_unknown_item_sentence(item_id))
         updated_record = replace(
             current.record,
             kind=kind.value,
@@ -785,7 +803,7 @@ class StateRefBoard:
                 f"with aco item close {item_id}"
             )
         if record.parent is not None:
-            self._related(record.parent, missing=_PARENT_MISSING)
+            self._related(record.parent, missing=_missing_parent_sentence(record.parent))
         self._refuse_unresolved_blockers(item_id, record.blocked_by)
 
     def _refuse_unresolved_blockers(
@@ -806,7 +824,7 @@ class StateRefBoard:
             named.add(blocker_id)
             if blocker_id in stored:
                 continue
-            self._related(blocker_id, missing=_BLOCKER_MISSING)
+            self._related(blocker_id, missing=_missing_blocker_sentence(item_id, blocker_id))
             if blocker_id == item_id:
                 raise ClaimUnavailableError(f"item {item_id} {_BLOCKER_ITSELF}")
 

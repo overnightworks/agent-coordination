@@ -360,7 +360,7 @@ and no `items/aco-ffffff.md`, `itself.md` one naming `blocked_by = ["<item-id>"]
 
 ```console
 $ aco item edit <item-id> < unknown.md
-2> ERROR: item aco-ffffff is listed as a blocker but does not exist
+2> ERROR: item <item-id> lists blocker aco-ffffff, which does not exist
 exit 2
 $ aco item edit <item-id> < itself.md
 2> ERROR: item <item-id> is listed as its own blocker
@@ -421,7 +421,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-a>` op
 ```console
 $ aco item close <item-a>
 CLOSED <item-a>
-hint: could not read the board to report what this write freed (item aco-ffffff is listed as a blocker but does not exist); run `aco board --json` once it is repaired
+hint: could not read the board to report what this write freed (item <item-m> lists blocker aco-ffffff, which does not exist); run `aco board --json` once it is repaired
 exit 0
 $ aco item close <item-a>
 2> ERROR: <item-a> is already closed (closed on <closed_at>)
