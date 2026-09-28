@@ -4262,6 +4262,21 @@ class TestCliStateRefForge:
                 None,
                 id="last-readable-child-beside-an-unreadable-item",
             ),
+            pytest.param(
+                {
+                    f"{CLOSE_PARENT_ID}.md": _state_ref_body(
+                        _CLOSE_PARENT_PROJECTION,
+                        _record(
+                            title="Parent",
+                            state="open",
+                            kind="container",
+                            parent=DANGLING_PARENT_ID,
+                        ),
+                    ).encode()
+                },
+                None,
+                id="last-open-child-of-a-parent-whose-own-parent-is-missing",
+            ),
         ],
     )
     def test_item_close_json_carries_the_parent_closable_number(
@@ -4278,7 +4293,9 @@ class TestCliStateRefForge:
         number the text form's parent hint names. Issue #536 (ITEM-54):
         beside an item whose record does not read, that item counts as the
         parent's child, so the parent's own close would refuse by it and
-        the hint names no parent rather than recommending that close."""
+        the hint names no parent rather than recommending that close.
+        Issue #536 (ITEM-53, PIN-16): the same holds while the parent's own
+        parent does not read."""
         item_files = {**_close_parent_scenario_item_files(), **neighbours}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
