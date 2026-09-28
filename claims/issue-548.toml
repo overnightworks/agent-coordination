@@ -1,8 +1,0 @@
-claim_id = "5293512abd504596b819536712b0c7da"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "79245511d5bc334449bc5b7d0cf946ab8eeb4772"
-branch = "claude/issue-548-brief-rules-blocker-lister"
-scope = ["scripts/test_budget_ratchet.txt", "specs/board.spec.md", "specs/brief.spec.md", "specs/item.spec.md", "specs/landing-grammar.spec.md", "specs/next.spec.md", "specs/release.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "src/agent_coordination/state_board.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_state_board.py"]
-opened_commit = "5cfb857b43b316260e5f9a3c297f5ae99b130cf4"
-whole_reason = "brief --step's entries through the one terminal owner, and PIN-16's sentence naming the listing item wherever it is quoted"
