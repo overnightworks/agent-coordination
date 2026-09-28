@@ -8624,7 +8624,10 @@ def test_release_merged_closes_and_releases_atomically_under_the_state_ref_pin(
 @pytest.mark.parametrize(
     ("unrelated_blocked_by", "refusal"),
     [
-        (("aco-ffffff",), "item aco-ffffff is listed as a blocker but does not exist"),
+        (
+            ("aco-ffffff",),
+            f"item {_UNRELATED_LANDING_ITEM_ID} lists blocker aco-ffffff, which does not exist",
+        ),
         (
             ("aco-00000b", "aco-00000b"),
             f"item {_UNRELATED_LANDING_ITEM_ID} lists blocker aco-00000b more than once",

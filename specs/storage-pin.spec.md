@@ -94,7 +94,7 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 - [ ] [PIN-14] A read of an `items/<id>.md` entry whose bytes are not valid UTF-8 refuses `item <id> is not valid UTF-8`, then ITEM-38's repair clause.
 - [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `agent-claim` block and `[record]` refuses `item <id> has a malformed agent-claim block`, then ITEM-38's repair clause (see E-PIN-07).
 - [ ] [PIN-16] An item whose own `record.parent` names an id no `items/` entry carries refuses `item <parent-id> is referenced as a parent but does not exist`.
-- [ ] [PIN-17] An item whose own `record.blocked_by` names an id no `items/` entry carries refuses `item <blocker-id> is listed as a blocker but does not exist`.
+- [ ] [PIN-17] An item whose own `record.blocked_by` names an id no `items/` entry carries refuses `item <item-id> lists blocker <blocker-id>, which does not exist`, naming the listing item as PIN-34 does.
 - [ ] [PIN-34] An item whose own `record.blocked_by` names one id twice refuses ITEM-43's `item <item-id> lists blocker <blocker-id> more than once` (see E-PIN-38).
 - [ ] [PIN-29] While PIN-14/PIN-15 refuse an item, only the `item close` and `item edit --kind` ITEM-53 and ITEM-54 name and a `board --serve` click refuse with the lowest id before any write (E-PIN-07).
 
