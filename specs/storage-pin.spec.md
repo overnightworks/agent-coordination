@@ -22,7 +22,7 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
 | a key the configuration does not define | PIN-33 | PIN-33 | PIN-33 | PIN-33 | — |
 | `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08, PIN-31 |
-| a state-ref item file itself is malformed | PIN-13..17, PIN-34, PIN-29 | ITEM-37 | ITEM-39, PIN-29 | BOARD-54 | — |
+| a state-ref item file itself is malformed | PIN-13..17, PIN-34, PIN-29 | ITEM-37 | ITEM-39, PIN-29, PIN-35 | BOARD-54 | — |
 | a fresh item id, minted | PIN-06, PIN-07 | PIN-06, PIN-07 | — | — | — |
 
 \* PIN-04/PIN-05 gate only a command that resolves this repository's item
@@ -90,7 +90,8 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 
 ## The state-ref item file, one layer above the block
 
-- [ ] [PIN-13] An `items/<id>.md` entry whose filename is not `aco-` plus six lowercase hex characters plus `.md` makes a state-ref read refuse `items/<name> is not a valid item file name`.
+- [ ] [PIN-13] An `items/` entry whose filename is not `aco-` plus six lowercase hex characters plus `.md` makes `board`, `next` and a `board --serve` click refuse `items/<name> is not a valid item file name`.
+- [ ] [PIN-35] Such an entry belongs to no item: `item close`, `item edit --kind` and `item show` of any item still answer beside it (see E-PIN-13).
 - [ ] [PIN-14] A read of an `items/<id>.md` entry whose bytes are not valid UTF-8 refuses `item <id> is not valid UTF-8`, then ITEM-38's repair clause.
 - [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `agent-claim` block and `[record]` refuses `item <id> has a malformed agent-claim block`, then ITEM-38's repair clause (see E-PIN-07).
 - [ ] [PIN-16] An item whose own `record.parent` names an id no `items/` entry carries refuses `item <parent-id> is referenced as a parent but does not exist`.
@@ -282,6 +283,21 @@ exit 2
 $ aco item close <item-id>
 CLOSED <item-id>
 freed: none
+exit 0
+```
+
+### E-PIN-13 — an entry that names no item
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/NOTANID.md` hand-written, `<item-id>` an open Task with no parent and no child and blocking no item
+
+```console
+$ aco board --json
+2> ERROR: items/NOTANID.md is not a valid item file name
+{"ok": false, "reason": "unavailable", "message": "items/NOTANID.md is not a valid item file name"}
+exit 2
+$ aco item close <item-id>
+CLOSED <item-id>
+hint: could not read the board to report what this write freed (items/NOTANID.md is not a valid item file name); run `aco board --json` once it is repaired
 exit 0
 ```
 

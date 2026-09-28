@@ -342,6 +342,9 @@ def _blank_title_item(parent: str | None = None) -> bytes:
     return _task_item(parent, title="")
 
 
+# An `items/` entry whose file name is no item id (PIN-13, issue #550).
+NON_ITEM_NAME = "NOTANID"
+
 # An id no `items/` entry carries, named as a `parent` (PIN-16).
 DANGLING_PARENT_ID = "aco-ffffff"
 
@@ -601,7 +604,12 @@ def _fake_oid(seed: str) -> protocol.ObjectId:
 
 
 def _item_oids(item_files: Mapping[str, bytes]) -> dict[str, protocol.ObjectId]:
-    return {items.item_id_from_filename(filename): _fake_oid(filename) for filename in item_files}
+    """The oid map `ClaimState.items` keys by file name less its suffix, so
+    an entry that names no item keeps its key too (issue #550)."""
+    return {
+        filename.removesuffix(store.ITEM_FILENAME_SUFFIX): _fake_oid(filename)
+        for filename in item_files
+    }
 
 
 def _state_ref_board(
@@ -850,9 +858,25 @@ class TestMalformedItem:
 
         assert (MALFORMED_NUMBER, "Duplicate me") in adapter.open_item_titles()
 
-    def test_a_malformed_filename_fails_loud(self) -> None:
-        with pytest.raises(MalformedStateTreeError, match="not a valid item file name"):
-            _state_ref_board({"not-an-item.md": b"anything"})
+    @pytest.mark.parametrize(
+        "whole_store_read",
+        [
+            pytest.param(StateRefBoard.list_open_board_issues, id="board-read"),
+            pytest.param(StateRefBoard.hold_well_formed, id="serve-click-hold"),
+        ],
+    )
+    def test_a_malformed_filename_refuses_only_a_read_of_the_whole_store(
+        self, whole_store_read: Callable[[StateRefBoard], object]
+    ) -> None:
+        """Issue #550 (PIN-13): an entry whose file name is no item id
+        belongs to no item, so every item still reads, while the board read
+        and `board --serve`'s whole-store hold refuse by its name."""
+        adapter = _state_ref_board({**_item_files(), "NOTANID.md": b"anything"})
+
+        assert adapter.item_reference(CONTAINER_NUMBER).state is forge.ItemState.OPEN
+        with pytest.raises(MalformedStateTreeError) as refused:
+            whole_store_read(adapter)
+        assert str(refused.value) == "items/NOTANID.md is not a valid item file name"
 
 
 class TestStateRefBoardMethods:
@@ -3186,6 +3210,14 @@ class TestCliStateRefForge:
                 _container_alone(),
                 id="edit-kind-of-a-childless-container-beside-a-top-level-malformed-item",
             ),
+            *(
+                pytest.param(arguments, NON_ITEM_NAME, _item_files(), id=f"{case}-beside-NOTANID")
+                for case, arguments in (
+                    ("item-close", ["item", "close", CHILD_B_ID]),
+                    ("edit-kind", ["item", "edit", CHILD_B_ID, "--kind", "container"]),
+                    ("item-show", ["item", "show", CHILD_B_ID]),
+                )
+            ),
         ],
     )
     def test_a_malformed_item_leaves_every_other_item_working(
@@ -3251,6 +3283,16 @@ class TestCliStateRefForge:
                 id="item-close-of-a-child-whose-parent-is-missing",
             ),
             *_unplaced_malformed_child_cases(),
+            *(
+                pytest.param(
+                    arguments,
+                    None,
+                    {**_item_files(), f"{NON_ITEM_NAME}.md": _blank_title_item()},
+                    f"items/{NON_ITEM_NAME}.md is not a valid item file name",
+                    id=f"{arguments[0]}-over-NOTANID",
+                )
+                for arguments in (["board", "--html"], ["next"])
+            ),
         ],
     )
     def test_an_unreadable_item_or_relative_refuses_and_writes_nothing(

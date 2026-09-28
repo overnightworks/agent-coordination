@@ -337,8 +337,13 @@ class StateRefBoard:
         self._items: dict[str, _DecodedItem] = {}
         self._malformed: dict[str, _MalformedItem] = {}
         self._holds_items = False
+        self._non_item_refusals: dict[str, str] = {}
         for filename, content in item_files.items():
-            item_id = items.item_id_from_filename(filename)
+            try:
+                item_id = items.item_id_from_filename(filename)
+            except MalformedStateTreeError as refusal:
+                self._non_item_refusals[filename] = str(refusal)
+                continue
             decoded = _decode_item(item_id, content, item_oids[item_id])
             if isinstance(decoded, _MalformedItem):
                 self._malformed[item_id] = decoded
@@ -347,6 +352,7 @@ class StateRefBoard:
         self._by_number = {
             items.item_number(item_id): item_id for item_id in (*self._items, *self._malformed)
         }
+        self._non_item_oids = {key: oid for key, oid in item_oids.items() if not self._carries(key)}
 
     @property
     def requests(self) -> int:
@@ -371,7 +377,8 @@ class StateRefBoard:
         blockers are unknown, so `board --serve`'s ruling click would guess
         past it -- the one whole-board write that keeps PIN-29 "before any
         write". Reads that only project the board list it instead (issue
-        #517)."""
+        #517). An entry that names no item refuses first (PIN-13)."""
+        self._refuse_a_non_item_entry()
         if self._malformed:
             item_id = min(self._malformed)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
@@ -383,6 +390,13 @@ class StateRefBoard:
         bad after the caller's check refuses the write instead of landing
         beside it."""
         self._holds_items = True
+
+    def _refuse_a_non_item_entry(self) -> None:
+        """Refuses by the lowest `items/` entry whose file name is no item
+        id (PIN-13, issue #550): it belongs to no item, so a read of named
+        items skips it, while a read of the whole store may not."""
+        if self._non_item_refusals:
+            raise MalformedStateTreeError(self._non_item_refusals[min(self._non_item_refusals)])
 
     def _write_item(self, item_id: str, *, expected: ObjectId | None, body: str) -> ObjectId:
         return self._writer.write_item(
@@ -398,6 +412,7 @@ class StateRefBoard:
         if not self._holds_items:
             return None
         return {
+            **self._non_item_oids,
             **{held_id: held.oid for held_id, held in self._malformed.items()},
             **{held_id: held.oid for held_id, held in self._items.items()},
         }
@@ -542,7 +557,9 @@ class StateRefBoard:
     def list_open_board_issues(self) -> tuple[board.Issue, ...]:
         """Every open item, plus every unreadable one as a row the board
         names by its defect (issue #517): its state may not read, so it
-        counts as open, and one such item never hides the others."""
+        counts as open, and one such item never hides the others. An entry
+        that names no item cannot be a row, so it refuses the board (PIN-13)."""
+        self._refuse_a_non_item_entry()
         return (
             *(
                 self._issue(item_id)
