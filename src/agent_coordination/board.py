@@ -1332,6 +1332,7 @@ class _BoardBuildContext:
     nesting_parents: Mapping[int, IssueReference]
     repository: str
     estimate_by_number: Mapping[int, metrics.Estimate]
+    unreadable_numbers: frozenset[int]
 
 
 def _board_stage(
@@ -1478,6 +1479,9 @@ def _board_item(
             ),
             childless_container_reason=_childless_container_reason(
                 issue.number, childless_verdict, parsed, config.storage
+            ),
+            unreadable_container_reason=_unreadable_children_reason(
+                container_progress, context.unreadable_numbers, config.storage
             ),
         )
     )
@@ -1776,6 +1780,9 @@ def build_board(inputs: BoardBuildInputs) -> Board:
         nesting_parents=inputs.nesting_parents,
         repository=repository,
         estimate_by_number=estimate_by_number,
+        unreadable_numbers=frozenset(
+            issue.number for issue in issues if issue.unreadable is not None
+        ),
     )
     landed_work_items = declared_work_items(recent_merged_pull_requests, repository)
     ordered = tuple(
@@ -2496,6 +2503,7 @@ class _ActionabilityFacts:
     read_state: BodyReadState = BodyReadState.VALID
     malformed_defect: ContractDefect | None = None
     childless_container_reason: str | None = None
+    unreadable_container_reason: str | None = None
 
 
 # `next`'s own words for a childless container whose `Next` line still names
@@ -2689,5 +2697,24 @@ def _actionable_reason(facts: _ActionabilityFacts) -> str | None:
     if read_state_reason is not None:
         return read_state_reason
     if facts.kind is ItemKind.CONTAINER:
-        return facts.childless_container_reason or "container; claim a child"
+        return (
+            facts.childless_container_reason
+            or facts.unreadable_container_reason
+            or "container; claim a child"
+        )
     return _claim_or_completeness_reason(facts)
+
+
+def _unreadable_children_reason(
+    progress: ContainerProgress | None, unreadable_numbers: frozenset[int], storage: Storage
+) -> str | None:
+    """What holds a container whose every open child is an item that does
+    not read (issue #550, ITEM-54): no child is there to claim, and its
+    close refuses by them, so `next` names them instead."""
+    if progress is None or not progress.open_children:
+        return None
+    numbers = [child.number for child in progress.open_children]
+    if not unreadable_numbers.issuperset(numbers):
+        return None
+    labels = ", ".join(item_label(number, storage) for number in numbers)
+    return f"container; its open children do not read: {labels}"

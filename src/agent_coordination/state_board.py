@@ -174,6 +174,16 @@ class _MalformedItem:
     title: str | None = None
     parent: str | UnreadParent | None = UnreadParent.UNREAD
 
+    def may_be_child_of(self, item_id: str, kind: ItemKind | None) -> bool:
+        """Whether this item may be `item_id`'s child, `kind` being
+        `item_id`'s own: its readable parent names it, or its parent does not
+        read and `item_id` is a Container, the one kind that takes children
+        (ITEM-45, ITEM-54). The one answer the board's child count and a
+        close or retype's refusal both ask (issue #550)."""
+        if self.parent is UnreadParent.UNREAD:
+            return kind is ItemKind.CONTAINER
+        return self.parent == item_id
+
 
 # The defects an item file the block grammar never reached is named by
 # (issue #517): its bytes are no UTF-8, or its valid block has no record.
@@ -519,9 +529,12 @@ class StateRefBoard:
         return () if item_id is None else self._children(item_id)
 
     def _children(self, item_id: str) -> tuple[board.ChildItem, ...]:
-        """`item_id`'s children, an unreadable one whose `[record].parent`
-        still names it counted open (issue #517): its state may not read, so
-        its container never reads as childless past it."""
+        """`item_id`'s children, every unreadable item that may be one
+        counted open (issues #517, #550): its state may not read, so its
+        container never reads as childless past it, and the board offers no
+        close that `item close` would refuse by it (ITEM-54)."""
+        decoded = self._items.get(item_id)
+        kind = None if decoded is None else _item_kind(decoded.record.kind)
         return (
             *(
                 board.ChildItem(child.record.number, board.ChildState(child.record.state.value))
@@ -531,24 +544,8 @@ class StateRefBoard:
             *(
                 board.ChildItem(items.item_number(child_id), board.ChildState.OPEN)
                 for child_id, child in self._malformed.items()
-                if child.parent == item_id
+                if child.may_be_child_of(item_id, kind)
             ),
-        )
-
-    def unplaced_child_numbers(self, number: int) -> tuple[int, ...]:
-        """While `number`'s decoded item is a container, every malformed item
-        whose record or its parent does not read: `_children` cannot
-        place it, yet it may be this container's open child (issue #536,
-        ITEM-54), so a close or retype deciding with the children refuses by
-        it rather than guessing past it. No other kind takes a child
-        (ITEM-45), so any other item has none."""
-        record = self._items[self._by_number[number]].record
-        if _item_kind(record.kind) is not ItemKind.CONTAINER:
-            return ()
-        return tuple(
-            items.item_number(malformed_id)
-            for malformed_id, malformed in self._malformed.items()
-            if malformed.parent is UnreadParent.UNREAD
         )
 
     def default_branch(self) -> str:

@@ -3384,6 +3384,52 @@ class TestCliStateRefForge:
             f"ERROR: {_malformed_item_refusal(problem, CHILD_A_ID)}\n",
         )
 
+    def test_an_unplaced_unreadable_item_keeps_its_possible_container_open_on_the_board(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #550 line 2 (ITEM-54): the container's one readable child is
+        closed, and an item whose record does not read may be its open child,
+        so `board --json` counts it open, `next` never offers the close
+        `item close` refuses, and names that item as what holds it."""
+        closed_child = _state_ref_body(
+            _CHILD_A_PROJECTION,
+            _record(
+                title="Slice A",
+                state="closed",
+                kind="task",
+                parent=CONTAINER_ID,
+                closed_at="2026-09-15T00:00:00Z",
+            ),
+        )
+        item_files = {
+            **_container_alone(),
+            f"{CHILD_A_ID}.md": closed_child.encode(),
+            f"{MALFORMED_ID}.md": b"no block at all\n",
+        }
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        board_exit_code = issue_claim.main(["board", "--json"])
+        board_items = json.loads(capsys.readouterr().out)["items"]
+        next_exit_code = issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        close_exit_code = issue_claim.main(["item", "close", CONTAINER_ID])
+        close_err = capsys.readouterr().err
+
+        container = next(item for item in board_items if item["number"] == CONTAINER_NUMBER)
+        assert (board_exit_code, next_exit_code, close_exit_code) == (0, 3, 2)
+        assert (container["container"]["closed"], container["container"]["total"]) == (1, 2)
+        assert "\nclose: none\n" in next_out
+        assert (
+            f"\n{CONTAINER_ID}: container; its open children do not read: {MALFORMED_ID}\n"
+            in next_out
+        )
+        assert close_err == f"ERROR: {_malformed_item_refusal()}\n"
+
     def test_board_html_names_an_unreadable_child_inside_its_readable_containers_topic(
         self,
         monkeypatch: pytest.MonkeyPatch,
