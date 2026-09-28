@@ -152,8 +152,8 @@ sentence>`, not restated.
 - [ ] [LAND-63] A rerun of LAND-55's own close that finds its `landed by PR #<n>` comment already posted skips it and closes straight away, never posting it twice (issue #397).
 - LAND-36 (retired 19.09.2026, issue #359): "work item #<n> is open, not closed" no longer exists; a still-open item is closed instead (LAND-55).
 - [ ] [LAND-37] `release --merged <pr>` for a lane, against a merge commit trailer carrying only `No-Item: docs`, releases the claim without reading any closing reference or pull request body.
-- [ ] [LAND-38] A forge outage after the release committed prints `hint: could not read the board to report what this landing freed (<error>); run \`aco board\` once the forge is reachable`.
-- [ ] [LAND-65] A board read refusal (PIN-16/17) after the release committed prints `hint: could not read the board to report what this landing freed (<refusal>); run \`aco board\` once it is repaired`.
+- [ ] [LAND-38] A forge outage after the write committed prints `hint: could not read the board to report what this write freed (<error>); run \`aco board --json\` once the forge is reachable`.
+- [ ] [LAND-65] A board read refusal (PIN-16/17/34) after the write committed prints `hint: could not read the board to report what this write freed (<refusal>); run \`aco board --json\` once it is repaired`.
 - [ ] [LAND-50] The release LAND-38 or LAND-65 reports on never undoes or fails on that hiccup: its claim stays released and its exit code stays `0`, exactly as a reachable forge would have produced.
 - [ ] [LAND-39] `--abandoned "<reason>"` never verifies a pull request or reads the board: it prints `RELEASED ...` alone, with no `freed`/`next` line and no `hint` line, ever.
 - [ ] [LAND-47] Under `storage = "state-ref"`, `release --merged <sha|empty>` reads the trunk walk (LAND-01/LAND-02); empty picks the newest commit naming this claim's item.

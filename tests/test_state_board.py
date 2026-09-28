@@ -4089,7 +4089,7 @@ class TestCliStateRefForge:
         refusal: str,
         as_json: bool,
     ) -> None:
-        """Issues #541, #546 (ITEM-55, PIN-17): an unrelated item whose
+        """Issues #541, #546 (ITEM-55, PIN-17, PIN-34): an unrelated item whose
         stored blockers the board read refuses -- one `items/` lacks, or one
         named twice -- fails only `freed:`'s read after the close is written,
         so the close still reports success and the state ref holds it; the
@@ -4129,7 +4129,7 @@ class TestCliStateRefForge:
         advice = hint.split("`")[1]
         assert _arguments_bash_hands_aco(advice, tmp_path) == (0, ["board", "--json"])
         advised = issue_claim.main(["board", "--json"])
-        assert (advised, refusal in capsys.readouterr().err) == (2, True)
+        assert (advised, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
 
     def test_item_close_prints_the_parent_hint_for_the_last_open_child(
         self,

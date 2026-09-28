@@ -8468,7 +8468,7 @@ def test_release_merged_under_state_ref_hints_a_runnable_board_read_beside_an_un
     refusal: str,
     as_json: bool,
 ) -> None:
-    """Issue #546 (LAND-65, PIN-17): an unrelated item whose stored
+    """Issue #546 (LAND-65, PIN-17, PIN-34): an unrelated item whose stored
     blockers the board read refuses -- one `items/` lacks, or one named
     twice -- leaves the committed landing standing and prints one neutral
     hint naming no forge, whose advice bash runs as printed and which reads
@@ -8488,7 +8488,7 @@ def test_release_merged_under_state_ref_hints_a_runnable_board_read_beside_an_un
     advice = hint.split("`")[1]
     assert _arguments_bash_hands_aco(advice, tmp_path) == (0, ["board", "--json"])
     advised = issue_claim.main(["board", "--json"])
-    assert (advised, refusal in capsys.readouterr().err) == (2, True)
+    assert (advised, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
 
 
 def test_release_merged_refuses_a_trunk_item_the_state_ref_has_no_entry_for(
