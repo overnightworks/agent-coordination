@@ -7259,6 +7259,44 @@ def test_body_and_brief_config_printers_show_foreign_text_as_next_escapes_it(
     assert re.search(expected, printed), printed
 
 
+@pytest.mark.parametrize(
+    ("arrange", "refusal_after_path"),
+    [
+        pytest.param(
+            _brief_config_with_foreign_top_level_key,
+            " has unknown top-level key ",
+            id="brief-config-top-level-key",
+        ),
+        pytest.param(
+            _brief_config_with_foreign_step_key,
+            " [build] has unknown key ",
+            id="brief-config-step-key",
+        ),
+    ],
+)
+def test_brief_config_unknown_key_json_refusal_carries_the_escaped_key(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], list[str]],
+    refusal_after_path: str,
+) -> None:
+    """Issue #544 line 3: under `--json` the brief configuration's
+    unknown-key refusal is the `unavailable` envelope, its message and
+    stderr naming the key as `next` escapes it (BRIEF-24, BRIEF-17)."""
+    arguments = arrange(monkeypatch, tmp_path)
+    config = Path.cwd() / board.BRIEF_CONFIG_PATH
+    key = "Hallo\\x1b[2J Welt\tÜber\\u202eRLO\\n\\u2060WJ Größe"
+    sentence = f"brief configuration {config}{refusal_after_path}{key}"
+
+    status = issue_claim.main([*arguments, "--json"])
+
+    captured = capsys.readouterr()
+    refusal = {"ok": False, "reason": "unavailable", "message": sentence}
+    assert (status, captured.err) == (2, f"ERROR: {sentence}\n")
+    assert json.loads(captured.out) == refusal
+
+
 @pytest.mark.parametrize("command", [["brief"], ["item", "show"]], ids=["brief", "item-show"])
 def test_body_printers_json_keeps_the_stored_body_as_stored(
     monkeypatch: pytest.MonkeyPatch,
