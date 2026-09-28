@@ -1404,8 +1404,8 @@ def _release_reason(outcome: protocol.ReleaseOutcome) -> ReleaseReason:
     )
 
 
-def _release_json(report: ReleaseReport, landing: ReleaseLanding | None) -> None:
-    released = report.selected
+def _release_json(report: ReleaseReport) -> None:
+    released, landing = report.selected, report.landing
     payload: dict[str, object] = {
         "outcome": report.outcome.reason,
         **_identity_json(released.identity),
@@ -1414,7 +1414,7 @@ def _release_json(report: ReleaseReport, landing: ReleaseLanding | None) -> None
         "agent": report.agent,
         "role": report.role if report.role is not None else released.role,
     }
-    if landing is not None:
+    if isinstance(landing, ReleaseLanding):
         payload["freed"] = list(landing.freed)
         payload["next"] = None if landing.next_item is None else landing.next_item.number
         payload["parent_closable"] = landing.parent_closable
@@ -5839,8 +5839,8 @@ def _release_transition(
     )
     # The run already fetched the canonical remote and asked the forge's
     # default branch to verify the merge, so this ref costs no read.
-    landing, hint = (
-        (None, None)
+    landing = (
+        None
         if client is None
         else _landing_report(
             context, identity, new_state, storage, context.fetched_default_branch_ref()
@@ -5859,9 +5859,7 @@ def _release_transition(
             parsed.agent,
             resolved.resolved_role,
             outcome,
-            client,
             landing,
-            hint,
             storage,
             worktree_cleanup,
         ),
@@ -6516,7 +6514,7 @@ def _cmd_release_landed(
         intent,
     )
     client.mark_landed(write, new_oid)
-    landing, hint = _landing_report(context, identity, new_state, storage, trunk_ref)
+    landing = _landing_report(context, identity, new_state, storage, trunk_ref)
     worktree_cleanup = _cleanup_landed_worktree(
         parsed, resolved.selected.branch, context, context.fetched_trunk_ref
     )
@@ -6526,9 +6524,7 @@ def _cmd_release_landed(
             parsed.agent,
             resolved.resolved_role,
             outcome,
-            client,
             landing,
-            hint,
             storage,
             worktree_cleanup,
         ),
@@ -6550,15 +6546,19 @@ def _board_read_after_write(read: Callable[[], _BoardRead]) -> _BoardRead | str:
     try:
         return read()
     except forge.ForgeError as error:
-        return (
-            f"hint: could not read the board to report what this landing freed ({error}); "
-            "run `aco board` once the forge is reachable"
-        )
+        return _board_read_hint(error, "once the forge is reachable")
     except protocol.MalformedStateTreeError as error:
-        return (
-            f"hint: could not read the board to report what this landing freed ({error}); "
-            "run `aco board` once it is repaired"
-        )
+        return _board_read_hint(error, "once it is repaired")
+
+
+def _board_read_hint(refusal: protocol.ClaimError, until: str) -> str:
+    """The one wording every post-write command shares (issue #546): it
+    names the write rather than a landing, since `item close` lands
+    nothing, and advises the one board read that runs as printed."""
+    return (
+        f"hint: could not read the board to report what this write freed ({refusal}); "
+        f"run `aco board --json` {until}"
+    )
 
 
 def _print_board_read_hint(hint: str, *, as_json: bool) -> None:
@@ -6575,22 +6575,19 @@ def _landing_report(
     new_state: store.ClaimState,
     storage: body.Storage,
     trunk_ref: str,
-) -> tuple[ReleaseLanding | None, str | None]:
-    """The `(landing, hint)` pair `_cmd_release` prints once its release
-    transition already committed (issue #256): a forge hiccup here, or a
-    state-ref store the board read refuses (issue #447), can only
-    ever downgrade the report to `hint`, never undo or fail that release."""
+) -> ReleaseLanding | str:
+    """The landing `_cmd_release` prints once its release transition
+    already committed (issue #256), or the hint that replaces it: a forge
+    hiccup here, or a state-ref store the board read refuses (issue #447),
+    can only ever downgrade the report, never undo or fail that release."""
     landed = (
         board.IssueReference(context.forge.repository.path, identity.issue)
         if isinstance(identity, protocol.IssueIdentity)
         else None
     )
-    landing = _board_read_after_write(
+    return _board_read_after_write(
         lambda: _release_landing(context, new_state, landed, storage, trunk_ref)
     )
-    if isinstance(landing, str):
-        return None, landing
-    return landing, None
 
 
 @dataclass(frozen=True)
@@ -6599,40 +6596,36 @@ class ReleaseReport:
     outcome (issue #256), bundled so the printer itself takes one argument
     instead of PLR0913's five-scalar ceiling: the just-released claim, the
     caller identity that performed it, the outcome it recorded, and the
-    merged-landing board read (`None` for an abandoned or issueless release)
-    alongside its `hint` fallback. `worktree` is the merged outcome's own
-    cleanup result (issue #322 review finding 4), `None` for `--abandoned`,
-    which never attempts cleanup at all."""
+    merged-landing board read, or the hint that replaced it (issue #546),
+    `None` for a release that runs no board read. `worktree` is the merged
+    outcome's own cleanup result (issue #322 review finding 4), `None` for
+    `--abandoned`, which never attempts cleanup at all."""
 
     selected: protocol.ActiveClaim
     agent: str
     role: str | None
     outcome: protocol.ReleaseOutcome
-    client: forge.ForgeReader | None
-    landing: ReleaseLanding | None
-    hint: str | None
+    landing: ReleaseLanding | str | None
     storage: body.Storage
     worktree: checkout.WorktreeCleanupOutcome | None
 
 
 def _print_release_result(report: ReleaseReport, *, as_json: bool) -> None:
-    selected, landing, hint = report.selected, report.landing, report.hint
+    selected, landing = report.selected, report.landing
     if as_json:
-        _release_json(report, landing)
-        if hint is not None:
-            _print_board_read_hint(hint, as_json=True)
+        _release_json(report)
+        if isinstance(landing, str):
+            _print_board_read_hint(landing, as_json=True)
         return
     print(f"RELEASED {_claim_subject(selected, report.storage)}: {selected.claim_id}")
-    if report.client is not None:
-        if hint is not None:
-            _print_board_read_hint(hint, as_json=False)
-        else:
-            assert landing is not None
-            print(_release_freed_line(landing.freed, report.storage))
-            print(_release_next_line(landing.next_item, report.storage))
-            parent_line = _parent_closable_line(landing.parent_closable, report.storage)
-            if parent_line is not None:
-                print(parent_line)
+    if isinstance(landing, str):
+        _print_board_read_hint(landing, as_json=False)
+    elif landing is not None:
+        print(_release_freed_line(landing.freed, report.storage))
+        print(_release_next_line(landing.next_item, report.storage))
+        parent_line = _parent_closable_line(landing.parent_closable, report.storage)
+        if parent_line is not None:
+            print(parent_line)
     if report.worktree is not None:
         print(f"worktree: {worktree_cleanup_outcome_text(report.worktree)}")
 

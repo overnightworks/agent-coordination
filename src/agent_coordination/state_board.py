@@ -126,6 +126,12 @@ _BLOCKER_MISSING = "is listed as a blocker but does not exist"
 _BLOCKER_ITSELF = "is listed as its own blocker"
 
 
+def _repeated_blocker_sentence(item_id: str, blocker_id: str) -> str:
+    """ITEM-43's sentence, shared by the write that refuses a delivered
+    repeat and the read that refuses a stored one (issue #546)."""
+    return f"item {item_id} lists blocker {blocker_id} more than once"
+
+
 @dataclass(frozen=True)
 class _DecodedItem:
     record: items.ItemRecord
@@ -581,7 +587,13 @@ class StateRefBoard:
         if decoded is None:
             return ()
         dependencies: list[board.IssueDependency] = []
+        named: set[str] = set()
         for blocker_id in decoded.record.blocked_by:
+            if blocker_id in named:
+                raise MalformedStateTreeError(
+                    _repeated_blocker_sentence(items.format_item_id(number), blocker_id)
+                )
+            named.add(blocker_id)
             if blocker_id in self._malformed:
                 dependencies.append(self._unreadable_blocker(blocker_id))
                 continue
@@ -790,9 +802,7 @@ class StateRefBoard:
         named: set[str] = set()
         for blocker_id in blocked_by:
             if blocker_id in named:
-                raise ClaimUnavailableError(
-                    f"item {item_id} lists blocker {blocker_id} more than once"
-                )
+                raise ClaimUnavailableError(_repeated_blocker_sentence(item_id, blocker_id))
             named.add(blocker_id)
             if blocker_id in stored:
                 continue

@@ -222,7 +222,7 @@ already merged into `main`, run from the main checkout, issue `#42` claimed
 ```console
 $ aco release 42 --merged 57
 RELEASED issue #42: <claim-id>
-hint: could not read the board to report what this landing freed (<error>); run `aco board` once the forge is reachable
+hint: could not read the board to report what this write freed (<error>); run `aco board --json` once the forge is reachable
 worktree: removed
 exit 0
 ```

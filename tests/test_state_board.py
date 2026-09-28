@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 from cli_fixtures import count_context_reads, fresh_observation
-from test_cli import FakeForge, _redirect_toplevel, projected_board
+from test_cli import FakeForge, _arguments_bash_hands_aco, _redirect_toplevel, projected_board
 from test_store import _blob, _push_raw_state_tree, _raw_tree
 
 from agent_coordination import board, checkout, forge, items, process, protocol, store
@@ -1724,14 +1724,16 @@ def _filled_body(template: str, *, now: str, next_step: str, done_when: str) -> 
 
 
 def _path_without_gh(tmp_path: Path) -> str:
-    """A `PATH` carrying a real `git` and nothing else -- proof that a run
-    never shells out to `gh` under `storage = state-ref` rather than an
-    assertion resting on a fake that could never have called it anyway."""
-    git_executable = shutil.which("git")
-    assert git_executable is not None, "this test needs a real git on PATH to symlink"
+    """A `PATH` carrying a real `git` and `bash` and nothing else -- proof
+    that a run never shells out to `gh` under `storage = state-ref` rather
+    than an assertion resting on a fake that could never have called it
+    anyway; `bash` runs printed advice as printed (issue #546)."""
     bin_directory = tmp_path / "bin"
     bin_directory.mkdir()
-    (bin_directory / "git").symlink_to(git_executable)
+    for tool in ("git", "bash"):
+        executable = shutil.which(tool)
+        assert executable is not None, f"this test needs a real {tool} on PATH to symlink"
+        (bin_directory / tool).symlink_to(executable)
     return str(bin_directory)
 
 
@@ -4066,20 +4068,12 @@ class TestCliStateRefForge:
 
     @pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
     @pytest.mark.parametrize(
-        ("unrelated_blocked_by", "hint"),
+        ("unrelated_blocked_by", "refusal"),
         [
-            (
-                ("aco-ffffff",),
-                "hint: could not read the board to report what this landing freed "
-                "(item aco-ffffff is listed as a blocker but does not exist); "
-                "run `aco board` once it is repaired",
-            ),
+            (("aco-ffffff",), "item aco-ffffff is listed as a blocker but does not exist"),
             (
                 (CLOSE_TARGET_ID, CLOSE_TARGET_ID),
-                "hint: could not read the board to report what this landing freed "
-                "(GitHub returned a malformed board blocked-by list for #16: "
-                "listing total_blocked_by=2, detail length=2); "
-                "run `aco board` once the forge is reachable",
+                f"item aco-000010 lists blocker {CLOSE_TARGET_ID} more than once",
             ),
         ],
         ids=["missing-blocker", "repeated-blocker"],
@@ -4092,14 +4086,19 @@ class TestCliStateRefForge:
         bare_remote: Path,
         worktree: Path,
         unrelated_blocked_by: tuple[str, ...],
-        hint: str,
+        refusal: str,
         as_json: bool,
     ) -> None:
-        """Issue #541 (ITEM-55): an unrelated item whose stored blockers the
-        board read refuses -- one `items/` lacks, or one named twice -- fails
-        only `freed:`'s read after the close is written, so the close still
-        reports success and the state ref holds it; the failed read becomes
-        one hint line (stderr under `--json`)."""
+        """Issues #541, #546 (ITEM-55, PIN-17, PIN-34): an unrelated item whose
+        stored blockers the board read refuses -- one `items/` lacks, or one
+        named twice -- fails only `freed:`'s read after the close is written,
+        so the close still reports success and the state ref holds it; the
+        failed read becomes one neutral hint line (stderr under `--json`)
+        whose advice bash runs as printed, reading the same refusal back."""
+        hint = (
+            f"hint: could not read the board to report what this write freed ({refusal}); "
+            "run `aco board --json` once it is repaired"
+        )
         unrelated_id = "aco-000010"
         unrelated_body = _state_ref_body(
             _CLOSE_TARGET_PROJECTION,
@@ -4127,6 +4126,10 @@ class TestCliStateRefForge:
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{CLOSE_BLOCKER_ID}.md"].decode()
         assert _decoded_record(stored, CLOSE_BLOCKER_ID).state is items.RecordState.CLOSED
+        advice = hint.split("`")[1]
+        assert _arguments_bash_hands_aco(advice, tmp_path) == (0, ["board", "--json"])
+        advised = issue_claim.main(["board", "--json"])
+        assert (advised, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
 
     def test_item_close_prints_the_parent_hint_for_the_last_open_child(
         self,
