@@ -840,7 +840,9 @@ def _add_item_parser(commands: argparse._SubParsersAction) -> None:
     new.add_argument("--not-a-twin", action="store_true", help=NOT_A_TWIN_HELP)
     _add_json_flag(new)
     show = item_commands.add_parser(
-        "show", help="print one item's header and its stored body byte-exact"
+        "show",
+        help="print one item's header and its stored body, display controls escaped"
+        " (--json keeps the body as stored)",
     )
     show.add_argument(
         "item", type=board.parse_item_reference, help=f"the item to show, {ITEM_REF_HELP}"
