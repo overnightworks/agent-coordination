@@ -48,7 +48,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
 | `--parent` an open Task, or `--kind` given, either storage | ITEM-45, ITEM-46 | — | ITEM-47..ITEM-51 | — |
-| an item, open or closed | — | ITEM-07, ITEM-08, ITEM-55 | — | — |
+| an item, open or closed | — | ITEM-07, ITEM-08, ITEM-56 | — | — |
 | an unknown id | PIN-18 | ITEM-10 | PIN-23 | PIN-28 |
 | `storage = "github"` | ITEM-26..ITEM-31 | ITEM-11 | PIN-10 | PIN-11 |
 | `storage = "github"`, the `--parent` relation write fails | ITEM-32 | — | — | — |
@@ -103,8 +103,8 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 ## `item show`
 
-- [ ] [ITEM-07] `aco item show ITEM` prints one header, `<id> · #<n> · <state> · parent <parent-or-none> · origin <origin-or-none>`, then the stored body as ITEM-55 shows it, exit `0` (see E-ITEM-02).
-- [ ] [ITEM-55] Text shows the body with each display control but the line feed escaped (NEXT-37): `a\x1b[2J` prints as typed; line breaks, TAB and `Größe` as is; `--json`'s `body` keeps it as stored.
+- [ ] [ITEM-07] `aco item show ITEM` prints one header, `<id> · #<n> · <state> · parent <parent-or-none> · origin <origin-or-none>`, then the stored body as ITEM-56 shows it, exit `0` (see E-ITEM-02).
+- [ ] [ITEM-56] Text shows the body with each display control but the line feed escaped (NEXT-37): `a\x1b[2J` prints as typed; line breaks, TAB and `Größe` as is; `--json`'s `body` keeps it as stored.
 - [ ] [ITEM-08] A closed item prints ITEM-07's same header, `state closed`; closing rewrites the body's `[record]` with `state = "closed"`, `closed_at`, and `updated_at`, the rest byte-identical.
 - [ ] [ITEM-09] `aco item show ITEM --json` prints the envelope, `reason: "shown"`, then `item`, `number`, `state`, `parent`, `origin`, `body` (`parent`/`origin` `null` when unset) (see E-ITEM-02).
 - [ ] [ITEM-10] `aco item show ITEM` against an unknown id refuses `#<n> does not exist in <owner/repo>`, exit `2`.

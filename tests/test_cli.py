@@ -7244,7 +7244,7 @@ def test_body_and_brief_config_printers_show_foreign_text_as_next_escapes_it(
     with ESC, RLO and U+2060 as their printable escapes while its line
     feeds, TAB and Umlauts stay; the brief configuration's unknown-key
     refusals escape the line feed too, as every one-line printer does
-    (BRIEF-23, ITEM-55, BRIEF-24)."""
+    (BRIEF-23, ITEM-56, BRIEF-24)."""
     block = "Hallo\\x1b[2J Welt\tÜber\\u202eRLO\n\\u2060WJ Größe"
     line = "Hallo\\x1b[2J Welt\tÜber\\u202eRLO\\n\\u2060WJ Größe"
     arguments = arrange(monkeypatch, tmp_path)
@@ -7268,7 +7268,7 @@ def test_body_printers_json_keeps_the_stored_body_as_stored(
 ) -> None:
     """Issue #544 line 2: `--json` leaves a body's escaping to JSON, so a
     reader gets the foreign lines back exactly as stored (BRIEF-23,
-    ITEM-55)."""
+    ITEM-56)."""
     item, stored = _foreign_body_item(monkeypatch, tmp_path)
 
     issue_claim.main([*command, item, "--json"])
