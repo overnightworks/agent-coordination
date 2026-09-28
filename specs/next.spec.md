@@ -42,6 +42,7 @@ other printable space are text.
 | a title, `Next`, slice title or `SKIPPED` reason holds a display control | NEXT-37 | NEXT-11..14 |
 | its first uncut row's title holds a line break or control character | NEXT-32 | NEXT-14 |
 | a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
+| a container whose every open child is such an item | NEXT-38 | NEXT-14 |
 | a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
 | that container is itself a child of another item | NEXT-25, NEXT-29, NEXT-33 | NEXT-14 |
 | a childless container has no further `Next` work | NEXT-07 | NEXT-13 |
@@ -76,6 +77,7 @@ other printable space are text.
 - [ ] [NEXT-31] An advice command attaches each option's value as `--title=<quoted>` or `--scope=<quoted>`, so a value starting with `-` still reaches it: title `-draft` prints `--title=-draft`.
 - [ ] [NEXT-32] A first uncut row whose title NEXT-37 escapes gets no `cut`; `SKIPPED` reads `slice row <i> title holds a line break or control character; make it one printable line` (E-NEXT-10).
 - [ ] [NEXT-36] An item PIN-14/PIN-15 refuses is named under `SKIPPED` as `<item-id>: body malformed: <field>: <message>`; every other item still reads, one it blocks stays blocked (see E-NEXT-11).
+- [ ] [NEXT-38] A container whose every open child, ITEM-54's included, is such an item reads `container; its open children do not read: <item-ids>` under `SKIPPED`, never `close:` (see E-NEXT-12).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
 - [ ] [NEXT-07] The same container with no further `Next` work prints `close_container <label>: <closed>/<total> children closed, no Next work` (see E-NEXT-04).
 - [ ] [NEXT-25] A childless container with an uncut row that is a child of any item -- any type, open or closed, any repository -- never gets `cut_slice` (CUT-03); `SKIPPED` names its repair (E-NEXT-09).
@@ -321,5 +323,25 @@ aco-4470c5: body malformed: agent-claim: agent-claim block is not valid TOML: Il
 exit 3
 $ aco item show aco-4470c5
 2> ERROR: item aco-4470c5 has a malformed agent-claim block; repair it with aco item edit aco-4470c5 and a body whose agent-claim block carries a valid [record]
+exit 2
+```
+
+### E-NEXT-12 — a container whose one open child may be an unreadable item
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked; `aco-000001` is a filled Container whose one readable child is closed, `aco-3e26d9`'s file was hand-written with no `agent-claim` block
+
+```console
+$ aco next
+No actionable item.
+parallel: none
+scope unknown: none
+close: none
+
+SKIPPED
+aco-3e26d9: body malformed: agent-claim: no agent-claim block
+aco-000001: container; its open children do not read: aco-3e26d9
+exit 3
+$ aco item close aco-000001
+2> ERROR: item aco-3e26d9 has a malformed agent-claim block; repair it with aco item edit aco-3e26d9 and a body whose agent-claim block carries a valid [record]
 exit 2
 ```

@@ -96,7 +96,7 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 - [ ] [PIN-16] An item whose own `record.parent` names an id no `items/` entry carries refuses `item <parent-id> is referenced as a parent but does not exist`.
 - [ ] [PIN-17] An item whose own `record.blocked_by` names an id no `items/` entry carries refuses `item <item-id> lists blocker <blocker-id>, which does not exist`, naming the listing item as PIN-34 does.
 - [ ] [PIN-34] An item whose own `record.blocked_by` names one id twice refuses ITEM-43's `item <item-id> lists blocker <blocker-id> more than once` (see E-PIN-38).
-- [ ] [PIN-29] While PIN-14/PIN-15 refuse an item, only the `item close` and `item edit --kind` ITEM-53 and ITEM-54 name and a `board --serve` click refuse with the lowest id before any write (E-PIN-07).
+- [ ] [PIN-29] While PIN-14/PIN-15 refuse an item, only the `item close` and `item edit --kind` ITEM-53 names, a child as ITEM-54 decides, and a `board --serve` click refuse, lowest id, before any write (E-PIN-07).
 
 ## Writing a fresh state-ref item
 

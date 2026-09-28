@@ -3251,6 +3251,13 @@ class TestCliStateRefForge:
                 id="item-close-of-a-child-whose-parent-is-missing",
             ),
             *_unplaced_malformed_child_cases(),
+            pytest.param(
+                ["item", "close", CHILD_B_ID],
+                None,
+                {**_item_files(), "NOTANID": b"anything"},
+                "items/NOTANID is not a valid item file name",
+                id="item-close-of-a-healthy-item-beside-an-entry-that-names-no-item",
+            ),
         ],
     )
     def test_an_unreadable_item_or_relative_refuses_and_writes_nothing(
@@ -3271,7 +3278,9 @@ class TestCliStateRefForge:
         valid `[record]` as the repair, and nothing reaches the remote.
         Issue #536 (ITEM-53, PIN-16): `item close` of an item whose `parent`
         no `items/` entry carries refuses PIN-16's sentence before the close
-        writes, so the item stays open rather than closing and then refusing."""
+        writes, so the item stays open rather than closing and then refusing.
+        Issue #550 (PIN-13): an entry whose file name is no item refuses every
+        write beside it, because a write would rename or collapse it."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
         remote_url = f"file://{bare_remote}"
@@ -3341,6 +3350,65 @@ class TestCliStateRefForge:
             2,
             f"ERROR: {_malformed_item_refusal(problem, CHILD_A_ID)}\n",
         )
+
+    @pytest.mark.parametrize(
+        "unplaced_content",
+        [
+            pytest.param(b"no block at all\n", id="record-does-not-read"),
+            pytest.param(
+                _task_item(CONTAINER_ID).replace(
+                    f'parent = "{CONTAINER_ID}"'.encode(), b"parent = 1"
+                ),
+                id="parent-does-not-read",
+            ),
+        ],
+    )
+    def test_an_unplaced_unreadable_item_keeps_its_possible_container_open_on_the_board(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        unplaced_content: bytes,
+    ) -> None:
+        """Issue #550 line 2 (ITEM-54): the container's one readable child is
+        closed, and an item whose record, or its parent, does not read may be
+        its open child, so `board --json` counts it open, `next` never offers the close
+        `item close` refuses, and names that item as what holds it."""
+        closed_child = _state_ref_body(
+            _CHILD_A_PROJECTION,
+            _record(
+                title="Slice A",
+                state="closed",
+                kind="task",
+                parent=CONTAINER_ID,
+                closed_at="2026-09-15T00:00:00Z",
+            ),
+        )
+        item_files = {
+            **_container_alone(),
+            f"{CHILD_A_ID}.md": closed_child.encode(),
+            f"{MALFORMED_ID}.md": unplaced_content,
+        }
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        board_exit_code = issue_claim.main(["board", "--json"])
+        board_items = json.loads(capsys.readouterr().out)["items"]
+        next_exit_code = issue_claim.main(["next"])
+        next_out = capsys.readouterr().out
+        close_exit_code = issue_claim.main(["item", "close", CONTAINER_ID])
+        close_err = capsys.readouterr().err
+
+        container = next(item for item in board_items if item["number"] == CONTAINER_NUMBER)
+        assert (board_exit_code, next_exit_code, close_exit_code) == (0, 3, 2)
+        assert (container["container"]["closed"], container["container"]["total"]) == (1, 2)
+        assert "\nclose: none\n" in next_out
+        assert (
+            f"\n{CONTAINER_ID}: container; its open children do not read: {MALFORMED_ID}\n"
+            in next_out
+        )
+        assert close_err == f"ERROR: {_malformed_item_refusal()}\n"
 
     def test_board_html_names_an_unreadable_child_inside_its_readable_containers_topic(
         self,
@@ -4194,6 +4262,21 @@ class TestCliStateRefForge:
                 None,
                 id="last-readable-child-beside-an-unreadable-item",
             ),
+            pytest.param(
+                {
+                    f"{CLOSE_PARENT_ID}.md": _state_ref_body(
+                        _CLOSE_PARENT_PROJECTION,
+                        _record(
+                            title="Parent",
+                            state="open",
+                            kind="container",
+                            parent=DANGLING_PARENT_ID,
+                        ),
+                    ).encode()
+                },
+                None,
+                id="last-open-child-of-a-parent-whose-own-parent-is-missing",
+            ),
         ],
     )
     def test_item_close_json_carries_the_parent_closable_number(
@@ -4210,7 +4293,9 @@ class TestCliStateRefForge:
         number the text form's parent hint names. Issue #536 (ITEM-54):
         beside an item whose record does not read, that item counts as the
         parent's child, so the parent's own close would refuse by it and
-        the hint names no parent rather than recommending that close."""
+        the hint names no parent rather than recommending that close.
+        Issue #536 (ITEM-53, PIN-16): the same holds while the parent's own
+        parent does not read."""
         item_files = {**_close_parent_scenario_item_files(), **neighbours}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
