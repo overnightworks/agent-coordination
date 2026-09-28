@@ -769,7 +769,7 @@ def _validated_brief_step_rules(
         raise protocol.ClaimError(f"brief configuration {path} [{section}] must be a table")
     unknown = sorted(set(section_raw) - BRIEF_STEP_KEYS)
     if unknown:
-        named = ", ".join(unknown)
+        named = terminal_text(", ".join(unknown))
         raise protocol.ClaimError(f"brief configuration {path} [{section}] has unknown key {named}")
     return BriefStepRules(
         rules=_validated_brief_string_list(section_raw, path, section, "rules"),
@@ -780,7 +780,7 @@ def _validated_brief_step_rules(
 def _refuse_unknown_brief_config_keys(raw: dict[str, object], path: Path) -> None:
     unknown = sorted(set(raw) - BRIEF_CONFIG_STEPS)
     if unknown:
-        named = ", ".join(unknown)
+        named = terminal_text(", ".join(unknown))
         raise protocol.ClaimError(f"brief configuration {path} has unknown top-level key {named}")
 
 
@@ -2436,6 +2436,14 @@ def terminal_text(text: str) -> str:
         else character
         for character in text
     )
+
+
+def terminal_block(text: str) -> str:
+    """Foreign multi-line `text` -- a stored body -- as it may reach a
+    terminal (issue #544): each line as `terminal_text` shows it, so its
+    line feeds still break lines while every other display control, the
+    carriage return included, prints as its escape."""
+    return "\n".join(terminal_text(line) for line in text.split("\n"))
 
 
 def _quoted_prose(text: str) -> str:
