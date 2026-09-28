@@ -62,7 +62,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 | state \ trigger | `aco brief <item> --step <step>` (text) | `aco brief <item> --step <step> --json` |
 |---|---|---|
-| a tracked `.agent-claim/brief.toml` | BRIEF-12, BRIEF-13 | BRIEF-14 |
+| a tracked `.agent-claim/brief.toml` | BRIEF-12, BRIEF-13, BRIEF-25 | BRIEF-14, BRIEF-25 |
 | no tracked `.agent-claim/brief.toml` | BRIEF-15 | BRIEF-15 |
 | a tracked `.agent-claim/brief.toml` naming an unknown key | BRIEF-24 | BRIEF-24 |
 
@@ -70,6 +70,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-13] `RULES`' own lines are followed by a blank line, `CHECKS`, one line per `[<step>].checks` entry, empty when it names none (see E-BRIEF-07).
 - [ ] [BRIEF-14] `aco brief <item> --step <step> --json` adds `"rules"` and `"checks"` string-list keys to BRIEF-06/BRIEF-10's own object (see E-BRIEF-08).
 - [ ] [BRIEF-15] `--step <step>` refuses `no .agent-claim/brief.toml in the repository`, exit `2`, before reading the body or claim, when the repository tracks no such file (see E-BRIEF-09).
+- [ ] [BRIEF-25] Text shows each `RULES` and `CHECKS` entry on one line, every display control escaped (NEXT-37): a line feed prints as `\n`; `--json`'s `"rules"` and `"checks"` keep each entry as stored.
 - [ ] [BRIEF-24] An unknown key refuses `brief configuration <path> has unknown top-level key <keys>` or `... [<step>] has unknown key <keys>`, each display control escaped (NEXT-37), exit `2` (see E-BRIEF-18).
 
 ## Forge resolution
