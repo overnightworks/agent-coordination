@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, Literal, NoReturn, TypeVar, cast
 
 from . import (
     __version__,
@@ -3634,7 +3634,8 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
     item, naming its date. An unreadable item refuses at its own read; an
     unreadable parent or child, or a parent `items/` lacks, refuses before
     the write (`_refuse_an_unreadable_relative`); any other malformed item only goes
-    unfreed. Prints one line, `CLOSED aco-xxxxxx` (`--json`:
+    unfreed, and one failing the `freed:` read after the write turns that line
+    into a hint (issue #541). Prints one line, `CLOSED aco-xxxxxx` (`--json`:
     `{"item", "number", "closed_at", "parent_closable"}`), then `release
     --merged`'s own `freed:` line -- open items whose only open local
     blocker was this one (`_freed_item_numbers`, issue #256; nothing new) --
@@ -3660,7 +3661,7 @@ def _cmd_item_close(parsed: argparse.Namespace, context: RunContext) -> int:
             item_id=items.format_item_id(number),
             number=number,
             closed_at=closed_at,
-            freed=_item_close_freed(client, number),
+            freed=_board_read_after_write(lambda: _item_close_freed(client, number)),
             parent_closable=_closable_parent_of_a_closed_item(client, number),
         )
         _print_item_close_result(result, as_json=as_json)
@@ -3722,12 +3723,13 @@ def _item_close_freed(client: forge.ForgeReader, number: int) -> tuple[int, ...]
 class _ItemCloseResult:
     """Everything `_print_item_close_result` needs for one `item close`
     (issue #348), bundled so the printer itself takes one argument instead
-    of PLR0913's five-scalar ceiling."""
+    of PLR0913's five-scalar ceiling. `freed` is the freed numbers, or
+    the hint that replaced them when that read refused (issue #541)."""
 
     item_id: str
     number: int
     closed_at: str
-    freed: tuple[int, ...]
+    freed: tuple[int, ...] | str
     parent_closable: int | None
 
 
@@ -3741,12 +3743,17 @@ def _print_item_close_result(result: _ItemCloseResult, *, as_json: bool) -> None
             closed_at=result.closed_at,
             parent_closable=result.parent_closable,
         )
+        if isinstance(result.freed, str):
+            _print_board_read_hint(result.freed, as_json=True)
         return
     print(f"CLOSED {result.item_id}")
-    # `item close` only ever runs under `storage = "state-ref"`
-    # (`_cmd_item_close`'s own refusal otherwise), so `freed:`'s own id
-    # chooser is fixed here rather than threaded as a further field.
-    print(_release_freed_line(result.freed, body.Storage.STATE_REF))
+    if isinstance(result.freed, str):
+        _print_board_read_hint(result.freed, as_json=False)
+    else:
+        # `item close` only ever runs under `storage = "state-ref"`
+        # (`_cmd_item_close`'s own refusal otherwise), so `freed:`'s own id
+        # chooser is fixed here rather than threaded as a further field.
+        print(_release_freed_line(result.freed, body.Storage.STATE_REF))
     parent_line = _parent_closable_line(result.parent_closable, body.Storage.STATE_REF)
     if parent_line is not None:
         print(parent_line)
@@ -6528,6 +6535,38 @@ def _cmd_release_landed(
     return 0
 
 
+_BoardRead = TypeVar("_BoardRead")
+
+
+def _board_read_after_write(read: Callable[[], _BoardRead]) -> _BoardRead | str:
+    """`read`'s result, or the one hint that replaces it, for a board read a
+    command runs once its own write already committed (`release --merged`,
+    issue #256; `item close`, issue #541): a forge hiccup (LAND-38) or a
+    board read refusal (LAND-65) can only downgrade that report, never undo
+    or fail the write, so this is the one owner of which refusals become a
+    hint and what it says."""
+    try:
+        return read()
+    except forge.ForgeError as error:
+        return (
+            f"hint: could not read the board to report what this landing freed ({error}); "
+            "run `aco board` once the forge is reachable"
+        )
+    except protocol.MalformedStateTreeError as error:
+        return (
+            f"hint: could not read the board to report what this landing freed ({error}); "
+            "run `aco board` once it is repaired"
+        )
+
+
+def _print_board_read_hint(hint: str, *, as_json: bool) -> None:
+    """Print `_board_read_after_write`'s hint on the channel both of its
+    callers share: stderr under `--json`, so stdout stays one JSON document,
+    and stdout in text mode, in place of the lines the read would have
+    printed."""
+    print(hint, file=sys.stderr if as_json else sys.stdout)
+
+
 def _landing_report(
     context: RunContext,
     identity: protocol.ClaimIdentity,
@@ -6544,20 +6583,11 @@ def _landing_report(
         if isinstance(identity, protocol.IssueIdentity)
         else None
     )
-    try:
-        landing = _release_landing(context, new_state, landed, storage, trunk_ref)
-    except forge.ForgeError as error:
-        hint = (
-            f"hint: could not read the board to report what this landing freed ({error}); "
-            "run `aco board` once the forge is reachable"
-        )
-        return None, hint
-    except protocol.MalformedStateTreeError as error:
-        hint = (
-            f"hint: could not read the board to report what this landing freed ({error}); "
-            "run `aco board` once it is repaired"
-        )
-        return None, hint
+    landing = _board_read_after_write(
+        lambda: _release_landing(context, new_state, landed, storage, trunk_ref)
+    )
+    if isinstance(landing, str):
+        return None, landing
     return landing, None
 
 
@@ -6588,12 +6618,12 @@ def _print_release_result(report: ReleaseReport, *, as_json: bool) -> None:
     if as_json:
         _release_json(report, landing)
         if hint is not None:
-            print(hint, file=sys.stderr)
+            _print_board_read_hint(hint, as_json=True)
         return
     print(f"RELEASED {_claim_subject(selected, report.storage)}: {selected.claim_id}")
     if report.client is not None:
         if hint is not None:
-            print(hint)
+            _print_board_read_hint(hint, as_json=False)
         else:
             assert landing is not None
             print(_release_freed_line(landing.freed, report.storage))

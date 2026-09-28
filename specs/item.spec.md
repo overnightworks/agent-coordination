@@ -62,6 +62,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | a malformed piped body | ITEM-27 | — | ITEM-25 | — |
 | another item malformed | ITEM-37, ITEM-42 | ITEM-37 | ITEM-53, ITEM-54, PIN-29 | ITEM-53, ITEM-54, PIN-29 |
 | the item itself malformed | — | ITEM-38 | ITEM-39..ITEM-41 | ITEM-38 |
+| another item naming a blocker `items/` lacks | — | — | — | ITEM-55 |
 | a refusal reached with `--json` | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 |
 
 ## `item new`
@@ -135,6 +136,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 ## `item close`
 
 - [ ] [ITEM-16] `aco item close ITEM --json` prints `reason: "closed"`, then `item`, `number`, `closed_at`, `parent_closable` (issue #348's parent hint); overlaps ITEM-09's `item`/`number` (see E-ITEM-04).
+- [ ] [ITEM-55] After the write, only hints: a `freed:` read another item refuses prints LAND-38's or LAND-65's `hint:` line instead (`--json`: on stderr), exit `0` (see E-ITEM-15).
 
 ## One malformed item (issue #447)
 
@@ -411,3 +413,19 @@ exit 2
 ```
 
 `refs/aco/state` keeps its tip after both refusals.
+
+### E-ITEM-15 — a close stands although `freed:` does not read
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-a>` open with no live claim, `<item-m>` open with `blocked_by = ["aco-ffffff"]`, an id `items/` lacks
+
+```console
+$ aco item close <item-a>
+CLOSED <item-a>
+hint: could not read the board to report what this landing freed (item aco-ffffff is listed as a blocker but does not exist); run `aco board` once it is repaired
+exit 0
+$ aco item close <item-a>
+2> ERROR: <item-a> is already closed (closed on <closed_at>)
+exit 2
+```
+
+`refs/aco/state` holds the first close; the second refuses before any write.
