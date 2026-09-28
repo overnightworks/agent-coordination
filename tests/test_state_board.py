@@ -3351,6 +3351,18 @@ class TestCliStateRefForge:
             f"ERROR: {_malformed_item_refusal(problem, CHILD_A_ID)}\n",
         )
 
+    @pytest.mark.parametrize(
+        "unplaced_content",
+        [
+            pytest.param(b"no block at all\n", id="record-does-not-read"),
+            pytest.param(
+                _task_item(CONTAINER_ID).replace(
+                    f'parent = "{CONTAINER_ID}"'.encode(), b"parent = 1"
+                ),
+                id="parent-does-not-read",
+            ),
+        ],
+    )
     def test_an_unplaced_unreadable_item_keeps_its_possible_container_open_on_the_board(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -3358,10 +3370,11 @@ class TestCliStateRefForge:
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        unplaced_content: bytes,
     ) -> None:
         """Issue #550 line 2 (ITEM-54): the container's one readable child is
-        closed, and an item whose record does not read may be its open child,
-        so `board --json` counts it open, `next` never offers the close
+        closed, and an item whose record, or its parent, does not read may be
+        its open child, so `board --json` counts it open, `next` never offers the close
         `item close` refuses, and names that item as what holds it."""
         closed_child = _state_ref_body(
             _CHILD_A_PROJECTION,
@@ -3376,7 +3389,7 @@ class TestCliStateRefForge:
         item_files = {
             **_container_alone(),
             f"{CHILD_A_ID}.md": closed_child.encode(),
-            f"{MALFORMED_ID}.md": b"no block at all\n",
+            f"{MALFORMED_ID}.md": unplaced_content,
         }
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
