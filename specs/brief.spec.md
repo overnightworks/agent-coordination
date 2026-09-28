@@ -266,11 +266,11 @@ exit 2
 ### E-BRIEF-18 -- an unknown `.agent-claim/brief.toml` key carrying a bidi override
 
 Setup: bare-remote checkout at `/repo`, fake `gh`, `.agent-claim/brief.toml`
-tracked with the one line `"a‮b" = 1`
+tracked with the one line `"a\u202eb" = 1`
 
 ```console
 $ aco brief 42 --step build
-2> ERROR: brief configuration /repo/.agent-claim/brief.toml has unknown top-level key a‮b
+2> ERROR: brief configuration /repo/.agent-claim/brief.toml has unknown top-level key a\u202eb
 exit 2
 ```
 
