@@ -8268,7 +8268,7 @@ class _RefusingItemWriter:
         raise AssertionError(f"unexpected close of item {item_id}")
 
 
-def _landing_item_body(title: str) -> str:
+def _landing_item_body(title: str, blocked_by: tuple[str, ...] = ()) -> str:
     data: dict[str, object] = {
         "version": 1,
         "now": "Ship it.",
@@ -8279,7 +8279,7 @@ def _landing_item_body(title: str) -> str:
             "state": "open",
             "kind": "task",
             "labels": [],
-            "blocked_by": [],
+            "blocked_by": list(blocked_by),
             "created_at": "2026-09-10T00:00:00Z",
             "updated_at": "2026-09-10T00:00:00Z",
         },
@@ -8297,6 +8297,7 @@ def _landing_item_oid(number: int) -> protocol.ObjectId:
 
 
 _LANDING_ITEM_NUMBERS = (10, 11, 13)  # merge (#10), squash (#11, #12), rebase (#13)
+_UNRELATED_LANDING_ITEM_ID = "aco-000014"
 
 
 def _landing_repository(tmp_path: Path) -> Path:
@@ -8351,7 +8352,9 @@ def _landing_repository(tmp_path: Path) -> Path:
 
 
 def _landing_scenario(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unrelated_blocked_by: tuple[str, ...] = (),
 ) -> tuple[Path, state_board.StateRefBoard]:
     """The shared fixture every atomic-landing test builds on (issue #359):
     `storage = "state-ref"`, a real trunk history (`_landing_repository`),
@@ -8359,7 +8362,9 @@ def _landing_scenario(
     each, and a matching fake store whose `ClaimState.items` agrees with
     the board's own oids -- so `release --merged` (this module's own CLI
     path) and `prepare_landing`/`mark_landed` (`state_board.py`'s) are
-    exercised together, exactly as a real run composes them."""
+    exercised together, exactly as a real run composes them.
+    `unrelated_blocked_by`, when given, seeds one further unclaimed item
+    carrying exactly those stored blockers (issue #546)."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo = _landing_repository(tmp_path)
     _write_state_ref_pin(repo)
@@ -8370,6 +8375,13 @@ def _landing_scenario(
         for number, item_id in item_ids.items()
     }
     item_oids = {item_id: _landing_item_oid(number) for number, item_id in item_ids.items()}
+    if unrelated_blocked_by:
+        item_files[f"{_UNRELATED_LANDING_ITEM_ID}.md"] = _landing_item_body(
+            "Unrelated", unrelated_blocked_by
+        ).encode()
+        item_oids[_UNRELATED_LANDING_ITEM_ID] = _landing_item_oid(
+            items.item_number(_UNRELATED_LANDING_ITEM_ID)
+        )
     client = state_board.StateRefBoard(
         repository=forge.RepositoryId("file", ("acme",), "items"),
         default_branch="main",
@@ -8434,6 +8446,49 @@ def test_release_merged_closes_and_releases_atomically_under_the_state_ref_pin(
     remaining = store.fetch_state(worktree=Path("."), remote="origin").claims
     assert protocol.claim_key(protocol.IssueIdentity(number), "") not in remaining
     assert len(remaining) == len(_LANDING_ITEM_NUMBERS) - 1
+
+
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+@pytest.mark.parametrize(
+    ("unrelated_blocked_by", "refusal"),
+    [
+        (("aco-ffffff",), "item aco-ffffff is listed as a blocker but does not exist"),
+        (
+            ("aco-00000b", "aco-00000b"),
+            f"item {_UNRELATED_LANDING_ITEM_ID} lists blocker aco-00000b more than once",
+        ),
+    ],
+    ids=["missing-blocker", "repeated-blocker"],
+)
+def test_release_merged_under_state_ref_hints_a_runnable_board_read_beside_an_unrelated_broken_item(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    unrelated_blocked_by: tuple[str, ...],
+    refusal: str,
+    as_json: bool,
+) -> None:
+    """Issue #546 (LAND-65, PIN-17): an unrelated item whose stored
+    blockers the board read refuses -- one `items/` lacks, or one named
+    twice -- leaves the committed landing standing and prints one neutral
+    hint naming no forge, whose advice bash runs as printed and which reads
+    the same refusal back."""
+    _landing_scenario(monkeypatch, tmp_path, unrelated_blocked_by)
+    hint = (
+        f"hint: could not read the board to report what this write freed ({refusal}); "
+        "run `aco board --json` once it is repaired"
+    )
+    arguments = ["release", "10", "--agent", "Codex Sol", "--claim-id", "claim-10", "--merged"]
+
+    status = issue_claim.main([*arguments, *(["--json"] if as_json else [])])
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert hint in (captured.err if as_json else captured.out).splitlines()
+    advice = hint.split("`")[1]
+    assert _arguments_bash_hands_aco(advice, tmp_path) == (0, ["board", "--json"])
+    advised = issue_claim.main(["board", "--json"])
+    assert (advised, refusal in capsys.readouterr().err) == (2, True)
 
 
 def test_release_merged_refuses_a_trunk_item_the_state_ref_has_no_entry_for(
