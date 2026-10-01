@@ -61,6 +61,27 @@ def board_config(toplevel: Path) -> board.BoardConfig:
     return board.load_config(toplevel / board.CONFIG_PATH)
 
 
+def trunk_lane_shared(remote: str, toplevel: Path) -> tuple[str, ...]:
+    """The lane-shared registry files (issue #575) the trunk's committed
+    board configuration names -- `remote`'s trunk in the checkout at
+    `toplevel` as the last fetch left it, the ref `RunContext.trunk_ref`
+    resolves -- never the checkout's own copy, so a lane cannot authorise
+    itself by editing its worktree's `board.toml`: a change to the list
+    takes effect once it lands. A trunk that does not resolve, or that
+    holds no configuration, names none; a configuration git fails to read
+    is a git failure."""
+    try:
+        trunk = checkout.trunk_ref(remote, directory=toplevel)
+    except checkout.TrunkUnknownError:
+        return ()
+    text = checkout.file_at_revision(
+        board.CONFIG_PATH.as_posix(), revision=trunk, directory=toplevel
+    )
+    if text is None:
+        return ()
+    return board.parse_config(text, Path(f"{trunk}:{board.CONFIG_PATH}")).lane_shared
+
+
 def _absent_board_config_refusal(toplevel: Path) -> str:
     """The repair for a checkout at `toplevel` with no board configuration
     at all. With none to name it, the canonical remote is the default one:

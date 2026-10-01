@@ -26,7 +26,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 | state \ trigger | `aco brief <item>` (text) | `aco brief <item> --json` |
 |---|---|---|
-| a live issue claim, lane branch resolves | BRIEF-01, BRIEF-02, BRIEF-11, BRIEF-05 | BRIEF-06, BRIEF-10 |
+| a live issue claim, lane branch resolves | BRIEF-01, BRIEF-02, BRIEF-11, BRIEF-26, BRIEF-05 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch gone | BRIEF-04 | BRIEF-06, BRIEF-10 |
 | a live issue claim, lane branch read or `<trunk>` diff fails outright | BRIEF-18 | BRIEF-18 |
 | a live issue claim, lane branch resolves, no `<trunk>`, `<remote>` has no branch | BRIEF-20 | BRIEF-20 |
@@ -43,6 +43,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-01] `aco brief <item>` prints the body, a blank line, `CLAIM`, a blank line, `TIP`, a blank line, `TOUCHED` -- always these four headings in order (see E-BRIEF-01).
 - [ ] [BRIEF-02] Under a live issue claim, `CLAIM` is followed by one line `<agent> (<role>) branch=<branch> base=<base>[ <age>]`, branch before base (see E-BRIEF-01).
 - [ ] [BRIEF-11] That claim line's indented lines are one per scope path, then `  whole: <reason>` only when the claim carries one (see E-BRIEF-01).
+- [ ] [BRIEF-26] After them, `  lane-shared: <file>, <file>` names each file the trunk's committed `lane_shared` names (PIN-37), files the claim may write beside its scope; none configured, no such line.
 - [ ] [BRIEF-03] With no live issue claim, `CLAIM` prints exactly `no active claim`; `TIP` prints no value line at all; `TOUCHED` lists nothing (see E-BRIEF-02).
 - [ ] [BRIEF-04] With a live claim whose branch resolves neither locally nor as `origin/<branch>` -- git itself answering "no such ref" -- `TIP` prints `branch not found` and `TOUCHED` lists nothing (see E-BRIEF-03).
 - [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from `git diff --name-only <trunk>...<tip>` (see E-BRIEF-01, E-BRIEF-14).

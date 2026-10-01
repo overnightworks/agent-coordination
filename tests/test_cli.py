@@ -108,6 +108,7 @@ _LIVE_TRUNK_REF_AFTER = checkout.trunk_ref_after
 _LIVE_FETCH_REMOTE = checkout.fetch_remote
 _LIVE_UNCONFIGURED_REMOTE_REFUSAL = checkout.unconfigured_remote_refusal
 _LIVE_PATH_IS_TRACKED = checkout.path_is_tracked
+_LIVE_FILE_AT_REVISION = checkout.file_at_revision
 
 LANDED = protocol.MergedRelease(12)
 
@@ -10538,10 +10539,13 @@ def _default_open_issue_reference(monkeypatch: pytest.MonkeyPatch) -> None:
 # A test's toplevel is a scratch directory with no trunk (`conftest.py`'s
 # `_isolate_git_toplevel`), so the live trunk reads would fail loud; tests of
 # the trunk itself (tests/test_checkout.py, tests/test_session.py) and the
-# real-repository scenarios here (`_redirect_toplevel`) read it live.
+# real-repository scenarios here (`_redirect_toplevel`) read it live. That
+# trunk holds no committed board configuration, so no file is lane-shared
+# (issue #575); a test of the lane-shared lines restores the live read.
 @pytest.fixture(autouse=True)
 def _stub_trunk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(checkout, "file_at_revision", lambda _path, **_kwargs: None)
     monkeypatch.setattr(
         checkout,
         "trunk_ref_after",
@@ -10870,14 +10874,48 @@ def test_every_output_names_a_github_item_by_its_number(
     assert "aco-" not in output
 
 
-def test_cli_status_shows_a_live_store_claim(
+@pytest.mark.parametrize(
+    ("initial_branch", "published_trunk", "lane_shared_line"),
+    [
+        pytest.param(
+            "main",
+            "refs/remotes/origin/main",
+            "lane-shared: scripts/a.py, scripts/b.txt\n",
+            id="trunk-names-them",
+        ),
+        pytest.param("lane", None, "", id="no-trunk-resolves"),
+    ],
+)
+def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    initial_branch: str,
+    published_trunk: str | None,
+    lane_shared_line: str,
 ) -> None:
+    """Issue #575 line 3: the lane-shared files the trunk's committed
+    configuration names follow the claim blocks once, so a builder counts
+    them as allowed beside its scope -- never one the working copy's own
+    `board.toml` adds, not even when no trunk resolves to name any."""
     claimed = _active_claim(
         "Codex Sol", claim_id="cli-claim", issue=72, branch="codex/issue-72", scope=("src",)
     )
     _patch_status_store(monkeypatch, claimed)
+    monkeypatch.setattr(checkout, "file_at_revision", _LIVE_FILE_AT_REVISION)
+    monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
+    _real_git(tmp_path, "init", "-q", "-b", initial_branch)
+    _real_git(tmp_path, "config", "user.name", "Test")
+    _real_git(tmp_path, "config", "user.email", "test@example.com")
+    (tmp_path / ".agent-claim").mkdir()
+    (tmp_path / board.CONFIG_PATH).write_text('lane_shared = ["scripts/a.py", "scripts/b.txt"]\n')
+    _real_git(tmp_path, "add", "-f", board.CONFIG_PATH.as_posix())
+    _real_git(tmp_path, "commit", "-q", "-m", "trunk configuration")
+    if published_trunk is not None:
+        _real_git(tmp_path, "update-ref", published_trunk, "HEAD")
+    (tmp_path / board.CONFIG_PATH).write_text(
+        'lane_shared = ["scripts/a.py", "scripts/b.txt", "src/x.py"]\n'
+    )
 
     status = issue_claim.main(["--repo", REPOSITORY, "status", "72"])
     assert status == 0
@@ -10885,6 +10923,7 @@ def test_cli_status_shows_a_live_store_claim(
         f"CLAIMED issue #72: Codex Sol (builder) base={BASE} "
         "branch=codex/issue-72 claim=cli-claim 0h 0m\n"
         "  src\n"
+        f"{lane_shared_line}"
     )
 
 
@@ -19481,7 +19520,7 @@ def test_untracked_board_config_refuses_item_show_in_its_own_json_envelope(
 
 
 def _scratch_lane_repository(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, board_config: str | None = None
 ) -> tuple[Path, str, str]:
     """A repository with a base commit on `main` and a lane branch one commit
     ahead of it -- `brief`'s own real reads (`rev-parse --verify`, `diff
@@ -19489,7 +19528,8 @@ def _scratch_lane_repository(
     `_git_output` fake. It is the isolated toplevel itself (`conftest.py`'s
     `_isolate_git_toplevel`), so the run's context resolves its trunk -- the
     local `main`, since its configured `origin` was never fetched -- in the
-    lane's own repository (issues #488, #508)."""
+    lane's own repository (issues #488, #508). Given `board_config`, the
+    base commit carries it as the trunk's `.agent-claim/board.toml`."""
     monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
     repository = tmp_path
     _real_git(repository, "init", "-q", "-b", "main")
@@ -19498,6 +19538,10 @@ def _scratch_lane_repository(
     _real_git(repository, "config", "user.email", "test@example.com")
     (repository / "README.md").write_text("hello\n")
     _real_git(repository, "add", "README.md")
+    if board_config is not None:
+        (repository / ".agent-claim").mkdir()
+        (repository / board.CONFIG_PATH).write_text(board_config)
+        _real_git(repository, "add", "-f", board.CONFIG_PATH.as_posix())
     _real_git(repository, "commit", "-q", "-m", "initial")
     base = _real_git(repository, "rev-parse", "HEAD").stdout.strip()
     _real_git(repository, "checkout", "-q", "-b", "codex/issue-258-brief")
@@ -19528,7 +19572,13 @@ def _brief_claim(
 def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    repository, base, tip = _scratch_lane_repository(monkeypatch, tmp_path)
+    repository, base, tip = _scratch_lane_repository(
+        monkeypatch, tmp_path, board_config='lane_shared = ["scripts/registry.txt"]\n'
+    )
+    (repository / board.CONFIG_PATH).write_text(
+        'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'
+    )
+    monkeypatch.setattr(checkout, "file_at_revision", _LIVE_FILE_AT_REVISION)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
         forge.ItemState.OPEN, "Brief", "The item's own body."
@@ -19548,6 +19598,7 @@ def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
         f"Codex Sol (builder) branch=codex/issue-258-brief base={base} 24h 0m old",
         "  README.md",
         "  whole: lane touches too much to split",
+        "  lane-shared: scripts/registry.txt",
         "",
         "TIP",
         tip,
