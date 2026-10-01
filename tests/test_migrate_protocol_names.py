@@ -162,25 +162,40 @@ def test_dry_run_refuses_and_names_every_shape_but_the_one_exact_fence(
 
 
 @pytest.mark.parametrize(
-    "repository",
+    ("arguments", "refusal_message"),
     [
-        "owner/.",
-        "owner/..",
-        "own_er/repo",
-        "ownér/repo",
-        "owner",
-        "owner/repo/extra",
-        "owner/repo\n",
+        *(
+            pytest.param(["--dry-run", "--repo", repository], "is not OWNER/REPO", id=repository)
+            for repository in (
+                "owner/.",
+                "owner/..",
+                "own_er/repo",
+                "ownér/repo",
+                "owner",
+                "owner/repo/extra",
+                "owner/repo\n",
+            )
+        ),
+        pytest.param(
+            ["--apply", "--repo", "owner/intended"],
+            "--apply takes its repositories from the manifest",
+            id="apply-with-repo",
+        ),
     ],
 )
-def test_dry_run_refuses_a_repo_that_is_not_owner_slash_repo_before_any_read(
-    migration: Migration, capsys: pytest.CaptureFixture[str], repository: str
+def test_main_refuses_a_command_line_it_cannot_honour_before_any_read(
+    migration: Migration,
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+    refusal_message: str,
 ) -> None:
+    command_line = [*arguments, "--manifest", str(migration.manifest)]
+
     with pytest.raises(SystemExit) as refusal:
-        migration.dry_run(repository)
+        migrate.main(command_line, run=migration.github, clock=migration.clock)
 
     assert refusal.value.code == 2
-    assert "is not OWNER/REPO" in capsys.readouterr().err
+    assert refusal_message in capsys.readouterr().err
     assert not migration.manifest.exists()
 
 

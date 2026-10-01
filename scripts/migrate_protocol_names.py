@@ -394,7 +394,13 @@ def _parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true", help="read and write the manifest")
     mode.add_argument("--apply", action="store_true", help="patch the manifest's rows")
-    parser.add_argument("--repo", action="append", type=_repository, default=[])
+    parser.add_argument(
+        "--repo",
+        action="append",
+        type=_repository,
+        default=[],
+        help="a repository to read (--dry-run only; repeat for several)",
+    )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument(
         "--pace-seconds",
@@ -415,6 +421,8 @@ def main(
     arguments = parser.parse_args(argv)
     if arguments.dry_run and not arguments.repo:
         parser.error("--dry-run needs at least one --repo OWNER/REPO")
+    if arguments.apply and arguments.repo:
+        parser.error("--apply takes its repositories from the manifest; --repo is for --dry-run")
     active_clock = clock if clock is not None else SystemClock()
     api = GitHubApi(run, active_clock)
     try:
