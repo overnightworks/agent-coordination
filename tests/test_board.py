@@ -57,11 +57,11 @@ from agent_coordination.body import (
     expectation_line_state,
     expectation_line_summary,
     expectation_lines,
-    locate_agent_claim_block,
+    locate_block,
     missing_or_empty_sections,
     parse_body,
     render_block,
-    replace_agent_claim_block,
+    replace_block,
     rule_expectation,
 )
 from agent_coordination.protocol import ClaimError, ClaimRequest
@@ -123,7 +123,7 @@ def test_rule_expectation_rules_a_proposed_line(ruling: str) -> None:
 @pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_rule_expectation_preserves_every_byte_outside_the_ruled_line(newline: str) -> None:
     body = issue_230_body().replace("\n", newline)
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     prefix, suffix = body[: located.content_start], body[located.content_end :]
 
     new_body = rule_expectation(body, 1, "yes", date(2026, 9, 15))
@@ -192,7 +192,7 @@ def test_append_expectation_adds_a_proposed_line(default: str) -> None:
     assert expectation_lines(new_body) == (
         ExpectationLine(1, "New question?", None, None, default=default),
     )
-    entries = locate_agent_claim_block(new_body).data["expectation"]
+    entries = locate_block(new_body).data["expectation"]
     assert entries == [{"text": "New question?", "default": default}]
     assert parse_body(new_body).expectation_state is ExpectationState.PROPOSED
 
@@ -213,7 +213,7 @@ def test_append_expectation_appends_after_existing_lines() -> None:
 @pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_append_expectation_preserves_every_byte_outside_the_appended_line(newline: str) -> None:
     body = issue_230_body(default="yes").replace("\n", newline)
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     prefix, suffix = body[: located.content_start], body[located.content_end :]
 
     new_body = append_expectation(body, "New question?", "yes")
@@ -266,7 +266,7 @@ def test_append_expectation_writes_the_card_fields() -> None:
             picture=VALID_SVG_PICTURE,
         ),
     )
-    entries = locate_agent_claim_block(new_body).data["expectation"]
+    entries = locate_block(new_body).data["expectation"]
     assert entries == [
         {
             "text": "New question?",
@@ -683,7 +683,7 @@ def test_render_block_round_trips_every_field() -> None:
         '[[slice]]\nindex = 4\ntitle = "Block contract in issue bodies"\n'
         'scope = ["src/agent_coordination/board.py"]\n'
     )
-    located = locate_agent_claim_block(agent_claim_body(toml_text))
+    located = locate_block(agent_claim_body(toml_text))
 
     reparsed = tomllib.loads(render_block(located.data))
 
@@ -758,7 +758,7 @@ def test_render_block_re_renders_a_canonical_scope_body_byte_exact() -> None:
         scope=["docs/plan.md", "src/widget.py"],
         slice=[{"index": 1, "title": "Row", "scope": ["src/agent_coordination/board.py"]}],
     )
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     interior = body[located.content_start : located.content_end]
 
     assert render_block(located.data, located.newline) == interior
@@ -766,24 +766,24 @@ def test_render_block_re_renders_a_canonical_scope_body_byte_exact() -> None:
 
 def test_render_block_escapes_quotes_and_backslashes() -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Quote \\" and back\\\\slash"\n'
-    located = locate_agent_claim_block(agent_claim_body(toml_text))
+    located = locate_block(agent_claim_body(toml_text))
 
     reparsed = tomllib.loads(render_block(located.data))
 
     assert reparsed == located.data
 
 
-def test_replace_agent_claim_block_preserves_crlf_and_surrounding_bytes() -> None:
+def test_replace_block_preserves_crlf_and_surrounding_bytes() -> None:
     body = (
         "Prose before.\r\n\r\n"
         "```agent-claim\r\n"
         'version = 1\r\nnow = "N"\r\nnext = "X"\r\ndone_when = "D"\r\n'
         "```\r\n\r\nProse after.\r\n"
     )
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     new_data = {**located.data, "now": "Changed"}
 
-    new_body = replace_agent_claim_block(body, located, new_data)
+    new_body = replace_block(body, located, new_data)
 
     assert new_body.startswith("Prose before.\r\n\r\n```agent-claim\r\n")
     assert new_body.endswith("```\r\n\r\nProse after.\r\n")
@@ -793,7 +793,7 @@ def test_replace_agent_claim_block_preserves_crlf_and_surrounding_bytes() -> Non
 
 def test_render_block_emits_an_empty_slice_array_after_removing_the_final_entry() -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Only slice"\n'
-    located = locate_agent_claim_block(agent_claim_body(toml_text))
+    located = locate_block(agent_claim_body(toml_text))
     new_data = {**located.data, "slice": []}
 
     rendered = render_block(new_data)
@@ -2770,14 +2770,14 @@ def test_parse_body_handles_a_body_with_no_trailing_newline() -> None:
     assert parsed.read_state is BodyReadState.VALID
 
 
-def test_locate_agent_claim_block_fails_loud_with_no_recognized_fence() -> None:
+def test_locate_block_fails_loud_with_no_recognized_fence() -> None:
     with pytest.raises(ClaimError, match="found no recognized agent-claim fence"):
-        locate_agent_claim_block("## Now\nOld prose.\n")
+        locate_block("## Now\nOld prose.\n")
 
 
-def test_locate_agent_claim_block_fails_loud_with_an_unclosed_fence() -> None:
+def test_locate_block_fails_loud_with_an_unclosed_fence() -> None:
     with pytest.raises(ClaimError, match="found no closed agent-claim fence"):
-        locate_agent_claim_block("```agent-claim\nversion = 1\n")
+        locate_block("```agent-claim\nversion = 1\n")
 
 
 def test_parse_body_reads_an_emptied_slice_array_as_nothing_left_to_cut() -> None:

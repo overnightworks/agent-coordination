@@ -45,11 +45,11 @@ from .body import (
     Storage,
     UnreadParent,
     body_defect_text,
-    locate_agent_claim_block,
+    locate_block,
     parse_body,
     readable_record_parent,
     readable_record_title,
-    replace_agent_claim_block,
+    replace_block,
 )
 from .protocol import (
     ClaimUnavailableError,
@@ -292,9 +292,9 @@ def _with_record(body: str, record: items.ItemRecord) -> str:
     write composes a fresh `[record]` table, shared by `create_child` (a
     brand new one), `update_item_body` (an existing one with `updated_at`
     refreshed), and `close_item` (an existing one moved to `CLOSED`)."""
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     new_data = {**located.data, RECORD_KEY: items.record_table(record)}
-    return replace_agent_claim_block(body, located, new_data)
+    return replace_block(body, located, new_data)
 
 
 def _item_kind(kind: str | None) -> ItemKind | None:

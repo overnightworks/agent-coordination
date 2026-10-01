@@ -44,7 +44,7 @@ CONTAINER_SKELETON_PROSE = "Blocked by: nichts"
 # The one fenced-block info string a repository pinned to `body_contract =
 # "block"` (issue #150) reads as its typed work-item body -- any other
 # fence's info string is ordinary documentation.
-AGENT_CLAIM_FENCE_INFO = "agent-claim"
+BLOCK_FENCE_INFO = "agent-claim"
 BLOCK_TOP_LEVEL_KEYS = frozenset(
     {
         "version",
@@ -302,7 +302,7 @@ def first_line(body: str) -> str:
     return _line_without_ending(lines[0]) if lines else ""
 
 
-def _agent_claim_fence_matches(body: str) -> list[tuple[int, int | None, str]]:
+def _fence_matches(body: str) -> list[tuple[int, int | None, str]]:
     """Every fence in `body` whose info string is exactly `agent-claim`
     (issue #150 §4): `(opening line index, closing line index or None when
     unclosed, interior text)`. Walks `body.splitlines(keepends=True)` --
@@ -328,7 +328,7 @@ def _agent_claim_fence_matches(body: str) -> list[tuple[int, int | None, str]]:
                 run = opening.group("run")
                 info = bare[opening.end() :].strip(" \t")
                 open_start, open_char, open_length = index, run[0], len(run)
-                open_recognized = info == AGENT_CLAIM_FENCE_INFO
+                open_recognized = info == BLOCK_FENCE_INFO
             index += 1
             continue
         closing = FENCE_CLOSING_PATTERN.match(bare)
@@ -855,7 +855,7 @@ def malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
 
 
 _NO_BLOCK_PARSED_BODY = malformed_parsed_body(
-    (ContractDefect(AGENT_CLAIM_FENCE_INFO, "no agent-claim block"),)
+    (ContractDefect(BLOCK_FENCE_INFO, "no agent-claim block"),)
 )
 
 
@@ -969,31 +969,27 @@ def parse_body(body: str, *, storage: Storage = Storage.GITHUB) -> ParsedBody:
 def _block_data(body: str) -> dict[str, object] | ParsedBody:
     """`body`'s one closed `agent-claim` block, decoded as TOML but not yet
     schema-checked, or the `ParsedBody` that already says why it cannot be."""
-    fences = _agent_claim_fence_matches(body)
+    fences = _fence_matches(body)
     if not fences:
         return _NO_BLOCK_PARSED_BODY
     if len(fences) > 1:
         return malformed_parsed_body(
             (
                 ContractDefect(
-                    AGENT_CLAIM_FENCE_INFO, "multiple agent-claim blocks; exactly one is allowed"
+                    BLOCK_FENCE_INFO, "multiple agent-claim blocks; exactly one is allowed"
                 ),
             )
         )
     _start, end, content = fences[0]
     if end is None:
         return malformed_parsed_body(
-            (ContractDefect(AGENT_CLAIM_FENCE_INFO, "unclosed agent-claim block"),)
+            (ContractDefect(BLOCK_FENCE_INFO, "unclosed agent-claim block"),)
         )
     try:
         data = tomllib.loads(content)
     except tomllib.TOMLDecodeError as error:
         return malformed_parsed_body(
-            (
-                ContractDefect(
-                    AGENT_CLAIM_FENCE_INFO, f"agent-claim block is not valid TOML: {error}"
-                ),
-            )
+            (ContractDefect(BLOCK_FENCE_INFO, f"agent-claim block is not valid TOML: {error}"),)
         )
     return data
 
@@ -1051,14 +1047,14 @@ class LocatedBlock:
     newline: str
 
 
-def locate_agent_claim_block(body: str) -> LocatedBlock:
+def locate_block(body: str) -> LocatedBlock:
     lines = body.splitlines(keepends=True)
-    matches = _agent_claim_fence_matches(body)
+    matches = _fence_matches(body)
     if not matches:
-        raise protocol.ClaimError("locate_agent_claim_block found no recognized agent-claim fence")
+        raise protocol.ClaimError("locate_block found no recognized agent-claim fence")
     start_line, end_line, content = matches[0]
     if end_line is None:
-        raise protocol.ClaimError("locate_agent_claim_block found no closed agent-claim fence")
+        raise protocol.ClaimError("locate_block found no closed agent-claim fence")
     content_start = sum(len(line) for line in lines[: start_line + 1])
     content_end = sum(len(line) for line in lines[:end_line])
     newline = _line_ending(lines[start_line]) or "\n"
@@ -1218,7 +1214,7 @@ def render_block(data: Mapping[str, object], newline: str = "\n") -> str:
     return newline.join((*lines, ""))
 
 
-def replace_agent_claim_block(body: str, located: LocatedBlock, data: Mapping[str, object]) -> str:
+def replace_block(body: str, located: LocatedBlock, data: Mapping[str, object]) -> str:
     """`body` with its one `agent-claim` block's interior replaced by
     `render_block(data, located.newline)` -- pure, changing only that span
     and preserving every other byte, fence lines included."""
@@ -1229,10 +1225,10 @@ def replace_agent_claim_block(body: str, located: LocatedBlock, data: Mapping[st
     )
 
 
-def carries_agent_claim_block(body: str) -> bool:
+def carries_block(body: str) -> bool:
     """Whether `body` opens any `agent-claim` fence at all, closed or not --
     a body without one is prose a fresh block goes below (issue #555)."""
-    return bool(_agent_claim_fence_matches(body))
+    return bool(_fence_matches(body))
 
 
 _SKELETON_PROJECTION: Mapping[str, object] = {
@@ -1250,7 +1246,7 @@ def prose_above_fresh_block(prose: str, fields: Mapping[str, object]) -> str:
     one blank line below the prose, in the prose's own line ending."""
     newline = _first_line_ending(prose)
     block = render_block({**_SKELETON_PROJECTION, **fields}, newline)
-    fence = f"```{AGENT_CLAIM_FENCE_INFO}{newline}{block}```{newline}"
+    fence = f"```{BLOCK_FENCE_INFO}{newline}{block}```{newline}"
     if not prose:
         return fence
     last_line_end = "" if _line_ending(prose) else newline
@@ -1279,11 +1275,11 @@ def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
     block lacks written in, the block re-rendered canonically and every byte
     outside it kept -- `body` itself when it lacks none (ITEM-62). The one
     writer behind `item new`'s and `cut`'s block flags."""
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     lacking = {key: value for key, value in fields.items() if key not in located.data}
     if not lacking:
         return body
-    return replace_agent_claim_block(body, located, {**located.data, **lacking})
+    return replace_block(body, located, {**located.data, **lacking})
 
 
 def _block_field_text(key: str, value: object) -> str:
@@ -1295,7 +1291,7 @@ def block_field_conflicts(body: str, fields: Mapping[str, object]) -> tuple[str,
     """One sentence per field of `fields` that `body`'s schema-valid block
     already holds with another value (issue #555), naming both values: a
     flag never silently overrides, nor yields to, a piped block."""
-    data = locate_agent_claim_block(body).data
+    data = locate_block(body).data
     conflicts: list[str] = []
     for key, value in fields.items():
         flagged, piped = _block_field_text(key, value), _block_field_text(key, data.get(key, value))
@@ -1343,7 +1339,7 @@ def expectation_lines(
     `parse_body` unchanged (issue #248)."""
     if parse_body(body, storage=storage).read_state is not BodyReadState.VALID:
         return ()
-    entries = _block_expectation_dicts(locate_agent_claim_block(body).data)
+    entries = _block_expectation_dicts(locate_block(body).data)
     return tuple(
         ExpectationLine(
             index=position,
@@ -1393,7 +1389,7 @@ def rule_expectation(
     """`body` with its `index`-th (1-based, block order) `[[expectation]]`
     entry moved from proposed to ruled: `default` falls, `ruling` and
     `ruled_on` take its place. Byte-preserving outside that one entry
-    (`locate_agent_claim_block` -> `replace_agent_claim_block`, #150 §4/§7 --
+    (`locate_block` -> `replace_block`, #150 §4/§7 --
     the same pair `cut` writes through). `note`, when given, is appended to
     the line's own text as ` Anmerkung: <note>`: the schema has no dedicated
     note field, and the ruled line's own text is the one place a
@@ -1408,7 +1404,7 @@ def rule_expectation(
         raise protocol.ClaimError(
             f"ruling must be one of {', '.join(sorted(BLOCK_EXPECTATION_RULINGS))}"
         )
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     entries = _block_expectation_dicts(located.data)
     if not 1 <= index <= len(entries):
         raise ExpectationOutOfRangeError(
@@ -1423,7 +1419,7 @@ def rule_expectation(
     ruled_entry: dict[str, object] = {"text": text, "ruling": ruling, "ruled_on": ruled_on}
     new_entries = [*entries[: index - 1], ruled_entry, *entries[index:]]
     new_data = {**located.data, "expectation": new_entries}
-    return replace_agent_claim_block(body, located, new_data)
+    return replace_block(body, located, new_data)
 
 
 @dataclass(frozen=True)
@@ -1484,11 +1480,11 @@ def append_expectation(
         if reason is not None:
             raise ExpectationFieldError(key, f"{key} {reason}")
         entry[key] = value
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     entries = _block_expectation_dicts(located.data)
     new_entries = [*entries, entry]
     new_data = {**located.data, "expectation": new_entries}
-    return replace_agent_claim_block(body, located, new_data)
+    return replace_block(body, located, new_data)
 
 
 def missing_or_empty_sections(contract: Contract) -> tuple[str, ...]:

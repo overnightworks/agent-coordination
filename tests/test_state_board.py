@@ -55,7 +55,7 @@ from agent_coordination.body import (
     ItemKind,
     Storage,
     expectation_lines,
-    locate_agent_claim_block,
+    locate_block,
     parse_body,
     render_block,
 )
@@ -2125,7 +2125,7 @@ class TestCliStateRefForge:
         before_container = store.read_item_files(worktree, before_state.tip)[
             f"{CONTAINER_ID}.md"
         ].decode()
-        before_located = locate_agent_claim_block(before_container)
+        before_located = locate_block(before_container)
 
         status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "Slice C"])
 
@@ -2144,7 +2144,7 @@ class TestCliStateRefForge:
         child_record = _decoded_record(item_files_after[f"{child_id}.md"].decode(), child_id)
         assert child_record.parent == CONTAINER_ID
         after_container = item_files_after[f"{CONTAINER_ID}.md"].decode()
-        after_located = locate_agent_claim_block(after_container)
+        after_located = locate_block(after_container)
         assert (
             before_container[: before_located.content_start]
             == (after_container[: after_located.content_start])
@@ -2197,7 +2197,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
-        remaining = locate_agent_claim_block(container_body).data
+        remaining = locate_block(container_body).data
         assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
 
     @pytest.mark.parametrize(
@@ -2235,7 +2235,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
-        remaining = locate_agent_claim_block(container_body).data
+        remaining = locate_block(container_body).data
         assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
 
     @pytest.mark.parametrize(
@@ -2386,7 +2386,7 @@ class TestCliStateRefForge:
             for name in item_files_after
             if items.item_number(items.item_id_from_filename(name)) == child_number
         ]
-        data = locate_agent_claim_block(item_files_after[f"{child_id}.md"].decode()).data
+        data = locate_block(item_files_after[f"{child_id}.md"].decode()).data
         scope = data.get("scope")
         return None if scope is None else protocol.valid_scope(scope)
 
@@ -2509,7 +2509,7 @@ class TestCliStateRefForge:
         container = store.read_item_files(worktree, after.tip)[f"{CONTAINER_ID}.md"].decode()
         assert (status, observations) == (0, {worktree: 1})
         assert len(set(after.items) - before_ids) == 1
-        assert locate_agent_claim_block(container).data["slice"] == []
+        assert locate_block(container).data["slice"] == []
 
     def test_cut_adopts_the_child_after_a_partial_failure_from_a_competing_write(
         self,
@@ -2601,7 +2601,7 @@ class TestCliStateRefForge:
         raced_container = store.read_item_files(worktree, after_first.tip)[
             f"{CONTAINER_ID}.md"
         ].decode()
-        raced_data = locate_agent_claim_block(raced_container).data
+        raced_data = locate_block(raced_container).data
         assert raced_data["now"] == "Competing edit landed mid-cut."
         assert raced_data["slice"] == [{"index": 1, "title": "Slice C"}]
 
@@ -2617,7 +2617,7 @@ class TestCliStateRefForge:
         first_item_files = store.read_item_files(worktree, after_first.tip)
         assert len(second_item_files) == len(first_item_files)
         final_container = second_item_files[f"{CONTAINER_ID}.md"].decode()
-        assert locate_agent_claim_block(final_container).data["slice"] == []
+        assert locate_block(final_container).data["slice"] == []
 
     def test_cut_adopts_a_child_created_by_item_new_with_the_matching_title(
         self,
@@ -2661,7 +2661,7 @@ class TestCliStateRefForge:
             created_id,
         }
         container_body = item_files_after[f"{CONTAINER_ID}.md"].decode()
-        assert locate_agent_claim_block(container_body).data["slice"] == []
+        assert locate_block(container_body).data["slice"] == []
         adopted_body = item_files_after[f"{created_id}.md"].decode()
         adopted_record = _decoded_record(adopted_body, created_id)
         assert adopted_record.parent == CONTAINER_ID
@@ -2888,7 +2888,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        assert locate_agent_claim_block(stored).data["scope"] == ["src/a.py", "src/b.py"]
+        assert locate_block(stored).data["scope"] == ["src/a.py", "src/b.py"]
 
     def test_item_new_size_writes_the_top_level_field(
         self,
@@ -2912,7 +2912,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        assert locate_agent_claim_block(stored).data["size"] == "M"
+        assert locate_block(stored).data["size"] == "M"
 
     def test_item_new_whole_writes_the_top_level_field(
         self,
@@ -2936,7 +2936,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        assert locate_agent_claim_block(stored).data["whole"] == reason
+        assert locate_block(stored).data["whole"] == reason
 
     @pytest.mark.parametrize(
         ("stdin_source", "flags", "err", "prefix", "block"),
@@ -3038,7 +3038,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        stored_block = locate_agent_claim_block(stored).data
+        stored_block = locate_block(stored).data
         assert stored.startswith(prefix)
         assert {key: stored_block[key] for key in block} == block
 
@@ -3939,7 +3939,7 @@ class TestCliStateRefForge:
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
-        assert locate_agent_claim_block(after_body).data["size"] == "L"
+        assert locate_block(after_body).data["size"] == "L"
         before_record = _decoded_record(before_body, CHILD_A_ID)
         after_record = _decoded_record(after_body, CHILD_A_ID)
         assert replace(after_record, updated_at=before_record.updated_at) == before_record
@@ -3969,7 +3969,7 @@ class TestCliStateRefForge:
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
-        assert locate_agent_claim_block(after_body).data["whole"] == reason
+        assert locate_block(after_body).data["whole"] == reason
         before_record = _decoded_record(before_body, CHILD_A_ID)
         after_record = _decoded_record(after_body, CHILD_A_ID)
         assert replace(after_record, updated_at=before_record.updated_at) == before_record

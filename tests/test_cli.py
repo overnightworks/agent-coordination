@@ -5077,7 +5077,7 @@ def test_cut_creates_a_child_and_removes_the_first_cuttable_slice(
             body.ItemKind.TASK,
         )
     ]
-    new_data = body.locate_agent_claim_block(client.item_bodies[CUT_CONTAINER]).data
+    new_data = body.locate_block(client.item_bodies[CUT_CONTAINER]).data
     assert new_data["slice"] == remaining_slice
     assert capsys.readouterr().out == f"CUT #{CUT_CONTAINER} row 1 -> #{child}\n"
 
@@ -5117,7 +5117,7 @@ def test_cut_selects_a_row_by_number_and_removes_only_that_entry(
         "row": 2,
         "child": child,
     }
-    remaining = body.locate_agent_claim_block(client.item_bodies[CUT_CONTAINER]).data
+    remaining = body.locate_block(client.item_bodies[CUT_CONTAINER]).data
     assert remaining["slice"] == [{"index": 1, "title": "Scheibe 1"}]
 
 
@@ -5367,7 +5367,7 @@ def test_cut_adopts_an_existing_open_child_instead_of_creating_one(
         "row": 1,
         "child": 950,
     }
-    remaining = body.locate_agent_claim_block(client.item_bodies[CUT_CONTAINER]).data
+    remaining = body.locate_block(client.item_bodies[CUT_CONTAINER]).data
     assert remaining["slice"] == []
 
 
@@ -5681,7 +5681,7 @@ def test_cut_adopts_the_orphan_after_a_relation_partial_failure(
     assert second_exit_code == 0
     assert client.created_issues == [("Scheibe 1", expected_body, body.ItemKind.TASK)]
     assert client.linked_children == [(CUT_CONTAINER, child), (CUT_CONTAINER, child)]
-    remaining = body.locate_agent_claim_block(client.item_bodies[CUT_CONTAINER]).data
+    remaining = body.locate_block(client.item_bodies[CUT_CONTAINER]).data
     assert remaining["slice"] == []
     assert capsys.readouterr().out == f"ADOPTED #{CUT_CONTAINER} row 1 -> #{child}\n"
 
@@ -6493,9 +6493,7 @@ def test_next_prints_a_cut_command_block_mode_accepts_a_differing_next_line(
 
     assert cut_exit_code == 0
     child = client.next_created_child_number - 1
-    remaining_slice_entries = body.locate_agent_claim_block(client.item_bodies[CUT_CONTAINER]).data[
-        "slice"
-    ]
+    remaining_slice_entries = body.locate_block(client.item_bodies[CUT_CONTAINER]).data["slice"]
     assert remaining_slice_entries == []
     assert capsys.readouterr().out == f"CUT #{CUT_CONTAINER} row 1 -> #{child}\n"
 
@@ -8442,8 +8440,8 @@ def test_the_body_fence_and_config_path_keep_their_agent_claim_names() -> None:
     state that is already written -- so they are protocol, not product name,
     and this test is what says so out loud.
     """
-    assert body.AGENT_CLAIM_FENCE_INFO == "agent-claim"
-    assert body.BLOCK_CHILD_SKELETON.startswith(f"```{body.AGENT_CLAIM_FENCE_INFO}\n")
+    assert body.BLOCK_FENCE_INFO == "agent-claim"
+    assert body.BLOCK_CHILD_SKELETON.startswith(f"```{body.BLOCK_FENCE_INFO}\n")
     assert board.CONFIG_PATH.as_posix() == ".agent-claim/board.toml"
 
 
@@ -21957,7 +21955,7 @@ def test_item_edit_size_writes_the_top_level_field_under_github_storage(
 
     assert exit_code == 0
     assert capsys.readouterr().out == f"EDITED #{RULE_ITEM} size=M\n"
-    assert body.locate_agent_claim_block(client.item_bodies[RULE_ITEM]).data["size"] == "M"
+    assert body.locate_block(client.item_bodies[RULE_ITEM]).data["size"] == "M"
 
 
 def test_item_edit_size_json_reports_the_item_and_size(
@@ -22035,7 +22033,7 @@ def test_item_edit_whole_writes_the_top_level_field_under_github_storage(
 
     assert exit_code == 0
     assert capsys.readouterr().out == f"EDITED #{RULE_ITEM} whole={reason}\n"
-    assert body.locate_agent_claim_block(client.item_bodies[RULE_ITEM]).data["whole"] == reason
+    assert body.locate_block(client.item_bodies[RULE_ITEM]).data["whole"] == reason
 
 
 def test_item_edit_whole_json_reports_the_item_and_reason(
