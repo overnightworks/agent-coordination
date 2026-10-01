@@ -3444,15 +3444,38 @@ class TestCliStateRefForge:
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
 
     @pytest.mark.parametrize(
-        ("arguments", "piped_body"),
+        ("arguments", "piped_body", "printed"),
         [
-            pytest.param(["item", "close", CHILD_B_ID], None, id="item-close"),
-            pytest.param(["item", "edit", CHILD_B_ID, "--size", "S"], None, id="edit-size"),
-            pytest.param(["item", "edit", CHILD_B_ID, "--whole", "one lock"], None, id="whole"),
-            pytest.param(["item", "edit", CHILD_B_ID, "--kind", "container"], None, id="kind"),
+            pytest.param(
+                ["item", "close", CHILD_B_ID],
+                None,
+                f"CLOSED {CHILD_B_ID}\nhint: could not read the board to report what this write"
+                " freed (items/NOTANID is not a valid item file name); run `aco board --json`"
+                " once it is repaired\n",
+                id="item-close",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--size", "S"],
+                None,
+                f"EDITED {CHILD_B_ID} size=S\n",
+                id="edit-size",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--whole", "one lock"],
+                None,
+                f"EDITED {CHILD_B_ID} whole=one lock\n",
+                id="edit-whole",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--kind", "container"],
+                None,
+                f"EDITED {CHILD_B_ID} kind=container\n",
+                id="edit-kind",
+            ),
             pytest.param(
                 ["item", "edit", CHILD_B_ID],
                 _item_files()[f"{CHILD_B_ID}.md"].decode(),
+                f"EDITED {CHILD_B_ID}\n",
                 id="edit-body",
             ),
         ],
@@ -3460,15 +3483,17 @@ class TestCliStateRefForge:
     def test_a_write_to_one_item_goes_past_entries_that_name_no_item(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
         arguments: list[str],
         piped_body: str | None,
+        printed: str,
     ) -> None:
-        """Issue #565 line 1 (PIN-13, CAS-61): beside a non-id name and a
-        bare id without `.md`, a write to a healthy item lands, and both
-        entries keep their name, mode, and blob."""
+        """Issue #565 line 1 (PIN-35, CAS-61, E-PIN-39): beside a non-id
+        name and a bare id without `.md`, a write to a healthy item lands,
+        and both entries keep their name, mode, and blob."""
         foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
         item_files = {**_item_files(), **foreign}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
@@ -3479,7 +3504,7 @@ class TestCliStateRefForge:
         status = issue_claim.main(arguments)
 
         after = _state_ref_listing(bare_remote)
-        assert (status, after != before) == (0, True)
+        assert (status, capsys.readouterr().out, after != before) == (0, printed, True)
         assert [after[path] for path in foreign_paths] == [before[path] for path in foreign_paths]
 
     @pytest.mark.parametrize(*_MALFORMED_CONTENTS)

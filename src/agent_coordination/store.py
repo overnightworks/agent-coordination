@@ -1496,9 +1496,10 @@ def _write_incremental_state_tree(
 
     `schema.toml` never changes after bootstrap, so it is always carried
     over; every entry a write does not change keeps its name, mode, and blob
-    (`_carried_entry`, CAS-61); each of `claims/`/`ids/`/`resources/`/`items/` costs `mktree`
-    only when it actually differs from `observed`, plus one `mktree` for the
-    top -- the process count below is fixed regardless of the tree's size.
+    (`_carried_entry`, CAS-61); each of `claims/`/`ids/`/`resources/`/
+    `items/` costs `mktree` only when it actually differs from `observed`,
+    plus one `mktree` for the top -- the process count below is fixed
+    regardless of the tree's size.
     Unlike `_write_bootstrap_tree`, which has no prior commit to diff
     against on a ref's very first write.
     """
