@@ -23,6 +23,7 @@ never builds one: it judges from its own payload's path.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import cast
@@ -61,25 +62,104 @@ def board_config(toplevel: Path) -> board.BoardConfig:
     return board.load_config(toplevel / board.CONFIG_PATH)
 
 
-def trunk_lane_shared(remote: str, toplevel: Path) -> tuple[str, ...]:
-    """The lane-shared registry files (issue #575) the trunk's committed
-    board configuration names -- `remote`'s trunk in the checkout at
+@dataclass(frozen=True)
+class _TrunkBoardConfiguration:
+    """The trunk's committed `board.toml` text, and the trunk it was read from."""
+
+    trunk: str
+    text: str
+
+    def parsed(self) -> board.BoardConfig:
+        return board.parse_config(self.text, Path(f"{self.trunk}:{board.CONFIG_PATH}"))
+
+
+def _trunk_board_configuration(remote: str, toplevel: Path) -> _TrunkBoardConfiguration | None:
+    """`remote`'s trunk's committed board configuration in the checkout at
     `toplevel` as the last fetch left it, the ref `RunContext.trunk_ref`
-    resolves -- never the checkout's own copy, so a lane cannot authorise
-    itself by editing its worktree's `board.toml`: a change to the list
-    takes effect once it lands. A trunk that does not resolve, or that
-    holds no configuration, names none; a configuration git fails to read
-    is a git failure."""
+    resolves -- never the checkout's own copy. `None` when no trunk resolves
+    or it holds none; a configuration git fails to read is a git failure."""
     try:
         trunk = checkout.trunk_ref(remote, directory=toplevel)
     except checkout.TrunkUnknownError:
-        return ()
+        return None
     text = checkout.file_at_revision(
         board.CONFIG_PATH.as_posix(), revision=trunk, directory=toplevel
     )
     if text is None:
+        return None
+    return _TrunkBoardConfiguration(trunk, text)
+
+
+def trunk_lane_shared(remote: str, toplevel: Path) -> tuple[str, ...]:
+    """The lane-shared registry files (issue #575) the trunk's committed
+    board configuration names (`_trunk_board_configuration`), so a lane
+    cannot authorise itself by editing its worktree's `board.toml`: a change
+    to the list takes effect once it lands. Only an entry the trunk tracks
+    as a file grants (`LaneSharedEntry`, issue #586). A trunk that does not
+    resolve, or that holds no configuration, names none; a defective
+    configuration refuses, so `protect` never grants a write it cannot read."""
+    configuration = _trunk_board_configuration(remote, toplevel)
+    if configuration is None:
         return ()
-    return board.parse_config(text, Path(f"{trunk}:{board.CONFIG_PATH}")).lane_shared
+    entries = _lane_shared_entries(
+        configuration.parsed().lane_shared, trunk=configuration.trunk, toplevel=toplevel
+    )
+    return lane_shared_files(entries)
+
+
+@dataclass(frozen=True)
+class LaneSharedEntry:
+    """One `lane_shared` entry, and whether it names a file the trunk tracks
+    (issue #586): a directory or a missing file grants nothing."""
+
+    path: str
+    names_a_file: bool
+
+
+@dataclass(frozen=True)
+class LaneSharedUnavailable:
+    """The trunk's committed board configuration is defective (issue #586):
+    a newer aco's key, an invalid value. Only the lane-shared answer is lost."""
+
+    defect: str
+
+
+LaneSharedReading = tuple[LaneSharedEntry, ...] | LaneSharedUnavailable
+
+
+def trunk_lane_shared_reading(remote: str, toplevel: Path) -> LaneSharedReading:
+    """`trunk_lane_shared`'s answer as `status` and `brief` show it (issue
+    #586): each entry beside whether the trunk tracks it as a file, or the
+    defect that keeps the trunk's configuration from naming any -- reported
+    by these orientation reads rather than stopping them."""
+    configuration = _trunk_board_configuration(remote, toplevel)
+    if configuration is None:
+        return ()
+    try:
+        entries = configuration.parsed().lane_shared
+    except protocol.ClaimError as defect:
+        return LaneSharedUnavailable(str(defect))
+    return _lane_shared_entries(entries, trunk=configuration.trunk, toplevel=toplevel)
+
+
+def lane_shared_files(reading: LaneSharedReading) -> tuple[str, ...]:
+    """The files a lane-shared `reading` grants: each entry the trunk tracks
+    as a file; none when the trunk's configuration is unavailable."""
+    if isinstance(reading, LaneSharedUnavailable):
+        return ()
+    return tuple(entry.path for entry in reading if entry.names_a_file)
+
+
+def _lane_shared_entries(
+    entries: tuple[str, ...], *, trunk: str, toplevel: Path
+) -> tuple[LaneSharedEntry, ...]:
+    """Each `lane_shared` entry beside whether `trunk` tracks it as a file in
+    the checkout at `toplevel` -- the one decider of what an entry grants,
+    for `protect` and the orientation reads alike."""
+    if not entries:
+        return ()
+    trunk_files = frozenset(checkout.versioned_paths(directory=toplevel, revision=trunk))
+    return tuple(LaneSharedEntry(entry, entry in trunk_files) for entry in entries)
 
 
 def _absent_board_config_refusal(toplevel: Path) -> str:

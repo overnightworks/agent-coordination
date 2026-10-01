@@ -1513,14 +1513,18 @@ def _use_real_path_is_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _protect_real_repo_with_worktree(
-    tmp_path: Path, *, slug: str = "issue-72-widget", board_config: str = ""
+    tmp_path: Path,
+    *,
+    slug: str = "issue-72-widget",
+    board_config: str = "",
+    trunk_files: tuple[str, ...] = (),
 ) -> tuple[Path, Path]:
     """A real repository (`main`, reused across worktrees) with one linked,
     isolated worktree on a feature branch -- the same `git worktree add`
     recipe `checkout.ISOLATED_WORKTREE_RECIPE` documents. `main` carries a
     real, tracked (`git add -f`) `.agent-claim/board.toml` holding
-    `board_config`, empty by default (issue #314
-    gate B3): every worktree shares `main`'s history, so `path_is_tracked`
+    `board_config`, empty by default, beside the `trunk_files` it tracks
+    (issue #314 gate B3): every worktree shares `main`'s history, so `path_is_tracked`
     reads a real "tracked" answer for it from any of them, via
     `_use_real_path_is_tracked`. `main` also carries a real, resolvable
     `origin/HEAD` (gate G4): every worktree's own feature branch reads a
@@ -1536,7 +1540,10 @@ def _protect_real_repo_with_worktree(
         (main / "README.md").write_text("hello\n")
         (main / ".agent-claim").mkdir()
         (main / ".agent-claim" / "board.toml").write_text(board_config)
-        _real_git(main, "add", "-f", "README.md", ".agent-claim/board.toml")
+        for trunk_file in trunk_files:
+            (main / trunk_file).parent.mkdir(parents=True, exist_ok=True)
+            (main / trunk_file).write_text("tracked\n")
+        _real_git(main, "add", "-f", "README.md", ".agent-claim/board.toml", *trunk_files)
         _real_git(main, "commit", "-q", "-m", "initial")
         _real_git(main, "remote", "add", "origin", "https://example.invalid/example/repo.git")
         _real_git(main, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -1782,13 +1789,25 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
     ids=["write", "apply-patch", "bash-sed-in-place", "bash-rm-rf"],
 )
 @pytest.mark.parametrize(
-    ("claimed_branch", "written", "decision"),
+    ("claimed_branch", "written", "trunk_defect", "decision"),
     [
-        pytest.param("codex/issue-72-widget", "scripts/registry.txt", "allow", id="claimed-shared"),
-        pytest.param("codex/issue-99-other", "scripts/registry.txt", "deny", id="unclaimed"),
-        pytest.param("codex/issue-72-widget", "src/y.py", "deny", id="not-shared"),
-        pytest.param("codex/issue-72-widget", "src/x.py", "deny", id="shared-only-by-the-lane"),
-        pytest.param("codex/issue-72-widget", "src", "deny", id="shared-directory-itself"),
+        pytest.param(
+            "codex/issue-72-widget", "scripts/registry.txt", "", "allow", id="claimed-shared"
+        ),
+        pytest.param("codex/issue-99-other", "scripts/registry.txt", "", "deny", id="unclaimed"),
+        pytest.param("codex/issue-72-widget", "src/y.py", "", "deny", id="not-shared"),
+        pytest.param("codex/issue-72-widget", "src/x.py", "", "deny", id="shared-only-by-the-lane"),
+        pytest.param("codex/issue-72-widget", "src", "", "deny", id="shared-directory-itself"),
+        pytest.param(
+            "codex/issue-72-widget", "scripts/missing.txt", "", "deny", id="names-no-trunk-file"
+        ),
+        pytest.param(
+            "codex/issue-72-widget",
+            "scripts/registry.txt",
+            'merge_method = "squash"\n',
+            "deny",
+            id="defective-trunk",
+        ),
     ],
 )
 def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
@@ -1797,6 +1816,7 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     capsys: pytest.CaptureFixture[str],
     claimed_branch: str,
     written: str,
+    trunk_defect: str,
     decision: str,
     payload_for: Callable[[Path], dict[str, object]],
 ) -> None:
@@ -1806,16 +1826,23 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     writes it; without a claim on the branch it still denies, and a file the
     trunk does not share stays bound to the scope -- also one below a
     directory the trunk names (`src`, PIN-41) or that directory itself, so
-    no `rm -rf` sweeps a tree through it, and one the lane's own
+    no `rm -rf` sweeps a tree through it, one an entry names though the
+    trunk tracks no such file (issue #586 line 3), and one the lane's own
     edit of its worktree's `board.toml` adds, so a lane never authorises
-    itself. Each tool's own denial wording is PROT-18's and PROT-33's."""
+    itself. A trunk copy this aco cannot read (issue #586: a newer aco's
+    key) grants nothing, never falling back to the worktree's own copy.
+    Each tool's own denial wording is PROT-18's and PROT-33's."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
     _use_real_path_is_tracked(monkeypatch)
     _main, worktree = _protect_real_repo_with_worktree(
-        tmp_path, board_config='lane_shared = ["scripts/registry.txt", "src"]\n'
+        tmp_path,
+        board_config=(
+            f'{trunk_defect}lane_shared = ["scripts/registry.txt", "scripts/missing.txt", "src"]\n'
+        ),
+        trunk_files=("scripts/registry.txt",),
     )
     (worktree / board.CONFIG_PATH).write_text(
         'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'

@@ -43,7 +43,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 - [ ] [BRIEF-01] `aco brief <item>` prints the body, a blank line, `CLAIM`, a blank line, `TIP`, a blank line, `TOUCHED` -- always these four headings in order (see E-BRIEF-01).
 - [ ] [BRIEF-02] Under a live issue claim, `CLAIM` is followed by one line `<agent> (<role>) branch=<branch> base=<base>[ <age>]`, branch before base (see E-BRIEF-01).
 - [ ] [BRIEF-11] That claim line's indented lines are one per scope path, then `  whole: <reason>` only when the claim carries one (see E-BRIEF-01).
-- [ ] [BRIEF-26] After them, `  lane-shared: <file>, <file>` names each file the trunk's committed `lane_shared` names (PIN-37), files the claim may write beside its scope; none configured, no such line.
+- [ ] [BRIEF-26] After them, `  lane-shared: <entry>, <entry>` names what the claim may write beside its scope, in `aco status`'s own form (STAT-19, STAT-20, STAT-21); none configured, no such line.
 - [ ] [BRIEF-03] With no live issue claim, `CLAIM` prints exactly `no active claim`; `TIP` prints no value line at all; `TOUCHED` lists nothing (see E-BRIEF-02).
 - [ ] [BRIEF-04] With a live claim whose branch resolves neither locally nor as `origin/<branch>` -- git itself answering "no such ref" -- `TIP` prints `branch not found` and `TOUCHED` lists nothing (see E-BRIEF-03).
 - [ ] [BRIEF-05] With a live claim whose branch resolves, `TIP` prints that branch's own commit id, and `TOUCHED` lists one path per line from `git diff --name-only <trunk>...<tip>` (see E-BRIEF-01, E-BRIEF-14).
@@ -57,7 +57,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 ## `--json`
 
 - [ ] [BRIEF-06] `aco brief <item> --json` prints `specs/output.spec.md`'s envelope, `reason: "composed"`, `"body", "claim", "tip", "touched"` (as `TOUCHED`), `"claim"` `null` without a live claim (see E-BRIEF-14).
-- [ ] [BRIEF-10] A non-`null` `"claim"` object is `{"agent", "role", "branch", "base", "scope", "whole", "age"}`, `"whole"` `null` without one (see E-BRIEF-04).
+- [ ] [BRIEF-10] A non-`null` `"claim"` object is `{"agent", "role", "branch", "base", "scope", "whole", "age"}` then STAT-22's keys, `"whole"` `null` without one (see E-BRIEF-04).
 
 ## `--step`
 
@@ -178,7 +178,7 @@ one commit on `ada/issue-42` past `<base>` touching `README.md`, pushed to
 
 ```console
 $ aco brief 42 --json
-{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m"}, "tip": "<tip>", "touched": ["README.md"]}
+{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m", "lane_shared": [], "lane_shared_unavailable": null}, "tip": "<tip>", "touched": ["README.md"]}
 exit 0
 ```
 
@@ -250,7 +250,7 @@ Setup: as E-BRIEF-07
 
 ```console
 $ aco brief 42 --step build --json
-{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m"}, "tip": "<tip>", "touched": ["README.md"], "rules": ["Stay in scope."], "checks": ["ruff check ."]}
+{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m", "lane_shared": [], "lane_shared_unavailable": null}, "tip": "<tip>", "touched": ["README.md"], "rules": ["Stay in scope."], "checks": ["ruff check ."]}
 exit 0
 ```
 
@@ -341,7 +341,7 @@ Setup: as E-BRIEF-04, then another lane lands `b.py` on `origin/main`, and
 
 ```console
 $ aco brief 42 --json
-{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m"}, "tip": "<tip>", "touched": ["README.md"]}
+{"ok": true, "reason": "composed", "body": "The item's own body.", "claim": {"agent": "Ada", "role": "builder", "branch": "ada/issue-42", "base": "<base>", "scope": ["README.md"], "whole": null, "age": "0h 0m", "lane_shared": [], "lane_shared_unavailable": null}, "tip": "<tip>", "touched": ["README.md"]}
 exit 0
 ```
 
