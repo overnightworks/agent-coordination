@@ -2670,22 +2670,25 @@ _STATE_DELETION_ADVICE = re.compile(
 def _message_texts(source: str) -> list[str]:
     """Every string a module can show a reader: each plain literal, and each
     f-string read as one text with `{}` for its interpolations, so advice
-    split across `{remote}` or `{STATE_REF}` is still one sentence. A bare
-    string statement (a docstring) explains code, never advises an
-    operator."""
+    split across `{remote}` or `{STATE_REF}` is still one sentence. A module
+    docstring counts (the CLI's `__doc__` is its `--help` description); a
+    class or function docstring explains code, never advises an operator."""
     nodes = list(ast.walk(ast.parse(source)))
-    docstrings = {node.value for node in nodes if isinstance(node, ast.Expr)}
+    code_docstrings = {
+        node.body[0].value
+        for node in nodes
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and isinstance(node.body[0], ast.Expr)
+    }
     texts = [
         node.value
         for node in nodes
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
-        and node not in docstrings
+        and node not in code_docstrings
     ]
     texts.extend(
-        "".join(
-            part.value if isinstance(part, ast.Constant) else "{}" for part in node.values
-        )
+        "".join(part.value if isinstance(part, ast.Constant) else "{}" for part in node.values)
         for node in nodes
         if isinstance(node, ast.JoinedStr)
     )
@@ -2752,6 +2755,7 @@ def test_the_deletion_advice_guard_flags_every_manual_delete_form(
         'message = f"if stuck, `git push {remote} --force {STATE_REF}` clears it"',
         'message = f"if stuck, `git push {remote} +{local}:{STATE_REF}` clears it"',
         'message = "if stuck, `git push origin :refs/aco/state` clears it"',
+        '"""Usage: if stuck, `git update-ref -d refs/aco/state` clears it."""',
     ],
 )
 def test_the_deletion_advice_guard_reads_every_message_a_module_writes(
