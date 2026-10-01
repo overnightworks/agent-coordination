@@ -2660,7 +2660,9 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
 
 
 _REPOSITORY_ROOT = Path(__file__).parent.parent
-_STATE_DELETION_ADVICE = re.compile(r"update-ref -d|push (?:--force|-f)\b")
+_STATE_DELETION_ADVICE = re.compile(
+    r"update-ref (?:-d|--delete)\b|push\b[^\n`]*(?:--force|\s-f\b|--delete|\s:refs/)"
+)
 
 
 def _source_message_literals() -> list[str]:
@@ -2709,12 +2711,20 @@ def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
         "git push --force origin refs/aco/state",
         "git push -f origin refs/aco/state",
         "git push --force-with-lease origin :refs/aco/state",
+        "git update-ref --delete refs/aco/state",
+        "git push --delete origin refs/aco/state",
+        "git push origin :refs/aco/state",
     ],
 )
 def test_the_deletion_advice_guard_flags_every_manual_delete_form(
     manual_deletion_advice: str,
 ) -> None:
     assert _STATE_DELETION_ADVICE.search(manual_deletion_advice)
+
+
+def test_the_deletion_advice_guard_lets_the_bundle_restore_fetch_through() -> None:
+    restore = "git fetch <bundle> refs/worktree/aco/reset-export:refs/aco/state"
+    assert not _STATE_DELETION_ADVICE.search(restore)
 
 
 def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_race(
