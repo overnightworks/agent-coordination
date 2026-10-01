@@ -79,7 +79,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-24] A head `<path>` the pin's own validator refuses prints `pull request #<n> carries an invalid <path>: <detail>`, exit `2`.
 - [ ] [LANDCMD-08] A classified work item that is not open refuses `work item #<n> is not open; it cannot be landed`, exit `2`; an issue-less pull request skips this check.
 - [ ] [LANDCMD-09] The classification's own claim, parent, and closing rules then apply (LAND-14..28): a defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
-- [ ] [LANDCMD-10] A claim held by another agent or role, with no explicit coordinator override, refuses (REL-12's sentence, `<repeat>` being `aco land <n>`, `--keep-worktree` when given, and REL-41's identity flags), exit `2`, before the merge.
+- [ ] [LANDCMD-10] A claim held by another agent or role, no coordinator override, refuses (REL-12's sentence), exit `2`, before the merge; `<repeat>` is `aco land <n>`, `--keep-worktree` if given, REL-41's identity.
 - [ ] [LANDCMD-11] This checkout must sit on the forge's default branch with nothing uncommitted, or `aco land` refuses `land must run from a clean checkout of the default branch '<branch>'`, exit `2`.
 - [ ] [LANDCMD-25] A checkout without a git identity refuses `land must run from a checkout with a git identity; set user.name and user.email there so its release can commit to the claim state`, exit `2`.
 - [ ] [LANDCMD-20] The forge names `<branch>` even where the canonical remote records no `HEAD`; LANDCMD-11 never reads one.
@@ -87,7 +87,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 ## Merge, composed by `aco land`
 
 - [ ] [LANDCMD-12] `aco land` merges pinned to the head sha read during preflight, never an unpinned re-read, with the method LANDCMD-27 picks: a merge commit or one squash commit, never a rebase.
-- [ ] [LANDCMD-27] `merge_method = "merge"` or `"squash"` in `<path>` picks the method; without it, `aco land` reads GitHub's own `allow_merge_commit`, `allow_squash_merge`, and `allow_rebase_merge` and picks a merge commit where GitHub allows one or withholds those settings, a squash where it allows a squash but no merge commit.
+- [ ] [LANDCMD-27] `merge_method` `"merge"`/`"squash"` in `<path>` picks the method; else GitHub's `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge`: a merge commit if allowed or withheld, else a squash.
 - [ ] [LANDCMD-28] A repository allowing neither refuses `pull request #<n> cannot land: this repository allows neither a merge commit nor a squash merge`, exit `2`, before any write (E-LANDCMD-28).
 - [ ] [LANDCMD-30] Any other `merge_method` refuses `board configuration <path> merge_method must be 'merge' or 'squash'`, exit `2`; a head carrying one refuses as LANDCMD-24.
 - [ ] [LANDCMD-29] The landed commit's title is `Merge pull request #<n>` for a merge commit and `<title> (#<n>)` for a squash commit.
@@ -97,7 +97,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 ## After the merge
 
 - [ ] [LANDCMD-15] A failed branch delete, fast-forward, or delegated `release --merged` prints `MERGED pull request #<n> as <sha>; follow-up incomplete: <step> (<error>); re-run aco land <n>`, exit `2`.
-- [ ] [LANDCMD-26] LANDCMD-15's `<error>` is the failed step's own sentence: for `release`, the one `release --merged` itself would print, without its `ERROR: ` prefix; its display controls print escaped as NEXT-37 shows them, so the recovery is always one line.
+- [ ] [LANDCMD-26] LANDCMD-15's `<error>` is the failed step's own sentence (for `release`, the one `release --merged` would print, without `ERROR: `), display controls escaped as NEXT-37 shows them.
 - [ ] [LANDCMD-21] The fast-forward fetches the canonical remote `<remote>` once per run and moves `<branch>` to `<remote>/<branch>`; the delegated release walks that same ref.
 - [ ] [LANDCMD-16] Deleting the merged branch is idempotent: a forge already reporting it absent is success, not a refusal.
 - [ ] [LANDCMD-17] In this package's own repository, a successful landing's last line is `reinstall: uv tool install --force --from . agent-coordination`; any other repository prints nothing further.
