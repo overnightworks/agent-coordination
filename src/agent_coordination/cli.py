@@ -4048,7 +4048,7 @@ def _joined_to_run_checkout(raw_path: str, *, flag: str) -> str:
     lands in and be judged there instead."""
     toplevel = _run_checkout_toplevel(raw_path, flag=flag)
     joined = toplevel / raw_path
-    if not joined.resolve().is_relative_to(toplevel):
+    if not checkout.resolves_inside(joined, toplevel=toplevel):
         raise _RescopeInvalidUsageError(_outside_checkout_reason(flag, raw_path, toplevel))
     return str(joined)
 
