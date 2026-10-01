@@ -3561,6 +3561,48 @@ class TestCliStateRefForge:
         assert (status, capsys.readouterr().out, after != before) == (0, printed, True)
         assert [after[path] for path in foreign_paths] == [before[path] for path in foreign_paths]
 
+    @pytest.mark.parametrize(
+        ("arguments", "printed"),
+        [
+            pytest.param(
+                ["item", "show", CHILD_A_ID],
+                f"{CHILD_A_ID} · #{CHILD_A_NUMBER} · open · parent {CONTAINER_ID} · origin none\n"
+                f"{_item_files()[f'{CHILD_A_ID}.md'].decode()}",
+                id="item-show",
+            ),
+            pytest.param(
+                ["brief", CHILD_A_ID],
+                f"{_item_files()[f'{CHILD_A_ID}.md'].decode()}\n\n"
+                "CLAIM\nno active claim\n\nTIP\n\nTOUCHED\n",
+                id="brief",
+            ),
+            pytest.param(["check", CHILD_A_ID], f"ISSUE {CHILD_A_ID} body ok\n", id="check"),
+        ],
+    )
+    def test_a_read_of_one_item_goes_past_entries_that_name_no_item(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        arguments: list[str],
+        printed: str,
+    ) -> None:
+        """Issue #565 line 1 (PIN-35): beside a non-id name and a bare id
+        without `.md`, a read of one healthy item -- `item show`, `brief`,
+        `check` -- prints it, and the store stays exactly as it was."""
+        foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
+        self._live_state_ref_checkout(
+            monkeypatch, tmp_path, bare_remote, worktree, {**_item_files(), **foreign}
+        )
+        before = _state_ref_listing(bare_remote)
+
+        status = issue_claim.main(arguments)
+
+        assert (status, capsys.readouterr().out) == (0, printed)
+        assert _state_ref_listing(bare_remote) == before
+
     @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
         self,
