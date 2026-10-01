@@ -2667,18 +2667,17 @@ def _source_message_literals() -> list[str]:
     """Every string literal under `src/` that can reach a reader at run
     time; a bare string statement (a docstring) explains code, never
     advises an operator."""
-    docstrings: set[int] = set()
     literals: list[str] = []
     for path in sorted((_REPOSITORY_ROOT / "src").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         nodes = list(ast.walk(tree))
-        docstrings.update(id(node.value) for node in nodes if isinstance(node, ast.Expr))
+        docstrings = {node.value for node in nodes if isinstance(node, ast.Expr)}
         literals.extend(
             node.value
             for node in nodes
             if isinstance(node, ast.Constant)
             and isinstance(node.value, str)
-            and id(node) not in docstrings
+            and node not in docstrings
         )
     return literals
 
