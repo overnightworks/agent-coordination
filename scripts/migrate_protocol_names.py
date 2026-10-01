@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""One-time rewrite of GitHub item bodies from the ```agent-claim fence to ```aco (issue #587).
+
+``--dry-run --repo OWNER/REPO ... --manifest FILE`` reads every issue of the named
+repositories (open and closed, no pull requests) and writes one manifest row per body to
+change; it writes nothing on GitHub. ``--apply --manifest FILE`` patches each row whose fresh
+body still has the row's old hash, reads the body back, and stops at the first drift. Rows
+whose body already has the new hash count as done, so a stopped apply resumes from the same
+manifest.
+
+Only one shape is rewritten: exactly one opening line reading exactly ```agent-claim, which
+becomes ```aco. Every other shape is refused and named, never handled.
+
+The shape check and the rewrite are pure. GitHub sits behind the injected ``run`` callable
+(gh arguments in, ``gh api --include`` output out) and time behind the injected ``Clock``,
+so tests drive both with fakes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import asdict, dataclass
+from enum import StrEnum
+from http import HTTPStatus
+from pathlib import Path
+from typing import Protocol
+
+OLD_FENCE_LINE = "```agent-claim"
+NEW_FENCE_LINE = "```aco"
+PACE_SECONDS = 8.0
+# GitHub's advice when a rate-limited answer names neither retry-after nor a reset time.
+FALLBACK_RATE_LIMIT_WAIT_SECONDS = 60.0
+MAX_RATE_LIMIT_WAITS = 5
+PAGE_SIZE = 100
+GH_TIMEOUT_SECONDS = 60
+
+_FENCE = re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
+_PROTOCOL_MENTION = re.compile(r"^\s*(?:`{3,}|~{3,})\s*agent-claim")
+_HEADER_END = re.compile(r"\r?\n\r?\n")
+_REPOSITORY = re.compile(r"^[\w.-]+/[\w.-]+$")
+_RATE_LIMIT_STATUSES = frozenset({HTTPStatus.FORBIDDEN, HTTPStatus.TOO_MANY_REQUESTS})
+
+
+class Refusal(StrEnum):
+    CRLF = "the body uses CRLF line endings"
+    TILDE_FENCE = "the agent-claim fence uses tildes"
+    INEXACT_OPENING_LINE = "the agent-claim opening line does not read exactly ```agent-claim"
+    INSIDE_ANOTHER_FENCE = "an agent-claim fence sits inside another fenced block"
+    UNCLOSED_FENCE = "the agent-claim fence is never closed"
+    SEVERAL_FENCES = "the body has more than one agent-claim fence"
+
+
+@dataclass(frozen=True)
+class Rewrite:
+    body: str
+
+
+@dataclass(frozen=True)
+class FencedBlock:
+    opening_index: int
+    closing_index: int | None
+
+
+@dataclass(frozen=True)
+class Issue:
+    repository: str
+    number: int
+    body: str
+
+
+@dataclass(frozen=True)
+class ManifestRow:
+    repository: str
+    number: int
+    old_hash: str
+    new_hash: str
+
+
+@dataclass(frozen=True)
+class ApiResponse:
+    status: int
+    headers: Mapping[str, str]
+    body: str
+
+
+class MigrationStoppedError(Exception):
+    """The run cannot go on without risking a wrong write; the message names where and why."""
+
+
+class GhRun(Protocol):
+    def __call__(self, arguments: list[str], *, input_data: bytes | None = None) -> str: ...
+
+
+class Clock(Protocol):
+    def now(self) -> float: ...
+
+    def sleep(self, seconds: float) -> None: ...
+
+
+class SystemClock:
+    def now(self) -> float:
+        return time.time()
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
+
+def body_hash(body: str) -> str:
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def item_reference(repository: str, number: int) -> str:
+    return f"{repository}#{number}"
+
+
+def classify(body: str) -> Rewrite | Refusal | None:
+    """The rewrite of a body, the reason it is refused, or None when it names no fence."""
+    lines = body.split("\n")
+    mentions = [index for index, line in enumerate(lines) if _PROTOCOL_MENTION.match(line)]
+    if not mentions:
+        return None
+    if "\r" in body:
+        return Refusal.CRLF
+    blocks = {block.opening_index: block for block in fenced_blocks(lines)}
+    for index in mentions:
+        refusal = _mention_refusal(lines[index], blocks.get(index))
+        if refusal is not None:
+            return refusal
+    if len(mentions) > 1:
+        return Refusal.SEVERAL_FENCES
+    (opening_index,) = mentions
+    lines[opening_index] = NEW_FENCE_LINE
+    return Rewrite("\n".join(lines))
+
+
+def _mention_refusal(line: str, block: FencedBlock | None) -> Refusal | None:
+    if block is None:
+        return Refusal.INSIDE_ANOTHER_FENCE if _FENCE.match(line) else Refusal.INEXACT_OPENING_LINE
+    if line.lstrip().startswith("~"):
+        return Refusal.TILDE_FENCE
+    if line != OLD_FENCE_LINE:
+        return Refusal.INEXACT_OPENING_LINE
+    if block.closing_index is None:
+        return Refusal.UNCLOSED_FENCE
+    return None
+
+
+def fenced_blocks(lines: Sequence[str]) -> list[FencedBlock]:
+    """CommonMark fenced code blocks: a fence closes on a bare line of its own marker
+    character at least as long as its opening marker."""
+    blocks: list[FencedBlock] = []
+    index = 0
+    while index < len(lines):
+        opening = _FENCE.match(lines[index])
+        if opening is None:
+            index += 1
+            continue
+        closing_index = _closing_index(lines, index, opening["marker"])
+        blocks.append(FencedBlock(index, closing_index))
+        if closing_index is None:
+            break
+        index = closing_index + 1
+    return blocks
+
+
+def _closing_index(lines: Sequence[str], opening_index: int, marker: str) -> int | None:
+    for index in range(opening_index + 1, len(lines)):
+        closing = _FENCE.match(lines[index])
+        if (
+            closing is not None
+            and closing["marker"][0] == marker[0]
+            and len(closing["marker"]) >= len(marker)
+            and not closing["info"].strip()
+        ):
+            return index
+    return None
+
+
+def parse_included_response(output: str) -> ApiResponse:
+    """Split `gh api --include` output into status line, headers and body."""
+    if not output.startswith("HTTP/"):
+        raise MigrationStoppedError(f"gh gave no HTTP response: {output[:200]}")
+    head, body = _HEADER_END.split(output, maxsplit=1)
+    status_line, *header_lines = head.splitlines()
+    headers = {
+        name.strip().lower(): value.strip()
+        for name, _, value in (line.partition(":") for line in header_lines)
+    }
+    return ApiResponse(int(status_line.split()[1]), headers, body)
+
+
+def rate_limit_wait(response: ApiResponse, now: float) -> float | None:
+    """Seconds to wait before retrying a rate-limited answer, or None when it is not one.
+
+    Follows GitHub's REST guidance: retry-after first, then the primary limit's reset time;
+    a 403 carrying neither sign is a refused permission, not a rate limit."""
+    if response.status not in _RATE_LIMIT_STATUSES:
+        return None
+    retry_after = response.headers.get("retry-after")
+    if retry_after is not None:
+        return float(retry_after)
+    if response.headers.get("x-ratelimit-remaining") == "0":
+        return max(float(response.headers["x-ratelimit-reset"]) - now, 0.0)
+    if response.status == HTTPStatus.TOO_MANY_REQUESTS:
+        return FALLBACK_RATE_LIMIT_WAIT_SECONDS
+    return None
+
+
+def run_gh(arguments: list[str], *, input_data: bytes | None = None) -> str:
+    """Run gh and return its stdout even on a non-zero exit: with --include the HTTP status
+    of a refused request is printed there, and the caller decides what it means."""
+    completed = subprocess.run(
+        ["gh", *arguments],
+        input=input_data,
+        capture_output=True,
+        timeout=GH_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if not completed.stdout:
+        raise MigrationStoppedError(f"gh {' '.join(arguments)} failed: {completed.stderr.decode()}")
+    return completed.stdout.decode()
+
+
+class GitHubApi:
+    def __init__(self, run: GhRun, clock: Clock) -> None:
+        self._run = run
+        self._clock = clock
+
+    def issues(self, repository: str) -> Iterator[Issue]:
+        page = 1
+        while True:
+            path = f"repos/{repository}/issues?state=all&per_page={PAGE_SIZE}&page={page}"
+            items = json.loads(self._request("GET", path).body)
+            for item in items:
+                if "pull_request" not in item:
+                    yield Issue(repository, item["number"], item["body"] or "")
+            if len(items) < PAGE_SIZE:
+                return
+            page += 1
+
+    def issue_body(self, repository: str, number: int) -> str:
+        item = json.loads(self._request("GET", f"repos/{repository}/issues/{number}").body)
+        return item["body"] or ""
+
+    def update_body(self, repository: str, number: int, body: str) -> None:
+        # Only the body travels, so labels, type, assignees, state and comments stay as they are.
+        payload = json.dumps({"body": body}).encode()
+        self._request("PATCH", f"repos/{repository}/issues/{number}", payload)
+
+    def _request(self, method: str, path: str, payload: bytes | None = None) -> ApiResponse:
+        arguments = ["api", "--include", "--method", method, path]
+        if payload is not None:
+            arguments += ["--input", "-"]
+        for _ in range(MAX_RATE_LIMIT_WAITS + 1):
+            response = parse_included_response(self._run(arguments, input_data=payload))
+            wait = rate_limit_wait(response, self._clock.now())
+            if wait is None:
+                return _successful(response, method, path)
+            self._clock.sleep(wait)
+        raise MigrationStoppedError(
+            f"{method} {path} still rate-limited after {MAX_RATE_LIMIT_WAITS} waits"
+        )
+
+
+def _successful(response: ApiResponse, method: str, path: str) -> ApiResponse:
+    if response.status != HTTPStatus.OK:
+        raise MigrationStoppedError(f"GitHub answered {response.status} to {method} {path}")
+    return response
+
+
+def dry_run(api: GitHubApi, repositories: Sequence[str], manifest: Path) -> None:
+    rows: list[ManifestRow] = []
+    refused = 0
+    for repository in repositories:
+        for issue in api.issues(repository):
+            outcome = classify(issue.body)
+            if isinstance(outcome, Refusal):
+                refused += 1
+                print(f"refused {item_reference(repository, issue.number)}: {outcome}")
+            elif isinstance(outcome, Rewrite):
+                rows.append(
+                    ManifestRow(
+                        repository, issue.number, body_hash(issue.body), body_hash(outcome.body)
+                    )
+                )
+    manifest.write_text(json.dumps([asdict(row) for row in rows], indent=2) + "\n")
+    print(f"{len(rows)} bodies to change, {refused} refused; manifest written to {manifest}")
+
+
+def read_manifest(manifest: Path) -> list[ManifestRow]:
+    return [ManifestRow(**row) for row in json.loads(manifest.read_text())]
+
+
+def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow]) -> None:
+    migrated = 0
+    for row in rows:
+        reference = item_reference(row.repository, row.number)
+        body = api.issue_body(row.repository, row.number)
+        current_hash = body_hash(body)
+        if current_hash == row.new_hash:
+            print(f"already migrated {reference}")
+            continue
+        if current_hash != row.old_hash:
+            raise MigrationStoppedError(f"{reference}: the body changed since the dry run")
+        if migrated:
+            clock.sleep(PACE_SECONDS)
+        api.update_body(row.repository, row.number, _migrated_body(reference, body))
+        migrated += 1
+        if body_hash(api.issue_body(row.repository, row.number)) != row.new_hash:
+            raise MigrationStoppedError(
+                f"{reference}: the body read back does not have the new hash"
+            )
+        print(f"migrated {reference}")
+    print(f"{migrated} migrated, {len(rows) - migrated} already migrated")
+
+
+def _migrated_body(reference: str, body: str) -> str:
+    outcome = classify(body)
+    if not isinstance(outcome, Rewrite):
+        raise MigrationStoppedError(f"{reference}: the body no longer has the one migratable shape")
+    return outcome.body
+
+
+def _repository(value: str) -> str:
+    if not _REPOSITORY.match(value):
+        raise argparse.ArgumentTypeError(f"{value!r} is not OWNER/REPO")
+    return value
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Rewrite the ```agent-claim fence in GitHub issue bodies to ```aco."
+    )
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dry-run", action="store_true", help="read and write the manifest")
+    mode.add_argument("--apply", action="store_true", help="patch the manifest's rows")
+    parser.add_argument("--repo", action="append", type=_repository, default=[])
+    parser.add_argument("--manifest", type=Path, required=True)
+    return parser
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    run: GhRun = run_gh,
+    clock: Clock | None = None,
+) -> int:
+    parser = _parser()
+    arguments = parser.parse_args(argv)
+    if arguments.dry_run and not arguments.repo:
+        parser.error("--dry-run needs at least one --repo OWNER/REPO")
+    active_clock = clock if clock is not None else SystemClock()
+    api = GitHubApi(run, active_clock)
+    try:
+        if arguments.dry_run:
+            dry_run(api, arguments.repo, arguments.manifest)
+        else:
+            apply(api, active_clock, read_manifest(arguments.manifest))
+    except MigrationStoppedError as stopped:
+        print(f"stopped: {stopped}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
