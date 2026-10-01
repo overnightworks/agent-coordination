@@ -886,6 +886,10 @@ def _bash_rm_target_payload(target: Path) -> dict[str, object]:
 _TARGET_PATH_PAYLOAD_BUILDERS = (_write_target_payload, _bash_rm_target_payload)
 
 
+def _bash_rm_rf_target_payload(target: Path) -> dict[str, object]:
+    return {"toolName": "Bash", "toolInput": {"command": f"rm -rf {target}"}}
+
+
 def _apply_patch_target_payload(target: Path) -> dict[str, object]:
     command = _patch_command(f"*** Update File: {target}", "@@", "-old", "+new")
     return {"toolName": "apply_patch", "toolInput": {"command": command}}
@@ -1763,8 +1767,13 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
 
 @pytest.mark.parametrize(
     "payload_for",
-    [_write_target_payload, _apply_patch_target_payload, _bash_sed_in_place_target_payload],
-    ids=["write", "apply-patch", "bash-sed-in-place"],
+    [
+        _write_target_payload,
+        _apply_patch_target_payload,
+        _bash_sed_in_place_target_payload,
+        _bash_rm_rf_target_payload,
+    ],
+    ids=["write", "apply-patch", "bash-sed-in-place", "bash-rm-rf"],
 )
 @pytest.mark.parametrize(
     ("claimed_branch", "written", "decision"),
@@ -1773,6 +1782,7 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
         pytest.param("codex/issue-99-other", "scripts/registry.txt", "deny", id="unclaimed"),
         pytest.param("codex/issue-72-widget", "src/y.py", "deny", id="not-shared"),
         pytest.param("codex/issue-72-widget", "src/x.py", "deny", id="shared-only-by-the-lane"),
+        pytest.param("codex/issue-72-widget", "src", "deny", id="shared-directory-itself"),
     ],
 )
 def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
@@ -1789,7 +1799,8 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     the checkout, though its scope (`docs`) never names it, whichever tool
     writes it; without a claim on the branch it still denies, and a file the
     trunk does not share stays bound to the scope -- also one below a
-    directory the trunk names (`src`, PIN-41), and one the lane's own
+    directory the trunk names (`src`, PIN-41) or that directory itself, so
+    no `rm -rf` sweeps a tree through it, and one the lane's own
     edit of its worktree's `board.toml` adds, so a lane never authorises
     itself. Each tool's own denial wording is PROT-18's and PROT-33's."""
     home = tmp_path / "home"
@@ -2704,10 +2715,6 @@ def test_protect_judges_a_file_in_a_not_yet_existing_directory_by_its_checkout(
 
     assert _protect_main(monkeypatch, payload_for(worktree / relative)) == status
     _assert_protect_decision(capsys, decision="deny" if reason else "allow", reason=reason)
-
-
-def _bash_rm_rf_target_payload(target: Path) -> dict[str, object]:
-    return {"toolName": "Bash", "toolInput": {"command": f"rm -rf {target}"}}
 
 
 def _unguarded_scratchpad(tmp_path: Path) -> Path:

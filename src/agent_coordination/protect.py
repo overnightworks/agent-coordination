@@ -343,9 +343,23 @@ def _protect_scope_denial(
         return None
     if _protect_session_claim_exists(
         state, agent=agent, branch=branch
-    ) and relative in lane_shared_for(question.path_checkout.toplevel):
+    ) and _protect_targets_a_lane_shared_file(question, lane_shared_for):
         return None
     return miss_denial
+
+
+def _protect_targets_a_lane_shared_file(
+    question: _ClaimQuestion, lane_shared_for: _LaneSharedFor
+) -> bool:
+    """Whether `question`'s path is a file the trunk's `lane_shared` names
+    exactly (PIN-41). An entry naming a directory covers no file, nor the
+    directory itself: an exact match on it would let `rm -rf` sweep the
+    whole unclaimed tree below it."""
+    toplevel = question.path_checkout.toplevel
+    return (
+        question.relative in lane_shared_for(toplevel)
+        and not (toplevel / question.relative).is_dir()
+    )
 
 
 def _protect_single_path_scope_miss_denial(
