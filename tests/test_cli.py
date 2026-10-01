@@ -21378,7 +21378,7 @@ def test_cli_reset_refusal_release_advice_runs_as_printed_and_clears_the_way(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """CAS-62 (issue #582): every release command the live-claim refusal
+    """CAS-63 (issue #582): every release command the live-claim refusal
     prints, its `<reason>` filled in, runs through bash into `release`,
     which accepts it -- the holder's own claim, another agent's claim as
     the coordinator, a lane claim by its branch -- after which `reset` no
