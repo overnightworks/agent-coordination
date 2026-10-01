@@ -1557,45 +1557,96 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
     One prepared `update-ref` transaction compares the tip and locks the ref
     before the section goes, and deletes the ref only after: while git holds
     that lock no other process can move or recreate the name, so the section
-    removed is always the lane's own and nothing is ever written back. A
-    commit made after the caller's tip check refuses the prepare, and a
-    section git refuses to remove aborts the transaction -- either way the
-    branch stays whole."""
-    section_refusal: str | None = None
+    removed is always the lane's own. A commit made after the caller's tip
+    check refuses the prepare, and a section git refuses to remove aborts
+    the transaction. A deletion git fails or never confirms once the section
+    is gone writes that section back (`_restore_branch_section`). Every way
+    a kept branch stays whole, unless git refuses that write-back, which the
+    returned refusal then names; a branch gone after all reads as deleted."""
+    removal = _BranchSectionRemoval()
 
     def remove_the_section_under_the_ref_lock() -> bool:
-        nonlocal section_refusal
-        section_refusal = _remove_own_branch_section(branch)
-        return section_refusal is None
+        nonlocal removal
+        removal = _remove_own_branch_section(branch)
+        return removal.refusal is None
 
-    deleted = _git_ref_transaction(
-        [f"delete refs/heads/{branch} {landed_head}"],
-        while_prepared=remove_the_section_under_the_ref_lock,
-    )
-    if section_refusal is not None:
-        return section_refusal
-    return process.git_failure_detail(deleted) if deleted.exit_status != 0 else None
+    try:
+        deleted = _git_ref_transaction(
+            [f"delete refs/heads/{branch} {landed_head}"],
+            while_prepared=remove_the_section_under_the_ref_lock,
+        )
+    except ClaimError as error:
+        failure: str | None = str(error)
+    else:
+        deletion_refusal = process.git_failure_detail(deleted) if deleted.exit_status else None
+        failure = removal.refusal or deletion_refusal
+    if failure is None:
+        return None
+    try:
+        _restore_branch_section(branch, landed_head, removal.removed)
+    except ClaimError as error:
+        failure = str(error)
+    return failure if branch_exists(branch) else None
 
 
-def _remove_own_branch_section(branch: str) -> str | None:
-    """Remove `branch`'s own `branch.<name>` section when it has one, and
-    return git's own refusal, or `None` once no such section is left."""
+@dataclass(frozen=True)
+class _BranchSectionRemoval:
+    """What `_remove_own_branch_section` did: git's own refusal, or the
+    `(key, value)` entries it removed -- none when there was no section."""
+
+    refusal: str | None = None
+    removed: tuple[tuple[str, str], ...] = ()
+
+
+def _remove_own_branch_section(branch: str) -> _BranchSectionRemoval:
+    """Remove `branch`'s own `branch.<name>` section when it has one."""
     listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
     if listed.exit_status not in (0, 1):
-        return process.git_failure_detail(listed)
-    if not _has_own_branch_section(listed.stdout.decode(), branch):
-        return None
+        return _BranchSectionRemoval(refusal=process.git_failure_detail(listed))
+    entries = _own_branch_section_entries(listed.stdout.decode(), branch)
+    if not entries:
+        return _BranchSectionRemoval()
     removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
-    return process.git_failure_detail(removed) if removed.exit_status != 0 else None
+    if removed.exit_status != 0:
+        return _BranchSectionRemoval(refusal=process.git_failure_detail(removed))
+    return _BranchSectionRemoval(removed=entries)
 
 
-def _has_own_branch_section(listing: str, branch: str) -> bool:
-    """Whether `git config --null --get-regexp` lists a key of `branch`'s own
-    `branch.<name>` section -- never a dotted sibling's, whose
-    `branch.<name>.x.<variable>` keys share the prefix."""
+def _own_branch_section_entries(listing: str, branch: str) -> tuple[tuple[str, str], ...]:
+    """The `(key, value)` entries `git config --null --get-regexp` lists for
+    `branch`'s own `branch.<name>` section -- never a dotted sibling's,
+    whose `branch.<name>.x.<variable>` keys share the prefix. git lists a
+    key set without a value bare, which reads as boolean true."""
     prefix = f"branch.{branch}."
-    keys = (entry.partition("\n")[0] for entry in listing.split("\0") if entry)
-    return any(key.startswith(prefix) and "." not in key.removeprefix(prefix) for key in keys)
+    entries = (entry.partition("\n") for entry in listing.split("\0") if entry)
+    return tuple(
+        (key, value if separator else "true")
+        for key, separator, value in entries
+        if key.startswith(prefix) and "." not in key.removeprefix(prefix)
+    )
+
+
+def _restore_branch_section(
+    branch: str, landed_head: str, entries: tuple[tuple[str, str], ...]
+) -> None:
+    """Write a removed `branch.<name>` section's `entries` back while one
+    more prepared transaction holds `branch`'s ref lock on `landed_head`: a
+    branch that is gone or moved meanwhile gets nothing, so the entries only
+    ever return to the lane's own branch."""
+    if not entries:
+        return
+
+    def write_back_under_the_ref_lock() -> bool:
+        for key, value in entries:
+            written = _git_run(["config", "--local", "--add", key, value])
+            if written.exit_status != 0:
+                raise ClaimError(process.git_failure_detail(written))
+        return True
+
+    _git_ref_transaction(
+        [f"verify refs/heads/{branch} {landed_head}"],
+        while_prepared=write_back_under_the_ref_lock,
+    )
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:

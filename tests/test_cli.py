@@ -17443,25 +17443,65 @@ def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: P
     (Path(common.stdout.strip()) / "config.lock").touch()
 
 
-def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+def _refuse_the_git_config_call(monkeypatch: pytest.MonkeyPatch, option: str, detail: str) -> None:
     run_git = checkout._git_run
 
-    def refuse_the_listing(
+    def refuse_the_call(
         arguments: list[str], *, directory: Path | None = None
     ) -> process.CapturedResult:
-        if "--get-regexp" in arguments:
-            return process.CapturedResult(3, b"", b"fatal: the configuration listing failed\n")
+        if option in arguments:
+            return process.CapturedResult(3, b"", f"{detail}\n".encode())
         return run_git(arguments, directory=directory)
 
-    monkeypatch.setattr(checkout, "_git_run", refuse_the_listing)
+    monkeypatch.setattr(checkout, "_git_run", refuse_the_call)
+
+
+def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+    _refuse_the_git_config_call(monkeypatch, "--get-regexp", "fatal: the listing failed")
+
+
+def _time_out_the_deletion_once_prepared(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+    """git never confirms the first decision sent to a prepared transaction
+    -- the branch deletion's, after its `branch.<name>` section is gone."""
+    communicate = subprocess.Popen.communicate
+    timed_out: list[bool] = []
+
+    def time_out_the_first_decision(
+        self: subprocess.Popen[bytes], decision: bytes | None = None, timeout: float | None = None
+    ) -> tuple[bytes, bytes]:
+        if decision is not None and not timed_out:
+            timed_out.append(True)
+            raise subprocess.TimeoutExpired(self.args, timeout or 0)
+        return communicate(self, decision, timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", time_out_the_first_decision)
+
+
+def _time_out_the_deletion_and_refuse_the_write_back(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    _time_out_the_deletion_once_prepared(monkeypatch, lane)
+    _refuse_the_git_config_call(monkeypatch, "--add", "error: the write-back failed")
 
 
 @pytest.mark.parametrize(
-    "interfere",
+    ("interfere", "reported_failure", "kept_upstream"),
     [
-        pytest.param(_commit_past_the_landed_head, id="commit-raced-past-the-landed-head"),
-        pytest.param(_lock_the_repository_configuration, id="configuration-locked"),
-        pytest.param(_refuse_the_branch_configuration_listing, id="configuration-listing-refused"),
+        pytest.param(_commit_past_the_landed_head, "", "origin", id="commit-raced-past-the-head"),
+        pytest.param(_lock_the_repository_configuration, "", "origin", id="configuration-locked"),
+        pytest.param(
+            _refuse_the_branch_configuration_listing,
+            "fatal: the listing failed\n",
+            "origin",
+            id="configuration-listing-refused",
+        ),
+        pytest.param(_time_out_the_deletion_once_prepared, "", "origin", id="deletion-timed-out"),
+        pytest.param(
+            _time_out_the_deletion_and_refuse_the_write_back,
+            "error: the write-back failed\n",
+            "",
+            id="deletion-timed-out-and-write-back-refused",
+        ),
     ],
 )
 def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
@@ -17469,6 +17509,8 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     interfere: Callable[[pytest.MonkeyPatch, Path], None],
+    reported_failure: str,
+    kept_upstream: str,
 ) -> None:
     """Issue #578 review finding 3: a clean commit made in the lane after
     cleanup judged its tip to be the squashed head, but before the branch
@@ -17476,7 +17518,10 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     deletes in one step, so only the landed head itself is ever deleted.
     Second review finding 2: a `branch.<name>` section git cannot list or
     remove keeps the branch too, the failure reported rather than swallowed.
-    Either way the kept branch keeps its tip and its own configuration."""
+    Fourth review finding 3: a deletion git never confirms after that
+    section is gone writes the section back onto the kept branch. Every way
+    the kept branch keeps its tip and its own configuration -- unless git
+    refuses that write-back, which the report then names."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
@@ -17498,10 +17543,10 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
 
     output = capsys.readouterr()
     assert (status, output.err) == (0, "")
-    assert "worktree: removed; branch kept -- git failure: " in output.out
+    assert f"worktree: removed; branch kept -- git failure: {reported_failure}" in output.out
     assert [_real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()] == kept_tips
     upstream = _real_git(repo, "config", f"branch.{LANDING_BRANCH}.remote", check=False)
-    assert upstream.stdout.strip() == "origin"
+    assert upstream.stdout.strip() == kept_upstream
 
 
 def _recreate_branch_after_its_deletion(
