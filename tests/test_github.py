@@ -2691,6 +2691,7 @@ def api_pull_request(**overrides: object) -> dict[str, object]:
         "body": "Work-Item: #72",
         "baseRefName": "main",
         "headRefName": LANDING_BRANCH,
+        "headRefOid": "a" * 40,
         "headRepository": {"name": name},
         "headRepositoryOwner": {"login": owner},
         "author": {"login": "ada"},
@@ -2701,9 +2702,12 @@ def api_pull_request(**overrides: object) -> dict[str, object]:
 
 
 def test_github_adapter_reads_a_pull_request_and_the_default_branch() -> None:
+    head_sha = "b" * 40
+    pull_request = api_pull_request(headRefOid=head_sha)
+
     def run(arguments: list[str], *, input_data: bytes | None = None) -> str:
         if arguments[:2] == ["pr", "view"]:
-            return json.dumps(api_pull_request())
+            return json.dumps(pull_request)
         return "main"
 
     client = GitHubForge(github.repository_id(REPOSITORY), run=run)
@@ -2718,6 +2722,7 @@ def test_github_adapter_reads_a_pull_request_and_the_default_branch() -> None:
         True,
         MERGE_COMMIT_SHA,
         "feat: land the lane",
+        head_sha,
     )
     assert dataclasses.astuple(client.landing(12)) == dataclasses.astuple(expected)
     assert client.default_branch() == "main"
@@ -2762,6 +2767,8 @@ def test_github_adapter_fails_loud_when_github_answers_for_another_pull_request(
         pytest.param({"number": 12, "body": "b"}, id="missing-refs"),
         pytest.param(api_pull_request(author={}), id="author-without-login"),
         pytest.param(api_pull_request(title=None), id="missing-title"),
+        pytest.param(api_pull_request(headRefOid=None), id="missing-head-sha"),
+        pytest.param(api_pull_request(headRefOid="not-a-sha"), id="malformed-head-sha"),
         pytest.param(api_pull_request(mergedAt="yesterday"), id="malformed-merge-time"),
         pytest.param(api_pull_request(headRepository={}), id="head-repository-without-name"),
         pytest.param(

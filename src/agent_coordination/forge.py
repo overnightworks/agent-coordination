@@ -181,7 +181,9 @@ class Landing:
     never this same read's mutable `body` -- a fixer can (and once did,
     Befund 41) edit the body after the merge without touching what actually
     landed. `title` heads the squash commit `aco land` composes (issue
-    #578).
+    #578). `head_sha` is the pull request's head commit; once `merged`, the
+    forge keeps it at the head that landed, the one tip a squashed lane is
+    cleaned up by (issue #590).
     """
 
     number: int
@@ -193,6 +195,7 @@ class Landing:
     merged: bool
     merge_commit: str | None
     title: str
+    head_sha: str
 
 
 # GitHub's own open vocabularies for a pull request's `mergeable_state` and a

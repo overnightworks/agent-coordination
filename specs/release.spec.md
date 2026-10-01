@@ -52,7 +52,7 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | landing board read hits an unreachable forge | — | REL-22 | — |
 | no landing to report | — | — | REL-21 |
 | any refusal past the parser, with `--json` | REL-24 | REL-24 | REL-24 |
-| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42 | REL-33 |
+| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42..REL-44 | REL-33 |
 
 ## Flags and outcome
 
@@ -122,8 +122,10 @@ section stayed (REL-42) -- one owner for all four shapes so they can never drift
 creates between its compare-and-delete and the section removal can lose its upstream setting,
 never a commit; `git branch -u` restores it.
 
-- [ ] [REL-25] A clean linked worktree whose branch is in the canonical remote's trunk, or whose tip is the head `aco land` pinned for its squash, goes with that local branch: `worktree: removed` (see E-REL-08).
-- [ ] [REL-42] A squashed branch goes by compare-and-delete on its pinned head, a moved one stays (REL-34); its section goes only while no such branch exists, and a refused removal reads `section kept`.
+- [ ] [REL-25] A clean linked worktree whose branch is in the canonical remote's trunk, or whose tip is the merged pull request's recorded head, goes with that local branch: `worktree: removed` (see E-REL-08).
+- [ ] [REL-42] A squashed branch goes by compare-and-delete on its recorded head, a moved one stays (REL-34); its section goes only while no such branch exists, and a refused removal reads `section kept`.
+- [ ] [REL-43] A rerun of `aco land` or `release --merged` after a squash judges the lane by that recorded head too: a clean lane on it reads `worktree: removed`, never `kept` (see E-REL-20).
+- [ ] [REL-44] A value under `branch.*` in git config that is no UTF-8 never stops the squashed branch's section removal: only key names are read (see E-REL-21).
 - [ ] [REL-26] `--keep-worktree` skips that removal outright: `worktree: kept -- --keep-worktree was given`, worktree and branch both left exactly as found (see E-REL-09).
 - [ ] [REL-27] A release run from inside the lane's own worktree cannot remove its own cwd: `worktree: kept -- release ran from inside it`, and keeps both (see E-REL-10).
 - [ ] [REL-28] A dirty worktree keeps it: `worktree: kept -- dirty`, exit code unaffected (see E-REL-11).
@@ -312,7 +314,8 @@ exit 0
 
 Setup: bare-remote, fake `gh` reporting pull request `#57` merged, its merge commit's trailer
 naming `Work-Item: #42`, a linked worktree on `ada/issue-42` whose branch this checkout has not
-itself merged into `main` yet, run from the main checkout, issue `#42` claimed
+itself merged into `main` yet and whose tip is not `#57`'s recorded head, run from the main
+checkout, issue `#42` claimed
 
 ```console
 $ aco release 42 --merged 57
@@ -419,4 +422,33 @@ Setup: bare-remote, fake `gh`, a live claim on issue `#42` taken with `--agent c
 $ aco release 42 --merged 57
 2> ERROR: only the original claimant may release; repeat as the holder with `aco release 42 --merged 57 --agent claude-head`, or use an explicit coordinator override (holder='claude-head (builder)', this session='Claude s-1 (builder)')
 exit 2
+```
+
+### E-REL-20 — a rerun after a squash removes the lane on the recorded head
+
+Setup: bare-remote, fake `gh`, pull request `#57` squashed into `main` with recorded head
+`0a5d32f`, its first release failing after the merge, a clean linked worktree on `ada/issue-42`
+at `0a5d32f`, run from the main checkout, issue `#42` claimed
+
+```console
+$ aco release 42 --merged 57
+RELEASED issue #42: <claim-id>
+freed: none
+next: none
+worktree: removed
+exit 0
+```
+
+### E-REL-21 — a non-UTF-8 branch description never stops the squash cleanup
+
+Setup: E-REL-20's, plus `branch.other.description` set to the bytes `caf\xe9` in this
+checkout's git config
+
+```console
+$ aco release 42 --merged 57
+RELEASED issue #42: <claim-id>
+freed: none
+next: none
+worktree: removed
+exit 0
 ```

@@ -339,7 +339,9 @@ class FakeForge:
         forge does on its own side, so the landing checkout stands behind
         until its own real fast-forward. `closes_on_merge` closes every issue
         the pull request body names with `Closes #<n>`, as GitHub itself does
-        on the merge, before the release ever reads it (issue #578)."""
+        on the merge, before the release ever reads it (issue #578). The
+        merged pull request keeps `head_sha` as its recorded head, as
+        GitHub does (issue #590)."""
         self._run()
         self.merge_calls.append((number, head_sha, method, title, body))
         if self.fail_merge is not None:
@@ -358,7 +360,7 @@ class FakeForge:
                 f"{title}\n\n{body}",
                 method,
             )
-        self.landings[number] = replace(landing, merged=True, merge_commit=sha)
+        self.landings[number] = replace(landing, merged=True, merge_commit=sha, head_sha=head_sha)
         return sha
 
     def delete_branch(self, branch: str) -> None:
@@ -14895,6 +14897,7 @@ def landing_pull_request(
         merged,
         merge_commit if merge_commit is not None else (MERGE_COMMIT_SHA if merged else None),
         title,
+        MERGE_COMMIT_SHA,
     )
 
 
@@ -17317,6 +17320,11 @@ def test_land_refuses_a_classification_defect_from_a_missing_claim(
             "aco land 12 --keep-worktree --agent Grok",
             id="keeps-the-worktree-flag",
         ),
+        pytest.param(
+            ("--keep-worktree", "--head", MERGE_COMMIT_SHA[:7].upper()),
+            f"aco land 12 --head {MERGE_COMMIT_SHA[:7]} --keep-worktree --agent Grok",
+            id="keeps-the-reviewed-head",
+        ),
     ],
 )
 def test_land_refuses_a_foreign_claim_before_the_merge(
@@ -17330,7 +17338,7 @@ def test_land_refuses_a_foreign_claim_before_the_merge(
     claimant/coordinator-override check (`_resolve_release_claimant`) --
     a claim held by another agent refuses before the merge, not only once
     the delegated `release --merged` step runs after it. The repeat keeps
-    `--keep-worktree` (LANDCMD-10)."""
+    `--head` and `--keep-worktree` (LANDCMD-10)."""
     client = _land_preflight_client(monkeypatch, readiness=_land_readiness(), claim_agent="Grok")
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12", *arguments]) == 2
@@ -17419,6 +17427,58 @@ def test_land_merges_a_green_pull_request_and_runs_the_release_path(
     out = capsys.readouterr().out
     assert "freed:" in out
     assert "next:" in out
+
+
+_HEAD_USAGE_REFUSAL = "--head must be 7 to 40 hex digits"
+
+
+@pytest.mark.parametrize(
+    ("reviewed_head", "refusal", "forge_read"),
+    [
+        pytest.param(MERGE_COMMIT_SHA, None, True, id="full-sha-matches"),
+        pytest.param(MERGE_COMMIT_SHA[:7].upper(), None, True, id="uppercase-prefix-matches"),
+        pytest.param(
+            "0000000",
+            f"pull request #12 head is {MERGE_COMMIT_SHA}, not the reviewed 0000000; "
+            "review the new head before landing",
+            True,
+            id="head-moved",
+        ),
+        pytest.param("main", _HEAD_USAGE_REFUSAL, False, id="not-hex"),
+        pytest.param(MERGE_COMMIT_SHA[:6], _HEAD_USAGE_REFUSAL, False, id="shorter-than-7"),
+        pytest.param(MERGE_COMMIT_SHA + "0", _HEAD_USAGE_REFUSAL, False, id="longer-than-40"),
+    ],
+)
+def test_land_merges_only_the_head_its_reviewers_saw(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    reviewed_head: str,
+    refusal: str | None,
+    forge_read: bool,
+) -> None:
+    """Issue #590 lines 1-3: `--head` lands the pull request only while the
+    head preflight reads -- the one the merge pins -- starts with the
+    reviewed sha; a moved head refuses before any write, and a value that
+    is no 7-40 hex digit sha refuses before the forge is read at all."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    trunk_before = _real_git(repo, "rev-parse", "main").stdout.strip()
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12", "--head", reviewed_head])
+
+    error = capsys.readouterr().err
+    pinned = [head_sha for _number, head_sha, *_rest in client.merge_calls]
+    if refusal is None:
+        assert (status, error, pinned) == (0, "", [MERGE_COMMIT_SHA])
+        return
+    trunk_after = _real_git(repo, "rev-parse", "main").stdout.strip()
+    assert (status, error, pinned, trunk_after, client.requests > 0) == (
+        2,
+        f"ERROR: {refusal}\n",
+        [],
+        trunk_before,
+        forge_read,
+    )
 
 
 def test_land_merges_an_issueless_lane_pull_request(
@@ -17528,23 +17588,36 @@ def test_land_merges_with_the_method_the_repository_allows(
     assert upstream.stdout == ""
 
 
+_LAND_AGAIN = ("land", "12")
+# A rerun's merge already happened, so a stale reviewed head changes nothing.
+_LAND_AGAIN_WITH_A_STALE_HEAD = ("land", "12", "--head", "0000000")
+_RELEASE_MERGED = ("release", str(WORK_ITEM_ISSUE), "--merged", "12")
+
+
 @pytest.mark.parametrize(
-    "squashed_before_this_run",
+    ("squashed_before_this_run", "lane_moved_on", "command"),
     [
-        pytest.param(False, id="lane-tip-moved-past-the-pinned-head"),
-        pytest.param(True, id="rerun-that-pinned-no-head"),
+        pytest.param(False, True, _LAND_AGAIN, id="land-with-the-lane-past-the-pinned-head"),
+        pytest.param(
+            True, False, _LAND_AGAIN_WITH_A_STALE_HEAD, id="land-rerun-on-the-recorded-head"
+        ),
+        pytest.param(True, False, _RELEASE_MERGED, id="release-rerun-on-the-recorded-head"),
+        pytest.param(True, True, _RELEASE_MERGED, id="release-rerun-past-the-recorded-head"),
     ],
 )
-def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
+def test_a_squashed_lane_goes_only_on_the_pull_requests_recorded_head(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     squashed_before_this_run: bool,
+    lane_moved_on: bool,
+    command: tuple[str, ...],
 ) -> None:
-    """Issue #578 review finding 2: only the head this run's own squash was
-    pinned to lets a squashed lane go -- a lane commit made after that pin,
-    or a rerun that merged nothing itself, keeps the worktree and its
-    branch, since nothing proves that tip landed."""
+    """Issues #578 review finding 2 and #590 line 5: a squashed lane goes
+    when its tip is the merged pull request's recorded head -- on a rerun of
+    `land` or `release --merged` after the squash too -- and a lane commit
+    made after that head keeps the worktree and its branch, since nothing
+    proves that tip landed."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
@@ -17559,17 +17632,25 @@ def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
             title="feat: land the lane (#12)",
             body=f"Work-Item: #{WORK_ITEM_ISSUE}",
         )
-    else:
+    if lane_moved_on:
         _real_git(lane, "commit", "-q", "--allow-empty", "-m", "after the pin")
     lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
 
-    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+    status = issue_claim.main(["--repo", REPOSITORY, *command])
 
     output = capsys.readouterr()
+    worktree_line = (
+        "worktree: kept -- not merged into the default branch\n"
+        if lane_moved_on
+        else "worktree: removed\n"
+    )
     assert (status, output.err) == (0, "")
-    assert "worktree: kept -- not merged into the default branch\n" in output.out
-    assert lane.exists()
-    assert _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip() == lane_tip
+    assert worktree_line in output.out
+    kept_tip = _real_git(repo, "rev-parse", "--verify", "--quiet", LANDING_BRANCH, check=False)
+    assert (lane.exists(), kept_tip.stdout.split()) == (
+        lane_moved_on,
+        [lane_tip] if lane_moved_on else [],
+    )
 
 
 def _leave_the_lane_alone(_monkeypatch: pytest.MonkeyPatch, _repo: Path, _lane: Path) -> None:
@@ -17658,8 +17739,19 @@ def _configure_only_a_dotted_sibling(
     _real_git(repo, "config", f"branch.{sibling}.remote", "origin")
 
 
+def _describe_another_branch_in_latin1(
+    _monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path
+) -> None:
+    """Give another branch a description whose bytes are no UTF-8, written
+    straight into the repository configuration as an editor would."""
+    common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    with (Path(common.stdout.strip()) / "config").open("ab") as configuration:
+        configuration.write(b'[branch "other"]\n\tdescription = caf\xe9\n')
+
+
 def _branch_configuration(repo: Path) -> list[str]:
-    listed = _real_git(repo, "config", "--get-regexp", r"^branch\.", check=False)
+    """The keys under `branch.*`: names only, since a value may be no UTF-8."""
+    listed = _real_git(repo, "config", "--name-only", "--get-regexp", r"^branch\.", check=False)
     return listed.stdout.splitlines()
 
 
@@ -17695,7 +17787,8 @@ def _branch_configuration(repo: Path) -> list[str]:
         ),
         pytest.param(
             _fail_the_git_launch(
-                ["config", "--local", "--null", "--get-regexp"], process.ProcessTimedOutError()
+                ["config", "--local", "--null", "--name-only", "--get-regexp"],
+                process.ProcessTimedOutError(),
             ),
             f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
             "git failure: git timed out while validating the build checkout\n",
@@ -17723,6 +17816,12 @@ def _branch_configuration(repo: Path) -> list[str]:
             False,
             id="dotted-sibling-without-an-own-section",
         ),
+        pytest.param(
+            _describe_another_branch_in_latin1,
+            "worktree: removed\n",
+            False,
+            id="another-branch-value-not-utf-8",
+        ),
     ],
 )
 def test_land_cleans_up_a_squashed_lane_branch_by_compare_and_delete(
@@ -17742,7 +17841,8 @@ def test_land_cleans_up_a_squashed_lane_branch_by_compare_and_delete(
     completion, after the delete keeps the section beside the removed
     branch, named on its own; a same-name branch
     recreated after the delete keeps the section, and a dotted sibling's
-    configuration is never the lane's. `interfere` runs just before the
+    configuration is never the lane's. Another branch's value that is no
+    UTF-8 never stops the section removal (issue #590 line 7). `interfere` runs just before the
     removal and returns the tip the branch must keep, or `None`."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
