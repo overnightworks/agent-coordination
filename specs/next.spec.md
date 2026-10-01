@@ -49,6 +49,7 @@ other printable space are text.
 | that same container still names further work | NEXT-06 | NEXT-13 |
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
 | an unworkable item exists beside the top action | NEXT-08 | NEXT-14 |
+| an item carries the label `needs-operator` | NEXT-39 | NEXT-14 |
 | further free items exist, disjoint from the first action | NEXT-09, NEXT-21, NEXT-22 | NEXT-15 |
 | more than three such candidates | NEXT-10 | NEXT-15 |
 | the first action itself names no scope | NEXT-16 | NEXT-15 |
@@ -90,6 +91,7 @@ other printable space are text.
 - [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
 - [ ] [NEXT-34] A NEXT-05 container not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, `\` and `"` in `<title>` escaped in text and `--json`; never `container; claim a child`.
 - [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED`, in text or `--json` (see E-NEXT-06).
+- [ ] [NEXT-39] An open, unclaimed, unfrozen item labelled `needs-operator` is never pulled; a line `waiting on operator: <labels>` after `close:` names it instead of `SKIPPED` (E-NEXT-13).
 
 ## `parallel:`
 
@@ -111,7 +113,7 @@ other printable space are text.
 - [ ] [NEXT-11] A work-item action's `reason` is `work_item` (`ok: true`), adding `number`, `score`, `title`, `next`, `command`, `ruling_landings`/`ruling_old`/`ruling_hint` per NEXT-04 (E-NEXT-07).
 - [ ] [NEXT-12] A cut proposal's `reason` is `"cut_slice"` (`ok: true`), the object adding `number`, `title`, `slice`, `cut_title`, `command` (see E-NEXT-07).
 - [ ] [NEXT-13] A close or check proposal's `reason` is `"close_container"` or `"check_container"` (`ok: true`), adding `number`, `closed`, `total`, `next_step` (`null` on close), never `command`.
-- [ ] [NEXT-14] The object always carries `recovery` (`{number, title, step}` each), `skipped` (`{number, reason}` each), and `close` (a bare number array), independent of `reason`.
+- [ ] [NEXT-14] The object always carries `recovery` (`{number, title, step}` each), `skipped` (`{number, reason}` each), `close` and `waiting_on_operator` (bare number arrays), independent of `reason`.
 - [ ] [NEXT-15] `parallel` always carries `first_scope_unknown`, `candidates` (`{number, scope}` each, uncapped), and `scope_unknown` (a bare number array).
 - [ ] [NEXT-35] Under `storage = "state-ref"` each item these fields name, `number` included, is the `aco-xxxxxx` id the text prints, a string in place of the bare number.
 - [ ] [NEXT-24] `--json` on a dispatched refusal (BOARD-02, BOARD-42) prints OUT-nn's envelope with the sentence as `message` and `reason` from the table below, exit `2` (see E-NEXT-08).
@@ -251,7 +253,7 @@ Setup: bare-remote, fake `gh`, container `#181` as in E-NEXT-03
 
 ```console
 $ aco next --json
-{"ok": true, "reason": "cut_slice", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": false, "candidates": [], "scope_unknown": []}, "close": [], "number": 181, "title": "Epic", "slice": "Scheibe C", "cut_title": "Scheibe C", "command": "aco cut 181 --title='Scheibe C'"}
+{"ok": true, "reason": "cut_slice", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": false, "candidates": [], "scope_unknown": []}, "close": [], "waiting_on_operator": [], "number": 181, "title": "Epic", "slice": "Scheibe C", "cut_title": "Scheibe C", "command": "aco cut 181 --title='Scheibe C'"}
 exit 0
 ```
 
@@ -344,4 +346,23 @@ exit 3
 $ aco item close aco-000001
 2> ERROR: item aco-3e26d9 has a malformed agent-claim block; repair it with aco item edit aco-3e26d9 and a body whose agent-claim block carries a valid [record]
 exit 2
+```
+
+### E-NEXT-13 — the top item waits on the operator
+
+Setup: bare-remote, fake `gh`; `#230` is labelled `security` and `needs-operator`, `#11` is a scopeless open item
+
+```console
+$ aco next
+#11 score -10: Top work
+Next: Claim #11.
+Run: aco claim 11 --scope <paths>
+scope unknown
+parallel: unknown (first action names no scope)
+close: none
+waiting on operator: #230
+exit 0
+$ aco next --json
+{"ok": true, "reason": "work_item", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": true, "candidates": [], "scope_unknown": []}, "close": [], "waiting_on_operator": [230], "number": 11, "score": -10, "title": "Top work", "next": "Claim #11.", "command": "aco claim 11 --scope <paths>", "ruling_landings": null, "ruling_old": null}
+exit 0
 ```
