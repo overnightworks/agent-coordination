@@ -21290,6 +21290,64 @@ def _reset_repository(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[
     return repository, bare_remote
 
 
+def _reset_repository_with_live_claims(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, Path]:
+    """`_reset_repository` bootstrapped with three live claims a reset
+    refuses over (issue #582): issue 42 held by the running agent, issue 43
+    and the issueless lane `fix/reset-docs` held by another agent."""
+    _use_real_store(monkeypatch)
+    monkeypatch.setenv(checkout.ACO_AGENT_ENV, "Codex Sol")
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
+    store.bootstrap(worktree=repository, remote=str(bare_remote))
+    other_agents_issue = replace(_real_claim_intent(43), agent="Grok Ada")
+    other_agents_lane = replace(
+        other_agents_issue,
+        identity=protocol.LaneIdentity(),
+        branch="fix/reset-docs",
+        claim_id=protocol.ClaimId("claim-lane"),
+        operation_id="op-lane",
+    )
+    for subject, intent in (
+        (store.ClaimTransitionSubject("claim issue 42", item="42"), _real_claim_intent(42)),
+        (store.ClaimTransitionSubject("claim issue 43", item="43"), other_agents_issue),
+        (
+            store.ClaimTransitionSubject("claim lane fix/reset-docs", item="fix/reset-docs"),
+            other_agents_lane,
+        ),
+    ):
+        store.commit_transition(
+            observed=fresh_observation(repository, bare_remote), subject=subject, intent=intent
+        )
+    return repository, bare_remote
+
+
+def test_cli_reset_refusal_release_advice_runs_as_printed_and_clears_the_way(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """CAS-62 (issue #582): every release command the live-claim refusal
+    prints, its `<reason>` filled in, runs through bash into `release`,
+    which accepts it -- the holder's own claim, another agent's claim as
+    the coordinator, a lane claim by its branch -- after which `reset` no
+    longer refuses."""
+    repository, _ = _reset_repository_with_live_claims(monkeypatch, tmp_path)
+    monkeypatch.chdir(repository)
+    assert issue_claim.main(["reset"]) == 2
+    refusal = capsys.readouterr().err.rstrip("\n").split("gone: ", 1)[1]
+    printed = [claim.split(", release: ", 1)[1] for claim in refusal.split("; ")]
+
+    for command in printed:
+        filled = command.replace("<reason>", shlex.quote("a stuck state ref"))
+        bash_exit_code, arguments = _arguments_bash_hands_aco(filled, tmp_path)
+        assert (bash_exit_code, arguments[:1]) == (0, ["release"])
+        assert issue_claim.main(arguments) == 0, capsys.readouterr().err
+    capsys.readouterr()
+
+    assert issue_claim.main(["reset"]) == 0
+
+
 def _real_claim_intent(issue: int) -> protocol.ClaimIntent:
     return protocol.ClaimIntent(
         identity=protocol.IssueIdentity(issue),
@@ -21425,15 +21483,7 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     with one sentence on stderr naming why and every claim to release;
     `--force-unreadable` (issue #341) only lifts the refusal over a schema
     this aco cannot read."""
-    _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
-    store.bootstrap(worktree=repository, remote=str(bare_remote))
-    for issue in (42, 43):
-        store.commit_transition(
-            observed=fresh_observation(repository, bare_remote),
-            subject=store.ClaimTransitionSubject(f"claim issue {issue}", item=str(issue)),
-            intent=_real_claim_intent(issue),
-        )
+    repository, bare_remote = _reset_repository_with_live_claims(monkeypatch, tmp_path)
     tip_before = _remote_state_tip(repository, bare_remote)
     lineage_before = _lineage_observation(repository)
     assert lineage_before != (None, None)
@@ -21447,11 +21497,16 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == (
-        "ERROR: refs/aco/state holds 2 live claim(s); release them first "
-        "(aco release <item>|--branch <branch> --abandoned <reason>), "
+        "ERROR: refs/aco/state holds 3 live claim(s); release them first, "
         "or reset after they are gone: "
         "issue #42 by Codex Sol (builder) branch=codex/issue-42-reset claim=claim-42, "
-        "issue #43 by Codex Sol (builder) branch=codex/issue-43-reset claim=claim-43\n"
+        "release: aco release 42 --abandoned <reason>; "
+        "issue #43 by Grok Ada (builder) branch=codex/issue-43-reset claim=claim-43, "
+        "release: aco release 43 --role coordinator --coordinator-override "
+        "--abandoned <reason>; "
+        "lane fix/reset-docs by Grok Ada (builder) branch=fix/reset-docs claim=claim-lane, "
+        "release: aco release --branch fix/reset-docs --role coordinator "
+        "--coordinator-override --abandoned <reason>\n"
     )
     assert _remote_state_tip(repository, bare_remote) == tip_before
     assert list(export_dir.iterdir()) == []

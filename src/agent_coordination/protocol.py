@@ -690,8 +690,11 @@ def _combined_scope(
     return valid_scope(list(combined))
 
 
+COORDINATOR_ROLE = "coordinator"
+
+
 def _require_coordinator_override(role: str | None) -> None:
-    if role != "coordinator":
+    if role != COORDINATOR_ROLE:
         raise ClaimUnavailableError("a coordinator override requires --role coordinator")
 
 

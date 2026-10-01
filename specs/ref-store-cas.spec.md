@@ -162,7 +162,7 @@ cannot read needs `--force-unreadable` besides (`specs/reset.spec.md`).
 
 - [ ] [CAS-39] `aco reset` without `--confirm` prints five `would: ` lines -- export, delete-remote, delete-local, clear-stamps, bootstrap -- exit `0`, and touches nothing.
 - [ ] [CAS-40] `aco reset`, confirmed or not, with a live claim in a readable state refuses before any write, stdout empty, naming each claim once: subject, holder, branch, id (see E-CAS-08).
-- [ ] [CAS-62] That refusal reads `refs/aco/state holds <n> live claim(s); release them first (aco release <item>|--branch <branch> --abandoned <reason>), or reset after they are gone: <claims>`, `, `-joined.
+- [ ] [CAS-62] That refusal reads `refs/aco/state holds <n> live claim(s); release them first, or reset after they are gone: <claims>`, `; `-joined, each claim ending `, release: <command>`: `aco release <item> --abandoned <reason>` for an item claim, `aco release --branch <branch> --abandoned <reason>` for a docs/ or fix/ lane claim, with `--role coordinator --coordinator-override` before `--abandoned` when the running agent does not hold it -- each runs as printed once `<reason>` is filled in.
 - [ ] [CAS-41] `aco reset --confirm`, when the ref exists on the remote, exports its tip to a `git bundle`-verifiable `aco-state-<repo>-<date>-<12-hex>.bundle` under `--export-dir` before any deletion.
 - [ ] [CAS-42] `aco reset --confirm` against an export path that already carries that bundle's name refuses `<path> already exists; refusing to overwrite an export`, before anything is deleted.
 - [ ] [CAS-43] `aco reset --confirm` deletes `refs/aco/state` on the remote with `--force-with-lease` matched to the tip it read; a rejected or stale-leased push refuses and leaves the local ref untouched.
@@ -287,10 +287,10 @@ exit 2
 
 ### E-CAS-08 — reset refuses while a claim is live
 
-Setup: bare-remote, bootstrapped, a live claim on issue 42 by `Ada` on branch `ada/issue-42`
+Setup: bare-remote, bootstrapped, run as `Ada`; a live claim on issue 42 by `Ada` on branch `ada/issue-42`, and one on lane `fix/typo` by `Bo`
 
 ```console
 $ aco reset --confirm --export-dir <tmp>
-2> ERROR: refs/aco/state holds 1 live claim(s); release them first (aco release <item>|--branch <branch> --abandoned <reason>), or reset after they are gone: issue #42 by Ada (builder) branch=ada/issue-42 claim=<claim-id>
+2> ERROR: refs/aco/state holds 2 live claim(s); release them first, or reset after they are gone: issue #42 by Ada (builder) branch=ada/issue-42 claim=<claim-id>, release: aco release 42 --abandoned <reason>; lane fix/typo by Bo (builder) branch=fix/typo claim=<claim-id>, release: aco release --branch fix/typo --role coordinator --coordinator-override --abandoned <reason>
 exit 2
 ```

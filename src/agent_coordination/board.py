@@ -2453,6 +2453,7 @@ def item_json_reference(number: int, storage: Storage) -> int | str:
 SCOPE_PLACEHOLDER = "--scope <paths>"
 WHOLE_PLACEHOLDER = "--whole <reason>"
 OUT_OF_ORDER_PLACEHOLDER = "--out-of-order <reason>"
+ABANDONED_PLACEHOLDER = "--abandoned <reason>"
 
 
 @dataclass(frozen=True)
@@ -2529,6 +2530,23 @@ def _pull_command(
     scope_options = (AdviceOption("--scope", path) for path in scope or ())
     unknown = placeholders if scope is not None else (SCOPE_PLACEHOLDER, *placeholders)
     return " ".join((advice_command(*arguments, *scope_options), *unknown))
+
+
+def abandoned_release_command(
+    claim: protocol.ActiveClaim, storage: Storage, *, by_holder: bool
+) -> str:
+    """The `release --abandoned` advice that ends live `claim` (issue #582):
+    an item claim by its item, a docs/ or fix/ lane claim by `--branch`,
+    and, unless the running agent holds it (`by_holder`), as the
+    coordinator -- each the form `release` itself accepts, so the line runs
+    as printed once `<reason>` is filled in."""
+    target = (
+        ("--branch", claim.branch)
+        if isinstance(claim.identity, protocol.LaneIdentity)
+        else (item_argument(claim.identity.issue, storage),)
+    )
+    override = () if by_holder else ("--role", protocol.COORDINATOR_ROLE, "--coordinator-override")
+    return f"{advice_command('release', *target, *override)} {ABANDONED_PLACEHOLDER}"
 
 
 def cut_command(number: int, storage: Storage, title: str) -> str:

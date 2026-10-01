@@ -8067,17 +8067,17 @@ def _build_reset_plan(
 
 
 def _reset_live_claims_sentence(
-    claims: Iterable[protocol.ActiveClaim], storage: body.Storage
+    claims: Iterable[protocol.ActiveClaim], storage: body.Storage, running_agent: str | None
 ) -> str:
     named = [
         f"{_claim_subject(claim, storage)} by {claim.agent} ({claim.role}) "
-        f"branch={claim.branch} claim={claim.claim_id}"
+        f"branch={claim.branch} claim={claim.claim_id}, release: "
+        + board.abandoned_release_command(claim, storage, by_holder=claim.agent == running_agent)
         for claim in claims
     ]
     return (
-        f"{store.STATE_REF} holds {len(named)} live claim(s); release them first "
-        f"(aco release <item>|--branch <branch> --abandoned <reason>), "
-        f"or reset after they are gone: {', '.join(named)}"
+        f"{store.STATE_REF} holds {len(named)} live claim(s); release them first, "
+        f"or reset after they are gone: {'; '.join(named)}"
     )
 
 
@@ -8198,7 +8198,9 @@ def _reset_state(parsed: argparse.Namespace, context: RunContext) -> int:
     worktree, remote, state = _reset_observation(context)
     if isinstance(state, protocol.ClaimState) and state.claims:
         raise protocol.ClaimError(
-            _reset_live_claims_sentence(state.claims.values(), context.config.storage)
+            _reset_live_claims_sentence(
+                state.claims.values(), context.config.storage, checkout.session_agent()
+            )
         )
     export = _resolved_reset_export_config(parsed, context.toplevel)
     plan = _build_reset_plan(
