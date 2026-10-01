@@ -3,5 +3,5 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "571a506fa554bd40209a11b494e01e38044a1902"
 branch = "claude/issue-556-command-audit"
-scope = ["docs/command-audit.md"]
+scope = ["README.md"]
 opened_commit = "aac40622619131652be542d211d85808c429e1c9"
