@@ -4250,8 +4250,9 @@ class TestCliStateRefForge:
             f"ERROR: item edit {CHILD_A_ID} needs the new body on stdin: "
             f"aco item edit {CHILD_A_ID} < body.md\n"
         )
+        observed = (status, captured.out, captured.err, wrote)
         expected = (0, f"EDITED {CHILD_A_ID}\n", "", True) if edits else (2, "", refusal, False)
-        assert (status, captured.out, captured.err, wrote) == expected
+        assert observed == expected
 
     @pytest.mark.parametrize(
         ("flag", "value", "field"),
