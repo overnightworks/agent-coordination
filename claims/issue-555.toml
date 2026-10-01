@@ -1,0 +1,8 @@
+claim_id = "3128924eecb14c8f9053d95750afe6e2"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "592e01cca30fc65e6d740c1fe4e285ef30cc6e02"
+branch = "claude/issue-555-item-new-builds-block"
+scope = ["specs/body-block.spec.md", "specs/item.spec.md", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "src/agent_coordination/state_board.py", "tests/test_cli.py", "tests/test_state_board.py"]
+opened_commit = "e3baeb04d99257deaa65ca52603571a86eaa24a7"
+whole_reason = "item new builds its block from flags and keeps the piped prose under both stores"
