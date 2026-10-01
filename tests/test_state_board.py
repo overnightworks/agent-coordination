@@ -3630,12 +3630,13 @@ class TestCliStateRefForge:
         entry whose name is no item -- a missing item still refuses as
         missing -- and only its fresh claim refuses with PIN-13's sentence,
         before any worktree is built or the store moves."""
-        item_files = {**_item_files(), "NOTANID": b"anything"}
+        foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
+        item_files = {**_item_files(), **foreign}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         _stub_claim_checkout(monkeypatch)
         before = _state_ref_listing(bare_remote)
 
-        status = issue_claim.main(["start", item_id, "--scope", "README"])
+        status = issue_claim.main(["start", item_id, "--slug", "s", "--scope", "README"])
 
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert _state_ref_listing(bare_remote) == before
