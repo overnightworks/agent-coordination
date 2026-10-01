@@ -3183,13 +3183,13 @@ def _trunk_defect(sentence: str) -> str:
         ),
         pytest.param("", [], [], None, "UNCLAIMED", id="none-named"),
         pytest.param(
-            'merge_method = "squash"\nlane_shared = ["scripts/registry.txt"]\n',
+            'newer_aco_key = true\nlane_shared = ["scripts/registry.txt"]\n',
             [
                 "lane-shared: unavailable "
-                f"({_trunk_defect('has unknown top-level key merge_method')})"
+                f"({_trunk_defect('has unknown top-level key newer_aco_key')})"
             ],
             None,
-            _trunk_defect("has unknown top-level key merge_method"),
+            _trunk_defect("has unknown top-level key newer_aco_key"),
             "UNCLAIMED",
             id="a-newer-aco-key",
         ),
