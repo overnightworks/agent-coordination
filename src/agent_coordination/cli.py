@@ -1228,15 +1228,21 @@ def _status(
     claims: tuple[protocol.ActiveClaim, ...],
     issue: int | None,
     ages: Mapping[str, datetime],
-    storage: body.Storage,
+    config: board.BoardConfig,
     now: datetime | None = None,
 ) -> int:
+    """Every related claim's block, then the lane-shared files once (issue
+    #575), named only beside a claim that may write them."""
     observed_at = (now or datetime.now(UTC)).astimezone(UTC)
     related, index = _status_claims(claims, issue)
     if related:
-        context = _ClaimReportContext(index, storage)
-        return _print_related_claims(claims, related, context, ages, observed_at)
-    subject = "repository" if issue is None else f"issue {board.item_label(issue, storage)}"
+        context = _ClaimReportContext(index, config.storage)
+        exit_code = _print_related_claims(claims, related, context, ages, observed_at)
+        shared = _lane_shared_line(config.lane_shared)
+        if shared is not None:
+            print(shared)
+        return exit_code
+    subject = "repository" if issue is None else f"issue {board.item_label(issue, config.storage)}"
     print(f"UNCLAIMED {subject}")
     return 0
 
@@ -4471,8 +4477,21 @@ def _lane_tip(branch: str) -> str | None:
     return None
 
 
+def _lane_shared_line(lane_shared: tuple[str, ...]) -> str | None:
+    """The one line `status` and `brief` name the repository's lane-shared
+    registry files with (issue #575), so a builder comparing its changes
+    with its claim scope counts them as allowed; `None` when none is
+    configured."""
+    if not lane_shared:
+        return None
+    return "lane-shared: " + ", ".join(lane_shared)
+
+
 def _print_brief_claim(
-    claim: protocol.ActiveClaim, opened_at: datetime, observed_at: datetime
+    claim: protocol.ActiveClaim,
+    opened_at: datetime,
+    observed_at: datetime,
+    lane_shared: tuple[str, ...],
 ) -> None:
     print(
         f"{claim.agent} ({claim.role}) branch={claim.branch} base={claim.base}"
@@ -4482,6 +4501,9 @@ def _print_brief_claim(
         print(f"  {path}")
     if claim.whole_reason is not None:
         print(f"  whole: {claim.whole_reason}")
+    shared = _lane_shared_line(lane_shared)
+    if shared is not None:
+        print(f"  {shared}")
 
 
 def _print_brief_step_rules(step_rules: board.BriefStepRules) -> None:
@@ -4513,6 +4535,7 @@ class _BriefComposition:
     tip: str | None
     touched: tuple[str, ...]
     step_rules: board.BriefStepRules | None
+    lane_shared: tuple[str, ...]
 
 
 def _print_brief(composition: _BriefComposition) -> None:
@@ -4523,7 +4546,10 @@ def _print_brief(composition: _BriefComposition) -> None:
         print("no active claim")
     else:
         _print_brief_claim(
-            composition.live.claim, composition.live.opened_at, composition.observed_at
+            composition.live.claim,
+            composition.live.opened_at,
+            composition.observed_at,
+            composition.lane_shared,
         )
     print()
     print("TIP")
@@ -4702,7 +4728,9 @@ def _brief_report(parsed: argparse.Namespace, context: RunContext) -> int:
             else ()
         )
     observed_at = datetime.now(UTC)
-    composition = _BriefComposition(item_body, live, observed_at, tip, touched, step_rules)
+    composition = _BriefComposition(
+        item_body, live, observed_at, tip, touched, step_rules, context.config.lane_shared
+    )
     if parsed.json:
         return _brief_json(composition)
     _print_brief(composition)
@@ -4741,7 +4769,7 @@ def _status_read(parsed: argparse.Namespace, context: RunContext) -> int:
     now = datetime.now(UTC)
     if parsed.json:
         return _status_json(claims, issue, ages, state.tip, now=now)
-    return _status(claims, issue, ages, context.config.storage, now=now)
+    return _status(claims, issue, ages, context.config, now=now)
 
 
 @dataclass(frozen=True)

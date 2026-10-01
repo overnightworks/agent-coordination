@@ -24,6 +24,7 @@ shared sink `specs/ref-store-cas.spec.md`'s own preamble already documents.
 | a matching claim, no conflict | — | STAT-17 | — | STAT-13 |
 | two claims share one identity | STAT-04 | STAT-05 | — | — |
 | a claim overlapping another's scope | STAT-06 | STAT-08 | — | — |
+| a matching claim, `lane_shared` configured | STAT-19 | — | — | — |
 | one holder, no extra fields | — | STAT-07, STAT-09 | STAT-11 | STAT-13 |
 | more than one holder of one path | — | — | STAT-12 | STAT-13 |
 | `storage = "state-ref"` | STAT-14 | STAT-15 | — | — |
@@ -57,6 +58,10 @@ the peer and its claim id, never the meeting paths.
 
 - [ ] [STAT-06] A claim with a live peer ends its own block with `overlaps issue <label> (<claim-id>), issue <label> (<claim-id>)`, comma-joining every peer; a claim with no peer prints no such line (see E-STAT-05).
 - [ ] [STAT-08] `aco status --json`'s `claims[]` object carries an `"overlaps"` array of `{"issue", "lane", "claim_id", "agent"}` objects, one per peer STAT-06's own line names, `[]` when none.
+
+## The lane-shared files
+
+- [ ] [STAT-19] Text `aco status` listing a claim ends with one line `lane-shared: <file>, <file>`, each file `lane_shared` names (PIN-35); none configured, no such line.
 
 ## `--json`'s claim object, beside the fields `claim-record.spec.md` owns
 
