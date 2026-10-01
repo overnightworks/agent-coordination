@@ -51,7 +51,12 @@ from .body import (
     readable_record_title,
     replace_agent_claim_block,
 )
-from .protocol import ClaimUnavailableError, MalformedStateTreeError, ObjectId
+from .protocol import (
+    ClaimUnavailableError,
+    MalformedStateTreeError,
+    ObjectId,
+    item_id_of_filename,
+)
 
 STATE_REF_CAPABILITIES: Mapping[forge.ForgeOperation, forge.Capability] = MappingProxyType(
     {
@@ -347,8 +352,13 @@ class StateRefBoard:
         self._items: dict[str, _DecodedItem] = {}
         self._malformed: dict[str, _MalformedItem] = {}
         self._holds_items = False
+        self._foreign_filenames = sorted(
+            filename for filename in item_files if item_id_of_filename(filename) is None
+        )
         for filename, content in item_files.items():
-            item_id = items.item_id_from_filename(filename)
+            item_id = item_id_of_filename(filename)
+            if item_id is None:
+                continue
             decoded = _decode_item(item_id, content, item_oids[item_id])
             if isinstance(decoded, _MalformedItem):
                 self._malformed[item_id] = decoded
@@ -373,6 +383,15 @@ class StateRefBoard:
         one existence check `aco item edit` needs, since it is also the
         repair path for a malformed item every other read refuses."""
         return number in self._by_number
+
+    def _refuse_a_foreign_entry(self) -> None:
+        """PIN-13's refusal by the lowest name while `items/` holds an entry
+        whose file name names no item (issue #565): a read of the whole store
+        cannot say what such an entry is, so leaving it out would let the
+        board lie. A write to one item never reads it, and the store carries
+        it byte for byte (CAS-61), so such a write goes past it."""
+        if self._foreign_filenames:
+            items.item_id_from_filename(self._foreign_filenames[0])
 
     def hold_well_formed(self) -> None:
         """Refuses with the lowest malformed item's own sentence and repair
@@ -540,6 +559,7 @@ class StateRefBoard:
         """Every open item, plus every unreadable one as a row the board
         names by its defect (issue #517): its state may not read, so it
         counts as open, and one such item never hides the others."""
+        self._refuse_a_foreign_entry()
         return (
             *(
                 self._issue(item_id)
@@ -583,6 +603,7 @@ class StateRefBoard:
         twin search: `item new` still runs beside a malformed item (issue
         #447), and one whose title still reads counts as open, since its
         state may not."""
+        self._refuse_a_foreign_entry()
         return (
             *(
                 (decoded.record.number, decoded.record.title)
@@ -640,6 +661,7 @@ class StateRefBoard:
         return ()
 
     def list_recently_closed_issues(self, since: datetime) -> tuple[forge.ClosedIssue, ...]:
+        self._refuse_a_foreign_entry()
         cutoff = since.astimezone(UTC)
         return tuple(
             forge.ClosedIssue(decoded.record.number, decoded.record.title)
@@ -887,7 +909,10 @@ class StateRefBoard:
         releases, instead of `close_item`'s own immediate, separately
         committed write. Call `mark_landed` with the result once that
         transition actually commits, to fold it into this instance's own
-        in-memory view -- this method itself writes nothing."""
+        in-memory view -- this method itself writes nothing. Unlike
+        `close_item`, it refuses beside an entry that names no item, before
+        any write (PIN-13; head ruling 01.10.2026, issue #565)."""
+        self._refuse_a_foreign_entry()
         return self._closing_write(number)
 
     def mark_landed(self, write: LandingWrite, oid: ObjectId) -> None:

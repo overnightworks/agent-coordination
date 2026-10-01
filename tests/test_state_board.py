@@ -38,7 +38,7 @@ from test_cli import (
     _redirect_toplevel,
     projected_board,
 )
-from test_store import _blob, _push_raw_state_tree, _raw_tree
+from test_store import _blob, _push_raw_state_tree, _raw_tree, _state_ref_listing
 
 from agent_coordination import board, checkout, forge, items, process, protocol, store
 from agent_coordination import cli as issue_claim
@@ -617,7 +617,12 @@ def _fake_oid(seed: str) -> protocol.ObjectId:
 
 
 def _item_oids(item_files: Mapping[str, bytes]) -> dict[str, protocol.ObjectId]:
-    return {items.item_id_from_filename(filename): _fake_oid(filename) for filename in item_files}
+    """Fabricated oids keyed as `store` keys `ClaimState.items`: only the
+    file names that name an item."""
+    named = {filename: protocol.item_id_of_filename(filename) for filename in item_files}
+    return {
+        item_id: _fake_oid(filename) for filename, item_id in named.items() if item_id is not None
+    }
 
 
 def _state_ref_board(
@@ -866,9 +871,31 @@ class TestMalformedItem:
 
         assert (MALFORMED_NUMBER, "Duplicate me") in adapter.open_item_titles()
 
-    def test_a_malformed_filename_fails_loud(self) -> None:
-        with pytest.raises(MalformedStateTreeError, match="not a valid item file name"):
-            _state_ref_board({"not-an-item.md": b"anything"})
+    @pytest.mark.parametrize(
+        "whole_store_read",
+        [
+            pytest.param(StateRefBoard.list_open_board_issues, id="open-board-issues"),
+            pytest.param(StateRefBoard.open_item_titles, id="open-item-titles"),
+            pytest.param(
+                lambda adapter: adapter.list_recently_closed_issues(datetime.now(UTC)),
+                id="recently-closed-issues",
+            ),
+            pytest.param(
+                lambda adapter: adapter.prepare_landing(CHILD_B_NUMBER), id="prepare-landing"
+            ),
+        ],
+    )
+    def test_a_whole_store_read_refuses_beside_an_entry_that_names_no_item(
+        self, whole_store_read: Callable[[StateRefBoard], object]
+    ) -> None:
+        """PIN-13 (issue #565): the read names the lowest such entry; the
+        store still builds, since a write to one item goes past it."""
+        adapter = _state_ref_board({**_item_files(), "zz-later": b"z", "NOTANID": b"anything"})
+
+        with pytest.raises(MalformedStateTreeError) as refused:
+            whole_store_read(adapter)
+
+        assert str(refused.value) == "items/NOTANID is not a valid item file name"
 
 
 class TestStateRefBoardMethods:
@@ -3373,12 +3400,15 @@ class TestCliStateRefForge:
                 id="item-close-of-a-child-whose-parent-is-missing",
             ),
             *_unplaced_malformed_child_cases(),
-            pytest.param(
-                ["item", "close", CHILD_B_ID],
-                None,
-                {**_item_files(), "NOTANID": b"anything"},
-                "items/NOTANID is not a valid item file name",
-                id="item-close-of-a-healthy-item-beside-an-entry-that-names-no-item",
+            *(
+                pytest.param(
+                    arguments,
+                    None,
+                    {**_item_files(), "NOTANID": b"anything"},
+                    "items/NOTANID is not a valid item file name",
+                    id=f"{arguments[0]}-beside-an-entry-that-names-no-item",
+                )
+                for arguments in (["board", "--html"], ["next"], ["rulings"])
             ),
         ],
     )
@@ -3401,8 +3431,8 @@ class TestCliStateRefForge:
         Issue #536 (ITEM-53, PIN-16): `item close` of an item whose `parent`
         no `items/` entry carries refuses PIN-16's sentence before the close
         writes, so the item stays open rather than closing and then refusing.
-        Issue #550 (PIN-13): an entry whose file name is no item refuses every
-        write beside it, because a write would rename or collapse it."""
+        Issue #565 (PIN-13): an entry whose file name is no item refuses
+        every read of the whole store."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
         remote_url = f"file://{bare_remote}"
@@ -3412,6 +3442,45 @@ class TestCliStateRefForge:
 
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
+
+    @pytest.mark.parametrize(
+        ("arguments", "piped_body"),
+        [
+            pytest.param(["item", "close", CHILD_B_ID], None, id="item-close"),
+            pytest.param(["item", "edit", CHILD_B_ID, "--size", "S"], None, id="edit-size"),
+            pytest.param(["item", "edit", CHILD_B_ID, "--whole", "one lock"], None, id="whole"),
+            pytest.param(["item", "edit", CHILD_B_ID, "--kind", "container"], None, id="kind"),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID],
+                _item_files()[f"{CHILD_B_ID}.md"].decode(),
+                id="edit-body",
+            ),
+        ],
+    )
+    def test_a_write_to_one_item_goes_past_entries_that_name_no_item(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        arguments: list[str],
+        piped_body: str | None,
+    ) -> None:
+        """Issue #565 line 1 (PIN-13, CAS-61): beside a non-id name and a
+        bare id without `.md`, a write to a healthy item lands, and both
+        entries keep their name, mode, and blob."""
+        foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
+        item_files = {**_item_files(), **foreign}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
+        foreign_paths = [f"items/{name}".encode() for name in foreign]
+        before = _state_ref_listing(bare_remote)
+
+        status = issue_claim.main(arguments)
+
+        after = _state_ref_listing(bare_remote)
+        assert (status, after != before) == (0, True)
+        assert [after[path] for path in foreign_paths] == [before[path] for path in foreign_paths]
 
     @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
