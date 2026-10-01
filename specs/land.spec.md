@@ -19,7 +19,7 @@ and `canonical_remote` (`priority_labels`, `idea_label`, `body_contract`, and
 preflight, `<actual>` that head's full sha, and `<reviewed>` the head its reviewers saw, the `--head` value lowercased: its
 full sha or a prefix of at least 7 hex digits. "Checks" is every check run GitHub reports for the head sha
 (every page of `check-runs`) plus every combined-status context
-(`commits/<sha>/status`; an external context such as SonarCloud counts);
+(`commits/<actual>/status`; an external context such as SonarCloud counts);
 "no checks" means both are empty. GitHub owns a check's own name -- no
 length this tool controls -- so each name is truncated to 40 characters
 with `…` before a name list past three entries prints only the first three,

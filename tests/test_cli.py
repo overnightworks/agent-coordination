@@ -17481,6 +17481,47 @@ def test_land_merges_only_the_head_its_reviewers_saw(
     )
 
 
+def _land_already_merged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeForge:
+    _repo, client = _land_scenario(monkeypatch, tmp_path)
+    _land_mark_already_merged(client)
+    return client
+
+
+def _land_under_the_state_ref_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeForge:
+    _write_state_ref_pin(tmp_path)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
+    client = FakeForge()
+    monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
+    return client
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(_land_already_merged, id="already-merged"),
+        pytest.param(_land_under_the_state_ref_pin, id="state-ref"),
+    ],
+)
+def test_land_refuses_a_malformed_head_as_usage_before_any_forge_call(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], FakeForge],
+) -> None:
+    """Issue #592 line 4, LANDCMD-33's order: a malformed `--head` refuses
+    at the argument parse, so neither a rerun's skipped preflight nor the
+    state-ref refusal (LANDCMD-01) answers first, and the forge is never asked."""
+    client = arrange(monkeypatch, tmp_path)
+
+    status = issue_claim.main(["land", "12", "--head", "main"])
+
+    assert (status, capsys.readouterr().err, client.requests) == (
+        2,
+        f"ERROR: {_HEAD_USAGE_REFUSAL}\n",
+        0,
+    )
+
+
 def test_land_merges_an_issueless_lane_pull_request(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

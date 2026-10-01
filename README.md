@@ -24,8 +24,8 @@ repository: GitHub today, forges next. Workspace-recovery (`register`, `run`,
 ## Install and maintain
 
 ```bash
-uv tool install git+https://github.com/overnightworks/agent-coordination.git@v3.1.0
-# or: pipx install git+https://github.com/overnightworks/agent-coordination.git@v3.1.0
+uv tool install git+https://github.com/overnightworks/agent-coordination.git@v3.2.0
+# or: pipx install git+https://github.com/overnightworks/agent-coordination.git@v3.2.0
 uv tool upgrade agent-coordination
 uv tool uninstall agent-coordination
 ```
@@ -85,7 +85,8 @@ the item's body, live claim, lane tip, and touched files -- what a builder
 starts from. The pull request names `Closes #42` and `Work-Item: #42`.
 
 `aco land <pull request>`, from a clean default-branch checkout, verifies it against GitHub
--- mergeable, checks green, body carrying Closes and Work-Item -- merges it
+-- mergeable, checks green, body carrying Closes and Work-Item; with
+`--head <sha>`, pinned to the head its reviewers saw and refused when the head moved -- merges it
 with a merge commit, or squashes it where the repository allows no merge
 commit or `merge_method` asks for it, deletes the branch, removes the lane's
 worktree (or names its branch when the worktree lives in another checkout),
