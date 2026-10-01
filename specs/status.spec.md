@@ -208,17 +208,17 @@ LANE-SHARED scripts/registry.txt
 exit 0
 ```
 
-A newer aco then lands `merge_method = "squash"` on the trunk's copy, and the
+A newer aco then lands `newer_aco_key = true` on the trunk's copy, and the
 lane fetches it:
 
 ```console
 $ aco status
 CLAIMED issue #42: Ada (builder) base=<sha> branch=ada/issue-42 claim=<claim-id> 0h 0m
   README.md
-lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key merge_method)
+lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key newer_aco_key)
 exit 0
 $ aco status --path scripts/registry.txt
 UNCLAIMED scripts/registry.txt
-lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key merge_method)
+lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key newer_aco_key)
 exit 0
 ```
