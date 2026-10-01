@@ -104,7 +104,7 @@ def trunk_lane_shared(remote: str, toplevel: Path) -> tuple[str, ...]:
     entries = _lane_shared_entries(
         configuration.parsed().lane_shared, trunk=configuration.trunk, toplevel=toplevel
     )
-    return tuple(entry.path for entry in entries if entry.names_a_file)
+    return lane_shared_files(entries)
 
 
 @dataclass(frozen=True)
@@ -140,6 +140,14 @@ def trunk_lane_shared_reading(remote: str, toplevel: Path) -> LaneSharedReading:
     except protocol.ClaimError as defect:
         return LaneSharedUnavailable(str(defect))
     return _lane_shared_entries(entries, trunk=configuration.trunk, toplevel=toplevel)
+
+
+def lane_shared_files(reading: LaneSharedReading) -> tuple[str, ...]:
+    """The files a lane-shared `reading` grants: each entry the trunk tracks
+    as a file; none when the trunk's configuration is unavailable."""
+    if isinstance(reading, LaneSharedUnavailable):
+        return ()
+    return tuple(entry.path for entry in reading if entry.names_a_file)
 
 
 def _lane_shared_entries(

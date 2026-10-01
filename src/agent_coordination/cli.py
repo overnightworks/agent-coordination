@@ -44,6 +44,7 @@ from .session import (
     RepoMeaninglessUnderStateRefError,
     RunContext,
     board_config,
+    lane_shared_files,
     trunk_lane_shared,
     trunk_lane_shared_reading,
 )
@@ -1330,7 +1331,7 @@ def _status_path(
     holders = protocol.claims_holding_path(claims, path)
     if holders:
         _print_path_holders(holders, path, storage)
-    elif path in _lane_shared_files(lane_shared):
+    elif path in lane_shared_files(lane_shared):
         print(f"LANE-SHARED {path}")
     else:
         print(f"UNCLAIMED {path}")
@@ -1353,13 +1354,6 @@ def _print_path_holders(
             "overlap: "
             + ", ".join(f"{_claim_subject(claim, storage)} ({claim.claim_id})" for claim in holders)
         )
-
-
-def _lane_shared_files(lane_shared: LaneSharedReading) -> frozenset[str]:
-    """The trunk-tracked files `lane_shared` grants; none when unavailable."""
-    if isinstance(lane_shared, LaneSharedUnavailable):
-        return frozenset()
-    return frozenset(entry.path for entry in lane_shared if entry.names_a_file)
 
 
 def _lane_shared_unavailable_line(unavailable: LaneSharedUnavailable) -> str:
