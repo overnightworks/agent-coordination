@@ -792,14 +792,29 @@ def test_file_at_revision_reads_the_committed_text_not_the_worktree_copy(
     assert checkout.file_at_revision(path, revision=revision, directory=repository) == expected
 
 
-def test_file_at_revision_refuses_a_revision_that_does_not_resolve(tmp_path: Path) -> None:
-    """Issue #575: an unresolvable revision is a git failure, never a file
-    the revision lacks -- the trunk's lane-shared list must not silently
-    empty on a broken ref."""
+def _lose_the_committed_readme_blob(repository: Path) -> None:
+    blob = _real_git(repository, "rev-parse", "main:README.md").stdout.strip()
+    (repository / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+
+
+@pytest.mark.parametrize(
+    ("revision", "break_repository"),
+    [
+        pytest.param("HEAD~1", lambda _repository: None, id="revision-does-not-resolve"),
+        pytest.param("main", _lose_the_committed_readme_blob, id="tree-lists-an-unreadable-blob"),
+    ],
+)
+def test_file_at_revision_refuses_a_file_git_cannot_read(
+    tmp_path: Path, revision: str, break_repository: Callable[[Path], None]
+) -> None:
+    """Issue #575: an unresolvable revision, or a file its tree lists but git
+    cannot show, is a git failure, never a file the revision lacks -- the
+    trunk's lane-shared list must not silently empty on a broken repository."""
     repository = _scratch_git_repository(tmp_path)
+    break_repository(repository)
 
     with pytest.raises(ClaimError):
-        checkout.file_at_revision("README.md", revision="HEAD~1", directory=repository)
+        checkout.file_at_revision("README.md", revision=revision, directory=repository)
 
 
 def _fake_trunk_log_record(*fields: str) -> str:
