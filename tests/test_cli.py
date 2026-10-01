@@ -18501,6 +18501,51 @@ def test_land_message_reads_no_trailer_from_what_git_writes_to_stderr(
     assert (status, body) == (0, f"{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n")
 
 
+def _refused_trailer_read(
+    result_or_failure: process.CapturedResult | Exception,
+) -> Callable[..., process.CapturedResult]:
+    run_git = process.run_git
+
+    def refuse_the_trailer_read(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        if arguments[0] != "interpret-trailers":
+            return run_git(arguments, directory=directory)
+        if isinstance(result_or_failure, Exception):
+            raise result_or_failure
+        return result_or_failure
+
+    return refuse_the_trailer_read
+
+
+@pytest.mark.parametrize(
+    ("result_or_failure", "sentence"),
+    [
+        pytest.param(
+            process.CapturedResult(128, b"", b"fatal: bad trailer\n"),
+            "fatal: bad trailer",
+            id="nonzero-exit",
+        ),
+        pytest.param(process.ProcessTimedOutError(), "git timed out", id="launch-failure"),
+    ],
+)
+def test_land_refuses_before_the_merge_when_git_cannot_read_the_trailers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    result_or_failure: process.CapturedResult | Exception,
+    sentence: str,
+) -> None:
+    """Issue #594: a trailer read git cannot answer refuses the landing
+    loud, before any merge, rather than guessing a join."""
+    _repo, client = _land_scenario(monkeypatch, tmp_path)
+    monkeypatch.setattr(process, "run_git", _refused_trailer_read(result_or_failure))
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    assert (status, client.merge_calls, sentence in capsys.readouterr().err) == (2, [], True)
+
+
 def test_land_release_routing_reuses_the_verified_classification_for_a_fresh_merge() -> None:
     """Issue #405 point 4: a fresh merge routes `release --merged` straight
     from the classification this same run's own preflight already verified
