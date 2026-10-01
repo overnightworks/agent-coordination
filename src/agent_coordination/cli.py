@@ -2110,14 +2110,15 @@ class _NextReport:
     each printer takes one argument instead of PLR0913's five-scalar
     ceiling (issue #348): the board's own first action (`None` when nothing
     qualifies), the unworkable rows `SKIPPED` names, the landed-but-open
-    `RECOVERY` rows, the parallel-capacity projection, and the zero-cost
-    `close:` list."""
+    `RECOVERY` rows, the parallel-capacity projection, the zero-cost
+    `close:` list, and the items waiting on the operator (issue #553)."""
 
     action: board.NextAction | None
     skipped: tuple[board.BoardItem, ...]
     recovery: tuple[board.BoardItem, ...]
     parallel: board.ParallelSet
     close: tuple[int, ...]
+    waiting: tuple[int, ...]
 
 
 def _next_json(report: _NextReport, storage: body.Storage) -> None:
@@ -2144,6 +2145,7 @@ def _next_json(report: _NextReport, storage: body.Storage) -> None:
         ],
         "parallel": _parallel_json(report.parallel, storage),
         "close": _next_json_numbers(report.close, storage),
+        "waiting_on_operator": _next_json_numbers(report.waiting, storage),
     }
     if report.action is not None:
         payload.update(_next_action_payload(report.action, storage))
@@ -2207,6 +2209,9 @@ def _next(report: _NextReport, storage: body.Storage) -> None:
     if not report.parallel.first_scope_unknown:
         lines.append(_scope_unknown_line(report.parallel, storage))
     lines.append(_close_line(report.close, storage))
+    if report.waiting:
+        named = ", ".join(board.item_label(number, storage) for number in report.waiting)
+        lines.append(f"{board.WAITING_ON_OPERATOR}: {named}")
     if report.skipped:
         skipped_lines = (
             f"{board.item_label(skipped_item.number, storage)}: "
@@ -4808,7 +4813,8 @@ def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
     projected = observed.board
     action = board.next_action(projected)
     close = board.zero_cost_closes(projected)
-    already_named = {_next_action_container_number(action), *close}
+    waiting = board.waiting_on_operator(projected)
+    already_named = {_next_action_container_number(action), *close, *waiting}
     skipped = tuple(item for item in _unworkable(projected) if item.number not in already_named)
     report = _NextReport(
         action=action,
@@ -4816,6 +4822,7 @@ def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
         recovery=projected.recovery,
         parallel=board.parallel_set(projected, observed.live_claims, action),
         close=close,
+        waiting=waiting,
     )
     if as_json:
         _next_json(report, storage)
