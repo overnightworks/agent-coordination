@@ -6822,19 +6822,48 @@ def _land_trunk_trailer(classification: board.Classification) -> str:
     return f"No-Item: {classification.kind.value}"
 
 
+# A line git's own trailer parsing reads as `Token: value`.
+_GIT_TRAILER_LINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*: \S.*")
+_BLANK_LINE_SEPARATOR = re.compile(r"\n[ \t]*\n")
+
+
+def _without_classification_lines(paragraph: str) -> str:
+    return "\n".join(
+        line
+        for line in paragraph.split("\n")
+        if not board.CLASSIFICATION_LINE_PATTERN.fullmatch(line)
+    )
+
+
+def _ends_in_trailer_paragraph(message: str) -> bool:
+    last_paragraph = _BLANK_LINE_SEPARATOR.split(message)[-1]
+    return all(_GIT_TRAILER_LINE.fullmatch(line) for line in last_paragraph.split("\n"))
+
+
 def _land_merge_body(body: str, classification: board.Classification) -> str:
     """The merge commit message `aco land` composes itself (issue #405,
     Befund 42 on #310): the pull request's own body with its classification
     line removed, then that classification, in the trunk's own trailer
-    grammar, as the message's own final paragraph -- so the trailer a later
-    trunk walk reads through git's own trailer parsing is never wherever
-    the pull request body happened to put it, always the message's own last
-    block."""
-    without_classification = board.CLASSIFICATION_LINE_PATTERN.sub("", body).strip()
+    grammar, as the message's own last line -- so the trailer a later trunk
+    walk reads through git's own trailer parsing is never wherever the pull
+    request body happened to put it. Git reads trailers from the last
+    paragraph only, so a body already ending in a trailer block (a
+    `Co-Authored-By:` line) takes the classification into that block
+    rather than behind a blank line that would orphan it (issue #594). A
+    paragraph the removal empties goes with it, leaving no blank-line run
+    behind."""
+    paragraphs = body.replace("\r\n", "\n").split("\n\n")
+    remaining = [
+        kept
+        for paragraph in paragraphs
+        if (kept := _without_classification_lines(paragraph)) or not paragraph
+    ]
+    without_classification = "\n\n".join(remaining).strip()
     trailer = _land_trunk_trailer(classification)
     if not without_classification:
         return f"{trailer}\n"
-    return f"{without_classification}\n\n{trailer}\n"
+    separator = "\n" if _ends_in_trailer_paragraph(without_classification) else "\n\n"
+    return f"{without_classification}{separator}{trailer}\n"
 
 
 def _land_merge_method(

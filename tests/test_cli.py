@@ -18321,17 +18321,69 @@ def test_land_trunk_trailer_renders_the_trunk_grammar_for_both_classifications()
     assert issue_claim._land_trunk_trailer(no_item) == "No-Item: docs"
 
 
-def test_land_merge_body_composes_the_trailer_as_its_own_last_paragraph() -> None:
-    """Issue #405, Befund 42 on #310: the classification line is removed
-    from wherever the body put it and reappears as the message's own final
-    paragraph; a body with nothing left over is the trailer alone."""
-    no_item = board.NoItemClassification(board.NoItemKind.FIX)
+_CO_AUTHOR = "Co-Authored-By: Ada <ada@example.com>"
+_WORK_ITEM_TRAILER = f"Work-Item: #{WORK_ITEM_ISSUE}"
+_CLOSES = f"Closes #{WORK_ITEM_ISSUE}"
 
-    with_prose = issue_claim._land_merge_body("Tidies the README.\n\nNo-Item: fix\n", no_item)
-    assert with_prose == "Tidies the README.\n\nNo-Item: fix\n"
 
-    bare = issue_claim._land_merge_body("No-Item: fix\n", no_item)
-    assert bare == "No-Item: fix\n"
+@pytest.mark.parametrize(
+    ("method", "pull_request_body", "message", "trailers"),
+    [
+        pytest.param(
+            board.MergeMethod.MERGE,
+            f"{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n{_CO_AUTHOR}",
+            f"{_CLOSES}\n\n{_CO_AUTHOR}\n{_WORK_ITEM_TRAILER}\n",
+            (_CO_AUTHOR, _WORK_ITEM_TRAILER),
+            id="merge-mixed-trailer-block",
+        ),
+        pytest.param(
+            board.MergeMethod.SQUASH,
+            f"{_CLOSES}\r\n\r\n{_WORK_ITEM_TRAILER}\r\n{_CO_AUTHOR}",
+            f"{_CLOSES}\n\n{_CO_AUTHOR}\n{_WORK_ITEM_TRAILER}\n",
+            (_CO_AUTHOR, _WORK_ITEM_TRAILER),
+            id="squash-mixed-trailer-block",
+        ),
+        pytest.param(
+            board.MergeMethod.MERGE,
+            f"{_WORK_ITEM_TRAILER}\n\n{_CLOSES}",
+            f"{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n",
+            (_WORK_ITEM_TRAILER,),
+            id="prose-ending",
+        ),
+        pytest.param(
+            board.MergeMethod.MERGE,
+            f"Fixes it.\n\n{_WORK_ITEM_TRAILER}\n\n{_CLOSES}",
+            f"Fixes it.\n\n{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n",
+            (_WORK_ITEM_TRAILER,),
+            id="classification-mid-body",
+        ),
+    ],
+)
+def test_land_message_keeps_the_classification_inside_gits_trailer_block(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    method: board.MergeMethod,
+    pull_request_body: str,
+    message: str,
+    trailers: tuple[str, ...],
+) -> None:
+    """Issue #594 lines 1, 2, 4 and 5 (and #405 Befund 42 on #310): the
+    classification leaves wherever the body put it, without a blank-line
+    run behind, and becomes the message's last line -- inside a trailer
+    block the body already ends in, else a paragraph of its own -- so
+    `git interpret-trailers --parse` lists every trailer and the delegated
+    release's own trailer check accepts the landing, merged or squashed."""
+    repo, client = _land_scenario(monkeypatch, tmp_path, body=pull_request_body)
+    client.allowed_methods = frozenset({method})
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    [(_number, _head_sha, _method, _title, body)] = client.merge_calls
+    landed_message = tmp_path / "landed-message"
+    landed_message.write_text(_real_git(repo, "log", "-1", "--format=%B", "main").stdout)
+    parsed = _real_git(repo, "interpret-trailers", "--parse", str(landed_message)).stdout
+    assert (status, body, tuple(parsed.splitlines())) == (0, message, trailers)
+    assert client.closed_issues == {WORK_ITEM_ISSUE}
 
 
 def test_land_release_routing_reuses_the_verified_classification_for_a_fresh_merge() -> None:
