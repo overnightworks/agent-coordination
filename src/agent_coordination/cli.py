@@ -2927,18 +2927,34 @@ def _read_body_check_input() -> str:
         ) from error
 
 
-def _stdin_is_a_regular_file() -> bool:
-    """Whether a file a shell redirected (`< body.md`) stands on stdin --
-    told from the descriptor's type, never by reading, since an idle pipe or
-    socket a harness holds open would block a read forever. Only a regular
-    file counts: an agent harness hands a command a pipe or a socket even
-    when it redirected nothing, so a pipe, socket, terminal, `/dev/null` or a
-    closed stdin passes, and a body piped in (`cat body.md |`) goes unread."""
+def _stdin_file_mode() -> int | None:
+    """The type bits of the descriptor on stdin, told without reading, since
+    an idle pipe or socket a harness holds open would block a read forever;
+    `None` for a closed stdin."""
     try:
-        mode = os.fstat(sys.stdin.fileno()).st_mode
+        return os.fstat(sys.stdin.fileno()).st_mode
     except (AttributeError, OSError, ValueError):
-        return False
-    return stat.S_ISREG(mode)
+        return None
+
+
+def _stdin_is_a_regular_file() -> bool:
+    """Whether a file a shell redirected (`< body.md`) stands on stdin. Only
+    a regular file counts: an agent harness hands a command a pipe or a
+    socket even when it redirected nothing, so a pipe, socket, terminal,
+    `/dev/null` or a closed stdin passes, and a body piped in
+    (`cat body.md |`) goes unread."""
+    mode = _stdin_file_mode()
+    return mode is not None and stat.S_ISREG(mode)
+
+
+def _stdin_carries_a_body() -> bool:
+    """Whether stdin carries a body a command reads (head ruling of
+    01.10.2026 on issue #555): a redirected file (`< body.md`) or a pipe
+    (`printf ... |`). A socket -- what Claude Code's Bash tool hands a
+    command -- a terminal, `/dev/null` or a closed stdin carry none, so the
+    command never waits on an idle harness stdin."""
+    mode = _stdin_file_mode()
+    return mode is not None and (stat.S_ISREG(mode) or stat.S_ISFIFO(mode))
 
 
 class BodyCheckReason(StrEnum):
@@ -3294,9 +3310,9 @@ class _ItemBodyInvalidError(protocol.ClaimError):
 
 
 def _read_item_new_input() -> str:
-    """`item new`'s piped body, or `""` when stdin is a terminal: a person
-    who typed the command piped nothing, and a read would wait for one."""
-    return "" if sys.stdin.isatty() else _read_body_check_input()
+    """`item new`'s piped body under either storage, or `""` when stdin
+    carries none (`_stdin_carries_a_body`)."""
+    return _read_body_check_input() if _stdin_carries_a_body() else ""
 
 
 def _item_new_block_fields(parsed: argparse.Namespace) -> dict[str, object]:

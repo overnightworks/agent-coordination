@@ -22,13 +22,22 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TextIO
 
 import pytest
 from cli_fixtures import count_context_reads, fresh_observation
-from test_cli import FakeForge, _arguments_bash_hands_aco, _redirect_toplevel, projected_board
+from test_cli import (
+    FakeForge,
+    _arguments_bash_hands_aco,
+    _empty_harness_socket_on_stdin,
+    _piping,
+    _redirect_toplevel,
+    projected_board,
+)
 from test_store import _blob, _push_raw_state_tree, _raw_tree
 
 from agent_coordination import board, checkout, forge, items, process, protocol, store
@@ -2890,10 +2899,10 @@ class TestCliStateRefForge:
         assert locate_agent_claim_block(stored).data["whole"] == reason
 
     @pytest.mark.parametrize(
-        ("piped", "flags", "err", "prefix", "block"),
+        ("stdin_source", "flags", "err", "prefix", "block"),
         [
             pytest.param(
-                "Ship the importer.\n",
+                _piping("Ship the importer.\n"),
                 ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged.", "--size", "S"),
                 "",
                 "Ship the importer.\n\n```agent-claim\n",
@@ -2901,8 +2910,10 @@ class TestCliStateRefForge:
                 id="prose_above_a_block_built_from_the_flags",
             ),
             pytest.param(
-                "Ship the importer.\n\n```agent-claim\nversion = 1\n"
-                'now = "Ready."\nnext = ""\ndone_when = ""\n```\n',
+                _piping(
+                    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+                    'now = "Ready."\nnext = ""\ndone_when = ""\n```\n'
+                ),
                 ("--now", "Ready.", "--size", "S"),
                 "{item} misses Next; aco item edit {item} fills it\n"
                 "{item} misses Done when; aco item edit {item} fills it\n",
@@ -2911,7 +2922,7 @@ class TestCliStateRefForge:
                 id="a_piped_block_matching_the_flags_kept_and_its_gaps_named",
             ),
             pytest.param(
-                "",
+                _piping(""),
                 (),
                 "{item} misses Now; aco item edit {item} fills it\n"
                 "{item} misses Next; aco item edit {item} fills it\n"
@@ -2919,6 +2930,16 @@ class TestCliStateRefForge:
                 "```agent-claim\n",
                 {"now": "", "next": "", "done_when": ""},
                 id="nothing_piped_writes_the_skeleton_and_names_each_gap",
+            ),
+            pytest.param(
+                _empty_harness_socket_on_stdin,
+                (),
+                "{item} misses Now; aco item edit {item} fills it\n"
+                "{item} misses Next; aco item edit {item} fills it\n"
+                "{item} misses Done when; aco item edit {item} fills it\n",
+                "```agent-claim\n",
+                {"now": "", "next": "", "done_when": ""},
+                id="a_harness_socket_is_never_read_and_the_skeleton_is_written",
             ),
         ],
     )
@@ -2929,7 +2950,7 @@ class TestCliStateRefForge:
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
-        piped: str,
+        stdin_source: Callable[[Path], AbstractContextManager[TextIO]],
         flags: tuple[str, ...],
         err: str,
         prefix: str,
@@ -2938,11 +2959,14 @@ class TestCliStateRefForge:
         """Issue #555 lines 1-3: under state-ref, `item new` stores the
         piped body as github does -- prose above a block its flags build,
         or a piped block the flags agree with -- never dropping it; every
-        section left empty is named on stderr, one line each."""
+        section left empty is named on stderr, one line each. Stdin carries
+        a body only as a file or a pipe (head ruling 01.10.2026): the socket
+        an agent harness hands over is never read, so the command returns."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
-        monkeypatch.setattr(sys, "stdin", io.StringIO(piped))
 
-        status = issue_claim.main(["item", "new", "--title", "Ship the importer", *flags])
+        with stdin_source(tmp_path) as stdin:
+            monkeypatch.setattr(sys, "stdin", stdin)
+            status = issue_claim.main(["item", "new", "--title", "Ship the importer", *flags])
 
         captured = capsys.readouterr()
         printed = captured.out.strip()
@@ -2965,10 +2989,11 @@ class TestCliStateRefForge:
         """Issue #555 line 1: a flag naming another value than the piped
         block refuses, naming both, and writes nothing."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
-        monkeypatch.setattr(sys, "stdin", io.StringIO(_github_body(_CHILD_A_PROJECTION)))
         command = ["item", "new", "--title", "Ship the importer", "--now", "Elsewhere."]
 
-        status = issue_claim.main(command)
+        with _piping(_github_body(_CHILD_A_PROJECTION))(tmp_path) as stdin:
+            monkeypatch.setattr(sys, "stdin", stdin)
+            status = issue_claim.main(command)
 
         assert (status, capsys.readouterr().err) == (
             2,

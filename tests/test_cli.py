@@ -19592,18 +19592,94 @@ def test_main_refuses_a_malformed_item_reference_before_ever_dispatching(
 _ITEM_NEW_BODY = complete_contract("Ship it.")
 
 
-def _item_new_github_client(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, piped_body: str
-) -> FakeForge:
+@contextlib.contextmanager
+def _devnull_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    with Path(os.devnull).open() as stdin:
+        yield stdin
+
+
+@contextlib.contextmanager
+def _body_file_on_stdin(tmp_path: Path) -> Iterator[TextIO]:
+    body_file = tmp_path / "body.md"
+    body_file.write_text(_ITEM_NEW_BODY)
+    with body_file.open() as stdin:
+        yield stdin
+
+
+def _read_end_of_a_pipe_carrying(text: str) -> TextIO:
+    """`printf ... | aco ...`: the read end of a pipe whose writer already
+    wrote `text` -- a scenario body, well inside a pipe's buffer -- and
+    closed."""
+    read_end, write_end = os.pipe()
+    with os.fdopen(write_end, "w") as writer:
+        writer.write(text)
+    return os.fdopen(read_end)
+
+
+@pytest.fixture
+def pipe_onto_stdin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], None]]:
+    """Puts a text on stdin as a pipe would; each pipe closes at teardown."""
+    with contextlib.ExitStack() as readers:
+
+        def pipe(text: str) -> None:
+            reader = readers.enter_context(_read_end_of_a_pipe_carrying(text))
+            monkeypatch.setattr(sys, "stdin", reader)
+
+        yield pipe
+
+
+def _piping(text: str) -> Callable[[Path], contextlib.AbstractContextManager[TextIO]]:
+    """A stdin source piping `text`, for a family whose cases each set their
+    own stdin."""
+
+    @contextlib.contextmanager
+    def piped(_tmp_path: Path) -> Iterator[TextIO]:
+        with _read_end_of_a_pipe_carrying(text) as stdin:
+            yield stdin
+
+    return piped
+
+
+_piped_body_on_stdin = _piping(_ITEM_NEW_BODY)
+
+
+@contextlib.contextmanager
+def _terminal_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    """A stdin a person types into, holding a line nobody piped."""
+    controller, terminal = os.openpty()
+    with os.fdopen(controller, "w") as typist, os.fdopen(terminal) as stdin:
+        typist.write("never read\n")
+        typist.flush()
+        yield stdin
+
+
+@contextlib.contextmanager
+def _closed_stdin(_tmp_path: Path) -> Iterator[None]:
+    """`aco ... <&-`: Python leaves `sys.stdin` as `None`."""
+    yield None
+
+
+@contextlib.contextmanager
+def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
+    """The stdin an agent harness such as Claude Code's Bash tool hands a
+    command: one end of a socket that never delivers a body."""
+    harness_end, other_end = socket.socketpair()
+    # The other end stays open, so a read would wait forever; the timeout
+    # turns a command that reads this stdin into a failure, not a hang.
+    harness_end.settimeout(1)
+    with harness_end, other_end, harness_end.makefile("r") as stdin:
+        yield stdin
+
+
+def _item_new_github_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeForge:
     """A `storage = "github"` checkout whose forge holds container `#79`
-    and a plain open issue `#951` titled `Ship it now`, with `piped_body` on
-    stdin -- the arrangement every `item new` GitHub scenario shares. An
+    and a plain open issue `#951` titled `Ship it now` -- the arrangement
+    every `item new` GitHub scenario shares; each pipes its own body. An
     issue it creates joins the open issues a later run reads."""
     look_alike = board_issue(951, "Ship it now", complete_contract("Ship it."))
     client = _configured_board_client(monkeypatch, tmp_path)
     client.board_issues = (_cut_container_issue(MINIMAL_BLOCK_TOML), look_alike)
     monkeypatch.setattr(client, "list_open_board_issues", lambda: client.board_issues)
-    monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body))
     return client
 
 
@@ -19650,6 +19726,7 @@ def test_item_new_creates_a_github_issue_from_the_piped_body(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    pipe_onto_stdin: Callable[[str], None],
     arguments: list[str],
     out: str,
     created: list[tuple[str, str, body.ItemKind]],
@@ -19659,19 +19736,13 @@ def test_item_new_creates_a_github_issue_from_the_piped_body(
     issue of the organization's type for `--kind`, its body the piped one
     (plus `--scope`), recorded under `--parent` when given, and prints the
     issue number the way the state-ref path prints its id."""
-    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    client = _item_new_github_client(monkeypatch, tmp_path)
+    pipe_onto_stdin(_ITEM_NEW_BODY)
 
     status = issue_claim.main(arguments)
 
     assert (status, capsys.readouterr().out) == (0, out)
     assert (client.created_issues, client.linked_children) == (created, linked)
-
-
-class _Terminal(io.StringIO):
-    """A stdin a person types into: whatever it would hold, nothing was piped."""
-
-    def isatty(self) -> bool:
-        return True
 
 
 _PROSE_ABOVE_BUILT_BLOCK = (
@@ -19686,22 +19757,22 @@ _PIPED_BLOCK_AS_TYPED = (
 
 
 @pytest.mark.parametrize(
-    ("stdin", "flags", "stored"),
+    ("stdin_source", "flags", "stored"),
     [
         pytest.param(
-            io.StringIO("Ship the importer.\n"),
+            _piping("Ship the importer.\n"),
             ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged.", "--size", "S"),
             ("Write the docs", _PROSE_ABOVE_BUILT_BLOCK, body.ItemKind.TASK),
             id="prose_above_a_block_built_from_the_flags",
         ),
         pytest.param(
-            io.StringIO(_PIPED_BLOCK_AS_TYPED),
+            _piping(_PIPED_BLOCK_AS_TYPED),
             ("--now", "Ready.", "--size", "S"),
             ("Write the docs", _PIPED_BLOCK_AS_TYPED, body.ItemKind.TASK),
             id="a_piped_block_matching_the_flags_kept_byte_for_byte",
         ),
         pytest.param(
-            io.StringIO(
+            _piping(
                 "Ship the importer.\n\n```agent-claim\nversion = 1\n# typed by hand\n"
                 'now   = "Ready."\nnext = "Build it."\ndone_when = "Merged."\n```\n'
             ),
@@ -19710,7 +19781,7 @@ _PIPED_BLOCK_AS_TYPED = (
             id="a_piped_block_a_flag_completes_stored_in_canonical_rendering",
         ),
         pytest.param(
-            _Terminal("never read\n"),
+            _terminal_on_stdin,
             ("--kind", "container", "--now", "Ready.", "--next", "Cut it.", "--done-when", "Done."),
             (
                 "Write the docs",
@@ -19725,7 +19796,7 @@ _PIPED_BLOCK_AS_TYPED = (
 def test_item_new_on_github_builds_the_block_its_piped_body_lacks(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    stdin: TextIO,
+    stdin_source: Callable[[Path], contextlib.AbstractContextManager[TextIO]],
     flags: tuple[str, ...],
     stored: tuple[str, str, body.ItemKind],
 ) -> None:
@@ -19733,10 +19804,11 @@ def test_item_new_on_github_builds_the_block_its_piped_body_lacks(
     the piped prose, keeps a piped block the flags agree with byte for byte,
     stores one a flag completes in its canonical rendering (ITEM-62), and
     reads nothing from a terminal."""
-    client = _item_new_github_client(monkeypatch, tmp_path, "")
-    monkeypatch.setattr(sys, "stdin", stdin)
+    client = _item_new_github_client(monkeypatch, tmp_path)
 
-    status = issue_claim.main(["item", "new", "--title", "Write the docs", *flags])
+    with stdin_source(tmp_path) as stdin:
+        monkeypatch.setattr(sys, "stdin", stdin)
+        status = issue_claim.main(["item", "new", "--title", "Write the docs", *flags])
 
     assert (status, client.created_issues) == (0, [stored])
 
@@ -19768,6 +19840,7 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    pipe_onto_stdin: Callable[[str], None],
     retype_dropped: bool,
     status: int,
     out: str,
@@ -19780,7 +19853,8 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
     Container and names that on stderr, instead of refusing `is not a
     container`; stdout still carries only the created issue. A retype the
     forge drops refuses exit 2 before anything is created (ITEM-46)."""
-    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    client = _item_new_github_client(monkeypatch, tmp_path)
+    pipe_onto_stdin(_ITEM_NEW_BODY)
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
     )
@@ -19792,46 +19866,6 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
     captured = capsys.readouterr()
     assert (exit_code, captured.out, captured.err) == (status, out, err)
     assert (client.retyped_items, client.created_issues) == (retyped, created)
-
-
-@contextlib.contextmanager
-def _devnull_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
-    with Path(os.devnull).open() as stdin:
-        yield stdin
-
-
-@contextlib.contextmanager
-def _body_file_on_stdin(tmp_path: Path) -> Iterator[TextIO]:
-    body_file = tmp_path / "body.md"
-    body_file.write_text(_ITEM_NEW_BODY)
-    with body_file.open() as stdin:
-        yield stdin
-
-
-@contextlib.contextmanager
-def _piped_body_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
-    """`cat body.md | aco ...`: the read end of a pipe whose writer already
-    wrote the body and closed."""
-    read_end, write_end = os.pipe()
-    with os.fdopen(write_end, "w") as writer:
-        writer.write(_ITEM_NEW_BODY)
-    with os.fdopen(read_end) as stdin:
-        yield stdin
-
-
-@contextlib.contextmanager
-def _closed_stdin(_tmp_path: Path) -> Iterator[None]:
-    """`aco ... <&-`: Python leaves `sys.stdin` as `None`."""
-    yield None
-
-
-@contextlib.contextmanager
-def _empty_harness_socket_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
-    """The stdin an agent harness such as Claude Code's Bash tool hands a
-    command: one end of a socket that never delivers a body."""
-    harness_end, other_end = socket.socketpair()
-    with harness_end, other_end, harness_end.makefile("r") as stdin:
-        yield stdin
 
 
 @pytest.mark.parametrize(
@@ -19974,7 +20008,7 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     while a pipe, the empty socket an agent harness hands as stdin, or a
     closed stdin passes (ITEM-51); `--json` reports the `item` label, its
     `number` and new `kind`. Each case sets its own stdin."""
-    client = _item_new_github_client(monkeypatch, tmp_path, "")
+    client = _item_new_github_client(monkeypatch, tmp_path)
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
     )
@@ -20082,6 +20116,7 @@ def test_item_new_on_github_refuses_before_creating_anything(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    pipe_onto_stdin: Callable[[str], None],
     piped_body: str,
     flags: tuple[str, ...],
     closed: tuple[forge.ClosedIssue, ...],
@@ -20092,7 +20127,8 @@ def test_item_new_on_github_refuses_before_creating_anything(
     included), a possible twin, a parent that is no open container,
     `--origin`, or a blank `--title` refuses with exit 2 and creates no
     issue at all."""
-    client = _item_new_github_client(monkeypatch, tmp_path, piped_body)
+    client = _item_new_github_client(monkeypatch, tmp_path)
+    pipe_onto_stdin(piped_body)
     client.recently_closed_issues = closed
 
     status = issue_claim.main(["item", "new", *flags])
@@ -20132,6 +20168,7 @@ def test_item_new_json_reports_a_created_issue_it_could_not_finish(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    pipe_onto_stdin: Callable[[str], None],
     failure: str,
     flags: tuple[str, ...],
     failed: str,
@@ -20141,7 +20178,8 @@ def test_item_new_json_reports_a_created_issue_it_could_not_finish(
     sub-issue relation or an issue type GitHub dropped reports
     `partial_write` naming it and what is left, never a plain refusal that
     would read as "nothing created" nor a success."""
-    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    client = _item_new_github_client(monkeypatch, tmp_path)
+    pipe_onto_stdin(_ITEM_NEW_BODY)
     setattr(client, failure, True)
     command = ["item", "new", "--title", "Write the docs", *flags, "--json"]
 
@@ -20168,13 +20206,15 @@ def test_item_new_rerun_on_github_meets_its_own_issue_as_a_twin(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    pipe_onto_stdin: Callable[[str], None],
     failure: str | None,
 ) -> None:
     """Issue #444 (ITEM-35): nothing guesses whether an open issue is an
     earlier run's own. The same command again meets the issue it created in
     the twin search and creates nothing; `--not-a-twin` creates a second
     one anyway, as ruled."""
-    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    client = _item_new_github_client(monkeypatch, tmp_path)
+    pipe_onto_stdin(_ITEM_NEW_BODY)
     if failure is not None:
         setattr(client, failure, True)
     command = ["item", "new", "--title", "Write the docs", "--parent", "79"]
@@ -20182,7 +20222,7 @@ def test_item_new_rerun_on_github_meets_its_own_issue_as_a_twin(
     if failure is not None:
         setattr(client, failure, False)
     capsys.readouterr()
-    monkeypatch.setattr(sys, "stdin", io.StringIO(_ITEM_NEW_BODY))
+    pipe_onto_stdin(_ITEM_NEW_BODY)
 
     refused = issue_claim.main(command)
 
@@ -20191,7 +20231,7 @@ def test_item_new_rerun_on_github_meets_its_own_issue_as_a_twin(
         "ERROR: possible twin #900; pass --not-a-twin\n",
         1,
     )
-    monkeypatch.setattr(sys, "stdin", io.StringIO(_ITEM_NEW_BODY))
+    pipe_onto_stdin(_ITEM_NEW_BODY)
     assert issue_claim.main([*command, "--not-a-twin"]) == 0
     assert len(client.created_issues) == 2
 
@@ -20584,9 +20624,10 @@ def test_item_refuses_through_the_shared_precondition_failed_envelope(
 
 
 def _github_item_new(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pipe: Callable[[str], None]
 ) -> tuple[FakeForge, list[str]]:
-    client = _item_new_github_client(monkeypatch, tmp_path, _ITEM_NEW_BODY)
+    client = _item_new_github_client(monkeypatch, tmp_path)
+    pipe(_ITEM_NEW_BODY)
     return client, ["item", "new", "--title", "Write the docs", "--kind", "feature"]
 
 
@@ -20600,7 +20641,7 @@ def _state_ref_item_client(tmp_path: Path) -> FakeForge:
 
 
 def _state_ref_item_new(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pipe: Callable[[str], None]
 ) -> tuple[FakeForge, list[str]]:
     client = _state_ref_item_client(tmp_path)
     monkeypatch.setattr(client, "compose_item", lambda **_kwargs: None, raising=False)
@@ -20608,12 +20649,11 @@ def _state_ref_item_new(
         client, "create_item", lambda _write: items.format_item_id(43), raising=False
     )
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
-    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
     return client, ["item", "new", "--title", "Fresh Item"]
 
 
 def _state_ref_item_edit(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pipe: Callable[[str], None]
 ) -> tuple[FakeForge, list[str]]:
     client = _state_ref_item_client(tmp_path)
     monkeypatch.setattr(client, "holds", lambda _number: True, raising=False)
@@ -20623,7 +20663,7 @@ def _state_ref_item_edit(
 
 
 def _state_ref_item_close(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pipe: Callable[[str], None]
 ) -> tuple[FakeForge, list[str]]:
     client = _state_ref_item_client(tmp_path)
     monkeypatch.setattr(client, "close_item", lambda _number: "2026-09-16T12:00:00Z", raising=False)
@@ -20643,12 +20683,15 @@ def _state_ref_item_close(
 def test_an_item_command_works_through_the_one_forge_its_run_context_builds(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    arrange: Callable[[pytest.MonkeyPatch, Path], tuple[FakeForge, list[str]]],
+    pipe_onto_stdin: Callable[[str], None],
+    arrange: Callable[
+        [pytest.MonkeyPatch, Path, Callable[[str], None]], tuple[FakeForge, list[str]]
+    ],
 ) -> None:
     """Issue #457 proof 7: `_build_forge`, asked through `RunContext.forge`,
     is the one place a run's forge is constructed -- an item command never
     builds a `GitHubForge` or a state-ref board of its own beside it."""
-    client, argv = arrange(monkeypatch, tmp_path)
+    client, argv = arrange(monkeypatch, tmp_path, pipe_onto_stdin)
     built: list[RunContext] = []
 
     def build_forge(context: RunContext) -> forge.ForgeReader:
