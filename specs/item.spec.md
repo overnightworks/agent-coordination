@@ -46,8 +46,8 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | state-ref pin, `--origin` given | ITEM-19 | — | — | — |
 | `--origin` malformed | ITEM-06 | — | — | — |
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
-| `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
-| `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
+| `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22, ITEM-49, ITEM-51 | — |
+| `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24, ITEM-49, ITEM-51 | — |
 | prose piped without a block, or nothing piped, either storage | ITEM-58, ITEM-60 | — | — | — |
 | a piped block a flag agrees with or contradicts, either storage | ITEM-59, ITEM-62 | — | — | — |
 | state-ref pin, a stored body leaving a section empty | ITEM-61 | — | — | — |
@@ -89,7 +89,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 ## The body `item new` stores (issue #555)
 
-- [ ] [ITEM-58] Under either storage, prose piped without a block is stored above a block built from the flags; `--now`/`--next`/`--done-when` fill their keys, a key no flag names stays `""` (see E-ITEM-16).
+- [ ] [ITEM-58] Either storage keeps prose piped without a block byte for byte, CRLF and trailing blanks too, above a block the flags build in its line ending; a key no flag names stays `""` (see E-ITEM-16).
 - [ ] [ITEM-59] A piped body keeps its prose and fence lines byte for byte; a flag naming another value refuses `--<flag> <value> contradicts the piped block's <key> = <value>`, exit `2` (see E-ITEM-16).
 - [ ] [ITEM-60] Under either storage `item new` reads a body from a file or pipe on stdin, never dropping it; a socket, terminal, `/dev/null` or closed stdin is never read.
 - [ ] [ITEM-61] Under `storage = "state-ref"`, each section the stored body leaves empty prints `<item-id> misses <Section>; aco item edit <item-id> fills it` on stderr, one line each (see E-ITEM-01).
@@ -142,9 +142,15 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 - [ ] [ITEM-24] `item edit --whole REASON` patches only the top-level `whole`, reads no stdin, works under both storages, prints `EDITED #<n> whole=<reason>` (`--json`: `reason: "edited"`, `item`, `whole`).
 - [ ] [ITEM-47] `item edit --kind task|container` sets only an open item's type (else `#<n> is not an open item`), both storages; prints `EDITED #<n> kind=<kind>` (`--json`: `item`, `number`, `kind`) (see E-ITEM-13).
 - [ ] [ITEM-48] `--kind task` on an item with an open child refuses `#<n> has an open child; a container with open children stays a container`, exit `2`, before any write (see E-ITEM-13).
-- [ ] [ITEM-49] Only a regular file on `--kind`'s stdin refuses `item edit --kind reads no stdin; drop the redirect`, exit `2`, before any write.
+- [ ] [ITEM-49] A file or pipe on the stdin of `--kind`, `--size` or `--whole` refuses `item edit --<flag> reads no stdin; drop the redirect`, exit `2`, before any write.
+
+  ```console
+  $ printf 'body\n' | aco item edit 484 --size S
+  2> ERROR: item edit --size reads no stdin; drop the redirect
+  exit 2
+  ```
 - [ ] [ITEM-50] `--size`, `--whole` and `--kind` exclude one another: a second one refuses at argparse, `argument <second>: not allowed with argument <first>`, exit `2`, before any write.
-- [ ] [ITEM-51] A pipe, socket, terminal, `/dev/null` or closed stdin on `--kind` passes, as agent harnesses hand a pipe or socket; a piped body goes unread, unrefused.
+- [ ] [ITEM-51] A socket, terminal, `/dev/null` or closed stdin on `--kind`, `--size` or `--whole` passes unread, as an agent harness hands a socket when nothing was piped.
 
 ## `item close`
 

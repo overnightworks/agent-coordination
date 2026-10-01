@@ -20022,11 +20022,11 @@ def _body_file_on_stdin(tmp_path: Path) -> Iterator[TextIO]:
 def _read_end_of_a_pipe_carrying(text: str) -> TextIO:
     """`printf ... | aco ...`: the read end of a pipe whose writer already
     wrote `text` -- a scenario body, well inside a pipe's buffer -- and
-    closed."""
+    closed. Read as `sys.stdin` reads a pipe: line endings untranslated."""
     read_end, write_end = os.pipe()
     with os.fdopen(write_end, "w") as writer:
         writer.write(text)
-    return os.fdopen(read_end)
+    return os.fdopen(read_end, newline="")
 
 
 @pytest.fixture
@@ -20297,17 +20297,6 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
         ),
         pytest.param(
             "484",
-            (),
-            _empty_harness_socket_on_stdin,
-            False,
-            0,
-            "EDITED #484 kind=container\n",
-            "",
-            [(484, body.ItemKind.CONTAINER)],
-            id="empty_harness_socket_retypes",
-        ),
-        pytest.param(
-            "484",
             ("--json",),
             _devnull_on_stdin,
             False,
@@ -20339,39 +20328,6 @@ def test_item_new_retypes_a_task_parent_to_container_or_refuses(
             "ERROR: #485 is not an open item\n",
             [],
             id="no_open_item",
-        ),
-        pytest.param(
-            "484",
-            (),
-            _body_file_on_stdin,
-            False,
-            2,
-            "",
-            "ERROR: item edit --kind reads no stdin; drop the redirect\n",
-            [],
-            id="body_file_refuses",
-        ),
-        pytest.param(
-            "484",
-            (),
-            _piped_body_on_stdin,
-            False,
-            0,
-            "EDITED #484 kind=container\n",
-            "",
-            [(484, body.ItemKind.CONTAINER)],
-            id="piped_body_passes_unread",
-        ),
-        pytest.param(
-            "484",
-            (),
-            _closed_stdin,
-            False,
-            0,
-            "EDITED #484 kind=container\n",
-            "",
-            [(484, body.ItemKind.CONTAINER)],
-            id="closed_stdin_retypes",
         ),
         pytest.param(
             "484",
@@ -20415,12 +20371,11 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     """Issue #503 (ITEM-47): `item edit --kind` runs under
     `storage = "github"` too, through the same forge retype `item new
     --parent` uses, so `next`'s nested-container repair runs under both
-    storages; a retype the forge drops, an item that is not open, a body
-    file redirected onto stdin (which `--kind` never reads, ITEM-49), or
-    `--size`/`--whole` beside it (ITEM-50) refuses exit 2 before any retype,
-    while a pipe, the empty socket an agent harness hands as stdin, or a
-    closed stdin passes (ITEM-51); `--json` reports the `item` label, its
-    `number` and new `kind`. Each case sets its own stdin."""
+    storages; a retype the forge drops, an item that is not open, or
+    `--size`/`--whole` beside it (ITEM-50) refuses exit 2 before any retype;
+    `--json` reports the `item` label, its `number` and new `kind`. Each
+    case sets its own stdin; which stdin passes is
+    `test_item_edit_of_one_field_refuses_a_body_on_stdin_and_passes_an_empty_one`."""
     client = _item_new_github_client(monkeypatch, tmp_path)
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
@@ -20434,6 +20389,63 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     captured = capsys.readouterr()
     assert (exit_code, captured.out, captured.err) == (status, out, err)
     assert client.retyped_items == retyped
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "edited"),
+    [
+        pytest.param("--kind", "container", "kind=container", id="kind"),
+        pytest.param("--size", "S", "size=S", id="size"),
+        pytest.param("--whole", "one PR", "whole=one PR", id="whole"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("stdin_source", "refused"),
+    [
+        pytest.param(_body_file_on_stdin, True, id="redirected_file_refuses"),
+        pytest.param(_piped_body_on_stdin, True, id="fifo_refuses"),
+        pytest.param(_empty_harness_socket_on_stdin, False, id="harness_socket_passes"),
+        pytest.param(_devnull_on_stdin, False, id="devnull_passes"),
+        pytest.param(_closed_stdin, False, id="closed_stdin_passes"),
+        pytest.param(_terminal_on_stdin, False, id="terminal_passes"),
+    ],
+)
+def test_item_edit_of_one_field_refuses_a_body_on_stdin_and_passes_an_empty_one(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    flag: str,
+    value: str,
+    edited: str,
+    stdin_source: Callable[[Path], contextlib.AbstractContextManager[TextIO | None]],
+    refused: bool,
+) -> None:
+    """Issue #567 (ITEM-49, ITEM-51): `item edit --kind/--size/--whole` read
+    no stdin, so a body a file or pipe carries there refuses before any
+    write rather than being dropped; a terminal, the socket an agent harness
+    hands over, `/dev/null` or a closed stdin carries none and the edit runs."""
+    client = _item_new_github_client(monkeypatch, tmp_path)
+    client.board_issues = (
+        board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
+    )
+    client.issue_references[484] = forge.ItemReference(
+        forge.ItemState.OPEN, "Task about to hold slices", _ITEM_NEW_BODY, False
+    )
+    command = ["item", "edit", "484", flag, value]
+
+    with stdin_source(tmp_path) as stdin:
+        monkeypatch.setattr(sys, "stdin", stdin)
+        exit_code = issue_claim.main(command)
+
+    captured = capsys.readouterr()
+    wrote = bool(client.retyped_items or client.item_bodies)
+    outcome = (exit_code, captured.out, captured.err, wrote)
+    expected = (
+        (2, "", f"ERROR: item edit {flag} reads no stdin; drop the redirect\n", False)
+        if refused
+        else (0, f"EDITED #484 {edited}\n", "", True)
+    )
+    assert outcome == expected
 
 
 @pytest.mark.parametrize(
