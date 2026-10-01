@@ -7806,7 +7806,8 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
     well below the board's top row, and a landed-but-open recovery item,
     both still appear under `close:` -- unconditionally, never gated by
     which row `next` happens to recommend -- and, named there, never again
-    under `SKIPPED` (issue #510 line 2)."""
+    under `SKIPPED` (issue #510 line 2), nor under `waiting on operator:`
+    when the landed item still carries `needs-operator` (issue #562 line 2)."""
     top_ranked = board_issue(
         70,
         "Top ranked work",
@@ -7824,7 +7825,12 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
         children_closed=2,
         children_total=2,
     )
-    landed_but_open = board_issue(72, "Landed but open", complete_contract("Close it."))
+    landed_but_open = board_issue(
+        72,
+        "Landed but open",
+        complete_contract("Close it."),
+        labels=(board.NEEDS_OPERATOR_LABEL,),
+    )
     client = _configured_board_client(
         monkeypatch, tmp_path, open_issues=(top_ranked, closable_container, landed_but_open)
     )
@@ -7850,7 +7856,11 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
     json_exit_code = issue_claim.main(["--repo", REPOSITORY, "next", "--json"])
     assert json_exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert (payload["close"], payload["skipped"]) == ([71, 72], [])
+    assert (payload["close"], payload["skipped"], payload["waiting_on_operator"]) == (
+        [71, 72],
+        [],
+        [],
+    )
 
 
 _RECOVERY_SHARED_SCOPE = "b"

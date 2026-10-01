@@ -2089,11 +2089,16 @@ def parallel_set(
 
 
 def waiting_on_operator(board: Board) -> tuple[int, ...]:
-    """Every item `NEEDS_OPERATOR_LABEL` holds (issue #553), in board order:
-    `next` names these apart from `SKIPPED`, since the operator's ruling,
-    not an agent's repair, is what frees them."""
+    """The numbers of every item `NEEDS_OPERATOR_LABEL` holds (issue #553),
+    in board order, less those `zero_cost_closes` already names (issue
+    #562): `next` names these apart from `SKIPPED`, since the operator's
+    ruling, not an agent's repair, is what frees them, while a landed item
+    only waits to be closed."""
+    closable = set(zero_cost_closes(board))
     return tuple(
-        item.number for item in board.items if item.actionable_reason == WAITING_ON_OPERATOR
+        item.number
+        for item in board.items
+        if item.actionable_reason == WAITING_ON_OPERATOR and item.number not in closable
     )
 
 
@@ -2515,7 +2520,7 @@ class _ActionabilityFacts:
     contract: Contract
     contract_complete: bool
     projectionless_idea: bool
-    waits_on_operator: bool = False
+    waits_on_operator: bool
     read_state: BodyReadState = BodyReadState.VALID
     malformed_defect: ContractDefect | None = None
     childless_container_reason: str | None = None
