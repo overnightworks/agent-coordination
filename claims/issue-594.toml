@@ -1,0 +1,8 @@
+claim_id = "0cdcde5e3c8d4d559efbe59688936118"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "464aadc8a1e91925cf166115dfe545fe97a6eb57"
+branch = "claude/issue-594-trailer-block"
+scope = ["specs/land.spec.md", "specs/landing-grammar.spec.md", "src/agent_coordination/cli.py", "tests/test_cli.py"]
+opened_commit = "35bcca2251fe184ac77a960dab9309289006f277"
+whole_reason = "the landing message composition, its two specs and its tests"
