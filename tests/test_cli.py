@@ -10874,28 +10874,45 @@ def test_every_output_names_a_github_item_by_its_number(
     assert "aco-" not in output
 
 
+@pytest.mark.parametrize(
+    ("initial_branch", "published_trunk", "lane_shared_line"),
+    [
+        pytest.param(
+            "main",
+            "refs/remotes/origin/main",
+            "lane-shared: scripts/a.py, scripts/b.txt\n",
+            id="trunk-names-them",
+        ),
+        pytest.param("lane", None, "", id="no-trunk-resolves"),
+    ],
+)
 def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    initial_branch: str,
+    published_trunk: str | None,
+    lane_shared_line: str,
 ) -> None:
     """Issue #575 line 3: the lane-shared files the trunk's committed
     configuration names follow the claim blocks once, so a builder counts
     them as allowed beside its scope -- never one the working copy's own
-    `board.toml` adds."""
+    `board.toml` adds, not even when no trunk resolves to name any."""
     claimed = _active_claim(
         "Codex Sol", claim_id="cli-claim", issue=72, branch="codex/issue-72", scope=("src",)
     )
     _patch_status_store(monkeypatch, claimed)
     monkeypatch.setattr(checkout, "file_at_revision", _LIVE_FILE_AT_REVISION)
-    _real_git(tmp_path, "init", "-q", "-b", "main")
+    monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
+    _real_git(tmp_path, "init", "-q", "-b", initial_branch)
     _real_git(tmp_path, "config", "user.name", "Test")
     _real_git(tmp_path, "config", "user.email", "test@example.com")
     (tmp_path / ".agent-claim").mkdir()
     (tmp_path / board.CONFIG_PATH).write_text('lane_shared = ["scripts/a.py", "scripts/b.txt"]\n')
     _real_git(tmp_path, "add", "-f", board.CONFIG_PATH.as_posix())
     _real_git(tmp_path, "commit", "-q", "-m", "trunk configuration")
-    _real_git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    if published_trunk is not None:
+        _real_git(tmp_path, "update-ref", published_trunk, "HEAD")
     (tmp_path / board.CONFIG_PATH).write_text(
         'lane_shared = ["scripts/a.py", "scripts/b.txt", "src/x.py"]\n'
     )
@@ -10906,7 +10923,7 @@ def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
         f"CLAIMED issue #72: Codex Sol (builder) base={BASE} "
         "branch=codex/issue-72 claim=cli-claim 0h 0m\n"
         "  src\n"
-        "lane-shared: scripts/a.py, scripts/b.txt\n"
+        f"{lane_shared_line}"
     )
 
 
