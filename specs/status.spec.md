@@ -24,7 +24,8 @@ shared sink `specs/ref-store-cas.spec.md`'s own preamble already documents.
 | a matching claim, no conflict | — | STAT-17 | — | STAT-13 |
 | two claims share one identity | STAT-04 | STAT-05 | — | — |
 | a claim overlapping another's scope | STAT-06 | STAT-08 | — | — |
-| a matching claim, `lane_shared` configured | STAT-19 | — | — | — |
+| a matching claim, `lane_shared` configured | STAT-19, STAT-20 | STAT-22 | STAT-23 | STAT-22 |
+| the trunk's committed `board.toml` refuses | STAT-21 | STAT-22 | STAT-23 | STAT-22 |
 | one holder, no extra fields | — | STAT-07, STAT-09 | STAT-11 | STAT-13 |
 | more than one holder of one path | — | — | STAT-12 | STAT-13 |
 | `storage = "state-ref"` | STAT-14 | STAT-15 | — | — |
@@ -36,7 +37,7 @@ shared sink `specs/ref-store-cas.spec.md`'s own preamble already documents.
 
 - [ ] [STAT-01] `aco status` with no issue argument, against no live claims, prints `UNCLAIMED repository`, exit `0` (see E-STAT-02).
 - [ ] [STAT-02] `aco status <n>` against an issue with no live claim prints `UNCLAIMED issue <label>`, `<label>` the storage-aware form STAT-14 owns, exit `0`.
-- [ ] [STAT-03] `aco status --json` against no matching claims prints the envelope, `reason: "unclaimed"`, then `"issue": <n-or-null>, "tip": <tip-or-null>, "claims": []`.
+- [ ] [STAT-03] `aco status --json` against no matching claims prints the envelope, `reason: "unclaimed"`, then `"issue": <n-or-null>, "tip": <tip-or-null>, "claims": []`, then STAT-22's keys.
 - [ ] [STAT-17] `aco status --json` against a matching, non-conflicting claim reports `reason: "claimed"`, `ok: true`, exit `0`.
 
 ## `CONFLICT`, status's own read of two claims on one identity
@@ -61,7 +62,11 @@ the peer and its claim id, never the meeting paths.
 
 ## The lane-shared files
 
-- [ ] [STAT-19] Text `aco status` listing a claim ends with one line `lane-shared: <file>, <file>`, each file the trunk's committed `lane_shared` names (PIN-37); none configured, no such line.
+- [ ] [STAT-19] Text `aco status` listing a claim ends with one line `lane-shared: <entry>, <entry>`, each entry the trunk's committed `lane_shared` names (PIN-37); none configured, no such line.
+- [ ] [STAT-20] An entry naming no file the trunk tracks -- a directory, a missing file -- shows as `<entry> (names no file)`, never as a bare grant (see E-STAT-06).
+- [ ] [STAT-21] A trunk copy that refuses (an unknown key, PIN-38, PIN-39) shows `lane-shared: unavailable (<sentence>)` instead; the claims still print, exit unchanged (see E-STAT-06).
+- [ ] [STAT-22] `--json`, also with `--path`, ends with `"lane_shared": [{"path", "names_a_file"}, ...]` and `"lane_shared_unavailable": null`; on STAT-21's defect `null` and `"<sentence>"`.
+- [ ] [STAT-23] `aco status --path P` with no holder prints `LANE-SHARED P` when P is a file an entry names (STAT-20); STAT-21's line follows the answer (see E-STAT-06).
 
 ## `--json`'s claim object, beside the fields `claim-record.spec.md` owns
 
@@ -113,7 +118,7 @@ CLAIMED issue #42: Ada (builder) base=<sha> branch=ada/issue-42 claim=<claim-id>
   README.md
 exit 0
 $ aco status --json
-{"ok": true, "reason": "claimed", "issue": null, "tip": "<tip>", "claims": [{"issue": 42, "lane": null, "claim_id": "<claim-id>", "agent": "Ada", "role": "builder", "base": "<sha>", "branch": "ada/issue-42", "scope": ["README.md"], "resource": null, "resource_value": null, "overlaps": [], "state": "CLAIMED", "age": "0h 0m", "old": false}]}
+{"ok": true, "reason": "claimed", "issue": null, "tip": "<tip>", "claims": [{"issue": 42, "lane": null, "claim_id": "<claim-id>", "agent": "Ada", "role": "builder", "base": "<sha>", "branch": "ada/issue-42", "scope": ["README.md"], "resource": null, "resource_value": null, "overlaps": [], "state": "CLAIMED", "age": "0h 0m", "old": false}], "lane_shared": [], "lane_shared_unavailable": null}
 exit 0
 ```
 
@@ -129,7 +134,7 @@ $ aco status 42
 UNCLAIMED issue #42
 exit 0
 $ aco status --json
-{"ok": true, "reason": "unclaimed", "issue": null, "tip": "<tip>", "claims": []}
+{"ok": true, "reason": "unclaimed", "issue": null, "tip": "<tip>", "claims": [], "lane_shared": [], "lane_shared_unavailable": null}
 exit 0
 ```
 
@@ -145,7 +150,7 @@ $ aco status --path README.md
 UNCLAIMED README.md
 exit 0
 $ aco status --path docs/PRODUCT.md --json
-{"ok": true, "reason": "claimed", "path": "docs/PRODUCT.md", "claims": [{"issue": 42, "lane": null, "claim_id": "<claim-id>", "agent": "Ada", "role": "builder", "base": "<sha>", "branch": "ada/issue-42", "scope": ["docs/PRODUCT.md"], "resource": null, "resource_value": null, "state": "CLAIMED"}]}
+{"ok": true, "reason": "claimed", "path": "docs/PRODUCT.md", "claims": [{"issue": 42, "lane": null, "claim_id": "<claim-id>", "agent": "Ada", "role": "builder", "base": "<sha>", "branch": "ada/issue-42", "scope": ["docs/PRODUCT.md"], "resource": null, "resource_value": null, "state": "CLAIMED"}], "lane_shared": [], "lane_shared_unavailable": null}
 exit 0
 ```
 
@@ -183,5 +188,37 @@ $ aco status --path docs/PRODUCT.md
 CLAIMED docs/PRODUCT.md issue <label>: Ada (builder) claim=<claim-id>
 CLAIMED docs/PRODUCT.md issue <label>: Ada (builder) claim=<claim-id>
 overlap: issue <label> (<claim-id>), issue <label> (<claim-id>)
+exit 0
+```
+
+### E-STAT-06 -- lane-shared files, an entry naming no file, and a defective trunk copy
+
+Setup: bare-remote, bootstrapped, the trunk's committed `.agent-claim/board.toml` naming
+`lane_shared = ["scripts/registry.txt", "src"]` beside a tracked `scripts/registry.txt`, a
+linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
+
+```console
+$ aco status
+CLAIMED issue #42: Ada (builder) base=<sha> branch=ada/issue-42 claim=<claim-id> 0h 0m
+  README.md
+lane-shared: scripts/registry.txt, src (names no file)
+exit 0
+$ aco status --path scripts/registry.txt
+LANE-SHARED scripts/registry.txt
+exit 0
+```
+
+A newer aco then lands `merge_method = "squash"` on the trunk's copy, and the
+lane fetches it:
+
+```console
+$ aco status
+CLAIMED issue #42: Ada (builder) base=<sha> branch=ada/issue-42 claim=<claim-id> 0h 0m
+  README.md
+lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key merge_method)
+exit 0
+$ aco status --path scripts/registry.txt
+UNCLAIMED scripts/registry.txt
+lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key merge_method)
 exit 0
 ```
