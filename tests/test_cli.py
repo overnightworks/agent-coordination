@@ -17477,11 +17477,12 @@ def _time_out_the_deletion_once_prepared(monkeypatch: pytest.MonkeyPatch, _lane:
     monkeypatch.setattr(subprocess.Popen, "communicate", time_out_the_first_decision)
 
 
-def _fail_to_start_the_deletion(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
-    def fail_to_start(*_arguments: object, **_options: object) -> process.CapturedResult:
-        raise process.ProcessStartFailedError("denied")
+def _deny_the_start(*_arguments: object, **_options: object) -> process.CapturedResult:
+    raise process.ProcessStartFailedError("denied")
 
-    monkeypatch.setattr(process, "run_git_ref_transaction", fail_to_start)
+
+def _fail_to_start_the_deletion(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+    monkeypatch.setattr(process, "run_git_ref_transaction", _deny_the_start)
 
 
 def _time_out_the_deletion_and_refuse_the_write_back(
