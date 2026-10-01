@@ -640,12 +640,16 @@ def _add_rescope_parser(commands: argparse._SubParsersAction) -> None:
     rescope.add_argument(
         "--add",
         action="append",
-        help="an absolute path to add; repeat --add for more than one path",
+        help=(
+            "an absolute or repository-relative path to add; repeat --add for more than one path"
+        ),
     )
     rescope.add_argument(
         "--drop",
         action="append",
-        help="an absolute path to drop; repeat --drop for more than one path",
+        help=(
+            "an absolute or repository-relative path to drop; repeat --drop for more than one path"
+        ),
     )
     rescope.add_argument("--claim-id", help=EXPECTED_CLAIM_ID_HELP)
     rescope.add_argument(

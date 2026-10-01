@@ -4107,6 +4107,14 @@ def test_readme_and_help_texts_carry_no_stale_state_ref_read_only_sentence() -> 
             ("--whole", "three paths"),
             id="rescope-names-the-whole-reason",
         ),
+        pytest.param(
+            "rescope",
+            (
+                "--add ADD an absolute or repository-relative path to add",
+                "--drop DROP an absolute or repository-relative path to drop",
+            ),
+            id="rescope-names-a-repository-relative-path",
+        ),
     ],
 )
 def test_help_text_names_the_refusal_or_source_it_documents(
