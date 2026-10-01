@@ -584,12 +584,20 @@ def test_apply_resumes_from_its_manifest_after_a_stopped_run(
 
 
 @pytest.mark.parametrize(
-    ("interruption", "stopped_exit_code"),
+    ("interruption", "stopped_exit_code", "stopped_line"),
     [
         pytest.param(
-            migrate.MigrationStoppedError("gh api failed: connection reset"), 1, id="gh-fails"
+            migrate.MigrationStoppedError("gh api failed: connection reset"),
+            1,
+            "stopped: gh api failed: connection reset",
+            id="gh-fails",
         ),
-        pytest.param(KeyboardInterrupt(), 130, id="ctrl-c"),
+        pytest.param(
+            KeyboardInterrupt(),
+            130,
+            f"stopped: interrupted at {REPOSITORY}#2 before it was confirmed migrated",
+            id="ctrl-c",
+        ),
     ],
 )
 def test_a_stopped_apply_has_already_written_out_every_row_it_patched(
@@ -598,6 +606,7 @@ def test_a_stopped_apply_has_already_written_out_every_row_it_patched(
     monkeypatch: pytest.MonkeyPatch,
     interruption: BaseException,
     stopped_exit_code: int,
+    stopped_line: str,
 ) -> None:
     github = migration.github
     for number in (1, 2):
@@ -620,7 +629,7 @@ def test_a_stopped_apply_has_already_written_out_every_row_it_patched(
     exit_code = migrate.main(command_line, run=run_until_the_second_patch, clock=migration.clock)
 
     assert exit_code == stopped_exit_code
-    assert capsys.readouterr().err.startswith("stopped: ")
+    assert capsys.readouterr().err.startswith(stopped_line)
     assert f"migrated {REPOSITORY}#1" in terminal.getvalue().decode()
 
 

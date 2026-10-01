@@ -112,6 +112,10 @@ class MigrationStoppedError(Exception):
     """The run cannot go on without risking a wrong write; the message names where and why."""
 
 
+class MigrationInterruptedError(Exception):
+    """Ctrl-C stopped an apply; the message names the row in flight."""
+
+
 class _ResendDeclinedError(Exception):
     """The caller declined to resend a request after a rate-limit wait."""
 
@@ -454,27 +458,33 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_second
     last_patch_at: float | None = None
     for row in rows:
         reference = item_reference(row.repository, row.number)
-        # The pace runs out before the fresh read, so the read stays right before the PATCH.
-        if last_patch_at is not None:
-            _wait_out_pace(clock, last_patch_at + pace_seconds)
-        body = api.issue_body(row.repository, row.number)
-        patched = False
-        if row_state(row, body) is RowState.PENDING:
-            patched = api.update_body(
-                row.repository,
-                row.number,
-                _migrated_body(reference, body),
-                resend_wanted=partial(_still_pending, api, row),
-            )
-            last_patch_at = clock.monotonic()
+        try:
+            # The pace runs out before the fresh read, so the read stays right before the PATCH.
+            if last_patch_at is not None:
+                _wait_out_pace(clock, last_patch_at + pace_seconds)
+            body = api.issue_body(row.repository, row.number)
+            patched = False
+            if row_state(row, body) is RowState.PENDING:
+                patched = api.update_body(
+                    row.repository,
+                    row.number,
+                    _migrated_body(reference, body),
+                    resend_wanted=partial(_still_pending, api, row),
+                )
+                last_patch_at = clock.monotonic()
+            if patched and body_hash(api.issue_body(row.repository, row.number)) != row.new_hash:
+                raise MigrationStoppedError(
+                    f"{reference}: the body read back does not have the new hash"
+                )
+        except KeyboardInterrupt:
+            raise MigrationInterruptedError(
+                f"interrupted at {reference} before it was confirmed migrated;"
+                " rerun --apply with the same manifest"
+            ) from None
         if not patched:
             report_progress(f"already migrated {reference}")
             continue
         migrated += 1
-        if body_hash(api.issue_body(row.repository, row.number)) != row.new_hash:
-            raise MigrationStoppedError(
-                f"{reference}: the body read back does not have the new hash"
-            )
         report_progress(f"migrated {reference}")
     report_progress(f"{migrated} migrated, {len(rows) - migrated} already migrated")
 
@@ -569,6 +579,9 @@ def main(
     except MigrationStoppedError as stopped:
         print(f"stopped: {stopped}", file=sys.stderr)
         return 1
+    except MigrationInterruptedError as interrupted:
+        print(f"stopped: {interrupted}", file=sys.stderr)
+        return INTERRUPTED_EXIT_CODE
     except KeyboardInterrupt:
         print("stopped: interrupted", file=sys.stderr)
         return INTERRUPTED_EXIT_CODE
