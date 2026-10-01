@@ -408,7 +408,7 @@ def test_git_output_denies_loud_on_a_non_standard_os_error_launching_git(
 
     monkeypatch.setattr(process, "run_captured", raises_os_error)
 
-    with pytest.raises(ClaimError, match="git failed to launch: denied"):
+    with pytest.raises(ClaimError, match="git failed to run: denied"):
         checkout._git_output(["rev-parse", "--verify", "HEAD"])
 
 

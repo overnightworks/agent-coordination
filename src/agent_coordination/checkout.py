@@ -5,7 +5,8 @@ from __future__ import annotations
 import functools
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -60,14 +61,29 @@ def _git_run(arguments: list[str], *, directory: Path | None = None) -> process.
     uncaught traceback out of `protect`'s hook boundary. Interpreting a
     successful launch's exit status is each caller's own job.
     """
-    try:
+    with _git_run_failures_fail_closed():
         return process.run_git(arguments, directory=directory)
+
+
+def _git_ref_transaction(
+    instructions: list[str], *, while_prepared: Callable[[], bool]
+) -> process.CapturedResult:
+    """`process.run_git_ref_transaction` in the calling process's own cwd,
+    its run failures failing closed exactly as `_git_run`'s do."""
+    with _git_run_failures_fail_closed():
+        return process.run_git_ref_transaction(instructions, while_prepared=while_prepared)
+
+
+@contextmanager
+def _git_run_failures_fail_closed() -> Iterator[None]:
+    try:
+        yield
     except process.ExecutableMissingError as error:
         raise ClaimError(_GIT_MISSING_EXECUTABLE_ERROR) from error
     except process.ProcessTimedOutError as error:
         raise ClaimError(_GIT_TIMED_OUT_ERROR) from error
-    except OSError as error:
-        raise ClaimError(f"git failed to launch: {error}") from error
+    except (OSError, process.ProcessError) as error:
+        raise ClaimError(f"git failed to run: {error}") from error
 
 
 def _git_output(arguments: list[str], *, directory: Path | None = None) -> str:
@@ -1538,51 +1554,48 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
     """Delete a squashed lane's `branch` only while its tip is still
     `landed_head`, with the `branch.<name>` section `git branch -d` would
     drop, and return git's own refusal, or `None` once both are gone.
-    The section goes first, while the ref still holds the name: once the ref
-    is deleted, a branch of that name -- and the section under it -- may
-    already be another process's. `update-ref -d` then compares and deletes
-    under the ref's own lock, so a commit made after the caller's tip check
-    keeps its branch, and that kept branch gets its section back. A refused
-    step before the deletion deletes nothing."""
+    One prepared `update-ref` transaction compares the tip and locks the ref
+    before the section goes, and deletes the ref only after: while git holds
+    that lock no other process can move or recreate the name, so the section
+    removed is always the lane's own and nothing is ever written back. A
+    commit made after the caller's tip check refuses the prepare, and a
+    section git refuses to remove aborts the transaction -- either way the
+    branch stays whole."""
+    section_refusal: str | None = None
+
+    def remove_the_section_under_the_ref_lock() -> bool:
+        nonlocal section_refusal
+        section_refusal = _remove_own_branch_section(branch)
+        return section_refusal is None
+
+    deleted = _git_ref_transaction(
+        [f"delete refs/heads/{branch} {landed_head}"],
+        while_prepared=remove_the_section_under_the_ref_lock,
+    )
+    if section_refusal is not None:
+        return section_refusal
+    return process.git_failure_detail(deleted) if deleted.exit_status != 0 else None
+
+
+def _remove_own_branch_section(branch: str) -> str | None:
+    """Remove `branch`'s own `branch.<name>` section when it has one, and
+    return git's own refusal, or `None` once no such section is left."""
     listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
     if listed.exit_status not in (0, 1):
         return process.git_failure_detail(listed)
-    configuration = _own_branch_configuration(listed.stdout.decode(), branch)
-    if configuration:
-        removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
-        if removed.exit_status != 0:
-            return process.git_failure_detail(removed)
-    deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
-    if deleted.exit_status == 0:
+    if not _has_own_branch_section(listed.stdout.decode(), branch):
         return None
-    return _restore_branch_configuration(process.git_failure_detail(deleted), configuration)
+    removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
+    return process.git_failure_detail(removed) if removed.exit_status != 0 else None
 
 
-def _own_branch_configuration(listing: str, branch: str) -> list[tuple[str, str]]:
-    """The `(key, value)` entries `git config --null --get-regexp` lists
-    under `branch`'s own `branch.<name>` section, in their file order --
-    never a dotted sibling's, whose `branch.<name>.x.<variable>` keys share
-    the prefix."""
+def _has_own_branch_section(listing: str, branch: str) -> bool:
+    """Whether `git config --null --get-regexp` lists a key of `branch`'s own
+    `branch.<name>` section -- never a dotted sibling's, whose
+    `branch.<name>.x.<variable>` keys share the prefix."""
     prefix = f"branch.{branch}."
-    entries = (entry.partition("\n") for entry in listing.split("\0") if entry)
-    return [
-        (key, value)
-        for key, _separator, value in entries
-        if key.startswith(prefix) and "." not in key.removeprefix(prefix)
-    ]
-
-
-def _restore_branch_configuration(refusal: str, configuration: list[tuple[str, str]]) -> str:
-    """Write a kept branch's `configuration` back and return the deletion's
-    `refusal`, with the write's own refusal appended when one fails."""
-    for key, value in configuration:
-        restored = _git_run(["config", "--local", "--add", key, value])
-        if restored.exit_status != 0:
-            return (
-                f"{refusal}; its configuration was not restored: "
-                f"{process.git_failure_detail(restored)}"
-            )
-    return refusal
+    keys = (entry.partition("\n")[0] for entry in listing.split("\0") if entry)
+    return any(key.startswith(prefix) and "." not in key.removeprefix(prefix) for key in keys)
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:

@@ -410,3 +410,84 @@ def test_run_bounded_reaps_the_child_when_the_selector_fails_to_close(
 
     observed = process.run_bounded([sys.executable, "-c", "print('ok')"])
     assert observed.output == b"ok\n"
+
+
+def _git(repository: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repository), *arguments], check=False, capture_output=True, text=True
+    )
+
+
+@pytest.fixture
+def lane_repository(tmp_path: Path) -> tuple[Path, str, str]:
+    """A real repository whose `lane` branch sits on `landed`, one commit
+    behind `main`'s `later`; returns the repository with both commits."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    identity = ("-c", "user.name=Ada", "-c", "user.email=ada@example.invalid")
+    _git(tmp_path, *identity, "commit", "-q", "--allow-empty", "-m", "landed")
+    _git(tmp_path, "branch", "lane")
+    _git(tmp_path, *identity, "commit", "-q", "--allow-empty", "-m", "later")
+    landed, later = (_git(tmp_path, "rev-parse", name).stdout.strip() for name in ("lane", "main"))
+    return tmp_path, landed, later
+
+
+@pytest.mark.parametrize("commit", [True, False], ids=["committed", "aborted"])
+def test_run_git_ref_transaction_holds_the_ref_lock_while_prepared_then_commits_or_aborts(
+    lane_repository: tuple[Path, str, str], commit: bool
+) -> None:
+    """Issue #578: while the prepared transaction runs its callback, no other
+    git process can move the ref it names; the callback's answer then
+    deletes the ref or keeps it on its old value."""
+    repository, landed, later = lane_repository
+    moves_while_prepared: list[int] = []
+
+    def try_to_move_the_lane() -> bool:
+        moves_while_prepared.append(_git(repository, "branch", "-f", "lane", later).returncode)
+        return commit
+
+    result = process.run_git_ref_transaction(
+        [f"delete refs/heads/lane {landed}"],
+        while_prepared=try_to_move_the_lane,
+        directory=repository,
+    )
+
+    lane = _git(repository, "rev-parse", "--verify", "--quiet", "refs/heads/lane").stdout.strip()
+    assert (result.exit_status, len(moves_while_prepared)) == (0, 1)
+    assert moves_while_prepared != [0]
+    assert lane == ("" if commit else landed)
+
+
+def test_run_git_ref_transaction_refuses_a_moved_ref_without_running_the_callback(
+    lane_repository: tuple[Path, str, str],
+) -> None:
+    repository, landed, later = lane_repository
+    prepared: list[bool] = []
+
+    result = process.run_git_ref_transaction(
+        [f"delete refs/heads/lane {later}"],
+        while_prepared=lambda: prepared.append(True) or True,
+        directory=repository,
+    )
+
+    assert (result.exit_status != 0, prepared) == (True, [])
+    assert _git(repository, "rev-parse", "lane").stdout.strip() == landed
+
+
+def test_run_git_ref_transaction_times_out_and_leaves_the_ref_unlocked_and_whole(
+    monkeypatch: pytest.MonkeyPatch, lane_repository: tuple[Path, str, str]
+) -> None:
+    repository, landed, later = lane_repository
+
+    def never_finishes(self: subprocess.Popen[bytes], *_args: object, **_kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(self.args, 0)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", never_finishes)
+
+    with pytest.raises(process.ProcessTimedOutError):
+        process.run_git_ref_transaction(
+            [f"delete refs/heads/lane {landed}"], while_prepared=lambda: True, directory=repository
+        )
+
+    monkeypatch.undo()
+    assert _git(repository, "rev-parse", "lane").stdout.strip() == landed
+    assert _git(repository, "branch", "-f", "lane", later).returncode == 0

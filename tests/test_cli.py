@@ -17577,6 +17577,46 @@ def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_
     assert _real_git(repo, "config", foreign_key, check=False).stdout.strip() == foreign_value
 
 
+def test_land_never_writes_a_squashed_lane_branch_section_into_a_branch_taken_during_cleanup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #578 third review finding 1: another process that moves the
+    squashed lane's branch name to its own commit and configures it while
+    the cleanup removes the lane's `branch.<name>` section either finds the
+    name locked or owns a section holding only its own values -- the lane's
+    removed configuration is never written back into it."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = frozenset({_SQUASH})
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
+    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
+    remote_key = f"branch.{LANDING_BRANCH}.remote"
+    run_git = checkout._git_run
+    taken: list[bool] = []
+
+    def take_the_name_once_its_section_is_removed(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        result = run_git(arguments, directory=directory)
+        if "--remove-section" in arguments:
+            moved = _real_git(repo, "branch", "-f", LANDING_BRANCH, "main", check=False)
+            taken.append(moved.returncode == 0)
+            if moved.returncode == 0:
+                _real_git(repo, "config", remote_key, "recreated")
+        return result
+
+    monkeypatch.setattr(checkout, "_git_run", take_the_name_once_its_section_is_removed)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    capsys.readouterr()
+    assert status == 0
+    remotes = _real_git(repo, "config", "--get-all", remote_key, check=False).stdout.split()
+    assert remotes == (["recreated"] if taken == [True] else [])
+
+
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
