@@ -1,8 +1,0 @@
-claim_id = "35311e2472124796b56929406b7a99b7"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "592e01cca30fc65e6d740c1fe4e285ef30cc6e02"
-branch = "claude/issue-554-rescope-body-scope"
-scope = ["specs/claim-record.spec.md", "specs/claim.spec.md", "specs/protect.spec.md", "specs/rescope.spec.md", "src/agent_coordination/body.py", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_protect.py"]
-opened_commit = "edb01644e81a75c395c320641470b0eec2fa876c"
-whole_reason = "rescope owns the claim scope and the body scope together, with relative paths"
