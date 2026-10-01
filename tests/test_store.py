@@ -2375,11 +2375,12 @@ def test_commit_transition_preserves_items_across_claim_rescope_and_release(
 @pytest.fixture
 def foreign_item_entries() -> tuple[tuple[str, str], ...]:
     """`(mode, name)` of `items/` entries the item file-name rule names no
-    item: a bare id, a non-id, a name git would quote, an executable blob."""
+    item: a bare id, a non-id, names git would quote, an executable blob."""
     return (
         ("100644", "aco-000001"),
         ("100644", "NOTANID"),
         ("100644", "ä.md"),
+        ("100644", "tab\tname.md"),
         ("100755", "hook.sh"),
     )
 

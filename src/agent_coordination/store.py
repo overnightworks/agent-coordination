@@ -850,7 +850,12 @@ def _read_state_archive(
         detail = process.git_failure_detail_from_stderr(result)
         raise MalformedStateTreeError(f"cannot read the state tree at {tip}: {detail}")
     try:
-        with tarfile.open(fileobj=BytesIO(result.stdout), mode="r:") as archive:
+        with tarfile.open(
+            fileobj=BytesIO(result.stdout),
+            mode="r:",
+            encoding=_TREE_NAME_ENCODING,
+            errors=_TREE_NAME_ERRORS,
+        ) as archive:
             return {
                 member.name: _extract_archive_member(archive, member)
                 for member in archive.getmembers()
@@ -1018,9 +1023,8 @@ def read_item_files(worktree: Path, tip: ObjectId) -> Mapping[str, bytes]:
 
     Structural shape only: every entry must be a blob, the same doctrine
     `claims/`/`ids/`/`resources/` already enforce (a broken tree is corrupt
-    state, ruling 9c). Filename and content grammar -- the `aco-` id
-    pattern, the `[record]` table -- belong to `items.py`, this function's
-    one caller.
+    state, ruling 9c). The file-name rule is `protocol.item_id_of_filename`'s
+    and the `[record]` content grammar stays `items.py`'s.
     """
     tree_oid = _tree_oid(worktree, tip)
     top_entries = _list_tree(worktree, tree_oid, tip=tip, context="state")
