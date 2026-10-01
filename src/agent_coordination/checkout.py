@@ -1602,8 +1602,8 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
         failure = str(error)
     try:
         still_there = branch_exists(branch)
-    except ClaimError:
-        return failure
+    except ClaimError as error:
+        return _joined_failures(failure, str(error))
     return failure if still_there else None
 
 

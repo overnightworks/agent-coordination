@@ -17605,18 +17605,26 @@ def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _l
 
 
 def _time_out_the_deletion_once_prepared(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
-    """git never confirms the first decision sent to a prepared transaction
-    -- the branch deletion's, after its `branch.<name>` section is gone."""
+    """git never takes the first decision sent to a prepared transaction --
+    the branch deletion's, after its `branch.<name>` section is gone."""
+    _time_out_the_first_decision(monkeypatch, taken=False)
+
+
+def _time_out_the_first_decision(monkeypatch: pytest.MonkeyPatch, *, taken: bool) -> None:
+    """git never confirms the first decision sent to a prepared transaction,
+    whether or not it `taken` that decision."""
     communicate = subprocess.Popen.communicate
     timed_out: list[bool] = []
 
     def time_out_the_first_decision(
         self: subprocess.Popen[bytes], decision: bytes | None = None, timeout: float | None = None
     ) -> tuple[bytes, bytes]:
-        if decision is not None and not timed_out:
-            timed_out.append(True)
-            raise subprocess.TimeoutExpired(self.args, timeout or 0)
-        return communicate(self, decision, timeout)
+        if decision is None or timed_out:
+            return communicate(self, decision, timeout)
+        timed_out.append(True)
+        if taken:
+            communicate(self, decision, timeout)
+        raise subprocess.TimeoutExpired(self.args, timeout or 0)
 
     monkeypatch.setattr(subprocess.Popen, "communicate", time_out_the_first_decision)
 
@@ -17787,7 +17795,7 @@ def _time_out_the_deletion_and_refuse_the_write_backs_publication(
         ),
         pytest.param(
             _fail_to_start_the_deletion_and_to_look_for_the_branch,
-            "git failed to run: denied\n",
+            "git failed to run: denied; fatal: the lookup failed\n",
             None,
             id="deletion-failed-to-start-and-branch-lookup-refused",
         ),
@@ -17968,6 +17976,40 @@ def _recreate_branch_after_its_deletion(
     monkeypatch.setattr(checkout, "_git_run", recreate_then_run)
     monkeypatch.setattr(checkout, "remove_linked_worktree", remove_then_recreate)
     return owned_key, "recreated"
+
+
+def test_land_names_the_lookup_git_refuses_after_a_squashed_lane_branch_deletion_it_never_confirmed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #578 review finding 6 on be6cfb0: git deletes the squashed
+    lane's branch without the cleanup ever hearing so, then refuses the
+    lookup that would tell -- the report names that refusal beside the
+    unconfirmed deletion, never the deletion's failure alone."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = frozenset({_SQUASH})
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
+    remove = checkout.remove_linked_worktree
+
+    def go_unconfirmed_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
+        _time_out_the_first_decision(monkeypatch, taken=True)
+        _refuse_the_git_call(monkeypatch, "show-ref", "fatal: the lookup failed")
+        return remove(path, **options)
+
+    monkeypatch.setattr(checkout, "remove_linked_worktree", go_unconfirmed_then_remove)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    assert (status, output.err) == (0, "")
+    assert (
+        "worktree: removed; branch kept -- git failure: "
+        "git timed out while validating the build checkout; fatal: the lookup failed\n"
+    ) in output.out
+    ref = f"refs/heads/{LANDING_BRANCH}"
+    assert _real_git(repo, "show-ref", "--verify", "--quiet", ref, check=False).returncode == 1
 
 
 def _recreate_branch_on_its_tip_after_an_unconfirmed_deletion(
