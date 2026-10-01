@@ -21373,32 +21373,6 @@ def _reset_repository_with_live_claims(
     return repository, bare_remote
 
 
-def test_cli_reset_refusal_release_advice_runs_as_printed_and_clears_the_way(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-) -> None:
-    """CAS-63 (issue #582): every release command the live-claim refusal
-    prints, its `<reason>` filled in, runs through bash into `release`,
-    which accepts it -- the holder's own claim, another agent's claim as
-    the coordinator, a lane claim by its branch -- after which `reset` no
-    longer refuses."""
-    repository, _ = _reset_repository_with_live_claims(monkeypatch, tmp_path)
-    monkeypatch.chdir(repository)
-    assert issue_claim.main(["reset"]) == 2
-    refusal = capsys.readouterr().err.rstrip("\n").split("gone: ", 1)[1]
-    printed = [claim.split(", release: ", 1)[1] for claim in refusal.split("; ")]
-
-    for command in printed:
-        filled = command.replace("<reason>", shlex.quote("a stuck state ref"))
-        bash_exit_code, arguments = _arguments_bash_hands_aco(filled, tmp_path)
-        assert (bash_exit_code, arguments[:1]) == (0, ["release"])
-        assert issue_claim.main(arguments) == 0, capsys.readouterr().err
-    capsys.readouterr()
-
-    assert issue_claim.main(["reset"]) == 0
-
-
 def _real_claim_intent(issue: int) -> protocol.ClaimIntent:
     return protocol.ClaimIntent(
         identity=protocol.IssueIdentity(issue),
@@ -21530,10 +21504,12 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     tmp_path: Path,
     mode: list[str],
 ) -> None:
-    """CAS-40/CAS-62 (issue #582): confirmed or not, a live claim refuses
-    with one sentence on stderr naming why and every claim to release;
-    `--force-unreadable` (issue #341) only lifts the refusal over a schema
-    this aco cannot read."""
+    """CAS-40/CAS-62/CAS-63 (issue #582): confirmed or not, a live claim
+    refuses with one sentence on stderr naming why and every claim to
+    release; `--force-unreadable` (issue #341) only lifts the refusal over
+    a schema this aco cannot read. Every release command it prints, its
+    `<reason>` filled in, runs through bash into `release`, which accepts
+    it, after which `reset` no longer refuses."""
     repository, bare_remote = _reset_repository_with_live_claims(monkeypatch, tmp_path)
     tip_before = _remote_state_tip(repository, bare_remote)
     lineage_before = _lineage_observation(repository)
@@ -21563,6 +21539,18 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     assert list(export_dir.iterdir()) == []
     assert not store.local_state_ref_exists(repository)
     assert _lineage_observation(repository) == lineage_before
+
+    printed_releases = [
+        claim.split(", release: ", 1)[1]
+        for claim in captured.err.rstrip("\n").split("gone: ", 1)[1].split("; ")
+    ]
+    for command in printed_releases:
+        filled = command.replace("<reason>", shlex.quote("a stuck state ref"))
+        bash_exit_code, arguments = _arguments_bash_hands_aco(filled, tmp_path)
+        assert (bash_exit_code, arguments[:1]) == (0, ["release"])
+        assert issue_claim.main(arguments) == 0, capsys.readouterr().err
+    capsys.readouterr()
+    assert issue_claim.main(["reset"]) == 0
 
 
 _UNREADABLE_SCHEMA_ONE_LINE = (
