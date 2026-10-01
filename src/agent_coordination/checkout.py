@@ -1634,7 +1634,8 @@ def _restore_branch_section(
     """Write a removed `branch.<name>` section's `entries` back while one
     more prepared transaction holds `branch`'s ref lock on `landed_head`: a
     branch that is gone or moved meanwhile gets nothing, so the entries only
-    ever return to the lane's own branch."""
+    ever return to the lane's own branch, and git's refusal of that
+    transaction raises as a `ClaimError` naming it."""
     if not entries:
         return
 
@@ -1645,10 +1646,12 @@ def _restore_branch_section(
                 raise ClaimError(process.git_failure_detail(written))
         return True
 
-    _git_ref_transaction(
+    verified = _git_ref_transaction(
         [f"verify refs/heads/{branch} {landed_head}"],
         while_prepared=write_back_under_the_ref_lock,
     )
+    if verified.exit_status != 0:
+        raise ClaimError(process.git_failure_detail(verified))
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:

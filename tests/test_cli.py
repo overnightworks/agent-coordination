@@ -17615,6 +17615,28 @@ def _time_out_the_deletion_once_prepared(monkeypatch: pytest.MonkeyPatch, _lane:
     monkeypatch.setattr(subprocess.Popen, "communicate", time_out_the_first_decision)
 
 
+def _time_out_the_deletion_and_hold_the_ref_for_the_write_back(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    """Another process holds the branch's ref lock -- a stale one a killed
+    git left, say -- by the time the write-back's own transaction asks for it."""
+    _time_out_the_deletion_once_prepared(monkeypatch, lane)
+    common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    ref_lock = Path(common.stdout.strip()) / "refs" / "heads" / f"{LANDING_BRANCH}.lock"
+    run_transaction = process.run_git_ref_transaction
+    transactions: list[list[str]] = []
+
+    def hold_the_ref_before_the_second(
+        instructions: list[str], **options: Callable[[], bool]
+    ) -> process.CapturedResult:
+        transactions.append(instructions)
+        if len(transactions) == 2:
+            ref_lock.touch()
+        return run_transaction(instructions, **options)
+
+    monkeypatch.setattr(process, "run_git_ref_transaction", hold_the_ref_before_the_second)
+
+
 def _deny_the_start(*_arguments: object, **_options: object) -> process.CapturedResult:
     raise process.ProcessStartFailedError("denied")
 
@@ -17653,6 +17675,12 @@ def _time_out_the_deletion_and_refuse_the_write_back(
             "error: the write-back failed\n",
             "",
             id="deletion-timed-out-and-write-back-refused",
+        ),
+        pytest.param(
+            _time_out_the_deletion_and_hold_the_ref_for_the_write_back,
+            "fatal: prepare: cannot lock ref",
+            "",
+            id="deletion-timed-out-and-ref-held-for-the-write-back",
         ),
     ],
 )
