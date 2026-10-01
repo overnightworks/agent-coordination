@@ -44,7 +44,7 @@ CONTAINER_SKELETON_PROSE = "Blocked by: nichts"
 # The one fenced-block info string a repository pinned to `body_contract =
 # "block"` (issue #150) reads as its typed work-item body -- any other
 # fence's info string is ordinary documentation.
-BLOCK_FENCE_INFO = "agent-claim"
+BLOCK_FENCE_INFO = "aco"
 BLOCK_TOP_LEVEL_KEYS = frozenset(
     {
         "version",

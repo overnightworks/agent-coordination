@@ -39,7 +39,7 @@ def _record(**overrides: object) -> dict[str, object]:
 
 
 def _item_body(record: Mapping[str, object]) -> str:
-    """One item file's full text: prose, then the same `agent-claim` fence
+    """One item file's full text: prose, then the same `aco` fence
     `board.py` reads elsewhere, its interior rendered by `render_block` --
     never hand-serialized, so a test fixture and the real writer can never
     drift apart (issue #248)."""

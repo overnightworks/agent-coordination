@@ -249,7 +249,7 @@ def complete_contract(
     done_when: str = "The work is merged.",
     **block_entries: object,
 ) -> str:
-    """A body whose one `agent-claim` block carries every projection key
+    """A body whose one `aco` block carries every projection key
     filled, plus whatever `[[expectation]]`/`[[slice]]`/`frozen_until`
     entries the scenario needs -- serialized by the production writer, so no
     test hand-writes the block's TOML escaping."""

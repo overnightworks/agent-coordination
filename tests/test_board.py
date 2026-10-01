@@ -1,4 +1,4 @@
-"""Behavioral tests for the pure `agent-claim` block write path `body.py`
+"""Behavioral tests for the pure `aco` block write path `body.py`
 owns (#240, moved from `board.py` by #419): `rule_expectation`,
 `append_expectation`, and the `expectation_lines` projection `rule --line`,
 `ask`, and `rulings` all share. CLI wiring for `rule`/`ask`/`rulings` is
@@ -629,7 +629,7 @@ def test_expectation_lines_reads_question_example_and_picture() -> None:
 @pytest.mark.parametrize(
     "body",
     [
-        "No agent-claim fence at all.",
+        "No aco fence at all.",
         block_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n'),
     ],
     ids=["no_block", "malformed"],
@@ -779,7 +779,7 @@ def test_replace_block_preserves_crlf_and_surrounding_bytes() -> None:
 
     new_body = replace_block(body, located, new_data)
 
-    assert new_body.startswith("Prose before.\r\n\r\n```agent-claim\r\n")
+    assert new_body.startswith("Prose before.\r\n\r\n```aco\r\n")
     assert new_body.endswith("```\r\n\r\nProse after.\r\n")
     assert '\nnow = "Changed"\r\n' in new_body
     assert parse_body(new_body).contract.now == "Changed"
@@ -2406,7 +2406,7 @@ def test_parse_body_treats_a_fenceless_body_as_malformed() -> None:
     parsed = parse_body("## Now\nOld prose.\n")
 
     assert parsed.read_state is BodyReadState.MALFORMED
-    assert parsed.contract.defects == (ContractDefect("agent-claim", "no agent-claim block"),)
+    assert parsed.contract.defects == (ContractDefect("aco", "no aco block"),)
 
 
 def test_parse_body_refuses_multiple_blocks() -> None:
@@ -2415,21 +2415,21 @@ def test_parse_body_refuses_multiple_blocks() -> None:
     parsed = parse_body(body)
 
     assert parsed.read_state is BodyReadState.MALFORMED
-    assert parsed.contract.defects[0].field == "agent-claim"
+    assert parsed.contract.defects[0].field == "aco"
 
 
 def test_parse_body_refuses_an_unclosed_block() -> None:
     parsed = parse_body(f"```{BLOCK_FENCE_INFO}\nversion = 1\n")
 
     assert parsed.read_state is BodyReadState.MALFORMED
-    assert parsed.contract.defects == (ContractDefect("agent-claim", "unclosed agent-claim block"),)
+    assert parsed.contract.defects == (ContractDefect("aco", "unclosed aco block"),)
 
 
 def test_parse_body_refuses_invalid_toml() -> None:
     parsed = parse_body(block_body("this is not toml ="))
 
     assert parsed.read_state is BodyReadState.MALFORMED
-    assert parsed.contract.defects[0].field == "agent-claim"
+    assert parsed.contract.defects[0].field == "aco"
 
 
 def test_parse_body_orders_schema_defects_deterministically() -> None:
@@ -2765,12 +2765,12 @@ def test_parse_body_handles_a_body_with_no_trailing_newline() -> None:
 
 
 def test_locate_block_fails_loud_with_no_recognized_fence() -> None:
-    with pytest.raises(ClaimError, match="found no recognized agent-claim fence"):
+    with pytest.raises(ClaimError, match="found no recognized aco fence"):
         locate_block("## Now\nOld prose.\n")
 
 
 def test_locate_block_fails_loud_with_an_unclosed_fence() -> None:
-    with pytest.raises(ClaimError, match="found no closed agent-claim fence"):
+    with pytest.raises(ClaimError, match="found no closed aco fence"):
         locate_block(f"```{BLOCK_FENCE_INFO}\nversion = 1\n")
 
 
@@ -2842,7 +2842,7 @@ def test_next_action_skips_a_blockless_childless_container() -> None:
 
     assert board.next_action(projected) is None
     item = next(item for item in projected.items if item.number == 210)
-    assert item.actionable_reason == "body malformed: agent-claim: no agent-claim block"
+    assert item.actionable_reason == "body malformed: aco: no aco block"
 
 
 def test_next_action_skips_a_malformed_childless_container() -> None:

@@ -758,7 +758,7 @@ def test_board_projects_fixture_json_without_github_writes(
     # 14-day floor (2026-08-07) would have admitted it — the oldest-open-
     # issue floor (2026-08-01) correctly still counts it.
     assert fourteen["stage"] == "code-landed"
-    assert fourteen["actionable_reason"] == "body malformed: agent-claim: no agent-claim block"
+    assert fourteen["actionable_reason"] == "body malformed: aco: no aco block"
     assert [item["number"] for item in payload["ready_now"]] == [10, 13]
     assert [item["number"] for item in payload["stale"]] == [12]
     assert next(item for item in payload["items"] if item["number"] == 12)["stage"] == "text-only"
@@ -1692,7 +1692,7 @@ _PARALLEL_LIVE_CLAIMS = (
             ("next",),
             3,
             "No actionable item.\n" + _NO_ACTION_NEXT_TAIL + "\nSKIPPED\n"
-            "#10: body malformed: agent-claim: no agent-claim block\n",
+            "#10: body malformed: aco: no aco block\n",
             id="names_a_body_with_no_block_as_malformed",
         ),
         pytest.param(
@@ -2949,7 +2949,7 @@ def test_start_refuses_a_malformed_body_before_no_scope(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     """Issue #310 finding 43, mirrored for `start` (issue #406): a target
-    whose `agent-claim` block is malformed refuses by naming that defect --
+    whose `aco` block is malformed refuses by naming that defect --
     the same block-defect reader `claim` shares -- before `start`'s own
     claim delegation ever gets to name the less specific "item names no
     scope"."""
@@ -3164,7 +3164,7 @@ def _lane_on_a_state_ref_board_with_registries(
 
 
 def _trunk_defect(sentence: str) -> str:
-    return f"board configuration refs/remotes/origin/main:.agent-claim/board.toml {sentence}"
+    return f"board configuration refs/remotes/origin/main:.aco/board.toml {sentence}"
 
 
 @pytest.mark.parametrize(
@@ -5249,7 +5249,7 @@ def test_cut_refuses_a_blockless_container_before_any_write(
     exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), "--title", "X"])
 
     assert exit_code == 2
-    assert "body malformed: agent-claim: no agent-claim block" in capsys.readouterr().err
+    assert "body malformed: aco: no aco block" in capsys.readouterr().err
     assert client.created_children == []
 
 
@@ -5265,7 +5265,7 @@ def test_cut_refuses_a_malformed_container_before_any_write(
     assert exit_code == 2
     assert (
         f"ERROR: #{CUT_CONTAINER} body malformed: version: version must be exactly 1; "
-        "cut needs a valid agent-claim block" in capsys.readouterr().err
+        "cut needs a valid aco block" in capsys.readouterr().err
     )
     assert client.created_children == []
 
@@ -5294,10 +5294,7 @@ def test_cut_names_the_created_child_when_linking_fails(
         )
     ]
     err = capsys.readouterr().err
-    assert (
-        f"created #{child} but failed to remove row 1 from #{CUT_CONTAINER}'s agent-claim block"
-        in err
-    )
+    assert f"created #{child} but failed to remove row 1 from #{CUT_CONTAINER}'s aco block" in err
     assert "re-run the same cut -- it adopts the child" in err
 
 
@@ -6105,10 +6102,7 @@ def test_ask_refuses_a_blockless_item_before_any_write(
 
     assert exit_code == 2
     captured = capsys.readouterr()
-    assert (
-        "body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block"
-        in captured.err
-    )
+    assert "body malformed: aco: no aco block; ask needs a valid aco block" in captured.err
     assert client.item_bodies == {}
     _assert_json_refusal_object(captured.err, captured.out, reason="invalid_item")
 
@@ -7704,7 +7698,7 @@ def _item_show_of_foreign_body(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
 def _brief_step_under_brief_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str
 ) -> list[str]:
-    """`brief --step build` against a tracked `.agent-claim/brief.toml`
+    """`brief --step build` against a tracked `.aco/brief.toml`
     holding `content`."""
     item, _stored = _foreign_body_item(monkeypatch, tmp_path)
     repo = Path.cwd()
@@ -8408,21 +8402,6 @@ def test_board_fetches_children_only_for_container_kinded_issues(
     assert container_item.container.open_children == (board.ChildItem(92, board.ChildState.OPEN),)
 
 
-def test_the_body_fence_and_config_path_keep_their_agent_claim_names() -> None:
-    """The package renamed to `agent-coordination` and the command to `aco`
-    (issue #191); these two strings deliberately did not follow.
-
-    The fence info string is spelled inside the issue bodies of every migrated
-    repository and the configuration file already sits at this path in each
-    checkout. Renaming either would make this release silently stop reading
-    state that is already written -- so they are protocol, not product name,
-    and this test is what says so out loud.
-    """
-    assert body.BLOCK_FENCE_INFO == "agent-claim"
-    assert body.BLOCK_CHILD_SKELETON.startswith(f"```{body.BLOCK_FENCE_INFO}\n")
-    assert board.CONFIG_PATH.as_posix() == ".agent-claim/board.toml"
-
-
 def test_body_contract_checks_names_a_blockless_container_by_its_no_block_defect() -> None:
     raw_body = "## Now\nOld prose.\n\n## Next\nDo the thing.\n"
     blockless = replace(
@@ -8444,9 +8423,7 @@ def test_body_contract_checks_names_a_blockless_container_by_its_no_block_defect
     checks = issue_claim._body_contract_checks(item, body.Storage.GITHUB)
 
     assert checks == (
-        issue_claim.SliceCheck(
-            "error", "body-contract", "body malformed: agent-claim: no agent-claim block"
-        ),
+        issue_claim.SliceCheck("error", "body-contract", "body malformed: aco: no aco block"),
     )
 
 
@@ -8868,7 +8845,7 @@ def test_status_notes_a_scope_that_is_claimed_after_its_descendant(
 
 
 def _write_state_ref_pin(toplevel: Path) -> None:
-    """`.agent-claim/board.toml` pinned to `storage = "state-ref"` in
+    """`.aco/board.toml` pinned to `storage = "state-ref"` in
     `toplevel`: the isolated toplevel `_isolate_git_toplevel` (conftest.py)
     already redirects this process's `rev-parse --show-toplevel` to (issue
     #248), or a repository `_redirect_toplevel` points it at."""
@@ -11645,7 +11622,7 @@ def test_claim_with_an_untracked_scope_entry_outside_a_working_tree_keeps_the_ch
     assert issue_claim.main(_claim_argv("--scope", "scratch")) == 2
     assert capsys.readouterr().err == (
         "ERROR: this command reads the repository's body contract from "
-        ".agent-claim/board.toml and needs a checkout (a shallow one is "
+        ".aco/board.toml and needs a checkout (a shallow one is "
         "enough): fatal: this operation must be run in a work tree\n"
     )
 
@@ -11809,7 +11786,7 @@ def test_cli_claim_scope_derivation_against_the_items_own_body(
 def test_cli_claim_without_scope_names_a_malformed_body_before_no_scope(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Issue #310 finding 43: a target whose `agent-claim` block is
+    """Issue #310 finding 43: a target whose `aco` block is
     malformed refuses by naming that defect -- reusing the same block-
     defect reader `body --check` uses -- before scope derivation ever gets
     to name the less specific "item names no scope"."""
@@ -12499,7 +12476,7 @@ def test_cli_claim_accepts_a_scope_path_without_a_comma_that_does_not_exist_yet(
 
 
 def _rescope_forge(whole: str | None = None) -> FakeForge:
-    """A forge serving issue #72 with a valid `agent-claim` block, naming
+    """A forge serving issue #72 with a valid `aco` block, naming
     `whole` when given -- the body a rescope keeps in step with its claim
     (issue #554)."""
     client = FakeForge()
@@ -12657,8 +12634,7 @@ def test_cli_rescope_refuses_an_item_body_without_a_block_before_any_write(
     assert status == 2
     assert (refusal["reason"], refusal["message"]) == (
         "precondition_failed",
-        "#72 body malformed: agent-claim: no agent-claim block; "
-        "rescope needs a valid agent-claim block",
+        "#72 body malformed: aco: no aco block; rescope needs a valid aco block",
     )
     assert (_live_store_claim().scope, client.item_bodies) == (("src/widget.py",), {})
 
@@ -14951,7 +14927,7 @@ def test_check_refuses_a_named_sentence_outside_a_checkout(
     assert run_check() == 2
     assert capsys.readouterr().err == (
         "ERROR: this command reads the repository's body contract from "
-        ".agent-claim/board.toml and needs a checkout (a shallow one is "
+        ".aco/board.toml and needs a checkout (a shallow one is "
         "enough): fatal: not a git repository (or any of the parent "
         "directories): .git\n"
     )
@@ -15506,9 +15482,7 @@ def test_release_merged_beside_an_unreadable_parent_reports_freed_instead_of_a_h
 
     def refusing_the_parent(number: int) -> forge.ItemReference:
         if number == PARENT_OF_WORK_ITEM:
-            raise protocol.MalformedStateTreeError(
-                "item aco-000001 has a malformed agent-claim block"
-            )
+            raise protocol.MalformedStateTreeError("item aco-000001 has a malformed aco block")
         return readable_reference(number)
 
     monkeypatch.setattr(client, "item_reference", refusing_the_parent)
@@ -17121,72 +17095,72 @@ def _toml_syntax_error(text: str) -> str:
         pytest.param(
             None,
             False,
-            "pull request #12 removes .agent-claim/board.toml; "
+            "pull request #12 removes .aco/board.toml; "
             "aco land cannot release its claim across that change",
             id="removed",
         ),
         pytest.param(
             None,
             True,
-            "pull request #12 removes .agent-claim/board.toml; "
+            "pull request #12 removes .aco/board.toml; "
             "aco land cannot release its claim across that change",
             id="removed-ahead-of-a-closed-item",
         ),
         pytest.param(
             'storage = "state-ref"\n',
             False,
-            "pull request #12 changes storage in .agent-claim/board.toml; "
+            "pull request #12 changes storage in .aco/board.toml; "
             "aco land cannot release its claim across that change",
             id="storage-changed",
         ),
         pytest.param(
             'canonical_remote = "upstream"\n',
             False,
-            "pull request #12 changes canonical_remote in .agent-claim/board.toml; "
+            "pull request #12 changes canonical_remote in .aco/board.toml; "
             "aco land cannot release its claim across that change",
             id="canonical-remote-changed",
         ),
         pytest.param(
             'storage = "gitlab"\n',
             False,
-            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
-            ".agent-claim/board.toml storage must be 'github' or 'state-ref'",
+            "pull request #12 carries an invalid .aco/board.toml: board configuration "
+            ".aco/board.toml storage must be 'github' or 'state-ref'",
             id="invalid",
         ),
         pytest.param(
             'merge_method = "rebase"\n',
             False,
-            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
-            ".agent-claim/board.toml merge_method must be 'merge' or 'squash'",
+            "pull request #12 carries an invalid .aco/board.toml: board configuration "
+            ".aco/board.toml merge_method must be 'merge' or 'squash'",
             id="invalid-merge-method",
         ),
         pytest.param(
             "not toml =",
             False,
-            "pull request #12 carries an invalid .agent-claim/board.toml: cannot read board "
-            f"configuration .agent-claim/board.toml: {_toml_syntax_error('not toml =')}",
+            "pull request #12 carries an invalid .aco/board.toml: cannot read board "
+            f"configuration .aco/board.toml: {_toml_syntax_error('not toml =')}",
             id="invalid-syntax",
         ),
         pytest.param(
             f'{"x" * 300} = "y"\n',
             False,
-            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
-            ".agent-claim/board.toml has unknown top-level key " + "x" * 61 + "…",
+            "pull request #12 carries an invalid .aco/board.toml: board configuration "
+            ".aco/board.toml has unknown top-level key " + "x" * 77 + "…",
             id="invalid-bounded",
         ),
         pytest.param(
             '"bad\\nkey" = 1\n"esc\\u001b[31m" = 2\n',
             False,
-            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
-            ".agent-claim/board.toml has unknown top-level key bad\\nkey, esc\\x1b[31m",
+            "pull request #12 carries an invalid .aco/board.toml: board configuration "
+            ".aco/board.toml has unknown top-level key bad\\nkey, esc\\x1b[31m",
             id="invalid-control-characters-escaped",
         ),
         pytest.param(
             '"a\N{RIGHT-TO-LEFT OVERRIDE}b\N{LEFT-TO-RIGHT ISOLATE}c\N{ZERO WIDTH SPACE}d'
             '\x9be\tf\N{NO-BREAK SPACE}g" = 1\n',
             False,
-            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
-            ".agent-claim/board.toml has unknown top-level key a\N{REVERSE SOLIDUS}u202eb"
+            "pull request #12 carries an invalid .aco/board.toml: board configuration "
+            ".aco/board.toml has unknown top-level key a\N{REVERSE SOLIDUS}u202eb"
             "\N{REVERSE SOLIDUS}u2066c\N{REVERSE SOLIDUS}u200bd\\x9be\tf\N{NO-BREAK SPACE}g",
             id="invalid-display-controls-escaped-as-next-shows-them",
         ),
@@ -19172,7 +19146,7 @@ def test_check_refuses_a_blockless_parent_before_the_next_check(
     assert run_check() == 2
     assert capsys.readouterr().err == (
         f"REFUSED: pull request #12 has parent {REPOSITORY}#{PARENT_ISSUE} with a body "
-        "malformed: agent-claim: no agent-claim block\n"
+        "malformed: aco: no aco block\n"
     )
 
 
@@ -19566,7 +19540,7 @@ def test_check_json_names_a_missing_number_as_its_own_kind(
 def test_check_names_a_body_with_no_recognized_block_as_malformed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """`no agent-claim block` keeps its meaning: no recognized block was
+    """`no aco block` keeps its meaning: no recognized block was
     found, never "recognized prose" (#204)."""
     issue_check_client(
         monkeypatch,
@@ -19576,7 +19550,7 @@ def test_check_names_a_body_with_no_recognized_block_as_malformed(
 
     assert run_check(CHECKED_ISSUE) == 2
     assert capsys.readouterr().err == (
-        f"ISSUE #{CHECKED_ISSUE} body malformed: agent-claim: no agent-claim block\n"
+        f"ISSUE #{CHECKED_ISSUE} body malformed: aco: no aco block\n"
     )
 
 
@@ -19585,7 +19559,7 @@ def test_check_names_a_body_with_no_recognized_block_as_malformed(
     [
         pytest.param(
             f"```{body.BLOCK_FENCE_INFO}\nversion = 1\n",
-            "agent-claim: unclosed agent-claim block",
+            "aco: unclosed aco block",
             id="broken-fence",
         ),
         pytest.param(
@@ -19882,7 +19856,7 @@ def test_body_check_names_a_body_with_no_recognized_block_as_malformed(
 ) -> None:
     monkeypatch.setattr(sys, "stdin", io.StringIO("no block\n"))
     assert body_check_main() == 2
-    assert capsys.readouterr().err == "body malformed: agent-claim: no agent-claim block\n"
+    assert capsys.readouterr().err == "body malformed: aco: no aco block\n"
 
 
 @pytest.mark.parametrize(
@@ -19960,8 +19934,7 @@ def test_body_check_json_carries_the_defect_list(
     monkeypatch.setattr(sys, "stdin", io.StringIO("no block\n"))
     assert body_check_main(extra=("--json",)) == 2
     assert capsys.readouterr().out == (
-        '{"ok": false, "reason": "malformed", '
-        '"defects": ["body malformed: agent-claim: no agent-claim block"]}\n'
+        '{"ok": false, "reason": "malformed", "defects": ["body malformed: aco: no aco block"]}\n'
     )
 
 
@@ -20348,12 +20321,12 @@ def test_cli_board_refuses_a_non_github_canonical_remote_by_host(
 
 
 _UNTRACKED_BOARD_CONFIG_ERROR = (
-    "ERROR: .agent-claim/board.toml is not tracked in this checkout, so its "
-    "storage pin cannot be trusted: git add -f .agent-claim/board.toml\n"
+    "ERROR: .aco/board.toml is not tracked in this checkout, so its "
+    "storage pin cannot be trusted: git add -f .aco/board.toml\n"
 )
 _MISSING_BOARD_CONFIG_ERROR = (
-    "ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request "
-    "adding only .agent-claim/board.toml into the default branch first, without aco "
+    "ERROR: .aco/board.toml does not exist in this checkout; merge a pull request "
+    "adding only .aco/board.toml into the default branch first, without aco "
     "(fetch first if the default branch may already carry it)\n"
 )
 
@@ -20386,7 +20359,7 @@ def test_an_untrusted_board_config_refuses_every_store_command_by_name(
     config_on_disk: bool,
     refusal: str,
 ) -> None:
-    """Issues #315 and #505: a `.agent-claim/board.toml` that is not tracked
+    """Issues #315 and #505: a `.aco/board.toml` that is not tracked
     never reads as `storage = "github"`'s silent default -- every store
     command, `land` included, refuses before any other work and writes
     nothing. A file present but untracked or ignored names the `git add -f`
@@ -20414,7 +20387,7 @@ def test_an_untrusted_board_config_refuses_every_store_command_by_name(
 
 @dataclass(frozen=True)
 class _AbsentPinLane:
-    """How a lane worktree without `.agent-claim/board.toml` came to be
+    """How a lane worktree without `.aco/board.toml` came to be
     (PIN-32): whether `main` gained the adoption commit after `lane` was
     cut, how `origin` carries `main`, whether this clone's fetch of it
     predates the adoption, whether `lane` merged `origin/main` and then
@@ -20430,8 +20403,8 @@ class _AbsentPinLane:
 
 
 _RESTORE_BOARD_CONFIG_ERROR = (
-    "ERROR: .agent-claim/board.toml was removed on this branch; restore it with "
-    "git checkout origin/main -- :/.agent-claim/board.toml\n"
+    "ERROR: .aco/board.toml was removed on this branch; restore it with "
+    "git checkout origin/main -- :/.aco/board.toml\n"
 )
 
 
@@ -20457,7 +20430,7 @@ def _advance_origin_main(repository: Path, lane: Path) -> None:
     [
         pytest.param(
             _AbsentPinLane(),
-            "ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main "
+            "ERROR: .aco/board.toml does not exist in this checkout, but origin/main "
             "tracks it; merge origin/main into this branch\n",
             id="trunk-adopted-after-the-cut",
         ),
@@ -20500,7 +20473,7 @@ def test_a_checkout_without_the_pin_is_told_its_pin_32_repair(
     refusal: str,
 ) -> None:
     """Issue #520: a lane worktree whose branch was cut before the adoption
-    commit lacks `.agent-claim/board.toml` although the trunk tracks it, so
+    commit lacks `.aco/board.toml` although the trunk tracks it, so
     PIN-32 refuses its merge sentence, never its adoption sentence; a lane
     that merged the trunk and then removed the file is told to restore it
     instead (issue #522), also once a newer trunk is fetched, since the merge
@@ -20584,7 +20557,7 @@ def _scratch_lane_repository(
     `_isolate_git_toplevel`), so the run's context resolves its trunk -- the
     local `main`, since its configured `origin` was never fetched -- in the
     lane's own repository (issues #488, #508). Given `board_config`, the
-    base commit carries it as the trunk's `.agent-claim/board.toml`."""
+    base commit carries it as the trunk's `.aco/board.toml`."""
     monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
     repository = tmp_path
     _real_git(repository, "init", "-q", "-b", "main")
@@ -20940,8 +20913,8 @@ def _write_repository_configs(
 def _brief_step_scenario(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, content: str = _DEFAULT_BRIEF_TOML
 ) -> tuple[str, str]:
-    """The scratch lane repository, `.agent-claim/board.toml` and
-    `.agent-claim/brief.toml` both genuinely `git add`-ed at the resolved
+    """The scratch lane repository, `.aco/board.toml` and
+    `.aco/brief.toml` both genuinely `git add`-ed at the resolved
     toplevel, and issue #258's own live claim -- the one arrangement
     `--step`'s text, `--json`, and no-`--step` cases all share (issue #324).
     Reads both configs' real tracked status instead of the file's blanket
@@ -21025,7 +20998,7 @@ def test_cli_brief_step_prints_this_repository_own_rules_and_checks_by_step(
     step: str,
     step_lines: tuple[str, ...],
 ) -> None:
-    """Issue #324: `--step <step>` appends `.agent-claim/brief.toml`'s own
+    """Issue #324: `--step <step>` appends `.aco/brief.toml`'s own
     `RULES` and `CHECKS`, one line per that section's own entries, after the
     four sections a plain brief always prints -- for every step the file can
     name, including one (`[land]`) that names neither rules nor checks at
@@ -21042,7 +21015,7 @@ def test_cli_brief_step_prints_this_repository_own_rules_and_checks_by_step(
 def test_cli_brief_without_step_ignores_the_tracked_brief_config(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """Without `--step`, a tracked `.agent-claim/brief.toml`'s presence or
+    """Without `--step`, a tracked `.aco/brief.toml`'s presence or
     content changes nothing: `brief` still prints exactly its own four
     sections (BRIEF-16)."""
     base, tip = _brief_step_scenario(monkeypatch, tmp_path)
@@ -21095,7 +21068,7 @@ def test_cli_brief_step_refuses_with_no_usable_brief_config(
     tmp_path: Path,
     brief_toml_present: bool,
 ) -> None:
-    """A `.agent-claim/brief.toml` this repository cannot actually read from
+    """A `.aco/brief.toml` this repository cannot actually read from
     -- absent entirely, or genuinely present on disk but never `git add`-ed
     -- refuses the same way before ever reading the item's body (the same
     tracked-file requirement `_board_config` enforces for `board.toml`'s
@@ -21119,7 +21092,7 @@ def test_cli_brief_step_refuses_with_no_usable_brief_config(
 
     captured = capsys.readouterr()
     assert status == 2
-    assert captured.err == "ERROR: no .agent-claim/brief.toml in the repository\n"
+    assert captured.err == "ERROR: no .aco/brief.toml in the repository\n"
     _assert_json_refusal_object(captured.err, captured.out, reason="unavailable")
 
 
@@ -21355,12 +21328,12 @@ def test_item_new_creates_a_github_issue_from_the_piped_body(
 
 
 _PROSE_ABOVE_BUILT_BLOCK = (
-    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+    "Ship the importer.\n\n```aco\nversion = 1\n"
     'now = "Ready."\nnext = "Build it."\ndone_when = "Merged."\n\nsize = "S"\n```\n'
 )
 # The same block as a person types it, not as aco renders it.
 _PIPED_BLOCK_AS_TYPED = (
-    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+    "Ship the importer.\n\n```aco\nversion = 1\n"
     'now = "Ready."\nnext = "Build it."\ndone_when = "Merged."\nsize = "S"\n```\n'
 )
 
@@ -21394,7 +21367,7 @@ _PIPED_BLOCK_AS_TYPED = (
             ("--kind", "container", "--now", "Ready.", "--next", "Cut it.", "--done-when", "Done."),
             (
                 "Write the docs",
-                "Blocked by: nichts\n\n```agent-claim\nversion = 1\n"
+                "Blocked by: nichts\n\n```aco\nversion = 1\n"
                 'now = "Ready."\nnext = "Cut it."\ndone_when = "Done."\n```\n',
                 body.ItemKind.CONTAINER,
             ),
@@ -22332,7 +22305,7 @@ def test_item_edit_json_reports_body_invalid_with_defects(
 
     assert status == 2
     captured = capsys.readouterr()
-    defect = "body malformed: agent-claim: no agent-claim block"
+    defect = "body malformed: aco: no aco block"
     assert captured.err == f"ERROR: {defect}\n"
     assert json.loads(captured.out) == {
         "ok": False,

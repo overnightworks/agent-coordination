@@ -40,7 +40,7 @@ from .body import (
 
 DEFAULT_PRIORITY_LABELS = ("security", "data", "ci", "product", "ux", "cleanup")
 DEFAULT_CANONICAL_REMOTE = "origin"
-CONFIG_PATH = Path(".agent-claim/board.toml")
+CONFIG_PATH = Path(".aco/board.toml")
 IDEA_REFINEMENT_STEP = "Problem neu prüfen und Item verfeinern"
 # The one typed marker that an item waits on the operator's ruling (issue
 # #553): no agent can pull it, so `next` names it apart and `claim`'s
@@ -768,7 +768,7 @@ def parse_config(text: str, path: Path) -> BoardConfig:
 # #324): a repository used to carry these ~25 lines by hand in every
 # dispatch, pasted fresh each time. `.agent-claim/brief.toml` gives it one
 # tracked owner instead, read only when `aco brief --step` asks for it.
-BRIEF_CONFIG_PATH = Path(".agent-claim/brief.toml")
+BRIEF_CONFIG_PATH = Path(".aco/brief.toml")
 
 
 class BriefStep(StrEnum):

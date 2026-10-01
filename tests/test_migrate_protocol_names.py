@@ -20,6 +20,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from agent_coordination import body
+
 _SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "migrate_protocol_names.py"
 migrate = SimpleNamespace(**runpy.run_path(str(_SCRIPT_PATH), run_name="migrate_protocol_names"))
 
@@ -653,3 +655,9 @@ def test_a_gh_call_that_hangs_stops_the_run_and_names_the_call(
     assert "stopped: gh api --include --method GET repos/owner/repo/issues" in (
         capsys.readouterr().err
     )
+
+
+def test_the_script_rewrites_to_the_fence_aco_reads() -> None:
+    """The script repeats the new fence instead of importing it (#587 line 6), so this
+    cross-check keeps the two from drifting until #441 step 7 deletes both."""
+    assert migrate.NEW_FENCE_INFO == body.BLOCK_FENCE_INFO

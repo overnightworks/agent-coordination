@@ -343,11 +343,11 @@ MALFORMED_NUMBER = items.item_number(MALFORMED_ID)
 
 
 def _malformed_item_refusal(
-    problem: str = "has a malformed agent-claim block", item_id: str = MALFORMED_ID
+    problem: str = "has a malformed aco block", item_id: str = MALFORMED_ID
 ) -> str:
     return (
         f"item {item_id} {problem}; repair it with aco item edit {item_id} "
-        "and a body whose agent-claim block carries a valid [record]"
+        "and a body whose aco block carries a valid [record]"
     )
 
 
@@ -406,10 +406,10 @@ def _unplaced_malformed_child_cases() -> list[object]:
     read: its parent is unknown, so it may be the container's open child (issue
     #536, ITEM-48, ITEM-54), and each refuses by that item's repair."""
     unreadable_contents = {
-        "no-block": (b"no block at all\n", "has a malformed agent-claim block"),
+        "no-block": (b"no block at all\n", "has a malformed aco block"),
         "broken-toml": (
             _task_item(CONTAINER_ID).replace(b"version = 1", b"version = = 1"),
-            "has a malformed agent-claim block",
+            "has a malformed aco block",
         ),
         "not-utf8": (
             _task_item(CONTAINER_ID).replace(b"Slice A", b"Slice \xff A"),
@@ -417,7 +417,7 @@ def _unplaced_malformed_child_cases() -> list[object]:
         ),
         "non-string-parent": (
             _task_item(CONTAINER_ID).replace(f'parent = "{CONTAINER_ID}"'.encode(), b"parent = 1"),
-            "has a malformed agent-claim block",
+            "has a malformed aco block",
         ),
     }
     return [
@@ -721,26 +721,24 @@ _MALFORMED_CONTENTS = (
             block_body(
                 f'{MINIMAL_BLOCK_TOML}\n[record]\ntitle = "Bare"', before="", after=""
             ).encode(),
-            "has a malformed agent-claim block",
+            "has a malformed aco block",
             id="record-missing-required-fields",
         ),
         pytest.param(
             CONTAINER_BODY.encode(),
-            "has a malformed agent-claim block",
+            "has a malformed aco block",
             id="no-record-table",
         ),
-        pytest.param(
-            _blank_title_item(), "has a malformed agent-claim block", id="blank-record-title"
-        ),
+        pytest.param(_blank_title_item(), "has a malformed aco block", id="blank-record-title"),
         pytest.param(
             _blank_title_item(parent=CONTAINER_ID),
-            "has a malformed agent-claim block",
+            "has a malformed aco block",
             id="blank-record-title-under-a-readable-parent",
         ),
         pytest.param(b"\xff\xfe not utf-8", "is not valid UTF-8", id="not-utf8"),
         pytest.param(
             _container_body_with_slices(((1, "Line one|Line two"),)).replace("|", "\v").encode(),
-            "has a malformed agent-claim block",
+            "has a malformed aco block",
             id="raw-vertical-tab-in-a-slice-title",
         ),
     ],
@@ -1877,7 +1875,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{RULABLE_ID}.md"].decode()
-        assert stored.startswith("Prose.\n\n```agent-claim\n")
+        assert stored.startswith("Prose.\n\n```aco\n")
         record = _decoded_record(stored, RULABLE_ID)
         assert record.title == "Rulable"
         assert record.updated_at.startswith(datetime.now(UTC).date().isoformat())
@@ -2599,8 +2597,7 @@ class TestCliStateRefForge:
         assert child_body.startswith(f"Parent: {CONTAINER_ID}\n")
         err = capsys.readouterr().err
         assert (
-            f"created {child_id} but failed to remove row 1 "
-            f"from {CONTAINER_ID}'s agent-claim block" in err
+            f"created {child_id} but failed to remove row 1 from {CONTAINER_ID}'s aco block" in err
         )
         assert "re-run the same cut -- it adopts the child" in err
         assert "written since it was read" in err
@@ -2687,7 +2684,7 @@ class TestCliStateRefForge:
         issue can carry any body at all. A state-ref item cannot: every
         item's `[record]` table is validated once, at read time, by
         `StateRefBoard`'s own decode (issue #283) -- so a container without
-        a working `[[slice]]` table (no agent-claim block to hold one) is
+        a working `[[slice]]` table (no aco block to hold one) is
         refused by the defect that decode names it by (issues #447, #517),
         rather than a second, cut-specific sentence, and `next` names that
         same defect instead of recommending `cut` on such a container.
@@ -2700,9 +2697,7 @@ class TestCliStateRefForge:
         status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "X"])
 
         assert status == 2
-        assert capsys.readouterr().err == (
-            "ERROR: body malformed: agent-claim: no agent-claim block\n"
-        )
+        assert capsys.readouterr().err == ("ERROR: body malformed: aco: no aco block\n")
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
 
@@ -2951,7 +2946,7 @@ class TestCliStateRefForge:
                 _piping("Ship the importer.\n"),
                 ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged.", "--size", "S"),
                 "",
-                "Ship the importer.\n\n```agent-claim\n",
+                "Ship the importer.\n\n```aco\n",
                 {"now": "Ready.", "next": "Build it.", "done_when": "Merged.", "size": "S"},
                 id="prose_above_a_block_built_from_the_flags",
             ),
@@ -2959,7 +2954,7 @@ class TestCliStateRefForge:
                 _piping("Ship the importer.  \r\nKeep it exact.\t\r\n"),
                 ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."),
                 "",
-                "Ship the importer.  \r\nKeep it exact.\t\r\n\r\n```agent-claim\r\n",
+                "Ship the importer.  \r\nKeep it exact.\t\r\n\r\n```aco\r\n",
                 {"now": "Ready.", "next": "Build it.", "done_when": "Merged."},
                 id="crlf_prose_kept_byte_for_byte_above_a_crlf_block",
             ),
@@ -2967,7 +2962,7 @@ class TestCliStateRefForge:
                 _piping("Ship the importer. \n\n"),
                 ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."),
                 "",
-                "Ship the importer. \n\n\n```agent-claim\n",
+                "Ship the importer. \n\n\n```aco\n",
                 {"now": "Ready.", "next": "Build it.", "done_when": "Merged."},
                 id="trailing_whitespace_and_blank_lines_kept",
             ),
@@ -2975,7 +2970,7 @@ class TestCliStateRefForge:
                 _piping("Ship the importer.\t"),
                 ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."),
                 "",
-                "Ship the importer.\t\n\n```agent-claim\n",
+                "Ship the importer.\t\n\n```aco\n",
                 {"now": "Ready.", "next": "Build it.", "done_when": "Merged."},
                 id="unended_last_line_kept_and_ended",
             ),
@@ -2987,7 +2982,7 @@ class TestCliStateRefForge:
                 ("--now", "Ready.", "--size", "S"),
                 "{item} misses Next; aco item edit {item} fills it\n"
                 "{item} misses Done when; aco item edit {item} fills it\n",
-                "Ship the importer.\n\n```agent-claim\n",
+                "Ship the importer.\n\n```aco\n",
                 {"now": "Ready.", "next": "", "done_when": "", "size": "S"},
                 id="a_piped_block_matching_the_flags_kept_and_its_gaps_named",
             ),
@@ -2997,7 +2992,7 @@ class TestCliStateRefForge:
                 "{item} misses Now; aco item edit {item} fills it\n"
                 "{item} misses Next; aco item edit {item} fills it\n"
                 "{item} misses Done when; aco item edit {item} fills it\n",
-                "```agent-claim\n",
+                "```aco\n",
                 {"now": "", "next": "", "done_when": ""},
                 id="nothing_piped_writes_the_skeleton_and_names_each_gap",
             ),
@@ -3007,7 +3002,7 @@ class TestCliStateRefForge:
                 "{item} misses Now; aco item edit {item} fills it\n"
                 "{item} misses Next; aco item edit {item} fills it\n"
                 "{item} misses Done when; aco item edit {item} fills it\n",
-                "```agent-claim\n",
+                "```aco\n",
                 {"now": "", "next": "", "done_when": ""},
                 id="a_harness_socket_is_never_read_and_the_skeleton_is_written",
             ),
@@ -4408,7 +4403,7 @@ class TestCliStateRefForge:
         bare_remote: Path,
         worktree: Path,
     ) -> None:
-        """Issue #287 proof 5: a piped body with no recognized `agent-claim`
+        """Issue #287 proof 5: a piped body with no recognized `aco`
         block refuses with `body --check`'s own sentence, before any write
         -- the remote's tip stays exactly what it was."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
@@ -4419,9 +4414,7 @@ class TestCliStateRefForge:
         )
 
         assert status == 2
-        assert capsys.readouterr().err == (
-            "ERROR: body malformed: agent-claim: no agent-claim block\n"
-        )
+        assert capsys.readouterr().err == ("ERROR: body malformed: aco: no aco block\n")
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
 
