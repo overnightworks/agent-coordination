@@ -49,7 +49,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
 | prose piped without a block, or nothing piped, either storage | ITEM-58, ITEM-60 | — | — | — |
-| a piped block a flag agrees with or contradicts, either storage | ITEM-59 | — | — | — |
+| a piped block a flag agrees with or contradicts, either storage | ITEM-59, ITEM-62 | — | — | — |
 | state-ref pin, a stored body leaving a section empty | ITEM-61 | — | — | — |
 | `--parent` an open Task, or `--kind` given, either storage | ITEM-45, ITEM-46 | — | ITEM-47..ITEM-51 | — |
 | an item, open or closed | — | ITEM-07, ITEM-08, ITEM-56 | — | — |
@@ -90,9 +90,10 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 ## The body `item new` stores (issue #555)
 
 - [ ] [ITEM-58] Under either storage, prose piped without a block is stored above a block built from the flags; `--now`/`--next`/`--done-when` fill their keys, a key no flag names stays `""` (see E-ITEM-16).
-- [ ] [ITEM-59] A piped block keeps every byte, a key it lacks written in; a flag naming another value refuses `--<flag> <value> contradicts the piped block's <key> = <value>`, exit `2` (see E-ITEM-16).
+- [ ] [ITEM-59] A piped body keeps its prose and fence lines byte for byte; a flag naming another value refuses `--<flag> <value> contradicts the piped block's <key> = <value>`, exit `2` (see E-ITEM-16).
 - [ ] [ITEM-60] Under `storage = "state-ref"`, `item new` reads stdin as under github, never dropping a piped body; a terminal on stdin counts as nothing piped, under either storage.
 - [ ] [ITEM-61] Under `storage = "state-ref"`, each section the stored body leaves empty prints `<item-id> misses <Section>; aco item edit <item-id> fills it` on stderr, one line each (see E-ITEM-01).
+- [ ] [ITEM-62] A piped block is stored verbatim when the flags add nothing to it under `storage = "github"`, otherwise in its canonical rendering, a comment typed inside it not kept.
 
 ## `item new` under `storage = "github"` (issue #444)
 

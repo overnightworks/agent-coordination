@@ -1263,8 +1263,9 @@ BLOCK_CHILD_SKELETON = prose_above_fresh_block("", {})
 
 def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
     """`body` with each field of `fields` its one schema-valid `agent-claim`
-    block lacks written in, every other byte kept -- `body` itself when it
-    lacks none. The one writer behind `item new`'s and `cut`'s block flags."""
+    block lacks written in, the block re-rendered canonically and every byte
+    outside it kept -- `body` itself when it lacks none (ITEM-62). The one
+    writer behind `item new`'s and `cut`'s block flags."""
     located = locate_agent_claim_block(body)
     lacking = {key: value for key, value in fields.items() if key not in located.data}
     if not lacking:

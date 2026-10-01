@@ -19701,6 +19701,15 @@ _PIPED_BLOCK_AS_TYPED = (
             id="a_piped_block_matching_the_flags_kept_byte_for_byte",
         ),
         pytest.param(
+            io.StringIO(
+                "Ship the importer.\n\n```agent-claim\nversion = 1\n# typed by hand\n"
+                'now   = "Ready."\nnext = "Build it."\ndone_when = "Merged."\n```\n'
+            ),
+            ("--size", "S"),
+            ("Write the docs", _PROSE_ABOVE_BUILT_BLOCK, body.ItemKind.TASK),
+            id="a_piped_block_a_flag_completes_stored_in_canonical_rendering",
+        ),
+        pytest.param(
             _Terminal("never read\n"),
             ("--kind", "container", "--now", "Ready.", "--next", "Cut it.", "--done-when", "Done."),
             (
@@ -19722,7 +19731,8 @@ def test_item_new_on_github_builds_the_block_its_piped_body_lacks(
 ) -> None:
     """Issue #555 line 1: `item new` builds the block from its flags below
     the piped prose, keeps a piped block the flags agree with byte for byte,
-    and reads nothing from a terminal."""
+    stores one a flag completes in its canonical rendering (ITEM-62), and
+    reads nothing from a terminal."""
     client = _item_new_github_client(monkeypatch, tmp_path, "")
     monkeypatch.setattr(sys, "stdin", stdin)
 
