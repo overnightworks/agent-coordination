@@ -889,6 +889,7 @@ class TestMalformedItem:
                 ),
                 id="compose-item",
             ),
+            pytest.param(StateRefBoard.hold_well_formed, id="ruling-click-hold"),
         ],
     )
     def test_a_whole_store_read_refuses_beside_an_entry_that_names_no_item(

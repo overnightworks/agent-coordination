@@ -400,7 +400,9 @@ class StateRefBoard:
         blockers are unknown, so `board --serve`'s ruling click would guess
         past it -- the one whole-board write that keeps PIN-29 "before any
         write". Reads that only project the board list it instead (issue
-        #517)."""
+        #517). An entry that names no item refuses the click as it refuses
+        every whole-store read (PIN-13, issue #565)."""
+        self._refuse_a_foreign_entry()
         if self._malformed:
             item_id = min(self._malformed)
             raise _malformed_item_refusal(item_id, self._malformed[item_id])
