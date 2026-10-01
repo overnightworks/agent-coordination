@@ -150,7 +150,7 @@ between separators is malformed like any other (PROT-41).
 - [ ] [PROT-20] The same scope miss under `apply_patch` denies `<path> outside claim scope`, naming the one path the payload's own grammar can name.
 - [ ] [PROT-21] A live claim covering the path allows (PROT-01) (see E-PROT-01).
 - [ ] [PROT-22] A lane (issueless) claim covering the path allows (PROT-01) exactly like an issue claim.
-- [ ] [PROT-46] A path the checkout's `lane_shared` names (PIN-35) allows for any live claim this session holds on the branch, whatever its scope; PROT-18 still denies without one (see E-PROT-16).
+- [ ] [PROT-46] A path the checkout's `lane_shared` names (PIN-37) allows for any live claim this session holds on the branch, whatever its scope; PROT-18 still denies without one (see E-PROT-16).
 
 ## `apply_patch`'s own multi-path payload
 

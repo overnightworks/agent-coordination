@@ -886,6 +886,15 @@ def _bash_rm_target_payload(target: Path) -> dict[str, object]:
 _TARGET_PATH_PAYLOAD_BUILDERS = (_write_target_payload, _bash_rm_target_payload)
 
 
+def _apply_patch_target_payload(target: Path) -> dict[str, object]:
+    command = _patch_command(f"*** Update File: {target}", "@@", "-old", "+new")
+    return {"toolName": "apply_patch", "toolInput": {"command": command}}
+
+
+def _bash_sed_in_place_target_payload(target: Path) -> dict[str, object]:
+    return {"toolName": "Bash", "toolInput": {"command": f"sed -i 's/a/b/' {target}"}}
+
+
 def _monitor_rm_target_payload(target: Path) -> dict[str, object]:
     return {"tool_name": "Monitor", "tool_input": {"command": f"rm {target}"}}
 
@@ -1752,17 +1761,16 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
 
 
 @pytest.mark.parametrize(
-    ("claimed_branch", "written", "decision", "reason"),
+    "payload_for",
+    [_write_target_payload, _apply_patch_target_payload, _bash_sed_in_place_target_payload],
+    ids=["write", "apply-patch", "bash-sed-in-place"],
+)
+@pytest.mark.parametrize(
+    ("claimed_branch", "written", "decision"),
     [
-        pytest.param(
-            "codex/issue-72-widget", "scripts/registry.txt", "allow", None, id="claimed-shared"
-        ),
-        pytest.param(
-            "codex/issue-99-other", "scripts/registry.txt", "deny", "claim first", id="unclaimed"
-        ),
-        pytest.param(
-            "codex/issue-72-widget", "docs/widget.md", "deny", "claim first", id="not-shared"
-        ),
+        pytest.param("codex/issue-72-widget", "scripts/registry.txt", "allow", id="claimed-shared"),
+        pytest.param("codex/issue-99-other", "scripts/registry.txt", "deny", id="unclaimed"),
+        pytest.param("codex/issue-72-widget", "docs/widget.md", "deny", id="not-shared"),
     ],
 )
 def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
@@ -1772,12 +1780,13 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     claimed_branch: str,
     written: str,
     decision: str,
-    reason: str | None,
+    payload_for: Callable[[Path], dict[str, object]],
 ) -> None:
     """Issue #575 line 2 (PROT-46): a `lane_shared` file is writable by any
     live claim this session holds in the checkout, though its scope (`src`)
-    never names it; without a claim on the branch it still denies, and a
-    file the configuration does not share stays bound to the scope."""
+    never names it, whichever tool writes it; without a claim on the branch
+    it still denies, and a file the configuration does not share stays bound
+    to the scope. Each tool's own denial wording is PROT-18's and PROT-33's."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -1787,12 +1796,12 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     (worktree / board.CONFIG_PATH).write_text('lane_shared = ["scripts/registry.txt"]\n')
     state = _protect_state_with_claim(_protect_active_claim("Grok sess-1", branch=claimed_branch))
     monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: state)
-    payload = {"toolName": "write", "toolInput": {"path": str(worktree / written)}}
 
-    exit_code = _protect_main(monkeypatch, payload)
+    exit_code = _protect_main(monkeypatch, payload_for(worktree / written))
 
     assert exit_code == (0 if decision == "allow" else 2)
-    _assert_protect_decision(capsys, decision=decision, reason=reason)
+    printed = capsys.readouterr().out
+    assert (json.loads(printed)["decision"] if printed else "allow") == decision
 
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])

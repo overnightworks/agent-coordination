@@ -1,2 +1,1 @@
 body_contract = "block"
-lane_shared = ["scripts/test_budget_ratchet.txt", "scripts/vulture_whitelist.py"]

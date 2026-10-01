@@ -61,7 +61,7 @@ the peer and its claim id, never the meeting paths.
 
 ## The lane-shared files
 
-- [ ] [STAT-19] Text `aco status` listing a claim ends with one line `lane-shared: <file>, <file>`, each file `lane_shared` names (PIN-35); none configured, no such line.
+- [ ] [STAT-19] Text `aco status` listing a claim ends with one line `lane-shared: <file>, <file>`, each file `lane_shared` names (PIN-37); none configured, no such line.
 
 ## `--json`'s claim object, beside the fields `claim-record.spec.md` owns
 
