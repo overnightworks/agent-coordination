@@ -9,6 +9,7 @@ semantics in Python.
 
 from __future__ import annotations
 
+import ast
 import errno
 import re
 import subprocess
@@ -2655,6 +2656,125 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
         )
     assert "without the ref ever moving" in str(raised.value)
     assert "held by" not in str(raised.value)
+    assert "`aco reset`" in str(raised.value)
+
+
+_REPOSITORY_ROOT = Path(__file__).parent.parent
+_STATE_DELETION_ADVICE = re.compile(
+    r"update-ref\b[^\n`]*\s(?:-d|--delete)\b"
+    r"|push\b[^\n`]*(?:--force|--delete|\s-[fd]\b"
+    r"|\s['\"]?:(?:refs/|\{)|\s\+(?:refs/|\{|[^\s:]+:))"
+)
+
+
+def _message_texts(source: str) -> list[str]:
+    """Every string a module can show a reader: each plain literal, and each
+    f-string read as one text with `{}` for its interpolations, so advice
+    split across `{remote}` or `{STATE_REF}` is still one sentence. A module
+    docstring counts (the CLI's `__doc__` is its `--help` description); a
+    class or function docstring explains code, never advises an operator."""
+    nodes = list(ast.walk(ast.parse(source)))
+    code_docstrings = {
+        node.body[0].value
+        for node in nodes
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and isinstance(node.body[0], ast.Expr)
+    }
+    texts = [
+        node.value
+        for node in nodes
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node not in code_docstrings
+    ]
+    texts.extend(
+        "".join(
+            part.value if isinstance(part, ast.Constant) and isinstance(part.value, str) else "{}"
+            for part in node.values
+        )
+        for node in nodes
+        if isinstance(node, ast.JoinedStr)
+    )
+    return texts
+
+
+def _source_message_texts() -> list[str]:
+    return [
+        text
+        for path in sorted((_REPOSITORY_ROOT / "src").rglob("*.py"))
+        for text in _message_texts(path.read_text(encoding="utf-8"))
+    ]
+
+
+def _spec_texts() -> list[str]:
+    return [
+        path.read_text(encoding="utf-8")
+        for path in sorted((_REPOSITORY_ROOT / "specs").glob("*.spec.md"))
+    ]
+
+
+@pytest.mark.parametrize(
+    "user_facing_texts", [_source_message_texts, _spec_texts], ids=["src", "specs"]
+)
+def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
+    user_facing_texts: Callable[[], list[str]],
+) -> None:
+    """Issue #579: a hand-run ref deletion or force-push wipes every claim
+    and state-ref item; a stuck ref is `aco reset`'s job, which exports
+    first."""
+    texts = user_facing_texts()
+    assert any("`aco reset`" in text for text in texts), "the guard must read the texts it protects"
+    advice = [text for text in texts if _STATE_DELETION_ADVICE.search(text)]
+    assert advice == []
+
+
+@pytest.mark.parametrize(
+    "manual_deletion_advice",
+    [
+        "git update-ref -d refs/aco/state",
+        "git push --force origin refs/aco/state",
+        "git push -f origin refs/aco/state",
+        "git push --force-with-lease origin :refs/aco/state",
+        "git update-ref --delete refs/aco/state",
+        "git push --delete origin refs/aco/state",
+        "git push origin :refs/aco/state",
+        "git push -d origin refs/aco/state",
+        "git push origin -d refs/aco/state",
+        "git push origin +refs/aco/state",
+        "git push origin +HEAD:refs/aco/state",
+        "git update-ref --no-deref -d refs/aco/state",
+    ],
+)
+def test_the_deletion_advice_guard_flags_every_manual_delete_form(
+    manual_deletion_advice: str,
+) -> None:
+    assert _STATE_DELETION_ADVICE.search(manual_deletion_advice)
+
+
+@pytest.mark.parametrize(
+    "advising_source",
+    [
+        'message = f"if stuck, `git update-ref -d {STATE_REF}` on {remote} clears it"',
+        'message = f"if stuck, `git push {remote} :{STATE_REF}` clears it"',
+        'message = f"if stuck, `git push {remote} --delete {STATE_REF}` clears it"',
+        'message = f"if stuck, `git push {remote} --force {STATE_REF}` clears it"',
+        'message = f"if stuck, `git push {remote} +{local}:{STATE_REF}` clears it"',
+        'message = "if stuck, `git push origin :refs/aco/state` clears it"',
+        '"""Usage: if stuck, `git update-ref -d refs/aco/state` clears it."""',
+    ],
+)
+def test_the_deletion_advice_guard_reads_every_message_a_module_writes(
+    advising_source: str,
+) -> None:
+    advice = [
+        text for text in _message_texts(advising_source) if _STATE_DELETION_ADVICE.search(text)
+    ]
+    assert advice != []
+
+
+def test_the_deletion_advice_guard_lets_the_bundle_restore_fetch_through() -> None:
+    restore = "git fetch <bundle> refs/worktree/aco/reset-export:refs/aco/state"
+    assert not _STATE_DELETION_ADVICE.search(restore)
 
 
 def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_race(
