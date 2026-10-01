@@ -19709,11 +19709,11 @@ def _body_file_on_stdin(tmp_path: Path) -> Iterator[TextIO]:
 def _read_end_of_a_pipe_carrying(text: str) -> TextIO:
     """`printf ... | aco ...`: the read end of a pipe whose writer already
     wrote `text` -- a scenario body, well inside a pipe's buffer -- and
-    closed."""
+    closed. Read as `sys.stdin` reads a pipe: line endings untranslated."""
     read_end, write_end = os.pipe()
     with os.fdopen(write_end, "w") as writer:
         writer.write(text)
-    return os.fdopen(read_end)
+    return os.fdopen(read_end, newline="")
 
 
 @pytest.fixture

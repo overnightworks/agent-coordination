@@ -3382,7 +3382,7 @@ def _item_new_body(parsed: argparse.Namespace, storage: body.Storage) -> str:
         default_prose = (
             body.CONTAINER_SKELETON_PROSE if parsed.kind == body.ItemKind.CONTAINER else ""
         )
-        return body.prose_above_fresh_block(piped.rstrip() or default_prose, fields)
+        return body.prose_above_fresh_block(piped if piped.strip() else default_prose, fields)
     shape = body.body_shape_check(piped, storage=storage)
     if shape.verdict is body.BodyShapeVerdict.MALFORMED:
         raise _ItemBodyInvalidError(shape.defects)

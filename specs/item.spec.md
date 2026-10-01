@@ -89,7 +89,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 ## The body `item new` stores (issue #555)
 
-- [ ] [ITEM-58] Under either storage, prose piped without a block is stored above a block built from the flags; `--now`/`--next`/`--done-when` fill their keys, a key no flag names stays `""` (see E-ITEM-16).
+- [ ] [ITEM-58] Either storage keeps prose piped without a block byte for byte, CRLF and trailing blanks too, above a block the flags build in its line ending; a key no flag names stays `""` (see E-ITEM-16).
 - [ ] [ITEM-59] A piped body keeps its prose and fence lines byte for byte; a flag naming another value refuses `--<flag> <value> contradicts the piped block's <key> = <value>`, exit `2` (see E-ITEM-16).
 - [ ] [ITEM-60] Under either storage `item new` reads a body from a file or pipe on stdin, never dropping it; a socket, terminal, `/dev/null` or closed stdin is never read.
 - [ ] [ITEM-61] Under `storage = "state-ref"`, each section the stored body leaves empty prints `<item-id> misses <Section>; aco item edit <item-id> fills it` on stderr, one line each (see E-ITEM-01).
