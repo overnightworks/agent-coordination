@@ -35,6 +35,11 @@ own `--json` contract (`asdict` serializes every dataclass field whether or
 not any function reads it back by name), and tests already pin all three by
 name (`tests/test_board.py`'s `priority_bucket`/`stale` attribute
 assertions, `tests/test_cli.py`'s `"age_days"` envelope pin).
+
+`MergeMethod.REBASE` (issue #578) is reached the same way as
+`NoItemKind.DOCS`: `GitHubForge.allowed_merge_methods` iterates `MergeMethod`
+to read each of GitHub's merge settings, and no code names the one method
+`aco land` never merges with.
 """
 
 from datetime import UTC, date, datetime
@@ -47,6 +52,7 @@ from agent_coordination.board import (
     ExpectationProgress,
     ExpectationState,
     Measurements,
+    MergeMethod,
     NoItemKind,
     Stage,
 )
@@ -137,6 +143,7 @@ _board_for_vulture = Board(
 _referenced_only_for_vulture = (
     NoItemKind.DOCS,
     NoItemKind.FIX,
+    MergeMethod.REBASE,
     ForgeUnsupportedError,
     Capability.UNSUPPORTED,
     _BoardRequestHandler.do_GET,
