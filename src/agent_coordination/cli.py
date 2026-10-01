@@ -31,6 +31,7 @@ from . import (
     github,
     items,
     metrics,
+    process,
     protect,
     protocol,
     providers,
@@ -6822,11 +6823,6 @@ def _land_trunk_trailer(classification: board.Classification) -> str:
     return f"No-Item: {classification.kind.value}"
 
 
-# A line git's own trailer parsing reads as `Token: value`.
-_GIT_TRAILER_LINE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*: \S.*")
-_BLANK_LINE_SEPARATOR = re.compile(r"\n[ \t]*\n")
-
-
 def _without_classification_lines(paragraph: str) -> str:
     return "\n".join(
         line
@@ -6835,12 +6831,22 @@ def _without_classification_lines(paragraph: str) -> str:
     )
 
 
-def _ends_in_trailer_paragraph(message: str) -> bool:
-    last_paragraph = _BLANK_LINE_SEPARATOR.split(message)[-1]
-    return all(_GIT_TRAILER_LINE.fullmatch(line) for line in last_paragraph.split("\n"))
+def _ends_in_trailer_block(title: str, body: str) -> bool:
+    """Whether the commit message `title` + `body` ends in a trailer block
+    as git's own trailer parsing reads it -- asked of git itself, never a
+    hand-written look-alike (issue #594). `--no-divider` matches the
+    `%(trailers)` read the release relies on (`checkout.trunk_landings`)."""
+    command = ["git", "interpret-trailers", "--parse", "--no-divider"]
+    try:
+        result = process.run_bounded(command, input_data=f"{title}\n\n{body}\n".encode())
+    except process.ProcessError as error:
+        raise protocol.ClaimError(f"git could not parse the landing's trailers: {error}") from error
+    if result.exit_status != 0:
+        raise protocol.ClaimError(process.git_failure_detail_from_bounded(result))
+    return bool(result.output.strip())
 
 
-def _land_merge_body(body: str, classification: board.Classification) -> str:
+def _land_merge_body(title: str, body: str, classification: board.Classification) -> str:
     """The merge commit message `aco land` composes itself (issue #405,
     Befund 42 on #310): the pull request's own body with its classification
     line removed, then that classification, in the trunk's own trailer
@@ -6862,7 +6868,8 @@ def _land_merge_body(body: str, classification: board.Classification) -> str:
     trailer = _land_trunk_trailer(classification)
     if not without_classification:
         return f"{trailer}\n"
-    separator = "\n" if _ends_in_trailer_paragraph(without_classification) else "\n\n"
+    joins_trailer_block = _ends_in_trailer_block(title, without_classification)
+    separator = "\n" if joins_trailer_block else "\n\n"
     return f"{without_classification}{separator}{trailer}\n"
 
 
@@ -6902,13 +6909,14 @@ def _land_merge(
     classification: board.Classification,
     method: board.MergeMethod,
 ) -> str:
+    title = _land_merge_title(method, detail)
     try:
         return client.merge_landing(
             detail.number,
             head_sha=readiness.head_sha,
             method=method,
-            title=_land_merge_title(method, detail),
-            body=_land_merge_body(detail.body, classification),
+            title=title,
+            body=_land_merge_body(title, detail.body, classification),
         )
     except forge.ForgeMergeConflictError as error:
         raise protocol.ClaimUnavailableError(

@@ -18386,6 +18386,56 @@ def test_land_message_keeps_the_classification_inside_gits_trailer_block(
     assert client.closed_issues == {WORK_ITEM_ISSUE}
 
 
+def _git_trailers(directory: Path, message: str) -> tuple[str, ...]:
+    """The trailers git's own parsing reads in `message`, read as the
+    release's `%(trailers)` reads them: `--no-divider`, so a Markdown `---`
+    rule stays prose."""
+    message_file = directory / "trailer-message"
+    message_file.write_text(message)
+    parsed = _real_git(
+        directory, "interpret-trailers", "--parse", "--no-divider", str(message_file)
+    )
+    return tuple(parsed.stdout.splitlines())
+
+
+@pytest.mark.parametrize(
+    "ending_trailers",
+    [
+        pytest.param("Co-authored-by:A <a@x>", id="no-space-after-colon"),
+        pytest.param("Reviewed-by : A <a@x>", id="space-before-colon"),
+        pytest.param("Co-authored-by: A\n  folded <a@x>", id="folded-continuation"),
+        pytest.param("Acked-by:", id="empty-value"),
+        pytest.param("https://x.example/a\nCo-authored-by: A <a@x>", id="url-beside-trailer"),
+        pytest.param("Signed-off-by: A <a@x>\nOne prose line.", id="quarter-trailers"),
+        pytest.param(
+            "Signed-off-by: A <a@x>\n(cherry picked from commit 0123abc)", id="cherry-picked"
+        ),
+    ],
+)
+def test_land_message_keeps_every_trailer_git_reads_at_the_body_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ending_trailers: str
+) -> None:
+    """Issue #594 line 1: whatever last paragraph git's own trailer parsing
+    reads as a trailer block -- not only canonical `Token: value` lines --
+    takes the classification as its last line, so every trailer git reads
+    in the body is still one in the landed message."""
+    body_after_removal = f"{_CLOSES}\n\n{ending_trailers}"
+    repo, client = _land_scenario(
+        monkeypatch, tmp_path, body=f"{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n{ending_trailers}"
+    )
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    [(_number, _head_sha, _method, title, _body)] = client.merge_calls
+    body_trailers = _git_trailers(tmp_path, f"{title}\n\n{body_after_removal}\n")
+    landed_message = _real_git(repo, "log", "-1", "--format=%B", "main").stdout
+    assert (status, bool(body_trailers), _git_trailers(tmp_path, landed_message)) == (
+        0,
+        True,
+        (*body_trailers, _WORK_ITEM_TRAILER),
+    )
+
+
 def test_land_release_routing_reuses_the_verified_classification_for_a_fresh_merge() -> None:
     """Issue #405 point 4: a fresh merge routes `release --merged` straight
     from the classification this same run's own preflight already verified
