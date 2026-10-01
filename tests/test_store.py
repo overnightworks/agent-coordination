@@ -2524,6 +2524,38 @@ def test_a_claim_and_its_release_keep_every_entry_they_do_not_write_by_mode(
     assert [after[path] for path in untouched] == [before[path] for path in untouched]
 
 
+def test_an_item_write_keeps_the_empty_ledger_directories_it_does_not_write(
+    bare_remote: Path, worktree: Path
+) -> None:
+    """CAS-61 across the whole tree (issue #565): an empty `claims/`,
+    `ids/`, and `resources/` stay through a write to one item."""
+    schema_blob = _blob(worktree, protocol.serialize_empty_schema_toml().encode())
+    empty_tree = _raw_tree(worktree, [])
+    ledger = (store.CLAIMS_DIRECTORY, store.IDS_DIRECTORY, store.RESOURCES_DIRECTORY)
+    _push_raw_state_tree(
+        bare_remote,
+        worktree,
+        [
+            ("100644", "blob", schema_blob, store.SCHEMA_TOML_FILENAME),
+            *(("040000", "tree", empty_tree, directory) for directory in ledger),
+        ],
+    )
+
+    store.commit_transition(
+        observed=fresh_observation(worktree, bare_remote),
+        subject=store.TransitionSubject("write item aco-000001"),
+        intent=_hashed_item_intent(worktree),
+    )
+
+    top_level = subprocess.run(
+        ["git", "--git-dir", str(bare_remote), "ls-tree", "--name-only", store.STATE_REF],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert sorted(top_level) == sorted([store.SCHEMA_TOML_FILENAME, store.ITEMS_DIRECTORY, *ledger])
+
+
 def test_fetch_state_keys_only_the_entries_the_item_file_name_rule_names(
     bare_remote: Path, worktree: Path, foreign_item_entries: tuple[tuple[str, str], ...]
 ) -> None:

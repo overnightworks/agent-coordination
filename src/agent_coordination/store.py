@@ -1410,16 +1410,20 @@ def _reuse_or_write_mapping_subtree(
     old_members: Mapping[str, _SubtreeValueT],
     new_members: Mapping[str, _SubtreeValueT],
     serialize: Callable[[_SubtreeValueT], str],
-) -> ObjectId:
+) -> ObjectId | None:
     """A `claims/`- or `resources/`-shaped subtree's new oid, reusing every
     member unchanged since `old_members` (issue #241): frozen-dataclass
     equality on the parsed record is exactly serialization equality --
     `serialize` is a pure function of the record's fields -- so an identical
     record needs neither a new blob nor a new tree; only `mktree` for a
     directory that actually changed, never once per unchanged entry.
+    An unchanged directory, an empty one included, is carried as it stands
+    (CAS-61, issue #565); `None` while it is absent or this write empties it.
     """
-    if old_members == new_members and existing.oid is not None:
+    if old_members == new_members:
         return existing.oid
+    if not new_members:
+        return None
     entries: list[_TreeEntry] = []
     for name, value in new_members.items():
         entry_name = f"{name}{TOML_SUFFIX}"
@@ -1436,13 +1440,16 @@ def _reuse_or_write_ids_subtree(
     existing: _ExistingSubtree,
     old_ids: frozenset[ClaimId],
     new_ids: frozenset[ClaimId],
-) -> ObjectId:
+) -> ObjectId | None:
     """`ids/`'s new subtree oid (issue #241): every id's blob is the same
     empty content, so reuse is membership-only -- the empty blob is written
-    at most once per call, never once per newly consumed id.
+    at most once per call, never once per newly consumed id. Carried and
+    `None` as `_reuse_or_write_mapping_subtree` carries them.
     """
-    if old_ids == new_ids and existing.oid is not None:
+    if old_ids == new_ids:
         return existing.oid
+    if not new_ids:
+        return None
     empty_blob: ObjectId | None = None
     entries: list[_TreeEntry] = []
     for claim_id in new_ids:
@@ -1512,52 +1519,32 @@ def _write_incremental_state_tree(
         old_items=observed.items,
         new_items=new_state.items,
     )
-    if items_subtree is not None:
-        top_entries.append(("040000", "tree", items_subtree, ITEMS_DIRECTORY))
-    if new_state.claims:
-        top_entries.append(
-            (
-                "040000",
-                "tree",
-                _reuse_or_write_mapping_subtree(
-                    worktree,
-                    existing=_existing_subtree(existing, CLAIMS_DIRECTORY),
-                    old_members=observed.claims,
-                    new_members=new_state.claims,
-                    serialize=serialize_claim_toml,
-                ),
-                CLAIMS_DIRECTORY,
-            )
-        )
-    if new_state.consumed_ids:
-        top_entries.append(
-            (
-                "040000",
-                "tree",
-                _reuse_or_write_ids_subtree(
-                    worktree,
-                    existing=_existing_subtree(existing, IDS_DIRECTORY),
-                    old_ids=observed.consumed_ids,
-                    new_ids=new_state.consumed_ids,
-                ),
-                IDS_DIRECTORY,
-            )
-        )
-    if new_state.resources:
-        top_entries.append(
-            (
-                "040000",
-                "tree",
-                _reuse_or_write_mapping_subtree(
-                    worktree,
-                    existing=_existing_subtree(existing, RESOURCES_DIRECTORY),
-                    old_members=observed.resources,
-                    new_members=new_state.resources,
-                    serialize=serialize_resource_toml,
-                ),
-                RESOURCES_DIRECTORY,
-            )
-        )
+    subtrees = {
+        ITEMS_DIRECTORY: items_subtree,
+        CLAIMS_DIRECTORY: _reuse_or_write_mapping_subtree(
+            worktree,
+            existing=_existing_subtree(existing, CLAIMS_DIRECTORY),
+            old_members=observed.claims,
+            new_members=new_state.claims,
+            serialize=serialize_claim_toml,
+        ),
+        IDS_DIRECTORY: _reuse_or_write_ids_subtree(
+            worktree,
+            existing=_existing_subtree(existing, IDS_DIRECTORY),
+            old_ids=observed.consumed_ids,
+            new_ids=new_state.consumed_ids,
+        ),
+        RESOURCES_DIRECTORY: _reuse_or_write_mapping_subtree(
+            worktree,
+            existing=_existing_subtree(existing, RESOURCES_DIRECTORY),
+            old_members=observed.resources,
+            new_members=new_state.resources,
+            serialize=serialize_resource_toml,
+        ),
+    }
+    top_entries.extend(
+        ("040000", "tree", oid, directory) for directory, oid in subtrees.items() if oid is not None
+    )
     return _mktree(worktree, top_entries)
 
 
