@@ -946,6 +946,7 @@ def test_read_item_files_reads_every_blob_under_items(bare_remote: Path, worktre
         pytest.param(("040000", "tree", "aco-000001.md"), id="a-directory"),
         pytest.param(("120000", "blob", "aco-000001.md"), id="a-symlink-named-as-an-item"),
         pytest.param(("120000", "blob", "NOTANID"), id="a-symlink-naming-no-item"),
+        pytest.param(("160000", "commit", "aco-000001.md"), id="a-submodule"),
     ]
 )
 def non_file_items_store(
@@ -954,7 +955,13 @@ def non_file_items_store(
     """A pushed state ref whose `items/` holds one entry that is no file;
     returns the tip and CAS-32's sentence for that entry."""
     mode, kind, name = request.param
-    target = _raw_tree(worktree, []) if kind == "tree" else _blob(worktree, b"aco-000002.md")
+    match kind:
+        case "tree":
+            target = _raw_tree(worktree, [])
+        case "commit":
+            target = _git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+        case _:
+            target = _blob(worktree, b"aco-000002.md")
     items_tree = _raw_tree(worktree, [(mode, kind, target, name)])
     schema_blob = _blob(worktree, protocol.serialize_empty_schema_toml().encode())
     tip = protocol.ObjectId(
@@ -973,8 +980,8 @@ def non_file_items_store(
 def test_read_item_files_refuses_an_entry_that_is_no_file(
     worktree: Path, non_file_items_store: tuple[protocol.ObjectId, str]
 ) -> None:
-    """CAS-32 (issue #565): a directory or a symlink under `items/` refuses
-    by name, never left out of the read without a word."""
+    """CAS-32 (issue #565): a directory, a symlink, or a submodule under
+    `items/` refuses by name, never left out of the read without a word."""
     tip, refusal = non_file_items_store
 
     with pytest.raises(protocol.MalformedStateTreeError, match=re.escape(refusal)):
