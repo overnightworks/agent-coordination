@@ -27,6 +27,7 @@ from cli_fixtures import (
     _real_git,
     _real_repository_with_bare_remote,
     _set_agent_identity_env,
+    stub_board_config_tracked,
 )
 from test_cli import FakeForge
 
@@ -55,19 +56,10 @@ def _stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     #315): `_isolate_protect_home`'s `work` directory is never a real git
     checkout, so a real `git ls-files` check would otherwise always read
     "not tracked" here. A test proving the refusal itself overrides this.
-    Only that index question is stubbed: whether a revision's tree holds a
-    file (the trunk's committed `lane_shared`, issue #575) stays with the
-    real helper, which reads `_patch_protect_git`'s faked `ls-tree` answer
-    or a real-worktree test's own repository."""
-
-    def tracked_in_the_index(
-        path: str, *, directory: Path | None = None, revision: str | None = None
-    ) -> bool:
-        if revision is None:
-            return True
-        return _REAL_PATH_IS_TRACKED(path, directory=directory, revision=revision)
-
-    monkeypatch.setattr(checkout, "path_is_tracked", tracked_in_the_index)
+    The trunk's tree question (issue #575) stays real and reads
+    `_patch_protect_git`'s faked `ls-tree` answer or a real-worktree test's
+    own repository."""
+    stub_board_config_tracked(monkeypatch)
 
 
 def _isolate_protect_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:

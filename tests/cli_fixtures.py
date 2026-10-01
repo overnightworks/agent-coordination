@@ -22,6 +22,9 @@ from agent_coordination import board, checkout, cli, forge, github, process, sto
 from agent_coordination.protocol import ClaimState
 from agent_coordination.session import RunContext
 
+# Captured at import, before any test's stub replaces it.
+_REAL_PATH_IS_TRACKED = checkout.path_is_tracked
+
 
 def _stub_one_git_call(
     monkeypatch: pytest.MonkeyPatch, arguments: list[str], *, exit_status: int, stderr: str
@@ -206,8 +209,19 @@ def stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     own `@pytest.fixture(autouse=True)` (never placed here itself, matching
     `conftest.py`'s "everything but git-toplevel isolation stays local to its
     test module") so every test file states in its own body that it reads a
-    tracked board.toml by default."""
-    monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: True)
+    tracked board.toml by default. Only that index question is stubbed:
+    whether a revision's tree holds a file (the trunk's committed
+    `lane_shared`, issue #575) stays with the real helper, so a test's faked
+    `ls-tree` answer or its real repository decides it."""
+
+    def tracked_in_the_index(
+        path: str, *, directory: Path | None = None, revision: str | None = None
+    ) -> bool:
+        if revision is None:
+            return True
+        return _REAL_PATH_IS_TRACKED(path, directory=directory, revision=revision)
+
+    monkeypatch.setattr(checkout, "path_is_tracked", tracked_in_the_index)
 
 
 def stub_every_remote_configured(monkeypatch: pytest.MonkeyPatch) -> None:
