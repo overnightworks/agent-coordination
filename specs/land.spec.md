@@ -51,6 +51,7 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | classification's own claim/parent/closing defect | LANDCMD-09 (LAND-14..28, cited) |
 | claim held by another agent or role | LANDCMD-10 |
 | checkout unclean or off the default branch | LANDCMD-11 |
+| checkout without a git identity | LANDCMD-25 |
 | every precondition holds | LANDCMD-12, LANDCMD-13 |
 | the pull request changed since it was read | LANDCMD-14 |
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
@@ -79,6 +80,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-09] The classification's own claim, parent, and closing rules then apply (LAND-14..28): a defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
 - [ ] [LANDCMD-10] A claim held by another agent or role, with no explicit coordinator override, refuses (REL-12's sentence), exit `2`, before the merge.
 - [ ] [LANDCMD-11] This checkout must sit on the forge's default branch with nothing uncommitted, or `aco land` refuses `land must run from a clean checkout of the default branch '<branch>'`, exit `2`.
+- [ ] [LANDCMD-25] A checkout without a git identity refuses `land must run from a checkout with a git identity; set user.name and user.email there so its release can commit to the claim state`, exit `2`.
 - [ ] [LANDCMD-20] The forge names `<branch>` even where the canonical remote records no `HEAD`; LANDCMD-11 never reads one.
 
 ## Merge, composed by `aco land`
@@ -89,11 +91,12 @@ preflight, refused or not, exactly as `reset`'s own read does.
 
 ## After the merge
 
-- [ ] [LANDCMD-15] A failure deleting the branch, fast-forwarding, or in the delegated `release --merged` prints `MERGED pull request #<n> as <sha>; follow-up incomplete: <step>; re-run aco land <n>`, exit `2`.
+- [ ] [LANDCMD-15] A failed branch delete, fast-forward, or delegated `release --merged` prints `MERGED pull request #<n> as <sha>; follow-up incomplete: <step> (<error>); re-run aco land <n>`, exit `2`.
+- [ ] [LANDCMD-26] LANDCMD-15's `<error>` is the failed step's own sentence: for `release`, the one `release --merged` itself would print, without its `ERROR: ` prefix.
 - [ ] [LANDCMD-21] The fast-forward fetches the canonical remote `<remote>` once per run and moves `<branch>` to `<remote>/<branch>`; the delegated release walks that same ref.
 - [ ] [LANDCMD-16] Deleting the merged branch is idempotent: a forge already reporting it absent is success, not a refusal.
 - [ ] [LANDCMD-17] In this package's own repository, a successful landing's last line is `reinstall: uv tool install --force --from . agent-coordination`; any other repository prints nothing further.
-- [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11 and LANDCMD-19, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.
+- [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11, LANDCMD-19, and LANDCMD-25, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.
 
 ## Never
 
@@ -101,7 +104,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - `aco land` never runs `release`'s own close, store transition, `freed`/`next` report, or worktree cleanup a second time; it delegates to the one existing `release --merged` path (`specs/release.spec.md`).
 - A step after the merge never re-merges: recovery always resumes from the pull request's own already-merged state, read fresh on every rerun.
 - Once merged, the delegated release never reads the pull request's own mutable body for routing: a fixer editing it away afterward changes nothing this pull request already landed (LAND-64).
-- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..24) refuses.
+- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25) refuses.
 - `aco land` never takes its storage, canonical remote, forge, or claim store from a head's `<path>`: this checkout's own tracked copy governs, and the head's copy is only checked (LANDCMD-22..24).
 
 ## Examples
@@ -191,6 +194,16 @@ $ aco land 57
 exit 2
 ```
 
+### E-LANDCMD-25 — a landing clone without a git identity refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, `aco land` running from a second clean clone on `main` with no user.name or user.email
+
+```console
+$ aco land 57
+2> ERROR: land must run from a checkout with a git identity; set user.name and user.email there so its release can commit to the claim state
+exit 2
+```
+
 ### E-LANDCMD-14 — the pull request changed since preflight refuses the merge
 
 Setup: bare-remote, fake `gh`, pull request `#57` open and green during preflight, its head moved before the pinned merge request lands
@@ -207,7 +220,7 @@ Setup: bare-remote, fake `gh`, pull request `#57` merges cleanly, the delegated 
 
 ```console
 $ aco land 57
-2> ERROR: MERGED pull request #57 as <sha>; follow-up incomplete: release; re-run aco land 57
+2> ERROR: MERGED pull request #57 as <sha>; follow-up incomplete: release (forge unreachable); re-run aco land 57
 exit 2
 ```
 

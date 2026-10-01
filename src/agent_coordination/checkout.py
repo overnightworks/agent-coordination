@@ -849,18 +849,30 @@ def is_default_branch(branch: str, default_branch: str | None) -> bool:
     return branch in DEFAULT_BRANCH_FALLBACK
 
 
-def refuse_unclean_default_branch_checkout(default_branch: str, *, directory: Path) -> None:
-    """`land`'s own precondition (issue #405): the checkout at `directory`
-    must already sit on `default_branch` -- the run's own answer, never read
-    here (issue #492) -- with nothing uncommitted, since `land`
-    fast-forwards that exact branch in place once its merge succeeds --
-    raises the ruled refusal otherwise."""
+LAND_MISSING_GIT_IDENTITY_REFUSAL = (
+    "land must run from a checkout with a git identity; set user.name and user.email "
+    "there so its release can commit to the claim state"
+)
+
+
+def refuse_unlandable_checkout(default_branch: str, *, directory: Path) -> None:
+    """`land`'s own checkout precondition (issue #405): the checkout at
+    `directory` must already sit on `default_branch` -- the run's own
+    answer, never read here (issue #492) -- with nothing uncommitted, since
+    `land` fast-forwards that exact branch in place once its merge
+    succeeds, and it must carry a git identity, since its delegated release
+    commits to the claim state from here: a separate landing clone without
+    one merged and only then failed its release (issue #578). Raises the
+    ruled refusal otherwise."""
     current = current_branch(directory=directory)
     dirty = _git_output(["status", "--porcelain"], directory=directory)
     if current != default_branch or dirty:
         raise ClaimError(
             f"land must run from a clean checkout of the default branch {default_branch!r}"
         )
+    for identity in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+        if _git_run(["var", identity], directory=directory).exit_status != 0:
+            raise ClaimError(LAND_MISSING_GIT_IDENTITY_REFUSAL)
 
 
 def trunk_ref(remote: str, *, directory: Path) -> str:
@@ -1061,7 +1073,7 @@ def fast_forward_default_branch(trunk: str, *, directory: Path) -> None:
     issue #492). `--ff-only` refuses loud
     rather than rewriting history if the local branch somehow diverged --
     never true in the ordinary case, since
-    `refuse_unclean_default_branch_checkout` already proved this exact
+    `refuse_unlandable_checkout` already proved this exact
     checkout clean and on the default branch before the merge ever ran."""
     result = _git_run(["merge", "--ff-only", trunk], directory=directory)
     if result.exit_status != 0:

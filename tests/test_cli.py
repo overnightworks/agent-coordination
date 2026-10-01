@@ -192,6 +192,7 @@ class FakeForge:
     merge_calls: list[tuple[int, str, str, str]] = field(default_factory=list)
     merge_sha: str = MERGE_COMMIT_SHA
     merge_remote: Path | None = None
+    closes_on_merge: bool = False
     fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
     head_board_config: str | None = ""
@@ -308,13 +309,19 @@ class FakeForge:
         `merge_remote` names a real bare repository (`land`'s own end-to-end
         tests), merges there into its default branch, as the forge does on
         its own side, so the landing checkout stands behind until its own
-        real fast-forward."""
+        real fast-forward. `closes_on_merge` closes every issue the pull
+        request body names with `Closes #<n>`, as GitHub itself does on the
+        merge, before the release ever reads it (issue #578)."""
         self._run()
         self.merge_calls.append((number, head_sha, title, body))
         if self.fail_merge is not None:
             raise self.fail_merge
         sha = self.merge_sha
         landing = self.landings[number]
+        if self.closes_on_merge:
+            self.closed_issues.update(
+                int(closed) for closed in re.findall(r"Closes #(\d+)", landing.body)
+            )
         if self.merge_remote is not None:
             sha = _merge_on_the_forge(
                 self.merge_remote,
@@ -17215,11 +17222,21 @@ def _break_fast_forward_merge(monkeypatch: pytest.MonkeyPatch, _client: FakeForg
 
 
 @pytest.mark.parametrize(
-    ("arrange", "step"),
+    ("arrange", "step", "detail"),
     [
-        pytest.param(_break_delete_branch, "delete-branch", id="delete-branch"),
-        pytest.param(_break_fetch, "fast-forward", id="fetch-fails"),
-        pytest.param(_break_fast_forward_merge, "fast-forward", id="ff-only-fails"),
+        pytest.param(
+            _break_delete_branch,
+            "delete-branch",
+            "delete branch failed (simulated)",
+            id="delete-branch",
+        ),
+        pytest.param(_break_fetch, "fast-forward", "fatal: unreachable", id="fetch-fails"),
+        pytest.param(
+            _break_fast_forward_merge,
+            "fast-forward",
+            "fatal: Not possible to fast-forward, aborting.",
+            id="ff-only-fails",
+        ),
     ],
 )
 def test_land_reports_incomplete_follow_up_for_every_post_merge_step(
@@ -17228,10 +17245,12 @@ def test_land_reports_incomplete_follow_up_for_every_post_merge_step(
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, FakeForge], None],
     step: str,
+    detail: str,
 ) -> None:
     """Issue #405: every step after a successful merge -- deleting the
     branch, fetching, or fast-forwarding -- names its own step in the one
-    ruled recovery line, the merge itself never repeated."""
+    ruled recovery line, the merge itself never repeated; issue #578: the
+    line carries the step's own failure, never a bare step name."""
     _repo, client = _land_scenario(monkeypatch, tmp_path)
     arrange(monkeypatch, client)
 
@@ -17242,7 +17261,7 @@ def test_land_reports_incomplete_follow_up_for_every_post_merge_step(
     assert merge_commit is not None
     assert capsys.readouterr().err == (
         f"ERROR: MERGED pull request #12 as {merge_commit}; "
-        f"follow-up incomplete: {step}; re-run aco land 12\n"
+        f"follow-up incomplete: {step} ({detail}); re-run aco land 12\n"
     )
     assert len(client.merge_calls) == 1
 
@@ -17279,7 +17298,7 @@ def _land_merged_pending_release(
     assert merge_commit is not None
     assert capsys.readouterr().err == (
         f"ERROR: MERGED pull request #12 as {merge_commit}; "
-        "follow-up incomplete: release; re-run aco land 12\n"
+        "follow-up incomplete: release (forge unreachable (simulated)); re-run aco land 12\n"
     )
     assert len(client.merge_calls) == 1
     assert client.closed_issues == set()
@@ -17609,6 +17628,104 @@ def test_land_rerun_recovers_release_routing_after_the_body_changed(
 
     assert len(client.merge_calls) == 1
     assert client.closed_issues == {WORK_ITEM_ISSUE}
+
+
+def _land_from_a_separate_clone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, git_identity: bool
+) -> tuple[Path, FakeForge]:
+    """`_land_scenario`'s claim, held for real in `refs/aco/state`, with the
+    lane worktree beside the primary checkout and `aco land` running from a
+    second, clean clone that holds no worktree at all (issue #578, the
+    songmaker landing clone). The forge closes the item through its own
+    `Closes #<n>` on the merge. `git_identity=False` leaves the clone with no
+    user.name or user.email, which git may never guess."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.closes_on_merge = True
+    _use_real_store(monkeypatch)
+    remote = tmp_path / "remote.git"
+    store.bootstrap(worktree=repo, remote=str(remote))
+    store.commit_transition(
+        observed=fresh_observation(repo, remote),
+        subject=store.ClaimTransitionSubject(
+            f"claim issue {WORK_ITEM_ISSUE}", item=str(WORK_ITEM_ISSUE)
+        ),
+        intent=protocol.ClaimIntent(
+            identity=protocol.IssueIdentity(WORK_ITEM_ISSUE),
+            agent="Ada",
+            role="builder",
+            base=protocol.ObjectId("c" * 40),
+            branch=LANDING_BRANCH,
+            scope=("src",),
+            claim_id=protocol.ClaimId("landing-claim"),
+            operation_id="landing-claim-op",
+        ),
+    )
+    _real_git(repo, "worktree", "add", "-q", str(tmp_path / "lane"), LANDING_BRANCH)
+    clone = tmp_path / "landing-clone"
+    _real_git(tmp_path, "clone", "-q", str(remote), str(clone))
+    _real_git(clone, "config", "user.useConfigOnly", "true")
+    if git_identity:
+        _real_git(clone, "config", "user.name", "Lander")
+        _real_git(clone, "config", "user.email", "lander@example.com")
+    for variable in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    _redirect_toplevel(monkeypatch, clone)
+    monkeypatch.chdir(clone)
+    return clone, client
+
+
+@pytest.mark.usefixtures("isolated_global_git_config")
+@pytest.mark.parametrize(
+    ("git_identity", "expected_status", "expected_error", "expected_merges", "released"),
+    [
+        pytest.param(True, 0, "", 1, True, id="identity-releases"),
+        pytest.param(
+            False,
+            2,
+            f"ERROR: {checkout.LAND_MISSING_GIT_IDENTITY_REFUSAL}\n",
+            0,
+            False,
+            id="no-identity-refuses-before-the-merge",
+        ),
+    ],
+)
+def test_land_from_a_separate_clone_releases_or_refuses_before_the_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    git_identity: bool,
+    expected_status: int,
+    expected_error: str,
+    expected_merges: int,
+    released: bool,
+) -> None:
+    """Issue #578 line 1: a landing clone without the lane worktree, whose
+    item GitHub already closed through `Closes #<n>`, merges and releases
+    the claim, the lane worktree kept where it lives and named as kept. The
+    songmaker cause: a clone with no git identity cannot commit that release
+    to the claim state, so it refuses before anything merges (LANDCMD-25)."""
+    clone, client = _land_from_a_separate_clone(monkeypatch, tmp_path, git_identity=git_identity)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    claims = store.fetch_state(worktree=clone, remote="origin").claims
+    assert (status, output.err, len(client.merge_calls)) == (
+        expected_status,
+        expected_error,
+        expected_merges,
+    )
+    assert (not claims, "worktree: kept -- no linked worktree found\n" in output.out) == (
+        released,
+        released,
+    )
+    assert (tmp_path / "lane").exists()
 
 
 @pytest.mark.parametrize(
