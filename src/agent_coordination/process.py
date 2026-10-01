@@ -13,7 +13,6 @@ import os
 import selectors
 import subprocess
 import time
-from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -26,7 +25,6 @@ _PROCESS_EXIT_POLL_SECONDS = 1
 _MAX_PROC_COMMAND_LINE_BYTES = 16 * 1024
 _MAX_NATIVE_PROCESS_SCAN = 1024
 _STAT_START_TIME_INDEX = 19
-_REF_TRANSACTION_PREPARED_REPLY = b"prepare: ok\n"
 
 # Fallback when a failed git invocation left nothing readable on either
 # stream (issue #372: one owner instead of a `checkout.py`/`store.py` copy).
@@ -139,28 +137,21 @@ def _close_process_streams(process_handle: subprocess.Popen[bytes]) -> None:
             stream.close()
 
 
-def _start_process(
-    command: list[str], *, stdin: int | None, stderr: int, env: dict[str, str] | None = None
+def _start_bounded_process(
+    command: list[str], *, env: dict[str, str] | None, input_data: bytes | None
 ) -> subprocess.Popen[bytes]:
     try:
         return subprocess.Popen(
-            command, stdin=stdin, stdout=subprocess.PIPE, stderr=stderr, env=env
+            command,
+            stdin=subprocess.PIPE if input_data is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
         )
     except FileNotFoundError as error:
         raise ExecutableMissingError(command[0]) from error
     except OSError as error:
         raise ProcessStartFailedError(str(error)) from error
-
-
-def _start_bounded_process(
-    command: list[str], *, env: dict[str, str] | None, input_data: bytes | None
-) -> subprocess.Popen[bytes]:
-    return _start_process(
-        command,
-        stdin=subprocess.PIPE if input_data is not None else None,
-        stderr=subprocess.STDOUT,
-        env=env,
-    )
 
 
 def _register_process_streams(
@@ -209,25 +200,18 @@ def _write_process_input(
     # from there instead of narrowing the selector's wider protocol.
     stream = process_handle.stdin
     assert stream is not None
-    remaining_input = pending_input[_write_stdin(process_handle, pending_input) :]
+    try:
+        written = os.write(stream.fileno(), pending_input)
+    except BrokenPipeError:
+        written = len(pending_input)
+    except OSError as error:
+        _stop_process(process_handle)
+        raise ProcessIoFailedError(IoStage.SENDING, str(error)) from error
+    remaining_input = pending_input[written:]
     if not remaining_input:
         selector.unregister(key.fileobj)
         stream.close()
     return remaining_input
-
-
-def _write_stdin(process_handle: subprocess.Popen[bytes], data: bytes | memoryview) -> int:
-    """Write `data` to `process_handle`'s stdin and return how many bytes it
-    took: a child that already exited counts as served, since its own answer
-    waits on its output, and any other write failure is a
-    `ProcessIoFailedError`."""
-    assert process_handle.stdin is not None
-    try:
-        return os.write(process_handle.stdin.fileno(), data)
-    except BrokenPipeError:
-        return len(data)
-    except OSError as error:
-        raise ProcessIoFailedError(IoStage.SENDING, str(error)) from error
 
 
 def _read_process_output(
@@ -363,61 +347,6 @@ def run_git(arguments: list[str], *, directory: Path | None = None) -> CapturedR
     closed is each caller's own call to make around this one, since callers
     disagree (issue #372)."""
     return run_captured(git_command(arguments, directory=directory))
-
-
-def run_git_ref_transaction(
-    instructions: list[str],
-    *,
-    while_prepared: Callable[[], bool],
-    directory: Path | None = None,
-) -> CapturedResult:
-    """Run `instructions` -- `git update-ref --stdin` lines such as
-    `delete <ref> <old value>` -- as one prepared transaction: git locks
-    every named ref and checks its old value, `while_prepared` runs while
-    git holds those locks, and the transaction commits when it returns
-    `True` and aborts otherwise. A refused prepare comes back as git's own
-    nonzero result without `while_prepared` ever running. An exception out of
-    `while_prepared` ends git's input without `commit`, which git answers by
-    aborting the transaction. Raises `ExecutableMissingError`,
-    `ProcessStartFailedError`, `ProcessTimedOutError` or
-    `ProcessIoFailedError` like this module's other runners."""
-    command = git_command(["update-ref", "--stdin"], directory=directory)
-    process_handle = _start_process(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        _write_stdin(process_handle, _prepared_transaction_input(instructions))
-        replies = _read_until_reply(
-            process_handle,
-            _REF_TRANSACTION_PREPARED_REPLY,
-            time.monotonic() + DEFAULT_TIMEOUT_SECONDS,
-        )
-        decision = None
-        if replies.endswith(_REF_TRANSACTION_PREPARED_REPLY):
-            decision = b"commit\n" if while_prepared() else b"abort\n"
-        stdout, stderr = process_handle.communicate(decision, timeout=DEFAULT_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as error:
-        raise ProcessTimedOutError from error
-    finally:
-        _reap_bounded_process(None, process_handle)
-    return CapturedResult(process_handle.returncode, replies + stdout, stderr)
-
-
-def _prepared_transaction_input(instructions: list[str]) -> bytes:
-    lines = ["start", *instructions, "prepare"]
-    return "".join(f"{line}\n" for line in lines).encode()
-
-
-def _read_until_reply(
-    process_handle: subprocess.Popen[bytes], reply: bytes, deadline: float
-) -> bytes:
-    """Read `process_handle`'s stdout until it ends with `reply` or closes."""
-    assert process_handle.stdout is not None
-    output = bytearray()
-    with selectors.DefaultSelector() as selector:
-        selector.register(process_handle.stdout, selectors.EVENT_READ, "stdout")
-        while selector.get_map() and not output.endswith(reply):
-            for key, _ in _await_process_io_events(selector, process_handle, deadline):
-                _read_process_output(key, selector, output, process_handle)
-    return bytes(output)
 
 
 def _git_failure_detail(stderr: bytes, stdout: bytes, *, errors: str = "strict") -> str:

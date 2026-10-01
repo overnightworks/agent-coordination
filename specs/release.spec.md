@@ -52,7 +52,7 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | landing board read hits an unreachable forge | — | REL-22 | — |
 | no landing to report | — | — | REL-21 |
 | any refusal past the parser, with `--json` | REL-24 | REL-24 | REL-24 |
-| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34 | REL-33 |
+| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42 | REL-33 |
 
 ## Flags and outcome
 
@@ -117,9 +117,12 @@ here, never anything on `remote`. Every outcome is loud: exactly one `worktree: 
 follows the report in text, and the same text becomes `--json`'s own `worktree` value -- `removed`
 when both are gone, `kept -- <reason>` when neither moves, or `removed; branch kept -- <reason>`
 when the worktree is gone but the branch delete itself failed (REL-34) -- one owner for all three
-shapes so they can never drift apart.
+shapes so they can never drift apart. Accepted residual of REL-42: a same-name branch another process
+creates between its compare-and-delete and the section removal can lose its upstream setting,
+never a commit; `git branch -u` restores it.
 
 - [ ] [REL-25] A clean linked worktree whose branch is in the canonical remote's trunk, or whose tip is the head `aco land` pinned for its squash, goes with that local branch: `worktree: removed` (see E-REL-08).
+- [ ] [REL-42] A squashed lane's branch goes by compare-and-delete on that pinned head, a moved one stays (REL-34); its `branch.<name>` section goes only while no branch of that name exists.
 - [ ] [REL-26] `--keep-worktree` skips that removal outright: `worktree: kept -- --keep-worktree was given`, worktree and branch both left exactly as found (see E-REL-09).
 - [ ] [REL-27] A release run from inside the lane's own worktree cannot remove its own cwd: `worktree: kept -- release ran from inside it`, and keeps both (see E-REL-10).
 - [ ] [REL-28] A dirty worktree keeps it: `worktree: kept -- dirty`, exit code unaffected (see E-REL-11).

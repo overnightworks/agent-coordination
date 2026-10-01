@@ -17576,332 +17576,51 @@ def _commit_past_the_landed_head(_monkeypatch: pytest.MonkeyPatch, lane: Path) -
     _real_git(lane, "commit", "-q", "--allow-empty", "-m", "raced past the landed head")
 
 
-def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
-    (_git_common_directory(lane) / "config.lock").touch()
-
-
-def _refuse_the_git_call(
-    monkeypatch: pytest.MonkeyPatch, option: str, detail: str, *, served_first: int = 0
-) -> None:
-    """Refuse every git call naming `option` after the first
-    `served_first` of them."""
+def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
     run_git = checkout._git_run
-    calls: list[list[str]] = []
 
-    def refuse_the_call(
+    def refuse_the_listing(
         arguments: list[str], *, directory: Path | None = None
     ) -> process.CapturedResult:
-        if option in arguments:
-            calls.append(arguments)
-            if len(calls) > served_first:
-                return process.CapturedResult(3, b"", f"{detail}\n".encode())
+        if "--get-regexp" in arguments:
+            return process.CapturedResult(3, b"", b"fatal: the listing failed\n")
         return run_git(arguments, directory=directory)
 
-    monkeypatch.setattr(checkout, "_git_run", refuse_the_call)
+    monkeypatch.setattr(checkout, "_git_run", refuse_the_listing)
 
 
-def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
-    _refuse_the_git_call(monkeypatch, "--get-regexp", "fatal: the listing failed")
-
-
-def _time_out_the_deletion_once_prepared(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
-    """git never takes the first decision sent to a prepared transaction --
-    the branch deletion's, after its `branch.<name>` section is gone."""
-    _time_out_the_first_decision(monkeypatch, taken=False)
-
-
-def _time_out_the_first_decision(monkeypatch: pytest.MonkeyPatch, *, taken: bool) -> None:
-    """git never confirms the first decision sent to a prepared transaction,
-    whether or not it `taken` that decision."""
-    communicate = subprocess.Popen.communicate
-    timed_out: list[bool] = []
-
-    def time_out_the_first_decision(
-        self: subprocess.Popen[bytes], decision: bytes | None = None, timeout: float | None = None
-    ) -> tuple[bytes, bytes]:
-        if decision is None or timed_out:
-            return communicate(self, decision, timeout)
-        timed_out.append(True)
-        if taken:
-            communicate(self, decision, timeout)
-        raise subprocess.TimeoutExpired(self.args, timeout or 0)
-
-    monkeypatch.setattr(subprocess.Popen, "communicate", time_out_the_first_decision)
-
-
-def _time_out_the_deletion_and_hold_the_ref_for_the_write_back(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    """Another process holds the branch's ref lock -- a stale one a killed
-    git left, say -- by the time the write-back's own transaction asks for it."""
-    _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    ref_lock = _git_common_directory(lane) / "refs" / "heads" / f"{LANDING_BRANCH}.lock"
-    _before_the_write_back(monkeypatch, ref_lock.touch)
-
-
-def _git_common_directory(lane: Path) -> Path:
+def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
     common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    return Path(common.stdout.strip())
-
-
-def _before_the_write_back(monkeypatch: pytest.MonkeyPatch, act: Callable[[], object]) -> None:
-    """Run `act` right before the cleanup's second ref transaction -- the
-    write-back's, once the deletion's failed."""
-    run_transaction = process.run_git_ref_transaction
-    transactions: list[list[str]] = []
-
-    def act_before_the_second(
-        instructions: list[str], *, while_prepared: Callable[[], bool]
-    ) -> process.CapturedResult:
-        transactions.append(instructions)
-        if len(transactions) == 2:
-            act()
-        return run_transaction(instructions, while_prepared=while_prepared)
-
-    monkeypatch.setattr(process, "run_git_ref_transaction", act_before_the_second)
-
-
-def _time_out_the_deletion_and_expire_the_oldest_reflog_entry(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    """Move the branch away and back, so its reflog holds more than its
-    creation, let git never confirm its deletion, then expire the reflog's
-    oldest entry -- as `git gc` does -- before the write-back reads it."""
-    ref = f"refs/heads/{LANDING_BRANCH}"
-    tip = _real_git(lane, "rev-parse", ref).stdout.strip()
-    _real_git(lane, "update-ref", ref, "main")
-    _real_git(lane, "update-ref", ref, tip)
-    _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    repository = _git_common_directory(lane)
-
-    def expire_the_oldest_entry() -> None:
-        selectors = _real_git(repository, "reflog", "show", "--format=%gD", ref).stdout.split()
-        _real_git(repository, "reflog", "delete", selectors[-1])
-
-    _before_the_write_back(monkeypatch, expire_the_oldest_entry)
-
-
-def _refuse_the_deletion_after_git_deleted_its_reflog(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    """git deletes a branch's reflog before its ref, so a deletion git then
-    refuses to commit -- a full disk replacing `packed-refs`, say -- keeps
-    the branch on its tip without the reflog."""
-    reflog = _git_common_directory(lane) / "logs" / "refs" / "heads" / LANDING_BRANCH
-    run_transaction = process.run_git_ref_transaction
-    transactions: list[list[str]] = []
-
-    def refuse_the_first_commit(
-        instructions: list[str], *, while_prepared: Callable[[], bool]
-    ) -> process.CapturedResult:
-        transactions.append(instructions)
-        if len(transactions) > 1:
-            return run_transaction(instructions, while_prepared=while_prepared)
-
-        def remove_the_section_but_keep_the_ref() -> bool:
-            while_prepared()
-            return False
-
-        run_transaction(instructions, while_prepared=remove_the_section_but_keep_the_ref)
-        reflog.unlink()
-        return process.CapturedResult(128, b"", b"fatal: commit: error replacing packed-refs\n")
-
-    monkeypatch.setattr(process, "run_git_ref_transaction", refuse_the_first_commit)
-
-
-def _refuse_the_reflog_read(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
-    _refuse_the_git_call(monkeypatch, "--walk-reflogs", "fatal: the reflog read failed")
-
-
-def _time_out_the_deletion_and_refuse_the_write_backs_reflog_read(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    _refuse_the_git_call(
-        monkeypatch, "--walk-reflogs", "fatal: the reflog read failed", served_first=1
-    )
-
-
-def _expire_the_branchs_whole_reflog(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
-    _real_git(lane, "reflog", "expire", "--expire=all", f"refs/heads/{LANDING_BRANCH}")
-
-
-def _time_out_the_deletion_of_a_branch_without_a_reflog(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    _expire_the_branchs_whole_reflog(monkeypatch, lane)
-    _time_out_the_deletion_once_prepared(monkeypatch, lane)
-
-
-def _deny_the_start(*_arguments: object, **_options: object) -> process.CapturedResult:
-    raise process.ProcessStartFailedError("denied")
-
-
-def _fail_to_start_the_deletion(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
-    monkeypatch.setattr(process, "run_git_ref_transaction", _deny_the_start)
-
-
-def _fail_to_start_the_deletion_and_to_look_for_the_branch(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    _fail_to_start_the_deletion(monkeypatch, lane)
-    _refuse_the_git_call(monkeypatch, "show-ref", "fatal: the lookup failed")
-
-
-def _time_out_the_deletion_and_refuse_the_write_back(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    _refuse_the_git_call(monkeypatch, "--add", "error: the write-back failed")
-
-
-def _time_out_the_deletion_and_refuse_the_write_back_midway(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    _refuse_the_git_call(monkeypatch, "--add", "error: the write-back failed", served_first=1)
-
-
-def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    _time_out_the_deletion_and_refuse_the_write_back_midway(monkeypatch, lane)
-    _refuse_the_git_call(monkeypatch, "--remove-section", "fatal: the undo failed", served_first=1)
-
-
-def _time_out_the_deletion_and_refuse_the_write_backs_publication(
-    monkeypatch: pytest.MonkeyPatch, lane: Path
-) -> None:
-    _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    _refuse_the_git_call(monkeypatch, "--rename-section", "error: the publication failed")
+    (Path(common.stdout.strip()) / "config.lock").touch()
 
 
 @pytest.mark.parametrize(
-    ("interfere", "reported_failure", "kept_entries"),
+    ("interfere", "reported_failure", "branch_kept"),
     [
-        pytest.param(_commit_past_the_landed_head, "", None, id="commit-raced-past-the-head"),
-        pytest.param(_lock_the_repository_configuration, "", None, id="configuration-locked"),
+        pytest.param(_commit_past_the_landed_head, "", True, id="commit-raced-past-the-head"),
         pytest.param(
             _refuse_the_branch_configuration_listing,
             "fatal: the listing failed\n",
-            None,
+            True,
             id="configuration-listing-refused",
         ),
-        pytest.param(
-            _fail_to_start_the_deletion,
-            "git failed to run: denied\n",
-            None,
-            id="deletion-failed-to-start",
-        ),
-        pytest.param(
-            _fail_to_start_the_deletion_and_to_look_for_the_branch,
-            "git failed to run: denied; fatal: the lookup failed\n",
-            None,
-            id="deletion-failed-to-start-and-branch-lookup-refused",
-        ),
-        pytest.param(
-            _time_out_the_deletion_once_prepared,
-            "git timed out while validating the build checkout\n",
-            None,
-            id="deletion-timed-out",
-        ),
-        pytest.param(
-            _time_out_the_deletion_and_refuse_the_write_back,
-            "error: the write-back failed\n",
-            0,
-            id="deletion-timed-out-and-write-back-refused",
-        ),
-        pytest.param(
-            _time_out_the_deletion_and_refuse_the_write_back_midway,
-            "error: the write-back failed\n",
-            0,
-            id="deletion-timed-out-and-write-back-refused-midway",
-        ),
-        pytest.param(
-            _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo,
-            "error: the write-back failed; fatal: the undo failed\n",
-            0,
-            id="deletion-timed-out-and-write-back-and-its-undo-refused-midway",
-        ),
-        pytest.param(
-            _time_out_the_deletion_and_refuse_the_write_backs_publication,
-            "error: the publication failed\n",
-            0,
-            id="deletion-timed-out-and-write-backs-publication-refused",
-        ),
-        pytest.param(
-            _time_out_the_deletion_and_hold_the_ref_for_the_write_back,
-            "fatal: prepare: cannot lock ref",
-            0,
-            id="deletion-timed-out-and-ref-held-for-the-write-back",
-        ),
-        pytest.param(
-            _expire_the_branchs_whole_reflog,
-            f"branch.{LANDING_BRANCH} not removed: git keeps no reflog",
-            None,
-            id="branch-without-a-reflog",
-        ),
-        pytest.param(
-            _time_out_the_deletion_of_a_branch_without_a_reflog,
-            "git timed out while validating the build checkout\n",
-            None,
-            id="deletion-timed-out-for-a-branch-without-a-reflog",
-        ),
-        pytest.param(
-            _time_out_the_deletion_and_expire_the_oldest_reflog_entry,
-            "git timed out while validating the build checkout\n",
-            None,
-            id="deletion-timed-out-and-oldest-reflog-entry-expired",
-        ),
-        pytest.param(
-            _refuse_the_deletion_after_git_deleted_its_reflog,
-            f"branch.{LANDING_BRANCH} not written back: git keeps no reflog",
-            0,
-            id="deletion-refused-after-git-deleted-its-reflog",
-        ),
-        pytest.param(
-            _refuse_the_reflog_read,
-            "fatal: the reflog read failed\n",
-            None,
-            id="reflog-read-refused",
-        ),
-        pytest.param(
-            _time_out_the_deletion_and_refuse_the_write_backs_reflog_read,
-            "fatal: the reflog read failed\n",
-            0,
-            id="deletion-timed-out-and-write-backs-reflog-read-refused",
-        ),
+        pytest.param(_lock_the_repository_configuration, "", False, id="configuration-locked"),
     ],
 )
-def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
+def test_land_reports_the_squashed_lane_branch_cleanup_git_refuses(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     interfere: Callable[[pytest.MonkeyPatch, Path], None],
     reported_failure: str,
-    kept_entries: int | None,
+    branch_kept: bool,
 ) -> None:
-    """Issue #578 review finding 3: a clean commit made in the lane after
-    cleanup judged its tip to be the squashed head, but before the branch
-    deletion, keeps the branch on that commit -- the deletion compares and
-    deletes in one step, so only the landed head itself is ever deleted.
-    Second review finding 2: a `branch.<name>` section git cannot list or
-    remove keeps the branch too, the failure reported rather than swallowed,
-    and so does a deletion git cannot even run. Fourth review finding 3: a
-    deletion git never confirms after that
-    section is gone writes the section back onto the kept branch, once its
-    reflog proves it the lane's own. Every way
-    the kept branch keeps its tip and its own configuration -- unless git
-    refuses that write-back, which the report then names -- and then no
-    part of the section returns, unless git refuses to take back the part
-    it already wrote, which the report names too; a branch without a reflog
-    gets nothing back either, and the report says why. Review findings 1
-    and 5 on be6cfb0: a reflog git itself deleted with a deletion it then refused
-    proves nothing and gets nothing back, named; a reflog that only lost
-    its oldest entry still proves the branch the lane's own. Finding 4: a
-    branch without a reflog keeps its section and its tip, and a write-back
-    publishes the whole section in one write, so no refusal leaves part of
-    it on the branch."""
+    """Issue #578 line 4: the squashed lane's branch goes with one
+    compare-and-delete against the landed head, so a commit made in the
+    lane after cleanup judged its tip keeps the branch on that commit with
+    its `branch.<name>` section, and so does a section listing git refuses;
+    a section removal git refuses after the delete leaves the section. Each
+    refusal is reported as git's own, never swallowed."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
@@ -17925,8 +17644,9 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     output = capsys.readouterr()
     assert (status, output.err) == (0, "")
     assert f"worktree: removed; branch kept -- git failure: {reported_failure}" in output.out
-    assert [_real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()] == kept_tips
-    assert _branch_section(repo, LANDING_BRANCH) == section[:kept_entries]
+    tip = _real_git(repo, "rev-parse", "--verify", "--quiet", LANDING_BRANCH, check=False)
+    assert tip.stdout.split() == (kept_tips if branch_kept else [])
+    assert _branch_section(repo, LANDING_BRANCH) == section
 
 
 def _branch_section(repo: Path, branch: str) -> list[str]:
@@ -17943,109 +17663,24 @@ def _branch_section(repo: Path, branch: str) -> list[str]:
 def _recreate_branch_after_its_deletion(
     monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
 ) -> tuple[str, str]:
-    """Let another process create a branch of `branch`'s name again, with
-    its own `branch.<name>.remote`, once the lane's branch is deleted: right
-    before the cleanup's next git step naming that section -- the latest
-    moment any check of the name before that step could look -- or, when no
-    such step follows, once the cleanup is done. Return that configuration
-    key with the value it must keep."""
-    owned_section = f"branch.{branch}"
-    owned_key = f"{owned_section}.remote"
-    run_git = checkout._git_run
-    remove = checkout.remove_linked_worktree
-
-    def recreate_once_deleted() -> None:
-        ref = f"refs/heads/{branch}"
-        name_is_free = _real_git(repo, "show-ref", "--verify", "--quiet", ref, check=False)
-        if name_is_free.returncode == 1:
-            _real_git(repo, "branch", "-q", branch, "main")
-            _real_git(repo, "config", owned_key, "recreated")
-
-    def recreate_then_run(
-        arguments: list[str], *, directory: Path | None = None
-    ) -> process.CapturedResult:
-        if owned_section in arguments:
-            recreate_once_deleted()
-        return run_git(arguments, directory=directory)
-
-    def remove_then_recreate(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
-        outcome = remove(path, **options)
-        recreate_once_deleted()
-        return outcome
-
-    monkeypatch.setattr(checkout, "_git_run", recreate_then_run)
-    monkeypatch.setattr(checkout, "remove_linked_worktree", remove_then_recreate)
-    return owned_key, "recreated"
-
-
-def test_land_names_the_lookup_git_refuses_after_a_squashed_lane_branch_deletion_it_never_confirmed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #578 review finding 6 on be6cfb0: git deletes the squashed
-    lane's branch without the cleanup ever hearing so, then refuses the
-    lookup that would tell -- the report names that refusal beside the
-    unconfirmed deletion, never the deletion's failure alone."""
-    repo, client = _land_scenario(monkeypatch, tmp_path)
-    client.allowed_methods = frozenset({_SQUASH})
-    lane = tmp_path / "lane"
-    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
-    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
-    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
-    remove = checkout.remove_linked_worktree
-
-    def go_unconfirmed_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
-        _time_out_the_first_decision(monkeypatch, taken=True)
-        _refuse_the_git_call(monkeypatch, "show-ref", "fatal: the lookup failed")
-        return remove(path, **options)
-
-    monkeypatch.setattr(checkout, "remove_linked_worktree", go_unconfirmed_then_remove)
-
-    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
-
-    output = capsys.readouterr()
-    assert (status, output.err) == (0, "")
-    assert (
-        "worktree: removed; branch kept -- git failure: "
-        "git timed out while validating the build checkout; fatal: the lookup failed\n"
-    ) in output.out
-    ref = f"refs/heads/{LANDING_BRANCH}"
-    assert _real_git(repo, "show-ref", "--verify", "--quiet", ref, check=False).returncode == 1
-
-
-def _recreate_branch_on_its_tip_after_an_unconfirmed_deletion(
-    monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
-) -> tuple[str, str]:
-    """Give `branch` a `branch.<name>.remote` of its own, let git delete it
-    without the cleanup ever hearing so, then let another process create a
-    branch of that name on the very same commit, with its own value of that
-    key, before the cleanup looks at the name again. Return that key with
+    """Give `branch` a `branch.<name>.remote` of its own, then let another
+    process create a branch of that name again, with its own value of that
+    key, right after the cleanup's compare-and-delete. Return that key with
     the value it must keep."""
     owned_key = f"branch.{branch}.remote"
     _real_git(repo, "config", owned_key, "origin")
-    tip = _real_git(repo, "rev-parse", branch).stdout.strip()
-    communicate = subprocess.Popen.communicate
-    run_transaction = process.run_git_ref_transaction
-    transactions: list[list[str]] = []
+    run_git = checkout._git_run
 
-    def commit_then_time_out_the_first_decision(
-        self: subprocess.Popen[bytes], decision: bytes | None = None, timeout: float | None = None
-    ) -> tuple[bytes, bytes]:
-        answer = communicate(self, decision, timeout)
-        if decision is not None and len(transactions) == 1:
-            raise subprocess.TimeoutExpired(self.args, timeout or 0)
-        return answer
-
-    def recreate_before_the_second(
-        instructions: list[str], *, while_prepared: Callable[[], bool]
+    def run_then_recreate(
+        arguments: list[str], *, directory: Path | None = None
     ) -> process.CapturedResult:
-        transactions.append(instructions)
-        if len(transactions) == 2:
-            _real_git(repo, "branch", "-q", branch, tip)
+        result = run_git(arguments, directory=directory)
+        if arguments[:2] == ["update-ref", "-d"]:
+            _real_git(repo, "branch", "-q", branch, "main")
             _real_git(repo, "config", owned_key, "recreated")
-        return run_transaction(instructions, while_prepared=while_prepared)
+        return result
 
-    monkeypatch.setattr(subprocess.Popen, "communicate", commit_then_time_out_the_first_decision)
-    monkeypatch.setattr(process, "run_git_ref_transaction", recreate_before_the_second)
+    monkeypatch.setattr(checkout, "_git_run", run_then_recreate)
     return owned_key, "recreated"
 
 
@@ -18068,10 +17703,6 @@ def _configure_a_sibling_branch(
     [
         pytest.param(_configure_a_sibling_branch, id="sibling-branch-without-an-own-section"),
         pytest.param(_recreate_branch_after_its_deletion, id="same-name-branch-recreated"),
-        pytest.param(
-            _recreate_branch_on_its_tip_after_an_unconfirmed_deletion,
-            id="same-name-branch-recreated-on-its-tip-after-an-unconfirmed-deletion",
-        ),
     ],
 )
 def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_configuration(
@@ -18080,13 +17711,10 @@ def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_
     tmp_path: Path,
     configure_a_foreign_section: Callable[[pytest.MonkeyPatch, Path, str], tuple[str, str]],
 ) -> None:
-    """Issue #578 review findings 2 and 4: the squashed lane's branch goes
-    and reads removed while configuration another branch owns stays intact
-    -- a dotted sibling's beside no section of its own, or a same-name
-    branch's created at any moment after the deletion, even on the lane's
-    own commit after a deletion git never confirmed: its fresh reflog tells
-    it from the lane's branch, so the lane's section is never written back
-    into it."""
+    """Issue #578 line 4: the squashed lane's branch goes and reads removed
+    while configuration another branch owns stays intact -- a dotted
+    sibling's beside no section of its own, or a same-name branch's that
+    exists by the time the cleanup would remove the lane's section."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
@@ -18102,46 +17730,6 @@ def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_
     assert "worktree: removed\n" in output.out
     assert not lane.exists()
     assert _real_git(repo, "config", foreign_key, check=False).stdout.strip() == foreign_value
-
-
-def test_land_never_writes_a_squashed_lane_branch_section_into_a_branch_taken_during_cleanup(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #578 third review finding 1: another process that moves the
-    squashed lane's branch name to its own commit and configures it while
-    the cleanup removes the lane's `branch.<name>` section either finds the
-    name locked or owns a section holding only its own values -- the lane's
-    removed configuration is never written back into it."""
-    repo, client = _land_scenario(monkeypatch, tmp_path)
-    client.allowed_methods = frozenset({_SQUASH})
-    lane = tmp_path / "lane"
-    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
-    _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
-    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
-    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
-    remote_key = f"branch.{LANDING_BRANCH}.remote"
-    run_git = checkout._git_run
-    taken: list[bool] = []
-
-    def take_the_name_once_its_section_is_removed(
-        arguments: list[str], *, directory: Path | None = None
-    ) -> process.CapturedResult:
-        result = run_git(arguments, directory=directory)
-        if "--remove-section" in arguments:
-            moved = _real_git(repo, "branch", "-f", LANDING_BRANCH, "main", check=False)
-            taken.append(moved.returncode == 0)
-            if moved.returncode == 0:
-                _real_git(repo, "config", remote_key, "recreated")
-        return result
-
-    monkeypatch.setattr(checkout, "_git_run", take_the_name_once_its_section_is_removed)
-
-    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
-
-    capsys.readouterr()
-    assert status == 0
-    remotes = _real_git(repo, "config", "--get-all", remote_key, check=False).stdout.split()
-    assert remotes == (["recreated"] if taken == [True] else [])
 
 
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(
