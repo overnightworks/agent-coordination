@@ -90,6 +90,7 @@ _board_item_for_vulture = BoardItem(
     container=None,
     container_parent=None,
     scope=None,
+    whole=None,
     contract=Contract(now=None, next=None, done_when=None),
     next_step=None,
     contract_complete=False,

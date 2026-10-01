@@ -6788,7 +6788,9 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
         assert isinstance(action, board.CutSliceAction)
 
         command_line = issue_claim._next_action_lines(
-            action, body.Storage.GITHUB, claims_in_place=True
+            action,
+            body.Storage.GITHUB,
+            site=issue_claim._PullSite(claims_in_place=True, scope_is_wide=False),
         )[1]
         cut_arguments = shlex.split(command_line.removeprefix("Next: aco "))
         client = _configured_board_client(
@@ -6985,31 +6987,103 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     assert tuple(claim.scope for claim in claimed.values()) == (top_level_scope or row_scope,)
 
 
+_WIDE_SCOPE = ("src/a.py", "src/b.py", "src/c.py", "src/d.py", "src/e.py")
+
+
 @pytest.mark.parametrize(
-    ("stands_in_lane", "expected_run"),
+    ("item_body", "scope", "stands_in_lane", "expected_run", "expected_branch"),
     [
         pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=["src/x.py"]),
+            ("src/x.py",),
             False,
             "aco start aco-00013a --slug=fresh-slug-title",
+            _START_BRANCH,
             id="default_branch_checkout_starts",
         ),
-        pytest.param(True, "aco claim aco-00013a", id="linked_worktree_claims"),
+        pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=["src/x.py"]),
+            ("src/x.py",),
+            True,
+            "aco claim aco-00013a",
+            _START_BRANCH,
+            id="linked_worktree_claims",
+        ),
+        pytest.param(
+            _state_ref_item_body("!!! ???", scope=["src/x.py"]),
+            ("src/x.py",),
+            False,
+            "aco start aco-00013a --slug=aco-00013a",
+            "codex/issue-314-aco-00013a",
+            id="slugless_title_starts_on_the_id_slug",
+        ),
+        pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=list(_WIDE_SCOPE)),
+            _WIDE_SCOPE,
+            False,
+            "aco start aco-00013a --slug=fresh-slug-title --whole <reason>",
+            _START_BRANCH,
+            id="wide_scope_without_whole_starts_with_a_reason",
+        ),
+        pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=list(_WIDE_SCOPE)),
+            _WIDE_SCOPE,
+            True,
+            "aco claim aco-00013a --whole <reason>",
+            _START_BRANCH,
+            id="wide_scope_without_whole_claims_with_a_reason",
+        ),
+        pytest.param(
+            _state_ref_item_body(
+                "Fresh Slug Title", scope=list(_WIDE_SCOPE), whole="One sweep over five files."
+            ),
+            _WIDE_SCOPE,
+            True,
+            "aco claim aco-00013a",
+            _START_BRANCH,
+            id="wide_scope_with_whole_claims_as_is",
+        ),
+        pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=["src"]),
+            ("src",),
+            False,
+            "aco start aco-00013a --slug=fresh-slug-title --whole <reason>",
+            _START_BRANCH,
+            id="directory_scope_without_whole_starts_with_a_reason",
+        ),
+        pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=["src"]),
+            ("src",),
+            True,
+            "aco claim aco-00013a --whole <reason>",
+            _START_BRANCH,
+            id="directory_scope_without_whole_claims_with_a_reason",
+        ),
     ],
 )
 def test_next_advises_a_pull_that_runs_as_printed_where_it_stands(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    item_body: str,
+    scope: tuple[str, ...],
     stands_in_lane: bool,
     expected_run: str,
+    expected_branch: str,
 ) -> None:
-    """Issue #562 line 1: from the default branch's checkout, where `claim`
-    refuses, `next` advises `start` with the slug `start` derives from the
-    title; from a linked lane worktree it advises `claim`. Either line runs
-    verbatim in bash and claims the item on the lane branch."""
-    repo, _remote, _seeded = _real_state_ref_repository(
-        monkeypatch, tmp_path, {314: _state_ref_item_body("Fresh Slug Title", scope=["src/x.py"])}
-    )
+    """Issues #562 line 1 and #566 lines 1-2: from the default branch's
+    checkout, where `claim` refuses, `next` advises `start` with the slug
+    `start` derives from the title, else the item id's own; from a linked
+    lane worktree it advises `claim`. A scope the width gate calls wide --
+    past three paths, or naming the trunk's `src` directory -- without a
+    body `whole` adds `--whole <reason>`. With the reason filled in, the
+    line runs in bash and claims the item on the lane branch."""
+    repo, _remote, _seeded = _real_state_ref_repository(monkeypatch, tmp_path, {314: item_body})
+    (repo / "src").mkdir()
+    (repo / "src" / "x.py").write_text("x = 1\n")
+    _real_git(repo, "add", "src/x.py")
+    _real_git(repo, "commit", "-q", "-m", "version src/x.py")
+    _push_repository_trunk(repo, "origin")
     if stands_in_lane:
         lane = tmp_path / "lane"
         _real_git(repo, "worktree", "add", "-q", "-b", _START_BRANCH, str(lane))
@@ -7018,28 +7092,15 @@ def test_next_advises_a_pull_that_runs_as_printed_where_it_stands(
 
     next_exit_code = issue_claim.main(["next"])
     run_line = capsys.readouterr().out.split("\nRun: ", 1)[1].splitlines()[0]
-    bash_exit_code, pull_arguments = _arguments_bash_hands_aco(run_line, tmp_path)
+    filled_line = run_line.replace("<reason>", "'One sweep over five files.'")
+    bash_exit_code, pull_arguments = _arguments_bash_hands_aco(filled_line, tmp_path)
     pull_exit_code = issue_claim.main(pull_arguments)
 
     assert (run_line, next_exit_code, bash_exit_code, pull_exit_code) == (expected_run, 0, 0, 0)
     claims = store.fetch_state(worktree=repo, remote="origin").claims
     assert tuple((claim.branch, claim.scope) for claim in claims.values()) == (
-        (_START_BRANCH, ("src/x.py",)),
+        (expected_branch, scope),
     )
-
-
-def test_next_leaves_the_slug_to_fill_where_the_title_yields_none(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #562 line 1: a title `start` derives no slug from gets the slug
-    placeholder, as an unknown scope gets its own, never a `start` that
-    refuses as printed."""
-    _real_state_ref_repository(
-        monkeypatch, tmp_path, {314: _state_ref_item_body("!!!", scope=["src/x.py"])}
-    )
-
-    assert issue_claim.main(["next"]) == 0
-    assert f"\nRun: aco start aco-00013a {board.SLUG_PLACEHOLDER}\n" in capsys.readouterr().out
 
 
 # Issue #538: display controls a slice title refuses beside the Cc set --
