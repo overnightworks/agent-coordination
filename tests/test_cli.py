@@ -17577,8 +17577,7 @@ def _commit_past_the_landed_head(_monkeypatch: pytest.MonkeyPatch, lane: Path) -
 
 
 def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
-    common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    (Path(common.stdout.strip()) / "config.lock").touch()
+    (_git_common_directory(lane) / "config.lock").touch()
 
 
 def _refuse_the_git_call(
@@ -17628,20 +17627,91 @@ def _time_out_the_deletion_and_hold_the_ref_for_the_write_back(
     """Another process holds the branch's ref lock -- a stale one a killed
     git left, say -- by the time the write-back's own transaction asks for it."""
     _time_out_the_deletion_once_prepared(monkeypatch, lane)
+    ref_lock = _git_common_directory(lane) / "refs" / "heads" / f"{LANDING_BRANCH}.lock"
+    _before_the_write_back(monkeypatch, ref_lock.touch)
+
+
+def _git_common_directory(lane: Path) -> Path:
     common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    ref_lock = Path(common.stdout.strip()) / "refs" / "heads" / f"{LANDING_BRANCH}.lock"
+    return Path(common.stdout.strip())
+
+
+def _before_the_write_back(monkeypatch: pytest.MonkeyPatch, act: Callable[[], object]) -> None:
+    """Run `act` right before the cleanup's second ref transaction -- the
+    write-back's, once the deletion's failed."""
     run_transaction = process.run_git_ref_transaction
     transactions: list[list[str]] = []
 
-    def hold_the_ref_before_the_second(
+    def act_before_the_second(
         instructions: list[str], *, while_prepared: Callable[[], bool]
     ) -> process.CapturedResult:
         transactions.append(instructions)
         if len(transactions) == 2:
-            ref_lock.touch()
+            act()
         return run_transaction(instructions, while_prepared=while_prepared)
 
-    monkeypatch.setattr(process, "run_git_ref_transaction", hold_the_ref_before_the_second)
+    monkeypatch.setattr(process, "run_git_ref_transaction", act_before_the_second)
+
+
+def _time_out_the_deletion_and_expire_the_oldest_reflog_entry(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    """Move the branch away and back, so its reflog holds more than its
+    creation, let git never confirm its deletion, then expire the reflog's
+    oldest entry -- as `git gc` does -- before the write-back reads it."""
+    ref = f"refs/heads/{LANDING_BRANCH}"
+    tip = _real_git(lane, "rev-parse", ref).stdout.strip()
+    _real_git(lane, "update-ref", ref, "main")
+    _real_git(lane, "update-ref", ref, tip)
+    _time_out_the_deletion_once_prepared(monkeypatch, lane)
+    repository = _git_common_directory(lane)
+
+    def expire_the_oldest_entry() -> None:
+        selectors = _real_git(repository, "reflog", "show", "--format=%gD", ref).stdout.split()
+        _real_git(repository, "reflog", "delete", selectors[-1])
+
+    _before_the_write_back(monkeypatch, expire_the_oldest_entry)
+
+
+def _refuse_the_deletion_after_git_deleted_its_reflog(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    """git deletes a branch's reflog before its ref, so a deletion git then
+    refuses to commit -- a full disk replacing `packed-refs`, say -- keeps
+    the branch on its tip without the reflog."""
+    reflog = _git_common_directory(lane) / "logs" / "refs" / "heads" / LANDING_BRANCH
+    run_transaction = process.run_git_ref_transaction
+    transactions: list[list[str]] = []
+
+    def refuse_the_first_commit(
+        instructions: list[str], *, while_prepared: Callable[[], bool]
+    ) -> process.CapturedResult:
+        transactions.append(instructions)
+        if len(transactions) > 1:
+            return run_transaction(instructions, while_prepared=while_prepared)
+
+        def remove_the_section_but_keep_the_ref() -> bool:
+            while_prepared()
+            return False
+
+        run_transaction(instructions, while_prepared=remove_the_section_but_keep_the_ref)
+        reflog.unlink()
+        return process.CapturedResult(128, b"", b"fatal: commit: error replacing packed-refs\n")
+
+    monkeypatch.setattr(process, "run_git_ref_transaction", refuse_the_first_commit)
+
+
+def _refuse_the_reflog_read(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+    _refuse_the_git_call(monkeypatch, "--walk-reflogs", "fatal: the reflog read failed")
+
+
+def _time_out_the_deletion_and_refuse_the_write_backs_reflog_read(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    _time_out_the_deletion_once_prepared(monkeypatch, lane)
+    _refuse_the_git_call(
+        monkeypatch, "--walk-reflogs", "fatal: the reflog read failed", served_first=1
+    )
 
 
 def _time_out_the_deletion_of_a_branch_without_a_reflog(
@@ -17746,6 +17816,30 @@ def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
             0,
             id="deletion-timed-out-for-a-branch-without-a-reflog",
         ),
+        pytest.param(
+            _time_out_the_deletion_and_expire_the_oldest_reflog_entry,
+            "git timed out while validating the build checkout\n",
+            None,
+            id="deletion-timed-out-and-oldest-reflog-entry-expired",
+        ),
+        pytest.param(
+            _refuse_the_deletion_after_git_deleted_its_reflog,
+            f"branch.{LANDING_BRANCH} not written back: git keeps no reflog",
+            0,
+            id="deletion-refused-after-git-deleted-its-reflog",
+        ),
+        pytest.param(
+            _refuse_the_reflog_read,
+            "fatal: the reflog read failed\n",
+            None,
+            id="reflog-read-refused",
+        ),
+        pytest.param(
+            _time_out_the_deletion_and_refuse_the_write_backs_reflog_read,
+            "fatal: the reflog read failed\n",
+            0,
+            id="deletion-timed-out-and-write-backs-reflog-read-refused",
+        ),
     ],
 )
 def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
@@ -17770,7 +17864,10 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     refuses that write-back, which the report then names -- and then no
     part of the section returns, unless git refuses to take back the part
     it already wrote, which the report names too; a branch without a reflog
-    gets nothing back either, and the report says why."""
+    gets nothing back either, and the report says why. Review findings 1
+    and 5 on be6cfb0: a reflog git itself deleted with a deletion it then refused
+    proves nothing and gets nothing back, named; a reflog that only lost
+    its oldest entry still proves the branch the lane's own."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"

@@ -1605,11 +1605,12 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
 class _BranchSectionRemoval:
     """What `_remove_own_branch_section` did: git's own refusal, or the
     `(key, value)` entries it removed -- none when there was no section --
-    with the branch's reflog as it read then, empty when git keeps none."""
+    with the branch's reflog entries as it read them then, none when git
+    keeps no reflog."""
 
     refusal: str | None = None
     removed: tuple[tuple[str, str], ...] = ()
-    reflog: str = ""
+    reflog_entries: frozenset[str] = frozenset()
 
 
 def _remove_own_branch_section(branch: str) -> _BranchSectionRemoval:
@@ -1626,13 +1627,33 @@ def _remove_own_branch_section(branch: str) -> _BranchSectionRemoval:
     removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
     if removed.exit_status != 0:
         return _BranchSectionRemoval(refusal=process.git_failure_detail(removed))
-    return _BranchSectionRemoval(removed=entries, reflog=reflog.stdout.decode())
+    return _BranchSectionRemoval(
+        removed=entries, reflog_entries=frozenset(reflog.stdout.decode().splitlines())
+    )
+
+
+def _still_the_lane_branch(branch: str, reflog_entries: frozenset[str]) -> bool:
+    """Whether `branch`'s reflog still begins with one of `reflog_entries`,
+    the ones its section's removal read: git deletes a branch's reflog
+    before its ref, so a branch created again begins a reflog of its own,
+    while a move or an expiry only adds or drops entries around the
+    lane's. A reflog git deleted with a deletion it then failed proves
+    nothing either way, and raises as a `ClaimError` naming that."""
+    reflog = _git_run(_branch_reflog_arguments(branch))
+    if reflog.exit_status != 0:
+        raise ClaimError(process.git_failure_detail(reflog))
+    entries = reflog.stdout.decode().splitlines()
+    if not entries:
+        raise ClaimError(_UNPROVEN_BRANCH_ERROR.format(branch=branch))
+    oldest = entries[-1]
+    return oldest in reflog_entries
 
 
 def _branch_reflog_arguments(branch: str) -> list[str]:
-    """`git log` arguments listing `branch`'s reflog, each entry's commit,
-    raw time and message: deleting a branch deletes its reflog, so a branch
-    created again on the same commit lists a different one."""
+    """`git log` arguments listing `branch`'s reflog, newest entry first,
+    each with its commit, raw time and message -- a raw time names an entry
+    by when it was written, never by its place, so expiring other entries
+    leaves it unchanged."""
     return [
         "log",
         "--walk-reflogs",
@@ -1670,16 +1691,13 @@ def _restore_branch_section(branch: str, landed_head: str, removal: _BranchSecti
     entries = removal.removed
     if not entries:
         return True
-    if not removal.reflog:
+    if not removal.reflog_entries:
         raise ClaimError(_UNPROVEN_BRANCH_ERROR.format(branch=branch))
     recreated = False
 
     def write_back_under_the_ref_lock() -> bool:
         nonlocal recreated
-        reflog = _git_run(_branch_reflog_arguments(branch))
-        if reflog.exit_status != 0:
-            raise ClaimError(process.git_failure_detail(reflog))
-        recreated = reflog.stdout.decode() != removal.reflog
+        recreated = not _still_the_lane_branch(branch, removal.reflog_entries)
         if recreated:
             return False
         for already_written, (key, value) in enumerate(entries):
