@@ -94,13 +94,17 @@ def trunk_lane_shared(remote: str, toplevel: Path) -> tuple[str, ...]:
     """The lane-shared registry files (issue #575) the trunk's committed
     board configuration names (`_trunk_board_configuration`), so a lane
     cannot authorise itself by editing its worktree's `board.toml`: a change
-    to the list takes effect once it lands. A trunk that does not resolve,
-    or that holds no configuration, names none; a defective configuration
-    refuses, so `protect` never grants a write it cannot read."""
+    to the list takes effect once it lands. Only an entry the trunk tracks
+    as a file grants (`LaneSharedEntry`, issue #586). A trunk that does not
+    resolve, or that holds no configuration, names none; a defective
+    configuration refuses, so `protect` never grants a write it cannot read."""
     configuration = _trunk_board_configuration(remote, toplevel)
     if configuration is None:
         return ()
-    return configuration.parsed().lane_shared
+    entries = _lane_shared_entries(
+        configuration.parsed().lane_shared, trunk=configuration.trunk, toplevel=toplevel
+    )
+    return tuple(entry.path for entry in entries if entry.names_a_file)
 
 
 @dataclass(frozen=True)
@@ -135,11 +139,18 @@ def trunk_lane_shared_reading(remote: str, toplevel: Path) -> LaneSharedReading:
         entries = configuration.parsed().lane_shared
     except protocol.ClaimError as defect:
         return LaneSharedUnavailable(str(defect))
+    return _lane_shared_entries(entries, trunk=configuration.trunk, toplevel=toplevel)
+
+
+def _lane_shared_entries(
+    entries: tuple[str, ...], *, trunk: str, toplevel: Path
+) -> tuple[LaneSharedEntry, ...]:
+    """Each `lane_shared` entry beside whether `trunk` tracks it as a file in
+    the checkout at `toplevel` -- the one decider of what an entry grants,
+    for `protect` and the orientation reads alike."""
     if not entries:
         return ()
-    trunk_files = frozenset(
-        checkout.versioned_paths(directory=toplevel, revision=configuration.trunk)
-    )
+    trunk_files = frozenset(checkout.versioned_paths(directory=toplevel, revision=trunk))
     return tuple(LaneSharedEntry(entry, entry in trunk_files) for entry in entries)
 
 
