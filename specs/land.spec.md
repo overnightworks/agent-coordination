@@ -97,7 +97,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 ## After the merge
 
 - [ ] [LANDCMD-15] A failed branch delete, fast-forward, or delegated `release --merged` prints `MERGED pull request #<n> as <sha>; follow-up incomplete: <step> (<error>); re-run aco land <n>`, exit `2`.
-- [ ] [LANDCMD-26] LANDCMD-15's `<error>` is the failed step's own sentence: for `release`, the one `release --merged` itself would print, without its `ERROR: ` prefix.
+- [ ] [LANDCMD-26] LANDCMD-15's `<error>` is the failed step's own sentence: for `release`, the one `release --merged` itself would print, without its `ERROR: ` prefix; its display controls print escaped as NEXT-37 shows them, so the recovery is always one line.
 - [ ] [LANDCMD-21] The fast-forward fetches the canonical remote `<remote>` once per run and moves `<branch>` to `<remote>/<branch>`; the delegated release walks that same ref.
 - [ ] [LANDCMD-16] Deleting the merged branch is idempotent: a forge already reporting it absent is success, not a refusal.
 - [ ] [LANDCMD-17] In this package's own repository, a successful landing's last line is `reinstall: uv tool install --force --from . agent-coordination`; any other repository prints nothing further.

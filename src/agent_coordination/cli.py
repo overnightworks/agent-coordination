@@ -6693,13 +6693,15 @@ def _land_step(number: int, sha: str, step: str, action: Callable[[], None]) -> 
     happened -- so it reports the one ruled recovery line instead of the
     generic refusal an earlier precondition would print. A rerun starts
     `_cmd_land` over from the top, finds the pull request already merged,
-    and resumes here without a second merge."""
+    and resumes here without a second merge. The failure is Git's or the
+    forge's own text, so its display controls print escaped and the
+    recovery stays one line."""
     try:
         action()
     except protocol.ClaimError as error:
         raise protocol.ClaimUnavailableError(
-            f"MERGED pull request #{number} as {sha}; follow-up incomplete: {step} ({error}); "
-            f"re-run aco land {number}"
+            f"MERGED pull request #{number} as {sha}; follow-up incomplete: {step} "
+            f"({board.terminal_text(str(error))}); re-run aco land {number}"
         ) from error
 
 

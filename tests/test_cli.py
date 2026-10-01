@@ -17360,6 +17360,17 @@ def _break_fetch(monkeypatch: pytest.MonkeyPatch, _client: FakeForge) -> None:
     _stub_one_git_call(monkeypatch, ["fetch", "origin"], exit_status=1, stderr="fatal: unreachable")
 
 
+def _break_fetch_with_terminal_controls(
+    monkeypatch: pytest.MonkeyPatch, _client: FakeForge
+) -> None:
+    _stub_one_git_call(
+        monkeypatch,
+        ["fetch", "origin"],
+        exit_status=1,
+        stderr="fatal: unreachable\n\x1b[2Jhint: \u202eretry",
+    )
+
+
 def _break_fast_forward_merge(monkeypatch: pytest.MonkeyPatch, _client: FakeForge) -> None:
     _stub_one_git_call(
         monkeypatch,
@@ -17379,6 +17390,12 @@ def _break_fast_forward_merge(monkeypatch: pytest.MonkeyPatch, _client: FakeForg
             id="delete-branch",
         ),
         pytest.param(_break_fetch, "fast-forward", "fatal: unreachable", id="fetch-fails"),
+        pytest.param(
+            _break_fetch_with_terminal_controls,
+            "fast-forward",
+            "fatal: unreachable\\n\\x1b[2Jhint: \\u202eretry",
+            id="fetch-fails-with-terminal-controls-escaped",
+        ),
         pytest.param(
             _break_fast_forward_merge,
             "fast-forward",
