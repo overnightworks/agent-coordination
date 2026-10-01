@@ -710,7 +710,10 @@ class StateRefBoard:
         (`--origin FORGE#N`, already grammar-checked by `items.parse_origin`)
         without aco governing that forge at all -- #230's own concept, "the
         forge is pulled, never governed." `item new` composes before it
-        retypes a Task parent, so a refused item leaves the store untouched."""
+        retypes a Task parent, so a refused item leaves the store untouched.
+        Minting an id decides over the whole store, so it refuses beside an
+        entry that names no item (PIN-13), `cut` included."""
+        self._refuse_a_foreign_entry()
         new_id = items.mint_item_id(self._by_number.values())
         now = items.format_record_timestamp(datetime.now(UTC))
         record = items.ItemRecord(

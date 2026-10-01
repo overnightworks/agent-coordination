@@ -8889,6 +8889,7 @@ def _landing_scenario(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     unrelated_blocked_by: tuple[str, ...] = (),
+    foreign_entry: str | None = None,
 ) -> tuple[Path, state_board.StateRefBoard]:
     """The shared fixture every atomic-landing test builds on (issue #359):
     `storage = "state-ref"`, a real trunk history (`_landing_repository`),
@@ -8898,7 +8899,8 @@ def _landing_scenario(
     path) and `prepare_landing`/`mark_landed` (`state_board.py`'s) are
     exercised together, exactly as a real run composes them.
     `unrelated_blocked_by`, when given, seeds one further unclaimed item
-    carrying exactly those stored blockers (issue #546)."""
+    carrying exactly those stored blockers (issue #546); `foreign_entry`,
+    one further `items/` entry whose file name names no item (issue #565)."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo = _landing_repository(tmp_path)
     _write_state_ref_pin(repo)
@@ -8916,6 +8918,8 @@ def _landing_scenario(
         item_oids[_UNRELATED_LANDING_ITEM_ID] = _landing_item_oid(
             items.item_number(_UNRELATED_LANDING_ITEM_ID)
         )
+    if foreign_entry is not None:
+        item_files[foreign_entry] = b"anything"
     client = state_board.StateRefBoard(
         repository=forge.RepositoryId("file", ("acme",), "items"),
         default_branch="main",
@@ -9026,6 +9030,24 @@ def test_release_merged_under_state_ref_hints_a_runnable_board_read_beside_an_un
     assert _arguments_bash_hands_aco(advice, tmp_path) == (0, ["board", "--json"])
     advised = issue_claim.main(["board", "--json"])
     assert (advised, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+
+
+def test_release_merged_refuses_beside_an_items_entry_that_names_no_item(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """PIN-13, PIN-35 (issue #565): `release --merged` refuses by the
+    foreign entry's name before it closes the item or releases its claim."""
+    _repo, client = _landing_scenario(monkeypatch, tmp_path, foreign_entry="NOTANID")
+
+    status = issue_claim.main(
+        ["release", "10", "--agent", "Codex Sol", "--claim-id", "claim-10", "--merged"]
+    )
+
+    assert (status, capsys.readouterr().err) == (
+        2,
+        "ERROR: items/NOTANID is not a valid item file name\n",
+    )
+    assert client.item_reference(10).state is forge.ItemState.OPEN
 
 
 def test_release_merged_refuses_a_trunk_item_the_state_ref_has_no_entry_for(

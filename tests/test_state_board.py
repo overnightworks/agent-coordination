@@ -883,6 +883,12 @@ class TestMalformedItem:
             pytest.param(
                 lambda adapter: adapter.prepare_landing(CHILD_B_NUMBER), id="prepare-landing"
             ),
+            pytest.param(
+                lambda adapter: adapter.compose_item(
+                    title="Fresh", body="", kind=ItemKind.TASK, parent=None
+                ),
+                id="compose-item",
+            ),
         ],
     )
     def test_a_whole_store_read_refuses_beside_an_entry_that_names_no_item(
@@ -3406,9 +3412,17 @@ class TestCliStateRefForge:
                     None,
                     {**_item_files(), "NOTANID": b"anything"},
                     "items/NOTANID is not a valid item file name",
-                    id=f"{arguments[0]}-beside-an-entry-that-names-no-item",
+                    id=f"{case_id}-beside-an-entry-that-names-no-item",
                 )
-                for arguments in (["board", "--html"], ["next"], ["rulings"])
+                for case_id, arguments in (
+                    ("board", ["board", "--html"]),
+                    ("next", ["next"]),
+                    ("rulings", ["rulings"]),
+                    ("item-new", ["item", "new", "--title", "Fresh"]),
+                    ("item-new-not-a-twin", ["item", "new", "--title", "Fresh", "--not-a-twin"]),
+                    ("cut", ["cut", CONTAINER_ID, "--title", "Slice C"]),
+                    ("claim", ["claim", CHILD_B_ID, "--agent", "Codex Sol", "--scope", "README"]),
+                )
             ),
         ],
     )
@@ -3431,9 +3445,11 @@ class TestCliStateRefForge:
         Issue #536 (ITEM-53, PIN-16): `item close` of an item whose `parent`
         no `items/` entry carries refuses PIN-16's sentence before the close
         writes, so the item stays open rather than closing and then refusing.
-        Issue #565 (PIN-13): an entry whose file name is no item refuses
-        every read of the whole store."""
+        Issue #565 (PIN-13, PIN-35): an entry whose file name is no item
+        refuses every read of the whole store and every write that decides
+        over it -- a minted id, a fresh claim -- `--not-a-twin` included."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        _stub_claim_checkout(monkeypatch)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
         remote_url = f"file://{bare_remote}"
         before = store.fetch_state(worktree=worktree, remote=remote_url)
