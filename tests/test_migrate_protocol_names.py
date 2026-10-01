@@ -114,6 +114,12 @@ def migration(tmp_path: Path) -> Migration:
     ("body", "reason"),
     [
         pytest.param(PROTOCOL_BODY + PROTOCOL_BODY, "more than one", id="several-fences"),
+        pytest.param(
+            MIGRATED_BODY + PROTOCOL_BODY, "already has an aco fence", id="mixed-new-then-old"
+        ),
+        pytest.param(
+            PROTOCOL_BODY + MIGRATED_BODY, "already has an aco fence", id="mixed-old-then-new"
+        ),
         pytest.param("Why\n```agent-claim\nversion = 1\n", "never closed", id="open-fence"),
         pytest.param("Why\n~~~agent-claim\nversion = 1\n~~~\n", "tildes", id="tilde"),
         pytest.param(PROTOCOL_BODY.replace("\n", "\r\n"), "CRLF", id="crlf"),

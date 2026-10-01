@@ -43,6 +43,7 @@ GH_TIMEOUT_SECONDS = 60
 
 _FENCE = re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
 _PROTOCOL_MENTION = re.compile(r"^\s*(?:`{3,}|~{3,})\s*agent-claim")
+_NEW_PROTOCOL_MENTION = re.compile(r"^\s*(?:`{3,}|~{3,})\s*aco\b")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
 _REPOSITORY = re.compile(r"^[\w.-]+/[\w.-]+$")
 _RATE_LIMIT_STATUSES = frozenset({HTTPStatus.FORBIDDEN, HTTPStatus.TOO_MANY_REQUESTS})
@@ -55,6 +56,7 @@ class Refusal(StrEnum):
     INSIDE_ANOTHER_FENCE = "an agent-claim fence sits inside another fenced block"
     UNCLOSED_FENCE = "the agent-claim fence is never closed"
     SEVERAL_FENCES = "the body has more than one agent-claim fence"
+    MIXED_FENCES = "the body already has an aco fence next to the agent-claim fence"
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,9 @@ def classify(body: str) -> Rewrite | Refusal | None:
             return refusal
     if len(mentions) > 1:
         return Refusal.SEVERAL_FENCES
+    # The rewrite would leave two aco blocks, a body the aco contract refuses.
+    if any(_NEW_PROTOCOL_MENTION.match(line) for line in lines):
+        return Refusal.MIXED_FENCES
     (opening_index,) = mentions
     lines[opening_index] = NEW_FENCE_LINE
     return Rewrite("\n".join(lines))
