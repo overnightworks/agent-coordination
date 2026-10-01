@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import board, process
 from .protocol import (
@@ -447,11 +447,15 @@ NOT_IN_A_REPOSITORY_REASON = "not in a repository"
 RELATIVE_PAYLOAD_PATH_DENIAL = "relative payload path"
 
 
-def resolves_inside(path: Path, *, toplevel: Path) -> bool:
-    """Whether `path`, symlinks resolved, lies inside `toplevel`: the one
-    containment rule protect and rescope share, so a relative rescope entry
-    and its absolute form get the same answer (E-RESC-02)."""
-    return path.resolve().is_relative_to(toplevel)
+def checkout_relative(path: Path, *, toplevel: Path) -> PurePosixPath | None:
+    """`path`, symlinks resolved, relative to `toplevel`, or `None` when it
+    lies outside: the one containment rule protect and rescope share, so a
+    relative rescope entry and its absolute form get the same answer
+    (E-RESC-02)."""
+    resolved = path.resolve()
+    if not resolved.is_relative_to(toplevel):
+        return None
+    return PurePosixPath(resolved.relative_to(toplevel).as_posix())
 
 
 def relative_scope_entry(absolute_path: str, *, toplevel: Path) -> str | None:
@@ -461,12 +465,11 @@ def relative_scope_entry(absolute_path: str, *, toplevel: Path) -> str | None:
     when it resolves outside `toplevel` or is otherwise not a valid scope
     entry. Shared by `protect.judge` (issue #314) and `cli`'s own
     `rescope` absolute-path handling (issue #314 delta, finding R1)."""
-    path = Path(absolute_path)
     try:
-        if not resolves_inside(path, toplevel=toplevel):
+        relative = checkout_relative(Path(absolute_path), toplevel=toplevel)
+        if relative is None:
             return None
-        relative = path.resolve().relative_to(toplevel).as_posix()
-        return valid_scope([relative])[0]
+        return valid_scope([relative.as_posix()])[0]
     except (InvalidClaimMarkerError, OSError, ValueError):
         return None
 
