@@ -1887,7 +1887,7 @@ class TestCliStateRefForge:
         next_out = capsys.readouterr().out
         assert RULABLE_ID in next_out
         assert f"#{RULABLE_NUMBER}" not in next_out
-        assert f"Run: aco claim {RULABLE_ID} --scope <paths>" in next_out
+        assert f"Run: aco start {RULABLE_ID} --slug=rulable --scope <paths>" in next_out
 
         rulings_status = issue_claim.main(["rulings"])
         assert rulings_status == 0
@@ -4733,7 +4733,7 @@ class TestCliStateRefForge:
             ),
             pytest.param(["check", "{item}"], "ISSUE {item} body incomplete: ", id="check"),
             pytest.param(["next"], "{item}: body incomplete: ", id="next"),
-            pytest.param(["next", "--json"], '"command": "aco claim {seeded} ', id="next-json"),
+            pytest.param(["next", "--json"], '"command": "aco start {seeded} ', id="next-json"),
             pytest.param(
                 ["board", "--json"], '"actionable_reason": "blocked by {seeded}"', id="board-json"
             ),

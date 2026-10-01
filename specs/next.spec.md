@@ -37,6 +37,7 @@ other printable space are text.
 | `--repo` under `storage = "state-ref"` | BOARD-42 (cited) | BOARD-42 (cited), NEXT-24 |
 | no actionable item at all | NEXT-01 | NEXT-01 |
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
+| that action, run outside a linked non-default worktree | NEXT-41 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
 | a title, `Next`, slice title or `SKIPPED` reason holds a display control | NEXT-37 | NEXT-11..14 |
@@ -49,7 +50,7 @@ other printable space are text.
 | that same container still names further work | NEXT-06 | NEXT-13 |
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
 | an unworkable item exists beside the top action | NEXT-08 | NEXT-14 |
-| an item carries the label `needs-operator` | NEXT-39 | NEXT-14 |
+| an item carries the label `needs-operator` | NEXT-39, NEXT-40 | NEXT-14 |
 | further free items exist, disjoint from the first action | NEXT-09, NEXT-21, NEXT-22 | NEXT-15 |
 | more than three such candidates | NEXT-10 | NEXT-15 |
 | the first action itself names no scope | NEXT-16 | NEXT-15 |
@@ -64,7 +65,8 @@ other printable space are text.
 
 ## A work item action
 
-- [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>`, exit `0` (see E-NEXT-01).
+- [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>` from a linked worktree on a non-default branch, exit `0` (see E-NEXT-01).
+- [ ] [NEXT-41] From any other checkout, where `claim` refuses, `Run:` is `aco start <n> --slug=<slug>`, the slug `start` derives from the title, else `--slug <slug>` at the end (E-NEXT-14).
 - [ ] [NEXT-37] Text shows each display control in a title, `Next`, slice title or `SKIPPED` reason as its escape: `a\x1b[2J` prints as typed; TAB, NBSP and `Größe` as is; `--json` unchanged.
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
 - [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope=<path>` per path of that row, with no `scope unknown`.
@@ -90,8 +92,9 @@ other printable space are text.
 - [ ] [NEXT-08] Every other unworkable item is named once under a trailing `SKIPPED` block, `<label>: <reason>`; a container `next` itself recommends cutting or closing is left out of that list.
 - [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
 - [ ] [NEXT-34] A NEXT-05 container not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, `\` and `"` in `<title>` escaped in text and `--json`; never `container; claim a child`.
-- [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED`, in text or `--json` (see E-NEXT-06).
+- [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED` or `waiting on operator:`, in text or `--json` (see E-NEXT-06).
 - [ ] [NEXT-39] An open, unclaimed, unfrozen item labelled `needs-operator` is never pulled; a line `waiting on operator: <labels>` after `close:` names it instead of `SKIPPED` (E-NEXT-13).
+- [ ] [NEXT-40] `aco next --help` names that label and how to set or remove it: `gh issue edit <n> --add-label/--remove-label`, or `aco item edit <item-id>` under `storage = "state-ref"`.
 
 ## `parallel:`
 
@@ -142,6 +145,8 @@ bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
 tracked `.agent-claim/board.toml`, and `ACO_AGENT` set to `Ada`. Every
 session below also names a fixed, deterministic fake `gh` as a setup
 precondition (the shape `specs/landing-grammar.spec.md` already uses).
+Every session runs from a linked worktree on branch `ada/lane` unless its
+setup names the main checkout.
 
 ### E-NEXT-01 — the top-ranked work item, scoped
 
@@ -366,3 +371,20 @@ $ aco next --json
 {"ok": true, "reason": "work_item", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": true, "candidates": [], "scope_unknown": []}, "close": [], "waiting_on_operator": [230], "number": 11, "score": -10, "title": "Top work", "next": "Claim #11.", "command": "aco claim 11 --scope <paths>", "ruling_landings": null, "ruling_old": null}
 exit 0
 ```
+
+### E-NEXT-14 — the top-ranked work item, seen from the main checkout
+
+Setup: bare-remote, run from the main checkout on `main`, fake `gh`, issue `#10` titled `Work` open, complete, `scope = ["README.md"]`
+
+```console
+$ aco next
+#10 score -10: Work
+Next: Claim #10.
+Run: aco start 10 --slug=work
+parallel: none
+scope unknown: none
+close: none
+exit 0
+```
+
+`aco start 10 --slug=work` then builds `issue-10-work` beside the checkout and claims `#10` there, as E-NEXT-01's `claim` would from that worktree. A title yielding no slug, such as `!!!`, prints `Run: aco start 10 --slug <slug>`.
