@@ -2661,7 +2661,9 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
 
 _REPOSITORY_ROOT = Path(__file__).parent.parent
 _STATE_DELETION_ADVICE = re.compile(
-    r"update-ref (?:-d|--delete)\b|push\b[^\n`]*(?:--force|\s-f\b|--delete|\s:refs/)"
+    r"update-ref\b[^\n`]*\s(?:-d|--delete)\b"
+    r"|push\b[^\n`]*(?:--force|--delete|\s-[fd]\b"
+    r"|\s['\"]?:(?:refs/|\{)|\s\+(?:refs/|\{|[^\s:]+:))"
 )
 
 
@@ -2714,6 +2716,11 @@ def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
         "git update-ref --delete refs/aco/state",
         "git push --delete origin refs/aco/state",
         "git push origin :refs/aco/state",
+        "git push -d origin refs/aco/state",
+        "git push origin -d refs/aco/state",
+        "git push origin +refs/aco/state",
+        "git push origin +HEAD:refs/aco/state",
+        "git update-ref --no-deref -d refs/aco/state",
     ],
 )
 def test_the_deletion_advice_guard_flags_every_manual_delete_form(
