@@ -401,7 +401,7 @@ exit 0
 
 ### E-REL-18 — a canonical remote with no URL configured
 
-Setup: as E-REL-17, but `.agent-claim/board.toml` names `canonical_remote = "hub"`, which this
+Setup: as E-REL-17, but `.aco/board.toml` names `canonical_remote = "hub"`, which this
 clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such
 as a local `remote.hub.fetch`
 

@@ -759,7 +759,7 @@ def test_path_is_tracked_reads_real_git_index_and_ignore_state(
 ) -> None:
     """`path_is_tracked` against real git filesystem/index state, not a
     hand-typed exit code (issue #315 review): absent, merely untracked, and
-    `.gitignore`-ignored (`.*/`, the pattern that hid `.agent-claim/` in the
+    `.gitignore`-ignored (`.*/`, the pattern that hid `.aco/` in the
     field checkout the issue reports) all read `False`; a tracked file reads
     `True` even when a later `.gitignore` pattern would also match it, since
     `git ls-files --error-unmatch` answers from the index, not the ignore

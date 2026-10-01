@@ -1,6 +1,6 @@
 # Body block
 
-The `agent-claim` fenced TOML block inside a work item's body: the one grammar
+The `aco` fenced TOML block inside a work item's body: the one grammar
 `aco board`, `aco next`, issue-mode `aco claim`, `aco cut`, `aco rulings` and
 `aco check` read a work item from. This file owns the block's shape, its
 defect sentences, and the two verdicts a body can carry (`malformed`,
@@ -16,9 +16,9 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 
 | body state \ trigger | `aco body --check` | `aco board` | `aco claim <n>` |
 |---|---|---|---|
-| no `agent-claim` fence | BODY-01 | BODY-50 | BODY-52 |
+| no `aco` fence | BODY-01 | BODY-50 | BODY-52 |
 | fence opened, never closed | BODY-02 | BODY-50 | BODY-52 |
-| two `agent-claim` fences | BODY-03 | BODY-50 | BODY-52 |
+| two `aco` fences | BODY-03 | BODY-50 | BODY-52 |
 | fence content is not TOML | BODY-04 | BODY-50 | BODY-52 |
 | block quoted inside a documentation fence | BODY-05 | BODY-50 | BODY-52 |
 | valid block, prose around it | BODY-06, BODY-07 | — | — |
@@ -42,11 +42,11 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 
 ## Fence and surroundings
 
-- [ ] [BODY-01] A body with no `agent-claim` fence makes `aco body --check` print `body malformed: agent-claim: no agent-claim block` on stderr, exit `2` — never a sentence about another grammar.
-- [ ] [BODY-02] A body whose `agent-claim` fence is opened and never closed makes `aco body --check` print `body malformed: agent-claim: unclosed agent-claim block` on stderr, exit `2`.
-- [ ] [BODY-03] A body with two `agent-claim` fences makes `aco body --check` print `body malformed: agent-claim: multiple agent-claim blocks; exactly one is allowed` on stderr, exit `2`.
-- [ ] [BODY-04] A fence whose content is not TOML makes `aco body --check` print `body malformed: agent-claim: agent-claim block is not valid TOML: <reason>` on stderr, exit `2`.
-- [ ] [BODY-05] An `agent-claim` fence quoted inside a longer documentation fence is not the item's block, so a body carrying only that one prints `body malformed: agent-claim: no agent-claim block`, exit `2`.
+- [ ] [BODY-01] A body with no `aco` fence makes `aco body --check` print `body malformed: aco: no aco block` on stderr, exit `2` — never a sentence about another grammar.
+- [ ] [BODY-02] A body whose `aco` fence is opened and never closed makes `aco body --check` print `body malformed: aco: unclosed aco block` on stderr, exit `2`.
+- [ ] [BODY-03] A body with two `aco` fences makes `aco body --check` print `body malformed: aco: multiple aco blocks; exactly one is allowed` on stderr, exit `2`.
+- [ ] [BODY-04] A fence whose content is not TOML makes `aco body --check` print `body malformed: aco: aco block is not valid TOML: <reason>` on stderr, exit `2`.
+- [ ] [BODY-05] An `aco` fence quoted inside a longer documentation fence is not the item's block, so a body carrying only that one prints `body malformed: aco: no aco block`, exit `2`.
 - [ ] [BODY-06] Prose beside the block — headings, a `Blocked by: nichts` line, another tool's own section — carries no contract, so a body of prose plus one complete block prints `body ok`, exit `0`.
 - [ ] [BODY-07] A block whose lines end in CRLF is read like any other: a complete CRLF body prints `body ok`, exit `0`; a rewrite keeps CRLF but re-renders the block's fields canonically, not byte-for-byte.
 
@@ -164,13 +164,13 @@ Sessions whose stdin carries a fenced block use a four-backtick console fence.
 
 ### E-BODY-01 — the golden body, complete and valid
 
-Setup: bare-remote, `storage = "github"` in a tracked `.agent-claim/board.toml`
+Setup: bare-remote, `storage = "github"` in a tracked `.aco/board.toml`
 
 ````console
 $ aco body --check <<'BODY'
 Prose a reader may write freely.
 
-```agent-claim
+```aco
 version = 1
 now = "Cut on 19.09.2026 from #320."
 next = "Build the two contract specs."
@@ -187,7 +187,7 @@ Setup: bare-remote, `storage = "github"`
 
 ````console
 $ aco body --check <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = ""
 next = ""
@@ -207,10 +207,10 @@ $ aco body --check <<'BODY'
 ## Ziel
 Prose only, no typed block.
 BODY
-2> body malformed: agent-claim: no agent-claim block
+2> body malformed: aco: no aco block
 exit 2
 $ aco claim 42 --scope README.md
-2> ERROR: body malformed: agent-claim: no agent-claim block
+2> ERROR: body malformed: aco: no aco block
 exit 2
 ````
 
@@ -220,7 +220,7 @@ Setup: bare-remote, `storage = "github"`
 
 ````console
 $ aco body --check --json <<'BODY'
-```agent-claim
+```aco
 version = 2
 now = "Something"
 next = "Something"
@@ -234,11 +234,11 @@ exit 2
 
 ### E-BODY-05 — `[record]` is known only under the state-ref pin
 
-Setup: bare-remote, `storage = "state-ref"` in a tracked `.agent-claim/board.toml`
+Setup: bare-remote, `storage = "state-ref"` in a tracked `.aco/board.toml`
 
 ````console
 $ aco body --check <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = "Open."
 next = "Build it."
@@ -263,7 +263,7 @@ Setup: bare-remote, `storage = "github"`
 
 ````console
 $ aco body --check <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = "Open."
 next = "Cut it."

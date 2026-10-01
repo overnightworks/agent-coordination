@@ -186,7 +186,7 @@ cannot read needs `--force-unreadable` besides (`specs/reset.spec.md`).
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml` naming no `storage` key (the default
+tracked `.aco/board.toml` naming no `storage` key (the default
 `github` pin, `specs/storage-pin.spec.md` PIN-01/PIN-02), and `ACO_AGENT` set
 to `Ada`; `<remote>`, `<tmp>`, and `<home>` are the runner's own paths, and
 `<bundle>` is the export path `aco reset` itself prints (its own filename

@@ -13,7 +13,7 @@ file cites those IDs rather than restating them.
 
 `judge` takes `canonical_remote_for` and `lane_shared_for` as explicit
 dependencies rather than reading the configuration itself: reading
-`.agent-claim/board.toml` behind its tracked-file precondition (PIN-01), and
+`.aco/board.toml` behind its tracked-file precondition (PIN-01), and
 the lane-shared registry files from the trunk's committed copy of it
 (PROT-46), is the board-configuration concern every store command shares,
 not something this lower layer re-implements or reaches upward for.
@@ -268,7 +268,7 @@ class _ProtectContext:
     same callers, so bundling them keeps every chain function's own
     parameter list short instead of parallel threads of the same values.
     `canonical_remote_for` and `lane_shared_for` are `cli`'s own
-    board-configuration readers: resolving `.agent-claim/board.toml`'s
+    board-configuration readers: resolving `.aco/board.toml`'s
     storage pin, and the trunk's lane-shared files (PROT-46), is that
     layer's own concern, handed down here rather than re-read from this
     lower module."""

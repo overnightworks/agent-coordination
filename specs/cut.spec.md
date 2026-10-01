@@ -70,7 +70,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 ## The body precondition
 
-- [ ] [CUT-05] `<n>` with a malformed body (BODY-50) refuses `#<n> body malformed: <field>: <message>; cut needs a valid agent-claim block`, exit `2`; an incomplete body (BODY-51) is accepted.
+- [ ] [CUT-05] `<n>` with a malformed body (BODY-50) refuses `#<n> body malformed: <field>: <message>; cut needs a valid aco block`, exit `2`; an incomplete body (BODY-51) is accepted.
 
 ## Row selection
 
@@ -102,7 +102,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 ## Partial failure and recovery
 
 - [ ] [CUT-17] GitHub's own failed sub-issue relation write refuses `created #<child> but failed to record #<child> as a sub-issue of #<n>: <cause>; re-run the same cut -- it adopts the child`, exit `2`.
-- [ ] [CUT-18] A failed row-removal write, either storage, refuses `created #<child> but failed to remove row <idx> from #<n>'s agent-claim block: <cause>; re-run the same cut -- it adopts the child`, exit `2`.
+- [ ] [CUT-18] A failed row-removal write, either storage, refuses `created #<child> but failed to remove row <idx> from #<n>'s aco block: <cause>; re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-19] An identical re-run after CUT-17, CUT-18, or -- once its type is set -- CUT-32 prints `ADOPTED` (CUT-13) instead of a second child, then finishes the row removal when a row was linked (see E-CUT-06).
 - [ ] [CUT-32] A child created without its `Task` type refuses `created #<child> but GitHub did not set its type Task; set that type on the forge by hand, then re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-28] CUT-17/CUT-18/CUT-32's partial write reports `reason: "partial_write"`, `written` (`<child>`) and `failed` (the step) as siblings, exit `2` (see E-CUT-08).
@@ -259,7 +259,7 @@ $ aco item show <child-id>
 <child-id> · #<child> · open · parent aco-000001 · origin none
 Parent: aco-000001
 
-```agent-claim
+```aco
 version = 1
 now = ""
 next = ""

@@ -1528,7 +1528,7 @@ def _protect_real_repo_with_worktree(
     """A real repository (`main`, reused across worktrees) with one linked,
     isolated worktree on a feature branch -- the same `git worktree add`
     recipe `checkout.ISOLATED_WORKTREE_RECIPE` documents. `main` carries a
-    real, tracked (`git add -f`) `.agent-claim/board.toml` holding
+    real, tracked (`git add -f`) `.aco/board.toml` holding
     `board_config`, empty by default, beside the `trunk_files` it tracks
     (issue #314 gate B3): every worktree shares `main`'s history, so `path_is_tracked`
     reads a real "tracked" answer for it from any of them, via
@@ -1981,7 +1981,7 @@ def test_protect_apply_patch_judges_two_worktrees_separately_and_one_deny_wins(
 
 
 def _serve_item_72_body(monkeypatch: pytest.MonkeyPatch) -> FakeForge:
-    """Issue #72's own body, with the `agent-claim` block a rescope keeps in
+    """Issue #72's own body, with the `aco` block a rescope keeps in
     step with its claim (issue #554), on a GitHub fake the checkout's
     canonical remote names -- so no rescope here ever reaches a real forge."""
     client = FakeForge()
@@ -3163,8 +3163,8 @@ def test_protect_runs_both_symlink_claim_checks_when_one_store_read_fails(
         (f"{_CLAIMED_WORKTREE}/src/into-nested-worktree.md", "claim first", 1),
         (
             "claimed/repo/into-worktree.md",
-            ".agent-claim/board.toml is not tracked in this checkout, so its "
-            "storage pin cannot be trusted: git add -f .agent-claim/board.toml",
+            ".aco/board.toml is not tracked in this checkout, so its "
+            "storage pin cannot be trusted: git add -f .aco/board.toml",
             0,
         ),
     ],

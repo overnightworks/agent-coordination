@@ -266,7 +266,7 @@ than a bare `claim first`.
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml` naming no `storage` key, and `ACO_AGENT`
+tracked `.aco/board.toml` naming no `storage` key, and `ACO_AGENT`
 set to `Ada`; `<worktree>` and `<main>` are its own linked-worktree and
 shared-main directories. Every session pipes the hook's JSON payload on
 stdin, exactly as a `PreToolUse` hook call does.
@@ -437,7 +437,7 @@ exit 2
 
 ### E-PROT-15 -- a canonical remote with no URL configured is named
 
-Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, the tracked `.agent-claim/board.toml` naming `canonical_remote = "upstream"`, no remote `upstream` configured
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, the tracked `.aco/board.toml` naming `canonical_remote = "upstream"`, no remote `upstream` configured
 
 ```console
 $ echo '{"tool_name": "Write", "tool_input": {"file_path": "<worktree>/README.md"}}' | aco protect
@@ -448,7 +448,7 @@ exit 2
 
 ### E-PROT-16 -- a lane-shared registry file is writable by any live claim
 
-Setup: bare-remote, bootstrapped, the trunk's committed `.agent-claim/board.toml` naming `lane_shared = ["scripts/vulture_whitelist.py"]` beside a tracked `scripts/vulture_whitelist.py`, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
+Setup: bare-remote, bootstrapped, the trunk's committed `.aco/board.toml` naming `lane_shared = ["scripts/vulture_whitelist.py"]` beside a tracked `scripts/vulture_whitelist.py`, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
 
 ```console
 $ echo '{"toolName": "Write", "toolInput": {"file_path": "<worktree>/scripts/vulture_whitelist.py"}}' | aco protect
@@ -457,7 +457,7 @@ exit 0
 
 ### E-PROT-17 -- a lane's own edit of its board.toml shares nothing
 
-Setup: bare-remote, bootstrapped, the trunk's committed `.agent-claim/board.toml` naming no `lane_shared`, a linked worktree on `ada/issue-42` whose own `.agent-claim/board.toml` was edited to name `lane_shared = ["src/x.py"]`, already `aco claim 42 --scope README.md`
+Setup: bare-remote, bootstrapped, the trunk's committed `.aco/board.toml` naming no `lane_shared`, a linked worktree on `ada/issue-42` whose own `.aco/board.toml` was edited to name `lane_shared = ["src/x.py"]`, already `aco claim 42 --scope README.md`
 
 ```console
 $ echo '{"toolName": "Write", "toolInput": {"file_path": "<worktree>/src/x.py"}}' | aco protect

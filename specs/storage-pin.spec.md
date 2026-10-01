@@ -1,23 +1,23 @@
 # Storage pin
 
-`storage = "github" | "state-ref"` in `.agent-claim/board.toml` (default
+`storage = "github" | "state-ref"` in `.aco/board.toml` (default
 `github`): which adapter owns this repository's board and item data. This
 file owns the pin's own values and precondition, which commands the pin
 gates by name, the two item id forms it chooses between, and the
-state-ref item file's own defects one layer above the `agent-claim` block
+state-ref item file's own defects one layer above the `aco` block
 grammar. `specs/body-block.spec.md` owns the block's own schema, including
 `[record]`'s field-by-field validity (BODY-15..BODY-20) once the pin has
 already gated it open; this file never restates those sentences. `<path>`
-is `.agent-claim/board.toml`, the pin's own file. Every refusal below
+is `.aco/board.toml`, the pin's own file. Every refusal below
 reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 
 ## Behavior table
 
 | pin state \ trigger | any store command | `item new` | `item edit` / `item close` | `release --merged` | an id argument |
 |---|---|---|---|---|---|
-| `.agent-claim/board.toml` absent, `origin` unconfigured | CHECK-15 (cited) | CHECK-15 (cited) | CHECK-15 (cited) | CHECK-15 (cited) | — |
-| `.agent-claim/board.toml` absent | PIN-32 | PIN-32 | PIN-32 | PIN-32 | — |
-| `.agent-claim/board.toml` present but untracked or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
+| `.aco/board.toml` absent, `origin` unconfigured | CHECK-15 (cited) | CHECK-15 (cited) | CHECK-15 (cited) | CHECK-15 (cited) | — |
+| `.aco/board.toml` absent | PIN-32 | PIN-32 | PIN-32 | PIN-32 | — |
+| `.aco/board.toml` present but untracked or ignored | PIN-01 | PIN-01 | PIN-01 | PIN-01 | — |
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
 | a key the configuration does not define | PIN-33 | PIN-33 | PIN-33 | PIN-33 | — |
@@ -65,9 +65,9 @@ So does a `<trunk>` fetched before the adoption landed; the sentence's
 parenthesis names that fetch, since no fetch runs here (see E-PIN-35).
 
 - [ ] [PIN-01] Any store command with a present but untracked or ignored `<path>` refuses `<path> is not tracked in this checkout, so its storage pin cannot be trusted: git add -f <path>` (E-PIN-01).
-- [ ] [PIN-02] A tracked `.agent-claim/board.toml` naming no `storage` key pins `storage = "github"`, the default every existing repository already reads.
-- [ ] [PIN-03] A tracked `.agent-claim/board.toml` naming a `storage` value outside `github`/`state-ref` refuses `board configuration <path> storage must be 'github' or 'state-ref'` (see E-PIN-02).
-- [ ] [PIN-33] A tracked `.agent-claim/board.toml` naming a key it does not define refuses `board configuration <path> has unknown top-level key <keys>`, each display control escaped (NEXT-37) (see E-PIN-11).
+- [ ] [PIN-02] A tracked `.aco/board.toml` naming no `storage` key pins `storage = "github"`, the default every existing repository already reads.
+- [ ] [PIN-03] A tracked `.aco/board.toml` naming a `storage` value outside `github`/`state-ref` refuses `board configuration <path> storage must be 'github' or 'state-ref'` (see E-PIN-02).
+- [ ] [PIN-33] A tracked `.aco/board.toml` naming a key it does not define refuses `board configuration <path> has unknown top-level key <keys>`, each display control escaped (NEXT-37) (see E-PIN-11).
 
 ## `lane_shared`, the registries every lane may write
 
@@ -76,7 +76,7 @@ mechanically -- a dead-code whitelist, a test-budget ledger -- so no lane
 can know in advance whether it needs one. `specs/protect.spec.md` (PROT-46)
 owns what a write to one is allowed.
 
-- [ ] [PIN-37] A tracked `.agent-claim/board.toml` may name `lane_shared = ["<file>", ...]`, each a repository-relative file path; absent, no file is lane-shared.
+- [ ] [PIN-37] A tracked `.aco/board.toml` may name `lane_shared = ["<file>", ...]`, each a repository-relative file path; absent, no file is lane-shared.
 - [ ] [PIN-38] A `lane_shared` value that is no list of unique strings refuses `board configuration <path> lane_shared must be a list of unique repository file paths` (see E-PIN-40).
 - [ ] [PIN-39] An absolute, `..`-climbing, or non-canonical entry refuses `board configuration <path> lane_shared entry '<entry>' is not a canonical path inside the repository` (see E-PIN-41).
 - [ ] [PIN-40] Only the trunk's committed copy counts, as the last fetch left it, never a worktree's own; no trunk copy means no file is lane-shared, while a trunk copy git fails to read is a git failure.
@@ -111,7 +111,7 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 - [ ] [PIN-35] A command on one item goes past such an entry, which stays byte for byte (CAS-61): `item show`, `item edit`, `item close`, `ask`, `rule`, `brief`, `check`, and `start` up to its fresh claim (PIN-36).
 - [ ] [PIN-36] A command over the whole store refuses with PIN-13's sentence: `board` and its `--serve` ruling click, `next`, `rulings`, `cut`, `item new` (`--not-a-twin` too), a fresh `claim`, `release --merged`.
 - [ ] [PIN-14] A read of an `items/<id>.md` entry whose bytes are not valid UTF-8 refuses `item <id> is not valid UTF-8`, then ITEM-38's repair clause.
-- [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `agent-claim` block and `[record]` refuses `item <id> has a malformed agent-claim block`, then ITEM-38's repair clause (see E-PIN-07).
+- [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `aco` block and `[record]` refuses `item <id> has a malformed aco block`, then ITEM-38's repair clause (see E-PIN-07).
 - [ ] [PIN-16] An item whose own `record.parent` names an id no `items/` entry carries refuses `item <parent-id> is referenced as a parent but does not exist`.
 - [ ] [PIN-17] An item whose own `record.blocked_by` names an id no `items/` entry carries refuses `item <item-id> lists blocker <blocker-id>, which does not exist`, naming the listing item as PIN-34 does.
 - [ ] [PIN-34] An item whose own `record.blocked_by` names one id twice refuses ITEM-43's `item <item-id> lists blocker <blocker-id> more than once` (see E-PIN-38).
@@ -128,7 +128,7 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 
 - [ ] [PIN-22] `aco item edit ITEM < body.md` under `storage = "state-ref"` replaces the item's stored body and prints `EDITED aco-xxxxxx`, exit `0` (see E-PIN-08).
 - [ ] [PIN-23] `aco item edit ITEM` against an `ITEM` no `items/` entry carries refuses `<item-id> does not exist in <repository>` (`<repository>`: PIN-28).
-- [ ] [PIN-24] `aco item edit ITEM` piping a body with no valid `agent-claim` block refuses with that body's own first defect sentence (`specs/body-block.spec.md`, BODY-01..BODY-50).
+- [ ] [PIN-24] `aco item edit ITEM` piping a body with no valid `aco` block refuses with that body's own first defect sentence (`specs/body-block.spec.md`, BODY-01..BODY-50).
 - [ ] [PIN-25] `aco item close ITEM` under `storage = "state-ref"` prints `CLOSED aco-xxxxxx` then a `freed: ` line naming every item `ITEM`'s own close just freed, or `freed: none`, exit `0` (see E-PIN-09).
 - [ ] [PIN-26] `aco item close ITEM` against an item still carrying a live claim refuses `<item-id> has a live claim (<agent> (<role>)); release the claim first`, before any write.
 - [ ] [PIN-27] A second `aco item close ITEM` on an already-closed item refuses `<item-id> is already closed (closed on <closed_at>)`.
@@ -153,32 +153,32 @@ own paths, `<item-id>` the id a session itself minted.
 
 ### E-PIN-01 — an untracked pin refuses before anything else
 
-Setup: bare-remote, `.agent-claim/board.toml` present on disk but never `git add`ed
+Setup: bare-remote, `.aco/board.toml` present on disk but never `git add`ed
 
 ```console
 $ aco status
-2> ERROR: .agent-claim/board.toml is not tracked in this checkout, so its storage pin cannot be trusted: git add -f .agent-claim/board.toml
+2> ERROR: .aco/board.toml is not tracked in this checkout, so its storage pin cannot be trusted: git add -f .aco/board.toml
 exit 2
 ```
 
 ### E-PIN-32 — an absent pin names its one-time adoption
 
-Setup: bare-remote, no `.agent-claim/board.toml` in the checkout at all
+Setup: bare-remote, no `.aco/board.toml` in the checkout at all
 
 ```console
 $ aco claim 1 --scope README.md
-2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco (fetch first if the default branch may already carry it)
+2> ERROR: .aco/board.toml does not exist in this checkout; merge a pull request adding only .aco/board.toml into the default branch first, without aco (fetch first if the default branch may already carry it)
 exit 2
 ```
 
 ### E-PIN-33 — a lane cut before the adoption merges the trunk
 
-Setup: bare-remote, branch `lane` cut at `main`'s first commit, then a commit adding `.agent-claim/board.toml` pushed to `origin/main`, and a worktree `<tmp>/lane` on `lane`
+Setup: bare-remote, branch `lane` cut at `main`'s first commit, then a commit adding `.aco/board.toml` pushed to `origin/main`, and a worktree `<tmp>/lane` on `lane`
 
 ```console
 $ cd <tmp>/lane
 $ aco claim 1 --scope README.md
-2> ERROR: .agent-claim/board.toml does not exist in this checkout, but origin/main tracks it; merge origin/main into this branch
+2> ERROR: .aco/board.toml does not exist in this checkout, but origin/main tracks it; merge origin/main into this branch
 exit 2
 ```
 
@@ -200,18 +200,18 @@ Setup: E-PIN-33's, then `refs/remotes/origin/main` reset to `main`'s first commi
 ```console
 $ cd <tmp>/lane
 $ aco claim 1 --scope README.md
-2> ERROR: .agent-claim/board.toml does not exist in this checkout; merge a pull request adding only .agent-claim/board.toml into the default branch first, without aco (fetch first if the default branch may already carry it)
+2> ERROR: .aco/board.toml does not exist in this checkout; merge a pull request adding only .aco/board.toml into the default branch first, without aco (fetch first if the default branch may already carry it)
 exit 2
 ```
 
 ### E-PIN-36 — a branch that removed the pin itself restores it
 
-Setup: E-PIN-33's, then in `<tmp>/lane` `git merge origin/main`, `git rm .agent-claim/board.toml` and a commit
+Setup: E-PIN-33's, then in `<tmp>/lane` `git merge origin/main`, `git rm .aco/board.toml` and a commit
 
 ```console
 $ cd <tmp>/lane
 $ aco claim 1 --scope README.md
-2> ERROR: .agent-claim/board.toml was removed on this branch; restore it with git checkout origin/main -- :/.agent-claim/board.toml
+2> ERROR: .aco/board.toml was removed on this branch; restore it with git checkout origin/main -- :/.aco/board.toml
 exit 2
 ```
 
@@ -222,50 +222,50 @@ Setup: E-PIN-36's, then a further commit pushed to `origin/main` and fetched, an
 ```console
 $ cd <tmp>/lane
 $ aco claim 1 --scope README.md
-2> ERROR: .agent-claim/board.toml was removed on this branch; restore it with git checkout origin/main -- :/.agent-claim/board.toml
+2> ERROR: .aco/board.toml was removed on this branch; restore it with git checkout origin/main -- :/.aco/board.toml
 exit 2
 $ cd docs
-$ git checkout origin/main -- :/.agent-claim/board.toml
+$ git checkout origin/main -- :/.aco/board.toml
 exit 0
 ```
 
 ### E-PIN-02 — an unrecognized storage value
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked with `storage = "gitlab"`
+Setup: bare-remote, `.aco/board.toml` tracked with `storage = "gitlab"`
 
 ```console
 $ aco status
-2> ERROR: board configuration .agent-claim/board.toml storage must be 'github' or 'state-ref'
+2> ERROR: board configuration .aco/board.toml storage must be 'github' or 'state-ref'
 exit 2
 ```
 
 ### E-PIN-11 — an unknown key carrying a bidi override
 
-Setup: bare-remote checkout at `/repo`, `.agent-claim/board.toml` tracked with the one line `"a\u202eb" = 1`
+Setup: bare-remote checkout at `/repo`, `.aco/board.toml` tracked with the one line `"a\u202eb" = 1`
 
 ```console
 $ aco next
-2> ERROR: board configuration /repo/.agent-claim/board.toml has unknown top-level key a\u202eb
+2> ERROR: board configuration /repo/.aco/board.toml has unknown top-level key a\u202eb
 exit 2
 ```
 
 ### E-PIN-40 — a lane_shared value that is not a list
 
-Setup: bare-remote checkout at `/repo`, `.agent-claim/board.toml` tracked with `lane_shared = "scripts/vulture_whitelist.py"`
+Setup: bare-remote checkout at `/repo`, `.aco/board.toml` tracked with `lane_shared = "scripts/vulture_whitelist.py"`
 
 ```console
 $ aco status
-2> ERROR: board configuration /repo/.agent-claim/board.toml lane_shared must be a list of unique repository file paths
+2> ERROR: board configuration /repo/.aco/board.toml lane_shared must be a list of unique repository file paths
 exit 2
 ```
 
 ### E-PIN-41 — a lane_shared entry outside the repository
 
-Setup: bare-remote checkout at `/repo`, `.agent-claim/board.toml` tracked with `lane_shared = ["../other/registry.txt"]`
+Setup: bare-remote checkout at `/repo`, `.aco/board.toml` tracked with `lane_shared = ["../other/registry.txt"]`
 
 ```console
 $ aco status
-2> ERROR: board configuration /repo/.agent-claim/board.toml lane_shared entry '../other/registry.txt' is not a canonical path inside the repository
+2> ERROR: board configuration /repo/.aco/board.toml lane_shared entry '../other/registry.txt' is not a canonical path inside the repository
 exit 2
 ```
 
@@ -282,7 +282,7 @@ $ aco item new --title "Reset export"
 exit 0
 $ aco item show <item-id>
 <item-id> · #n · open · parent none · origin none
-```agent-claim
+```aco
 version = 1
 now = ""
 next = ""
@@ -312,14 +312,14 @@ exit 2
 
 ### E-PIN-07 — a hand-corrupted item file
 
-Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block, `<child-id>` an open item whose `record.parent` is `aco-000001`, `<item-id>` another open Task with no parent and no child and blocking no item
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `aco` block, `<child-id>` an open item whose `record.parent` is `aco-000001`, `<item-id>` another open Task with no parent and no child and blocking no item
 
 ```console
 $ aco item show aco-000001
-2> ERROR: item aco-000001 has a malformed agent-claim block; repair it with aco item edit aco-000001 and a body whose agent-claim block carries a valid [record]
+2> ERROR: item aco-000001 has a malformed aco block; repair it with aco item edit aco-000001 and a body whose aco block carries a valid [record]
 exit 2
 $ aco item close <child-id>
-2> ERROR: item aco-000001 has a malformed agent-claim block; repair it with aco item edit aco-000001 and a body whose agent-claim block carries a valid [record]
+2> ERROR: item aco-000001 has a malformed aco block; repair it with aco item edit aco-000001 and a body whose aco block carries a valid [record]
 exit 2
 $ aco item close <item-id>
 CLOSED <item-id>
@@ -362,7 +362,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `<item-id>` a
 
 ````console
 $ aco item edit <item-id> <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = "Cut on 19.09.2026."
 next = "Build it."

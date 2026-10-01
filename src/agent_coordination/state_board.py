@@ -160,7 +160,7 @@ class _DecodedItem:
 
 @dataclass(frozen=True)
 class _MalformedItem:
-    """An item file whose bytes decode to no valid `agent-claim` block with
+    """An item file whose bytes decode to no valid `aco` block with
     a `[record]` table (issue #447): kept aside rather than refusing the
     store at decode, so a read of any other item still answers while this
     item's own read refuses, and `board`/`next` list it by `defect` rather
@@ -226,7 +226,7 @@ class NewItemWrite:
 
 
 def _valid_record(text: str) -> Mapping[str, object] | None:
-    """`text`'s own `[record]` table when its `agent-claim` block is VALID
+    """`text`'s own `[record]` table when its `aco` block is VALID
     under `Storage.STATE_REF` -- the same block grammar `body.py` already
     reads, gated open to `record` only there -- else `None`."""
     parsed = parse_body(text, storage=Storage.STATE_REF)
@@ -288,7 +288,7 @@ def _malformed_item_refusal(item_id: str, malformed: _MalformedItem) -> Malforme
 
 
 def _with_record(body: str, record: items.ItemRecord) -> str:
-    """`body`'s `agent-claim` block, its `[record]` table replaced by
+    """`body`'s `aco` block, its `[record]` table replaced by
     `record`'s own fields, every other byte untouched -- the one place a
     write composes a fresh `[record]` table, shared by `create_child` (a
     brand new one), `update_item_body` (an existing one with `updated_at`

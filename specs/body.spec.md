@@ -19,8 +19,8 @@ storage-gated validity is `specs/body-block.spec.md`'s own BODY-15/BODY-16.
 | stdin is a valid, complete block | — | BDY-07 (BODY-14) | BDY-09 |
 | stdin is malformed or incomplete | — | BDY-08 (BODY-01..56) | BDY-09 |
 | stdin is not valid UTF-8 | — | BDY-10 | BDY-10 |
-| `.agent-claim/board.toml` absent | — | BDY-11 (PIN-32) | BDY-11 |
-| `.agent-claim/board.toml` present but untracked or ignored | — | BDY-11 (PIN-01) | BDY-11 |
+| `.aco/board.toml` absent | — | BDY-11 (PIN-32) | BDY-11 |
+| `.aco/board.toml` present but untracked or ignored | — | BDY-11 (PIN-01) | BDY-11 |
 | `storage = "state-ref"` vs default `"github"` | — | BDY-12 (BODY-15, BODY-16) | BDY-12 |
 
 ## Flags and modes
@@ -38,7 +38,7 @@ owns only the CLI-level framing around it.
 - [ ] [BDY-08] `aco body --check` prints every defect sentence on stderr, one per line, never truncated like `aco check` (CHECK-06, CHECK-07); exit `2`.
 - [ ] [BDY-09] `aco body --check --json` prints the envelope, `reason` below, `"defects": [...]` the same ordered sentences BDY-08 lists; exit `0` on `valid`, exit `2` otherwise (see E-BDY-03).
 - [ ] [BDY-10] Stdin that is not valid UTF-8 refuses `stdin is not valid UTF-8: <reason>; pipe the body as UTF-8 text`, `--json` `reason: "unavailable"`, exit `2`, before any parse is attempted.
-- [ ] [BDY-11] `aco body --check` refuses PIN-32's sentence on an absent `.agent-claim/board.toml`, PIN-01's on a present but untracked or ignored one, `--json` `reason: "unavailable"`, before stdin is ever read.
+- [ ] [BDY-11] `aco body --check` refuses PIN-32's sentence on an absent `.aco/board.toml`, PIN-01's on a present but untracked or ignored one, `--json` `reason: "unavailable"`, before stdin is ever read.
 - [ ] [BDY-12] `aco body --check` reads the storage pin for `[record]`'s validity: unknown under default `storage = "github"` (BODY-15), field-checked under `storage = "state-ref"` (BODY-16).
 
 `reason`, by stdin's own shape:
@@ -61,7 +61,7 @@ owns only the CLI-level framing around it.
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local bare
 repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml` naming no `storage` key, and `ACO_AGENT` set
+tracked `.aco/board.toml` naming no `storage` key, and `ACO_AGENT` set
 to `Ada`. Sessions whose stdin carries a fenced block use a four-backtick
 console fence.
 
@@ -71,7 +71,7 @@ Setup: bare-remote
 
 ````console
 $ aco body --check <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = "Cut on 19.09.2026."
 next = "Build it."
@@ -81,7 +81,7 @@ BODY
 body ok
 exit 0
 $ aco body --check <<'BODY'
-```agent-claim
+```aco
 version = 1
 next = "X"
 ```
@@ -97,7 +97,7 @@ Setup: bare-remote
 
 ````console
 $ aco body --check --json <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = "Cut on 19.09.2026."
 next = "Build it."
@@ -119,10 +119,10 @@ Setup: bare-remote
 $ aco body --check --json <<'BODY'
 no block
 BODY
-{"ok": false, "reason": "malformed", "defects": ["body malformed: agent-claim: no agent-claim block"]}
+{"ok": false, "reason": "malformed", "defects": ["body malformed: aco: no aco block"]}
 exit 2
 $ aco body --check --json <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = ""
 next = ""

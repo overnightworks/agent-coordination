@@ -41,7 +41,7 @@ class RepoMeaninglessUnderStateRefError(protocol.ClaimUnavailableError):
 
 def board_config(toplevel: Path) -> board.BoardConfig:
     """The repository's board configuration, refused before
-    `board.load_config` ever runs when `.agent-claim/board.toml` is not
+    `board.load_config` ever runs when `.aco/board.toml` is not
     actually tracked by git (#315): a `.gitignore` that ignores every
     dot-directory keeps a freshly written pin off every worktree unless it
     is force-added, and the prior silent `storage = github` default then

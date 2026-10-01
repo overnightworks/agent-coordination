@@ -223,7 +223,7 @@ def _expectation_cards(
 
 def _ruled_expectations(body: str, *, storage: Storage) -> tuple[RuledExpectation, ...]:
     """The complement of `_expectation_cards`: every already-ruled line of
-    `body`'s own `agent-claim` block, read fresh from state (issue #388) --
+    `body`'s own `aco` block, read fresh from state (issue #388) --
     never carried across from the request that ruled it, so a page rendered
     long after the click shows exactly the same history a rendered-now one
     does."""

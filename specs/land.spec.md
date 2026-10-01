@@ -12,7 +12,7 @@ classification, claim, parent, closing, or claimant rules require (cited by
 ID) or what a successful release prints (`freed:`/`next:`, LAND-49). `<n>`
 is the pull request number as given, `<sha>` its merge commit, `<state>`
 GitHub's own `mergeable_state`, `<name>`/`<conclusion>` one check's own name
-and conclusion, `<path>` the board configuration `.agent-claim/board.toml`,
+and conclusion, `<path>` the board configuration `.aco/board.toml`,
 `<setting>` one of the two settings in it a head may not change, `storage`
 and `canonical_remote` (`priority_labels`, `idea_label`, `body_contract`, and
 `merge_method` may change), `<title>` the pull request's own title, a "head" the pull request's own head commit read during
@@ -198,31 +198,31 @@ exit 2
 
 ### E-LANDCMD-22 — a head that removes the board configuration refuses before any write
 
-Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head deleting `.agent-claim/board.toml`
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head deleting `.aco/board.toml`
 
 ```console
 $ aco land 57
-2> ERROR: pull request #57 removes .agent-claim/board.toml; aco land cannot release its claim across that change
+2> ERROR: pull request #57 removes .aco/board.toml; aco land cannot release its claim across that change
 exit 2
 ```
 
 ### E-LANDCMD-23 — a head that re-pins the storage refuses before any write
 
-Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head setting `storage = "state-ref"` in `.agent-claim/board.toml`
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head setting `storage = "state-ref"` in `.aco/board.toml`
 
 ```console
 $ aco land 57
-2> ERROR: pull request #57 changes storage in .agent-claim/board.toml; aco land cannot release its claim across that change
+2> ERROR: pull request #57 changes storage in .aco/board.toml; aco land cannot release its claim across that change
 exit 2
 ```
 
 ### E-LANDCMD-24 — a head carrying an invalid board configuration refuses before any write
 
-Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head setting `storage = "gitlab"` in `.agent-claim/board.toml`
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, its head setting `storage = "gitlab"` in `.aco/board.toml`
 
 ```console
 $ aco land 57
-2> ERROR: pull request #57 carries an invalid .agent-claim/board.toml: board configuration .agent-claim/board.toml storage must be 'github' or 'state-ref'
+2> ERROR: pull request #57 carries an invalid .aco/board.toml: board configuration .aco/board.toml storage must be 'github' or 'state-ref'
 exit 2
 ```
 

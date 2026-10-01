@@ -61,7 +61,7 @@ it, `<k>` an expectation line's 1-based index.
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml`, and `ACO_AGENT` set to `Ada`. A session
+tracked `.aco/board.toml`, and `ACO_AGENT` set to `Ada`. A session
 reading GitHub issues also names a fixed, deterministic fake `gh` as a
 setup precondition (the shape `specs/landing-grammar.spec.md` already
 uses).

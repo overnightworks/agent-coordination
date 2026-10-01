@@ -98,7 +98,7 @@ LAND-58, LAND-60, LAND-68).
 ## No checkout, no read
 
 `<no-checkout sentence>` is `this command reads the repository's body
-contract from .agent-claim/board.toml and needs a checkout (a shallow one
+contract from .aco/board.toml and needs a checkout (a shallow one
 is enough): <git detail>`.
 
 - [ ] [CHECK-10] `aco check <n>` outside a git checkout, or on any other pre-dispatch forge failure, refuses `ERROR: <sentence>`, `--json` `reason: "unavailable"`, exit `2` (see E-CHECK-06).
@@ -120,7 +120,7 @@ is enough): <git detail>`.
 bare repository with `main` at one commit, a git identity, `origin/HEAD`,
 and `ACO_AGENT` set to `Ada`; `<owner>/<repo>` is the runner's own
 repository path. Every session that reaches this command's own dispatch
-also needs `.agent-claim/board.toml` present and tracked (PIN-01/PIN-32), since that read
+also needs `.aco/board.toml` present and tracked (PIN-01/PIN-32), since that read
 comes before pull-request or issue mode ever run; the checkout-less
 session (E-CHECK-06) is the one exception, since it never reaches the
 dispatch at all. A session reading a pull request or an issue also names a
@@ -135,7 +135,7 @@ The text form's own literal is LAND-04's own fact, already driven by
 CHECK-01, this file's own `reason` values inside `specs/output.spec.md`'s
 envelope.
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, fake `gh`, pull request `#57` by `Ada`, body `Work-Item: #42\n\nCloses #42`, an active claim on issue `#42` matching its head branch
+Setup: bare-remote, `.aco/board.toml` tracked, fake `gh`, pull request `#57` by `Ada`, body `Work-Item: #42\n\nCloses #42`, an active claim on issue `#42` matching its head branch
 
 ```console
 $ aco check 57 --json
@@ -143,7 +143,7 @@ $ aco check 57 --json
 exit 0
 ```
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, fake `gh`, pull request `#57` by `Ada`, body `Tidy the README.` (no classification line)
+Setup: bare-remote, `.aco/board.toml` tracked, fake `gh`, pull request `#57` by `Ada`, body `Tidy the README.` (no classification line)
 
 ```console
 $ aco check 57 --json
@@ -153,7 +153,7 @@ exit 2
 
 ### E-CHECK-02 — a number in neither space
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, fake `gh`, no issue or pull request `#81` exists in this repository
+Setup: bare-remote, `.aco/board.toml` tracked, fake `gh`, no issue or pull request `#81` exists in this repository
 
 ```console
 $ aco check 81
@@ -166,7 +166,7 @@ exit 2
 
 ### E-CHECK-03 — a sound, unblocked issue
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, fake `gh`, issue `#81` open, body a complete `agent-claim` block, no open `blocked_by` dependencies
+Setup: bare-remote, `.aco/board.toml` tracked, fake `gh`, issue `#81` open, body a complete `aco` block, no open `blocked_by` dependencies
 
 ```console
 $ aco check 81
@@ -179,17 +179,17 @@ exit 0
 The defect text itself is BODY-01's own fact; this session drives only
 CHECK-06, this file's own `ISSUE #<n> ` wrapping around it.
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, fake `gh`, issue `#81` open, BODY-01's own defect (no `agent-claim` fence)
+Setup: bare-remote, `.aco/board.toml` tracked, fake `gh`, issue `#81` open, BODY-01's own defect (no `aco` fence)
 
 ```console
 $ aco check 81
-2> ISSUE #81 body malformed: agent-claim: no agent-claim block
+2> ISSUE #81 body malformed: aco: no aco block
 exit 2
 ```
 
 ### E-CHECK-05 — an issue blocked by a local and a foreign item
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, fake `gh`, issue `#81` open with a complete body, open `blocked_by` dependencies on `#7` (same repository) and `other/repo#9`
+Setup: bare-remote, `.aco/board.toml` tracked, fake `gh`, issue `#81` open with a complete body, open `blocked_by` dependencies on `#7` (same repository) and `other/repo#9`
 
 ```console
 $ aco check 81
@@ -206,13 +206,13 @@ Setup: a fresh repository outside any git checkout
 
 ```console
 $ aco check 12
-2> ERROR: this command reads the repository's body contract from .agent-claim/board.toml and needs a checkout (a shallow one is enough): fatal: not a git repository (or any of the parent directories): .git
+2> ERROR: this command reads the repository's body contract from .aco/board.toml and needs a checkout (a shallow one is enough): fatal: not a git repository (or any of the parent directories): .git
 exit 2
 ```
 
 ### E-CHECK-07 — `--repo` under `storage = "state-ref"`
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked with `storage = "state-ref"`
+Setup: bare-remote, `.aco/board.toml` tracked with `storage = "state-ref"`
 
 ```console
 $ aco --repo acme/items check 258 --json
@@ -223,7 +223,7 @@ exit 2
 
 ### E-CHECK-08 — a trunk commit, classified and refused
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, the trunk's newest commit carrying the trailer `No-Item: docs`, `<sha>` its own commit id
+Setup: bare-remote, `.aco/board.toml` tracked, the trunk's newest commit carrying the trailer `No-Item: docs`, `<sha>` its own commit id
 
 ```console
 $ aco check <sha>
@@ -234,7 +234,7 @@ $ aco check <sha> --json
 exit 0
 ```
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked, `<sha>` a commit id the first-parent trunk walk does not hold
+Setup: bare-remote, `.aco/board.toml` tracked, `<sha>` a commit id the first-parent trunk walk does not hold
 
 ```console
 $ aco check <sha>
@@ -247,7 +247,7 @@ exit 2
 
 ### E-CHECK-09 — a canonical remote with no URL configured
 
-Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, `<sha>` an unpushed local commit carrying `No-Item: docs`; the same holds when `hub` has only a URL-less line such as a global `prune = true`, and `refs/remotes/hub/*` left behind
+Setup: bare-remote added as `origin` only, `.aco/board.toml` tracked naming `canonical_remote = "hub"`, `<sha>` an unpushed local commit carrying `No-Item: docs`; the same holds when `hub` has only a URL-less line such as a global `prune = true`, and `refs/remotes/hub/*` left behind
 
 ```console
 $ aco check <sha>

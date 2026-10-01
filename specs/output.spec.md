@@ -74,12 +74,12 @@ exit 0
 
 ### E-OUT-02 -- a refusal envelope, `reason` and `message`
 
-Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `aco` block
 
 ```console
 $ aco ask aco-000001 --text "New question?" --json
-2> ERROR: aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
-{"ok": false, "reason": "invalid_item", "message": "aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block"}
+2> ERROR: aco-000001 body malformed: aco: no aco block; ask needs a valid aco block
+{"ok": false, "reason": "invalid_item", "message": "aco-000001 body malformed: aco: no aco block; ask needs a valid aco block"}
 exit 2
 ```
 
