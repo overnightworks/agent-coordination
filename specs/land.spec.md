@@ -57,7 +57,7 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | checkout unclean or off the default branch | LANDCMD-11 |
 | checkout without a git identity | LANDCMD-25 |
 | the repository allows neither a merge commit nor a squash merge | LANDCMD-28 |
-| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-29, LANDCMD-34, LANDCMD-35 |
+| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-29, LANDCMD-34, LANDCMD-35, LANDCMD-36 |
 | the pull request changed since it was read | LANDCMD-14 |
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
 | this repository's own pull request | LANDCMD-17 |
@@ -99,7 +99,8 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-30] Any other `merge_method` refuses `board configuration <path> merge_method must be 'merge' or 'squash'`, exit `2`; a head carrying one refuses as LANDCMD-24.
 - [ ] [LANDCMD-29] The landed commit's title is `Merge pull request #<n>` for a merge commit and `<title> (#<n>)` for a squash commit.
 - [ ] [LANDCMD-13] Its message is the pull request body with its classification line removed, then that classification as the message's last line, nothing after it, for a merge and a squash commit alike (E-LANDCMD-13).
-- [ ] [LANDCMD-34] When that body ends in a trailer paragraph, every line `Token: value` as git's trailer parsing reads it, the classification joins it as its last line, no blank line between; else a blank line, then the classification alone.
+- [ ] [LANDCMD-34] When that body ends in a trailer paragraph as git's trailer parsing reads it, the classification joins it as its last line, no blank line between, where git then reads both.
+- [ ] [LANDCMD-36] Any other body takes a blank line, then the classification alone as its last paragraph.
 - [ ] [LANDCMD-35] Removing the classification line leaves no run of blank lines where it stood: a paragraph it alone made goes with it, and a whitespace-only line counts as blank.
 - [ ] [LANDCMD-14] A pull request whose head sha changed since preflight refuses the pinned merge with `pull request #<n> changed while it was checked; re-run land`, exit `2`; nothing merges.
 
