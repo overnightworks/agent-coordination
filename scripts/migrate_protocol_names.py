@@ -411,16 +411,15 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_second
         if last_patch_at is not None:
             _wait_out_pace(clock, last_patch_at + pace_seconds)
         body = api.issue_body(row.repository, row.number)
-        if row_state(row, body) is RowState.MIGRATED:
-            print(f"already migrated {reference}")
-            continue
-        patched = api.update_body(
-            row.repository,
-            row.number,
-            _migrated_body(reference, body),
-            resend_wanted=partial(_still_pending, api, row),
-        )
-        last_patch_at = clock.monotonic()
+        patched = False
+        if row_state(row, body) is RowState.PENDING:
+            patched = api.update_body(
+                row.repository,
+                row.number,
+                _migrated_body(reference, body),
+                resend_wanted=partial(_still_pending, api, row),
+            )
+            last_patch_at = clock.monotonic()
         if not patched:
             print(f"already migrated {reference}")
             continue
