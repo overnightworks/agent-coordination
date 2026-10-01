@@ -868,20 +868,21 @@ def _add_item_parser(commands: argparse._SubParsersAction) -> None:
         "item", type=board.parse_item_reference, help=f"the item to edit, {ITEM_REF_HELP}"
     )
     one_field = edit.add_mutually_exclusive_group()
+    refuses_stdin = "reads no stdin; a piped or redirected body is refused"
     one_field.add_argument(
         "--size",
         choices=tuple(metrics.Size),
-        help="set only this item's size class (any storage); skips the stdin body read",
+        help=f"set only this item's size class (any storage); {refuses_stdin}",
     )
     one_field.add_argument(
         "--whole",
         metavar="REASON",
-        help="set only this item's whole reason (any storage); skips the stdin body read",
+        help=f"set only this item's whole reason (any storage); {refuses_stdin}",
     )
     one_field.add_argument(
         "--kind",
         choices=ITEM_EDIT_KINDS,
-        help="set only this item's kind (any storage); skips the stdin body read",
+        help=f"set only this item's kind (any storage); {refuses_stdin}",
     )
     _add_json_flag(edit)
     close = item_commands.add_parser(

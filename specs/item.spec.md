@@ -46,8 +46,8 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | state-ref pin, `--origin` given | ITEM-19 | — | — | — |
 | `--origin` malformed | ITEM-06 | — | — | — |
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
-| `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
-| `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
+| `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22, ITEM-49, ITEM-51 | — |
+| `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24, ITEM-49, ITEM-51 | — |
 | prose piped without a block, or nothing piped, either storage | ITEM-58, ITEM-60 | — | — | — |
 | a piped block a flag agrees with or contradicts, either storage | ITEM-59, ITEM-62 | — | — | — |
 | state-ref pin, a stored body leaving a section empty | ITEM-61 | — | — | — |

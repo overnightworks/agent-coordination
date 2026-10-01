@@ -20094,6 +20094,7 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
         pytest.param(_empty_harness_socket_on_stdin, False, id="harness_socket_passes"),
         pytest.param(_devnull_on_stdin, False, id="devnull_passes"),
         pytest.param(_closed_stdin, False, id="closed_stdin_passes"),
+        pytest.param(_terminal_on_stdin, False, id="terminal_passes"),
     ],
 )
 def test_item_edit_of_one_field_refuses_a_body_on_stdin_and_passes_an_empty_one(
@@ -20108,8 +20109,8 @@ def test_item_edit_of_one_field_refuses_a_body_on_stdin_and_passes_an_empty_one(
 ) -> None:
     """Issue #567 (ITEM-49, ITEM-51): `item edit --kind/--size/--whole` read
     no stdin, so a body a file or pipe carries there refuses before any
-    write rather than being dropped; the socket an agent harness hands
-    over, `/dev/null` or a closed stdin carries none and the edit runs."""
+    write rather than being dropped; a terminal, the socket an agent harness
+    hands over, `/dev/null` or a closed stdin carries none and the edit runs."""
     client = _item_new_github_client(monkeypatch, tmp_path)
     client.board_issues = (
         board_issue(484, "Task about to hold slices", _ITEM_NEW_BODY, kind=body.ItemKind.TASK),
