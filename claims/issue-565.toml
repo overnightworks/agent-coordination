@@ -1,8 +1,0 @@
-claim_id = "3350acbeac104275a3e2bcf59d6badf9"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "4ee909ab31c065a651d11189eb51641c464cf2d8"
-branch = "claude/issue-565-narrow-writes-skip-foreign"
-scope = ["scripts/test_budget_ratchet.txt", "specs/item.spec.md", "specs/ref-store-cas.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/state_board.py", "src/agent_coordination/store.py", "tests/test_cli.py", "tests/test_state_board.py", "tests/test_store.py"]
-opened_commit = "72c062acbaf14624a4bc6e8c835ddf1539886c39"
-whole_reason = "narrow writes skip foreign item entries, the whole tree keeps untouched entries byte for byte, non-file item entries refuse"
