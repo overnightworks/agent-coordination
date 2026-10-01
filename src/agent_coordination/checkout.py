@@ -1211,11 +1211,12 @@ def refuse_unsafe_start_branch(branch: str, *, prefix: str) -> None:
 
 def branch_exists(branch: str) -> bool:
     """Whether the calling process's own checkout already has a local
-    branch named `branch` (issue #322) -- `start`'s naming-collision guard,
-    read the same `-C`-free way `_validate_worktree_branch` reads the
-    checkout's own current branch, since `start` always runs from the
-    repository whose sibling worktree it is about to create, never from an
-    arbitrary resolved directory."""
+    branch named `branch` (issue #322) -- `start`'s naming-collision guard
+    and the squashed lane cleanup's section gate
+    (`_remove_deleted_branch_section`, issue #578) -- read the same `-C`-free
+    way `_validate_worktree_branch` reads the checkout's own current branch,
+    since both always run from the repository whose sibling worktree they
+    create or remove, never from an arbitrary resolved directory."""
     result = _git_run(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"])
     if result.exit_status == 0:
         return True
