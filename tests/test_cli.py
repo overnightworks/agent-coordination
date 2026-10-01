@@ -1508,6 +1508,17 @@ _TOP_AND_BLOCKED = (
     board_issue(12, "Depends on top", complete_contract("Claim #12."), blocked_by_count=1),
 )
 _BLOCKED_BY_ELEVEN = {12: (block_dependency(11),)}
+# Issue #553: a security item outranks every other one, but it waits on the
+# operator's ruling, so no agent can pull it.
+_WAITING_AND_PULLABLE = (
+    board_issue(
+        230,
+        "Operator ruling",
+        complete_contract("wait for session with the operator"),
+        labels=("security", board.NEEDS_OPERATOR_LABEL),
+    ),
+    board_issue(11, "Top work", complete_contract("Claim #11.")),
+)
 
 # issue #348: every `next` golden below a scopeless `WorkItemAction` needs
 # this note right after its `Run:` line -- the item's own body names no
@@ -1605,6 +1616,7 @@ _PARALLEL_LIVE_CLAIMS = (
                 "ruling_old": None,
                 "parallel": _UNKNOWN_SCOPE_PARALLEL_JSON,
                 "close": [],
+                "waiting_on_operator": [],
             },
             id="emits_the_highest_scored_actionable_item_as_json",
         ),
@@ -1673,6 +1685,7 @@ _PARALLEL_LIVE_CLAIMS = (
                 "skipped": [],
                 "parallel": _EMPTY_PARALLEL_JSON,
                 "close": [],
+                "waiting_on_operator": [],
             },
             id="emits_nothing_actionable_on_a_fully_empty_board",
         ),
@@ -1713,8 +1726,45 @@ _PARALLEL_LIVE_CLAIMS = (
                     "scope_unknown": [53],
                 },
                 "close": [],
+                "waiting_on_operator": [],
             },
             id="parallel_set_json_carries_full_scopes_for_every_candidate",
+        ),
+        pytest.param(
+            _WAITING_AND_PULLABLE,
+            {},
+            (),
+            ("next",),
+            0,
+            "#11 score -10: Top work\nNext: Claim #11.\n"
+            "Run: aco claim 11 --scope <paths>\n"
+            + _UNKNOWN_SCOPE_NEXT_TAIL
+            + "waiting on operator: #230\n",
+            id="names_the_pullable_item_and_the_one_waiting_on_the_operator_apart",
+        ),
+        pytest.param(
+            _WAITING_AND_PULLABLE,
+            {},
+            (),
+            ("next", "--json"),
+            0,
+            {
+                "ok": True,
+                "reason": "work_item",
+                "number": 11,
+                "score": -10,
+                "title": "Top work",
+                "next": "Claim #11.",
+                "command": "aco claim 11 --scope <paths>",
+                "recovery": [],
+                "skipped": [],
+                "ruling_landings": None,
+                "ruling_old": None,
+                "parallel": _UNKNOWN_SCOPE_PARALLEL_JSON,
+                "close": [],
+                "waiting_on_operator": [230],
+            },
+            id="json_lists_the_item_waiting_on_the_operator_apart_from_skipped",
         ),
     ],
 )
@@ -1762,7 +1812,8 @@ def test_next_json_pins_the_raw_envelope_text_for_a_work_item_success(
         '{"ok": true, "reason": "work_item", "recovery": [], '
         '"skipped": [{"number": 12, "reason": "blocked by #11"}], '
         '"parallel": {"first_scope_unknown": true, "candidates": [], "scope_unknown": []}, '
-        '"close": [], "number": 11, "score": 10, "title": "Top work", "next": "Claim #11.", '
+        '"close": [], "waiting_on_operator": [], "number": 11, "score": 10, '
+        '"title": "Top work", "next": "Claim #11.", '
         '"command": "aco claim 11 --scope <paths>", "ruling_landings": null, '
         '"ruling_old": null}\n'
     )
@@ -1892,6 +1943,7 @@ def test_next_pulls_an_unruled_item_and_names_only_unworkable_ones_as_skipped(
         ],
         "parallel": _UNKNOWN_SCOPE_PARALLEL_JSON,
         "close": [],
+        "waiting_on_operator": [],
     }
 
 
@@ -2870,12 +2922,13 @@ def _state_ref_item_body(
     closed_at: str | None = None,
     kind: body.ItemKind = body.ItemKind.TASK,
     parent: int | None = None,
+    labels: tuple[str, ...] = (),
     **block_fields: object,
 ) -> str:
-    """A state-ref item of `kind` titled `title`, open unless it was closed
-    at `closed_at`, a child of `parent` when one is named, plus whichever
-    further block fields (`scope`, `expectation`, `slice`) the scenario
-    needs."""
+    """A state-ref item of `kind` titled `title` carrying `labels`, open
+    unless it was closed at `closed_at`, a child of `parent` when one is
+    named, plus whichever further block fields (`scope`, `expectation`,
+    `slice`) the scenario needs."""
     closure = {} if closed_at is None else {"state": "closed", "closed_at": closed_at}
     nesting = {} if parent is None else {"parent": items.format_item_id(parent)}
     data: dict[str, object] = {
@@ -2887,7 +2940,7 @@ def _state_ref_item_body(
             "title": title,
             "state": "open",
             "kind": kind.value,
-            "labels": [],
+            "labels": list(labels),
             "blocked_by": [],
             "created_at": "2026-09-10T00:00:00Z",
             "updated_at": "2026-09-10T00:00:00Z",
@@ -6265,16 +6318,36 @@ def test_next_skips_a_frozen_item_and_names_it_as_such(
     assert payload["skipped"] == [{"number": 301, "reason": f"frozen: {FROZEN_TRIGGER}"}]
 
 
-def test_claim_does_not_warn_about_a_frozen_higher_scored_item(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+@pytest.mark.parametrize(
+    "higher",
+    [
+        pytest.param(
+            board_issue(
+                301, "Highest scored", complete_contract("Claim #301.", frozen_until=FROZEN_UNTIL)
+            ),
+            id="frozen",
+        ),
+        pytest.param(
+            board_issue(
+                301,
+                "Highest scored",
+                complete_contract("wait for session with the operator"),
+                labels=("security", board.NEEDS_OPERATOR_LABEL),
+            ),
+            id="waiting_on_the_operator",
+        ),
+    ],
+)
+def test_claim_does_not_warn_about_a_higher_scored_item_no_agent_can_pull(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    higher: board.Issue,
 ) -> None:
     client = FakeForge()
-    frozen = board_issue(
-        301, "Highest scored", complete_contract("Claim #301.", frozen_until=FROZEN_UNTIL)
-    )
     lower = board_issue(10, "Lower work", complete_contract("Claim #10."))
     claimed_request = request(issue=10, scope=("src/lower.py",))
-    monkeypatch.setattr(client, "list_open_board_issues", lambda: (frozen, lower))
+    monkeypatch.setattr(client, "list_open_board_issues", lambda: (higher, lower))
     monkeypatch.setattr(client, "list_open_board_pull_requests", lambda: ())
     monkeypatch.setattr(client, "list_recent_merged_board_pull_requests", lambda _since: ())
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
@@ -7387,6 +7460,45 @@ def test_state_ref_next_claim_in_a_skipped_reason_runs_past_a_higher_ranked_item
     ) == (0, 0, 0, 0, 2, 0), capsys.readouterr().err
 
 
+def test_state_ref_next_pulls_past_an_item_waiting_on_the_operator_and_claim_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #553 lines 1-3: the record's `needs-operator` label keeps the
+    top-ranked item out of `next`'s pull and `claim`'s precedence check;
+    `next` names it on its own line, and the pullable item claims as
+    printed, without `--out-of-order`."""
+    repo, _remote, _seeded = _real_state_ref_repository(
+        monkeypatch,
+        tmp_path,
+        {
+            10: _state_ref_item_body(
+                "Operator ruling",
+                labels=("security", board.NEEDS_OPERATOR_LABEL),
+                scope=["docs/ruling.md"],
+            ),
+            11: _state_ref_item_body("Pullable work", scope=["docs/work.md"]),
+        },
+    )
+    lane = tmp_path / "repo-worktrees" / "issue-11-work"
+    _real_git(repo, "worktree", "add", "-q", str(lane), "-b", "codex/issue-11-work")
+    _redirect_toplevel(monkeypatch, lane)
+    monkeypatch.chdir(lane)
+    waiting, pullable = items.format_item_id(10), items.format_item_id(11)
+
+    next_exit_code = issue_claim.main(["next"])
+    printed = capsys.readouterr().out
+    claim = _printed_line_after(printed, "\nRun: ")
+    claim_bash_exit_code, claim_arguments = _arguments_bash_hands_aco(claim, tmp_path)
+    claim_exit_code = issue_claim.main(claim_arguments)
+    claim_output = capsys.readouterr()
+
+    assert printed.startswith(f"{pullable} score")
+    assert f"\nwaiting on operator: {waiting}\n" in printed
+    assert "SKIPPED" not in printed
+    assert "WARNING" not in claim_output.out + claim_output.err
+    assert (next_exit_code, claim_bash_exit_code, claim_exit_code) == (0, 0, 0), claim_output.err
+
+
 def test_state_ref_next_json_names_items_by_the_ids_its_text_prints(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -8146,6 +8258,7 @@ def test_next_pulls_a_configured_projectionless_idea_with_refinement_step(
         "skipped": [],
         "parallel": _UNKNOWN_SCOPE_PARALLEL_JSON,
         "close": [],
+        "waiting_on_operator": [],
     }
 
 
@@ -8172,6 +8285,7 @@ def test_next_keeps_an_unlabelled_projectionless_item_skipped_with_an_active_ide
         "skipped": [{"number": 10, "reason": "body incomplete: Now, Next, Done when"}],
         "parallel": _EMPTY_PARALLEL_JSON,
         "close": [],
+        "waiting_on_operator": [],
     }
 
 

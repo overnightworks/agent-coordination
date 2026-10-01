@@ -124,6 +124,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 ## `item edit`
 
 - [ ] [ITEM-12] `aco item edit ITEM < BODY` takes `title`, `labels`, `blocked_by` from a delivered `[record]` when the piped body carries one valid (see E-ITEM-03).
+- [ ] [ITEM-57] A delivered `[record]` whose `labels` add or drop `needs-operator` marks the item waiting on the operator or frees it (`specs/next.spec.md` NEXT-39).
 - [ ] [ITEM-13] `item edit`'s every other field — `parent`, `state`, `origin`, `kind`, `created_at`, `closed_at` — stays stored, except a malformed item (ITEM-39) or `--kind` (ITEM-47); `updated_at` moves to now.
 - [ ] [ITEM-14] A delivered body carrying no `[record]` table at all leaves `title`, `labels`, `blocked_by` unchanged too, exactly `item edit`'s own pre-#287 behaviour, except a malformed item (ITEM-39).
 - [ ] [ITEM-43] A delivered `blocked_by` refuses before any write when it names one blocker twice, `item <item-id> lists blocker <blocker-id> more than once`, or a new one naming no item, PIN-17's (see E-ITEM-11).

@@ -100,6 +100,7 @@ to the clause each names below.
 - [ ] [CLM-21] With `--whole` omitted, a target naming its own top-level `whole` admits a wide scope exactly as `--whole REASON` would; that sentence lands on the claim (see E-CLM-05).
 - [ ] [CLM-22] Neither `--whole` nor the target's own body `whole` present, the width gate's refusal ends `; pass --whole REASON or set whole in the body`, exit `2` (see E-CLM-05).
 - [ ] [CLM-23] A higher-ranked item naming neither `scope` nor a `[[slice]]` row is skipped by CLM-08's own walk (`specs/next.spec.md` NEXT-23); claiming past it costs no `--out-of-order`.
+- [ ] [CLM-35] A higher-ranked item waiting on the operator (`specs/next.spec.md` NEXT-39) is skipped by CLM-08's own walk too: claiming past it warns of nothing.
 - [ ] [CLM-24] Deriving scope for a target missing or a pull request refuses by name before any slice-rule check runs, `reason: "target_invalid"` under `--json` (see E-CLM-07).
 - [ ] [CLM-25] The store's own refusal to write -- the identity or claim id already taken, or a resource conflict -- reports `reason: "claim_conflict"` under `--json`.
 - [ ] [CLM-31] A `state-ref` item closed or edited after the checks read it open refuses CAS-20's sentence (CAS-59), `reason: "unavailable"`, and writes no claim (see E-CLM-08).
