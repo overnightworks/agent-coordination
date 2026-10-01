@@ -164,6 +164,7 @@ cannot read needs `--force-unreadable` besides (`specs/reset.spec.md`).
 - [ ] [CAS-40] `aco reset`, confirmed or not, with a live claim in a readable state refuses before any write, stdout empty, naming each claim once: subject, holder, branch, id (see E-CAS-08).
 - [ ] [CAS-62] That refusal reads `refs/aco/state holds <n> live claim(s); release them first, or reset after they are gone: <claims>`, `; `-joined, each claim ending `, release: <command>`.
 - [ ] [CAS-63] Each `<command>` is `aco release` by item and `--claim-id`, or by `--branch` for a lane claim, as coordinator unless the runner holds it, and runs as printed once `<reason>` is filled (E-CAS-08).
+- [ ] [CAS-64] Run from a session naming no agent identity, each `<command>` releases as its holder, `--agent <holder>` in place of the coordinator override, so it still runs as printed.
 - [ ] [CAS-41] `aco reset --confirm`, when the ref exists on the remote, exports its tip to a `git bundle`-verifiable `aco-state-<repo>-<date>-<12-hex>.bundle` under `--export-dir` before any deletion.
 - [ ] [CAS-42] `aco reset --confirm` against an export path that already carries that bundle's name refuses `<path> already exists; refusing to overwrite an export`, before anything is deleted.
 - [ ] [CAS-43] `aco reset --confirm` deletes `refs/aco/state` on the remote with `--force-with-lease` matched to the tip it read; a rejected or stale-leased push refuses and leaves the local ref untouched.

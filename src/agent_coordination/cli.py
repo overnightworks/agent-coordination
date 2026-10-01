@@ -8120,12 +8120,14 @@ _ABANDONED_PLACEHOLDER = "--abandoned <reason>"
 
 
 def _abandoned_release_command(
-    claim: protocol.ActiveClaim, storage: body.Storage, *, by_holder: bool
+    claim: protocol.ActiveClaim, storage: body.Storage, running_agent: str | None
 ) -> str:
     """The `release --abandoned` advice that ends live `claim` (issue #582):
     an item claim by its item and claim id (so no attached branch is
-    needed, as reset needs none), a docs/ or fix/ lane claim by `--branch`,
-    and, unless the running agent holds it (`by_holder`), as the
+    needed, as reset needs none), a docs/ or fix/ lane claim by `--branch`;
+    from a session that names no identity, as its holder by `--agent`,
+    since `release` refuses without one and the holder is the only agent
+    reset knows; otherwise, unless `running_agent` holds it, as the
     coordinator -- each the form `release` itself accepts, so the line runs
     as printed once `<reason>` is filled in."""
     target = (
@@ -8133,8 +8135,13 @@ def _abandoned_release_command(
         if isinstance(claim.identity, protocol.LaneIdentity)
         else (board.item_argument(claim.identity.issue, storage), "--claim-id", claim.claim_id)
     )
-    override = () if by_holder else ("--role", protocol.COORDINATOR_ROLE, "--coordinator-override")
-    return f"{board.advice_command('release', *target, *override)} {_ABANDONED_PLACEHOLDER}"
+    if running_agent is None:
+        releaser: tuple[str, ...] = ("--agent", claim.agent)
+    elif running_agent == claim.agent:
+        releaser = ()
+    else:
+        releaser = ("--role", protocol.COORDINATOR_ROLE, "--coordinator-override")
+    return f"{board.advice_command('release', *target, *releaser)} {_ABANDONED_PLACEHOLDER}"
 
 
 def _reset_live_claims_sentence(
@@ -8143,7 +8150,7 @@ def _reset_live_claims_sentence(
     named = [
         f"{_claim_subject(claim, storage)} by {claim.agent} ({claim.role}) "
         f"branch={claim.branch} claim={claim.claim_id}, release: "
-        + _abandoned_release_command(claim, storage, by_holder=claim.agent == running_agent)
+        + _abandoned_release_command(claim, storage, running_agent)
         for claim in claims
     ]
     return (

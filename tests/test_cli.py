@@ -21490,12 +21490,32 @@ def test_cli_reset_confirm_exports_a_verifiable_bundle_and_bootstraps_a_fresh_re
     assert not store.local_state_ref_exists(repository)
 
 
+_RELEASES_AS_THE_HOLDER_OF_ISSUE_42 = (
+    "aco release 42 --claim-id claim-42 --abandoned <reason>",
+    "aco release 43 --claim-id claim-43 --role coordinator --coordinator-override "
+    "--abandoned <reason>",
+    "aco release --branch fix/reset-docs --role coordinator --coordinator-override "
+    "--abandoned <reason>",
+)
+_RELEASES_WITHOUT_A_SESSION_IDENTITY = (
+    "aco release 42 --claim-id claim-42 --agent 'Codex Sol' --abandoned <reason>",
+    "aco release 43 --claim-id claim-43 --agent 'Grok Ada' --abandoned <reason>",
+    "aco release --branch fix/reset-docs --agent 'Grok Ada' --abandoned <reason>",
+)
+
+
 @pytest.mark.parametrize(
-    "mode",
+    ("mode", "identified", "releases"),
     [
-        pytest.param([], id="dry-run"),
-        pytest.param(["--confirm"], id="confirm"),
-        pytest.param(["--confirm", "--force-unreadable"], id="forced"),
+        pytest.param([], True, _RELEASES_AS_THE_HOLDER_OF_ISSUE_42, id="dry-run"),
+        pytest.param(["--confirm"], True, _RELEASES_AS_THE_HOLDER_OF_ISSUE_42, id="confirm"),
+        pytest.param(
+            ["--confirm", "--force-unreadable"],
+            True,
+            _RELEASES_AS_THE_HOLDER_OF_ISSUE_42,
+            id="forced",
+        ),
+        pytest.param([], False, _RELEASES_WITHOUT_A_SESSION_IDENTITY, id="no-identity"),
     ],
 )
 def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
@@ -21503,14 +21523,24 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     mode: list[str],
+    identified: bool,
+    releases: tuple[str, str, str],
 ) -> None:
-    """CAS-40/CAS-62/CAS-63 (issue #582): confirmed or not, a live claim
+    """CAS-40/CAS-62..64 (issue #582): confirmed or not, a live claim
     refuses with one sentence on stderr naming why and every claim to
     release; `--force-unreadable` (issue #341) only lifts the refusal over
     a schema this aco cannot read. Every release command it prints, its
     `<reason>` filled in, runs through bash into `release`, which accepts
-    it, after which `reset` no longer refuses."""
+    it, after which `reset` no longer refuses. Without a session identity
+    every release names its holder with `--agent`, so it still runs."""
     repository, bare_remote = _reset_repository_with_live_claims(monkeypatch, tmp_path)
+    if not identified:
+        for variable in (
+            checkout.ACO_AGENT_ENV,
+            checkout.GROK_SESSION_ID_ENV,
+            checkout.CLAUDE_CODE_SESSION_ID_ENV,
+        ):
+            monkeypatch.delenv(variable, raising=False)
     tip_before = _remote_state_tip(repository, bare_remote)
     lineage_before = _lineage_observation(repository)
     assert lineage_before != (None, None)
@@ -21527,14 +21557,11 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
         "ERROR: refs/aco/state holds 3 live claim(s); release them first, "
         "or reset after they are gone: "
         "issue #42 by Codex Sol (builder) branch=codex/issue-42-reset claim=claim-42, "
-        "release: aco release 42 --claim-id claim-42 --abandoned <reason>; "
+        f"release: {releases[0]}; "
         "issue #43 by Grok Ada (builder) branch=codex/issue-43-reset claim=claim-43, "
-        "release: aco release 43 --claim-id claim-43 --role coordinator "
-        "--coordinator-override "
-        "--abandoned <reason>; "
+        f"release: {releases[1]}; "
         "lane fix/reset-docs by Grok Ada (builder) branch=fix/reset-docs claim=claim-lane, "
-        "release: aco release --branch fix/reset-docs --role coordinator "
-        "--coordinator-override --abandoned <reason>\n"
+        f"release: {releases[2]}\n"
     )
     assert _remote_state_tip(repository, bare_remote) == tip_before
     assert list(export_dir.iterdir()) == []
