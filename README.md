@@ -41,6 +41,12 @@ compatibility). The exact tree shape, versioning, and transport contract are
 
 ## Quick start
 
+The quick start assumes a GitHub `origin`; a repository without one follows
+[A workflow without a forge](#a-workflow-without-a-forge). `ACO_AGENT` names
+the agent and the branch prefix `start` creates; in a plain shell `start`
+refuses without it (or `GROK_SESSION_ID` / `CLAUDE_CODE_SESSION_ID`), so the
+block exports it once.
+
 ```bash
 # adopt once, without aco: a pull request adding only this file, merged into main
 mkdir .agent-claim && touch .agent-claim/board.toml
