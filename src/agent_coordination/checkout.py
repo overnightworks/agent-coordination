@@ -1571,11 +1571,13 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
     check refuses the prepare, and a section git refuses to remove -- or
     one whose branch keeps no reflog to prove it the lane's own when the
     section must be written back -- aborts the transaction. A deletion git
-    fails or never confirms once the section
-    is gone writes that section back (`_restore_branch_section`). Every way
-    a kept branch stays whole, unless git refuses that write-back, which the
-    returned refusal then names; a branch gone after all, or its name taken
-    by a branch created since, reads as deleted."""
+    fails or never confirms once the section is gone writes that section
+    back (`_restore_branch_section`). Every way a kept branch stays whole,
+    unless git refuses that write-back, or the branch's reflog git deleted
+    with its failed deletion leaves nothing to prove it the lane's own --
+    either of which the returned refusal then names; a branch gone after
+    all, or its name taken by a branch created since, reads as deleted, and
+    a lookup git refuses is named beside the failure it was to judge."""
     removal = _BranchSectionRemoval()
 
     def remove_the_section_under_the_ref_lock() -> bool:
