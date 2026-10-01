@@ -18321,6 +18321,18 @@ def test_land_trunk_trailer_renders_the_trunk_grammar_for_both_classifications()
     assert issue_claim._land_trunk_trailer(no_item) == "No-Item: docs"
 
 
+def _git_trailers(directory: Path, message: str) -> tuple[str, ...]:
+    """The trailers git's own parsing reads in `message`, read as the
+    release's `%(trailers)` reads them: `--no-divider`, so a Markdown `---`
+    rule stays prose."""
+    message_file = directory / "trailer-message"
+    message_file.write_text(message)
+    parsed = _real_git(
+        directory, "interpret-trailers", "--parse", "--no-divider", str(message_file)
+    )
+    return tuple(parsed.stdout.splitlines())
+
+
 _CO_AUTHOR = "Co-Authored-By: Ada <ada@example.com>"
 _WORK_ITEM_TRAILER = f"Work-Item: #{WORK_ITEM_ISSUE}"
 _CLOSES = f"Closes #{WORK_ITEM_ISSUE}"
@@ -18359,6 +18371,13 @@ _CLOSES = f"Closes #{WORK_ITEM_ISSUE}"
         ),
         pytest.param(
             board.MergeMethod.MERGE,
+            f"{_CLOSES}\n\n---\n\n{_WORK_ITEM_TRAILER}\n{_CO_AUTHOR}",
+            f"{_CLOSES}\n\n---\n\n{_CO_AUTHOR}\n{_WORK_ITEM_TRAILER}\n",
+            (_CO_AUTHOR, _WORK_ITEM_TRAILER),
+            id="markdown-rule-before-trailer-block",
+        ),
+        pytest.param(
+            board.MergeMethod.MERGE,
             f"Fixes it.\n \n{_WORK_ITEM_TRAILER}\n\t\n{_CLOSES}",
             f"Fixes it.\n\t\n{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n",
             (_WORK_ITEM_TRAILER,),
@@ -18393,23 +18412,9 @@ def test_land_message_keeps_the_classification_inside_gits_trailer_block(
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
 
     [(_number, _head_sha, _method, _title, body)] = client.merge_calls
-    landed_message = tmp_path / "landed-message"
-    landed_message.write_text(_real_git(repo, "log", "-1", "--format=%B", "main").stdout)
-    parsed = _real_git(repo, "interpret-trailers", "--parse", str(landed_message)).stdout
-    assert (status, body, tuple(parsed.splitlines())) == (0, message, trailers)
+    landed_message = _real_git(repo, "log", "-1", "--format=%B", "main").stdout
+    assert (status, body, _git_trailers(tmp_path, landed_message)) == (0, message, trailers)
     assert client.closed_issues == {WORK_ITEM_ISSUE}
-
-
-def _git_trailers(directory: Path, message: str) -> tuple[str, ...]:
-    """The trailers git's own parsing reads in `message`, read as the
-    release's `%(trailers)` reads them: `--no-divider`, so a Markdown `---`
-    rule stays prose."""
-    message_file = directory / "trailer-message"
-    message_file.write_text(message)
-    parsed = _real_git(
-        directory, "interpret-trailers", "--parse", "--no-divider", str(message_file)
-    )
-    return tuple(parsed.stdout.splitlines())
 
 
 @pytest.mark.parametrize(
