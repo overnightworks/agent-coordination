@@ -67,7 +67,7 @@ other printable space are text.
 ## A work item action
 
 - [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>` from a linked worktree on a non-default branch, exit `0` (see E-NEXT-01).
-- [ ] [NEXT-41] From any other checkout, where `claim` refuses, `Run:` is `aco start <n> --slug=<slug>`, the slug `start` derives from the title, else the id's: `!!! ???` gives `--slug=aco-1234ab` (E-NEXT-14).
+- [ ] [NEXT-41] From any other checkout, where `claim` refuses, `Run:` is `aco start <n> --slug=<slug>`, the slug `start` derives from the title, else the id's: `!!! ???` gives `--slug=<id>` (E-NEXT-14).
 - [ ] [NEXT-42] A scope of more than three paths and no `whole` in the body ends `Run:` with `--whole <reason>`, which `claim` and `start` then need; with `whole` set, it is left out (E-NEXT-14).
 - [ ] [NEXT-37] Text shows each display control in a title, `Next`, slice title or `SKIPPED` reason as its escape: `a\x1b[2J` prints as typed; TAB, NBSP and `Größe` as is; `--json` unchanged.
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
