@@ -142,9 +142,15 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 - [ ] [ITEM-24] `item edit --whole REASON` patches only the top-level `whole`, reads no stdin, works under both storages, prints `EDITED #<n> whole=<reason>` (`--json`: `reason: "edited"`, `item`, `whole`).
 - [ ] [ITEM-47] `item edit --kind task|container` sets only an open item's type (else `#<n> is not an open item`), both storages; prints `EDITED #<n> kind=<kind>` (`--json`: `item`, `number`, `kind`) (see E-ITEM-13).
 - [ ] [ITEM-48] `--kind task` on an item with an open child refuses `#<n> has an open child; a container with open children stays a container`, exit `2`, before any write (see E-ITEM-13).
-- [ ] [ITEM-49] Only a regular file on `--kind`'s stdin refuses `item edit --kind reads no stdin; drop the redirect`, exit `2`, before any write.
+- [ ] [ITEM-49] A file or pipe on the stdin of `--kind`, `--size` or `--whole` refuses `item edit --<flag> reads no stdin; drop the redirect`, exit `2`, before any write.
+
+  ```console
+  $ printf 'body\n' | aco item edit 484 --size S
+  2> ERROR: item edit --size reads no stdin; drop the redirect
+  exit 2
+  ```
 - [ ] [ITEM-50] `--size`, `--whole` and `--kind` exclude one another: a second one refuses at argparse, `argument <second>: not allowed with argument <first>`, exit `2`, before any write.
-- [ ] [ITEM-51] A pipe, socket, terminal, `/dev/null` or closed stdin on `--kind` passes, as agent harnesses hand a pipe or socket; a piped body goes unread, unrefused.
+- [ ] [ITEM-51] A socket, terminal, `/dev/null` or closed stdin on `--kind`, `--size` or `--whole` passes unread, as an agent harness hands a socket when nothing was piped.
 
 ## `item close`
 

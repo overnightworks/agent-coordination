@@ -2980,16 +2980,6 @@ def _stdin_file_mode() -> int | None:
         return None
 
 
-def _stdin_is_a_regular_file() -> bool:
-    """Whether a file a shell redirected (`< body.md`) stands on stdin. Only
-    a regular file counts: an agent harness hands a command a pipe or a
-    socket even when it redirected nothing, so a pipe, socket, terminal,
-    `/dev/null` or a closed stdin passes, and a body piped in
-    (`cat body.md |`) goes unread."""
-    mode = _stdin_file_mode()
-    return mode is not None and stat.S_ISREG(mode)
-
-
 def _stdin_carries_a_body() -> bool:
     """Whether stdin carries a body a command reads (head ruling of
     01.10.2026 on issue #555): a redirected file (`< body.md`) or a pipe
@@ -2998,6 +2988,14 @@ def _stdin_carries_a_body() -> bool:
     command never waits on an idle harness stdin."""
     mode = _stdin_file_mode()
     return mode is not None and (stat.S_ISREG(mode) or stat.S_ISFIFO(mode))
+
+
+def _refuse_a_body_on_stdin(command: str) -> None:
+    """Refuses, before any write, a body `command` would otherwise drop
+    unread (issue #567): it reads no stdin, so a file or pipe there carrying
+    one (`_stdin_carries_a_body`) is a mistake the person must see."""
+    if _stdin_carries_a_body():
+        raise protocol.ClaimUnavailableError(f"{command} reads no stdin; drop the redirect")
 
 
 class BodyCheckReason(StrEnum):
@@ -3589,6 +3587,7 @@ def _cmd_item_edit_size(parsed: argparse.Namespace, context: RunContext) -> int:
     as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
+        _refuse_a_body_on_stdin(ITEM_EDIT_SIZE_COMMAND)
         client = context.forge_writer
         _require_update_item_body(client, command=ITEM_EDIT_SIZE_COMMAND)
         number = parsed.item
@@ -3630,6 +3629,7 @@ def _cmd_item_edit_whole(parsed: argparse.Namespace, context: RunContext) -> int
     envelope as `precondition_failed` (issue #425)."""
     as_json = parsed.json
     try:
+        _refuse_a_body_on_stdin(ITEM_EDIT_WHOLE_COMMAND)
         client = context.forge_writer
         _require_update_item_body(client, command=ITEM_EDIT_WHOLE_COMMAND)
         number = parsed.item
@@ -3660,22 +3660,21 @@ def _print_item_edit_whole_result(
         print(f"EDITED {board.item_label(number, storage)} whole={reason}")
 
 
-ITEM_EDIT_KIND_STDIN_REFUSAL = "item edit --kind reads no stdin; drop the redirect"
+ITEM_EDIT_KIND_COMMAND = "item edit --kind"
 
 
 def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
     """`aco item edit ITEM --kind task|container` (issue #503): the one
     retype a person runs, over the `ForgeWriter.set_item_kind` both storages
     implement -- the repair `next` names for a nested container with one
-    uncut row. Reads no stdin, and refuses a file redirected there before
-    any write, so a body redirected from a file is never silently dropped.
+    uncut row. Reads no stdin, and refuses a body piped or redirected there
+    before any write, so it is never silently dropped.
     A container with an open child stays one, since a Task never has
     children to claim through. Every refusal reports through the shared
     envelope as `precondition_failed`."""
     as_json = parsed.json
     try:
-        if _stdin_is_a_regular_file():
-            raise protocol.ClaimUnavailableError(ITEM_EDIT_KIND_STDIN_REFUSAL)
+        _refuse_a_body_on_stdin(ITEM_EDIT_KIND_COMMAND)
         client = context.forge_writer
         storage = context.config.storage
         number = parsed.item
