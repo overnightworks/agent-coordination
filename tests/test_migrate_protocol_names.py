@@ -161,6 +161,29 @@ def test_dry_run_refuses_and_names_every_shape_but_the_one_exact_fence(
     assert migration.github.body(7) == body
 
 
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "owner/.",
+        "owner/..",
+        "own_er/repo",
+        "ownér/repo",
+        "owner",
+        "owner/repo/extra",
+        "owner/repo\n",
+    ],
+)
+def test_dry_run_refuses_a_repo_that_is_not_owner_slash_repo_before_any_read(
+    migration: Migration, capsys: pytest.CaptureFixture[str], repository: str
+) -> None:
+    with pytest.raises(SystemExit) as refusal:
+        migration.dry_run(repository)
+
+    assert refusal.value.code == 2
+    assert "is not OWNER/REPO" in capsys.readouterr().err
+    assert not migration.manifest.exists()
+
+
 def test_dry_run_lists_every_issue_body_to_change_across_pages_and_writes_nothing(
     migration: Migration, capsys: pytest.CaptureFixture[str]
 ) -> None:

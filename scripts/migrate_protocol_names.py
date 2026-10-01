@@ -46,7 +46,10 @@ _FENCE = re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
 _PROTOCOL_MENTION = re.compile(r"^\s*(?:`{3,}|~{3,})\s*agent-claim")
 _NEW_PROTOCOL_MENTION = re.compile(r"^\s*(?:`{3,}|~{3,})\s*aco\b")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
-_REPOSITORY = re.compile(r"^[\w.-]+/[\w.-]+$")
+# aco's own OWNER/REPO judge (`github.repository_id`), repeated here because #587 line 6
+# keeps this script free of aco imports.
+_REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}")
+_RESERVED_REPOSITORY_NAMES = frozenset({".", ".."})
 _RATE_LIMIT_STATUSES = frozenset({HTTPStatus.FORBIDDEN, HTTPStatus.TOO_MANY_REQUESTS})
 
 
@@ -371,7 +374,8 @@ def _migrated_body(reference: str, body: str) -> str:
 
 
 def _repository(value: str) -> str:
-    if not _REPOSITORY.match(value):
+    _, _, name = value.partition("/")
+    if _REPOSITORY.fullmatch(value) is None or name in _RESERVED_REPOSITORY_NAMES:
         raise argparse.ArgumentTypeError(f"{value!r} is not OWNER/REPO")
     return value
 
