@@ -143,6 +143,10 @@ def migration(tmp_path: Path) -> Migration:
         ),
         pytest.param("Why\n~~~agent-claim\nversion = 1\n~~~\n", "tildes", id="tilde"),
         pytest.param(PROTOCOL_BODY.replace("\n", "\r\n"), "CRLF", id="crlf"),
+        pytest.param(PROTOCOL_BODY + "a\rlone carriage return\n", "carriage-return", id="lone-cr"),
+        pytest.param(
+            "\ufeff```agent-claim\nversion = 1\n```\n", "byte-order mark", id="byte-order-mark"
+        ),
         pytest.param(
             "Example:\n````markdown\n" + PROTOCOL_BODY + "````\n",
             "inside another fenced block",
@@ -199,6 +203,11 @@ def test_dry_run_refuses_and_names_every_shape_but_the_one_exact_fence(
             ["--apply", "--repo", "owner/intended"],
             "--apply takes its repositories from the manifest",
             id="apply-with-repo",
+        ),
+        pytest.param(
+            ["--dry-run", "--repo", "owner/repo", "--repo", "Owner/Repo"],
+            "names the same repository more than once",
+            id="repeated-repo",
         ),
         pytest.param(
             ["--apply", "--pace-seconds", "abc"],
@@ -298,13 +307,20 @@ def test_dry_run_lists_every_issue_body_to_change_across_pages_and_writes_nothin
     github.add(201, PROTOCOL_BODY, pull_request={"url": "a pull request"})
     github.add(202, None)
     github.add(203, "- ```agent-claim``` blocks are prose here, inline code and no fence")
+    github.add(204, PROTOCOL_BODY + "```aco-like\nnot an aco fence\n```\n")
+    github.add(205, PROTOCOL_BODY + "Example:\n````markdown\n```aco\nversion = 1\n```\n````\n")
     github.add(1, PROTOCOL_BODY, repository="owner/other")
 
     exit_code = migration.dry_run(REPOSITORY, "owner/other")
 
     assert exit_code == 0
-    assert migration.manifest_rows() == [(REPOSITORY, 200), ("owner/other", 1)]
-    assert "2 bodies to change, 0 refused" in capsys.readouterr().out
+    assert migration.manifest_rows() == [
+        (REPOSITORY, 200),
+        (REPOSITORY, 204),
+        (REPOSITORY, 205),
+        ("owner/other", 1),
+    ]
+    assert "4 bodies to change, 0 refused" in capsys.readouterr().out
     assert github.body(200) == PROTOCOL_BODY
 
 
@@ -391,7 +407,7 @@ def _rate_limit_forever(migration: Migration) -> None:
         ),
         pytest.param(
             _refuse_permission,
-            "GitHub answered 403 to PATCH repos/owner/repo/issues/1",
+            "GitHub answered 403 to PATCH repos/owner/repo/issues/1: Resource not accessible",
             {3: PROTOCOL_BODY},
             [],
             id="refused-permission",

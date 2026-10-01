@@ -35,7 +35,8 @@ from pathlib import Path
 from typing import Protocol
 
 OLD_FENCE_LINE = "```agent-claim"
-NEW_FENCE_LINE = "```aco"
+NEW_FENCE_INFO = "aco"
+NEW_FENCE_LINE = f"```{NEW_FENCE_INFO}"
 PACE_SECONDS = 8.0
 # GitHub's advice when a rate-limited answer names neither retry-after nor a reset time.
 FALLBACK_RATE_LIMIT_WAIT_SECONDS = 60.0
@@ -46,12 +47,11 @@ GH_TIMEOUT_SECONDS = 60
 INTERRUPTED_EXIT_CODE = 130
 
 _FENCE = re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
-# A fence opening anywhere a reader would see one: after any indent and any blockquote or
-# list-item markers. A backtick run followed by another backtick on its line is inline code,
-# which CommonMark never reads as a fence.
-_MENTION_PREFIX = r"^(?:\s|>|[-*+]\s|\d{1,9}[.)]\s)*(?:`{3,}(?=[^`]*$)|~{3,})\s*"
+# A fence opening anywhere a reader would see one: after a byte-order mark, any indent and
+# any blockquote or list-item markers. A backtick run followed by another backtick on its line
+# is inline code, which CommonMark never reads as a fence.
+_MENTION_PREFIX = r"^\ufeff?(?:\s|>|[-*+]\s|\d{1,9}[.)]\s)*(?:`{3,}(?=[^`]*$)|~{3,})\s*"
 _PROTOCOL_MENTION = re.compile(_MENTION_PREFIX + "agent-claim")
-_NEW_PROTOCOL_MENTION = re.compile(_MENTION_PREFIX + r"aco\b")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
 # aco's own OWNER/REPO judge (`github.repository_id`), repeated here because #587 line 6
 # keeps this script free of aco imports.
@@ -62,7 +62,8 @@ _RATE_LIMIT_STATUSES = frozenset({HTTPStatus.FORBIDDEN, HTTPStatus.TOO_MANY_REQU
 
 
 class Refusal(StrEnum):
-    CRLF = "the body uses CRLF line endings"
+    CARRIAGE_RETURN = "the body has carriage-return line endings (CR or CRLF)"
+    BYTE_ORDER_MARK = "the agent-claim opening line starts with a byte-order mark (U+FEFF)"
     TILDE_FENCE = "the agent-claim fence uses tildes"
     INEXACT_OPENING_LINE = "the agent-claim opening line does not read exactly ```agent-claim"
     INSIDE_ANOTHER_FENCE = "an agent-claim fence sits inside another fenced block"
@@ -160,7 +161,7 @@ def classify(body: str) -> Rewrite | Refusal | None:
     if not mentions:
         return None
     if "\r" in body:
-        return Refusal.CRLF
+        return Refusal.CARRIAGE_RETURN
     blocks = {block.opening_index: block for block in fenced_blocks(lines)}
     for index in mentions:
         refusal = _mention_refusal(lines[index], blocks.get(index))
@@ -169,14 +170,23 @@ def classify(body: str) -> Rewrite | Refusal | None:
     if len(mentions) > 1:
         return Refusal.SEVERAL_FENCES
     # The rewrite would leave two aco blocks, a body the aco contract refuses.
-    if any(_NEW_PROTOCOL_MENTION.match(line) for line in lines):
+    if any(_is_aco_opening(lines[index]) for index in blocks):
         return Refusal.MIXED_FENCES
     (opening_index,) = mentions
     lines[opening_index] = NEW_FENCE_LINE
     return Rewrite("\n".join(lines))
 
 
+def _is_aco_opening(line: str) -> bool:
+    """aco reads a fenced block as its own when the info string, stripped of spaces and tabs,
+    is exactly its name (`body._agent_claim_fence_matches`)."""
+    opening = _FENCE.match(line)
+    return opening is not None and opening["info"].strip(" \t") == NEW_FENCE_INFO
+
+
 def _mention_refusal(line: str, block: FencedBlock | None) -> Refusal | None:
+    if line.startswith("\ufeff"):
+        return Refusal.BYTE_ORDER_MARK
     if block is None:
         return Refusal.INSIDE_ANOTHER_FENCE if _FENCE.match(line) else Refusal.INEXACT_OPENING_LINE
     if line.lstrip().startswith("~"):
@@ -343,8 +353,21 @@ class GitHubApi:
 
 def _successful(response: ApiResponse, method: str, path: str) -> ApiResponse:
     if response.status != HTTPStatus.OK:
-        raise MigrationStoppedError(f"GitHub answered {response.status} to {method} {path}")
+        raise MigrationStoppedError(
+            f"GitHub answered {response.status} to {method} {path}: {_github_message(response)}"
+        )
     return response
+
+
+def _github_message(response: ApiResponse) -> str:
+    """GitHub's own explanation of a refused request, or the start of its raw answer."""
+    try:
+        answer = json.loads(response.body)
+    except ValueError:
+        answer = None
+    if isinstance(answer, dict) and isinstance(answer.get("message"), str):
+        return answer["message"]
+    return response.body[:200]
 
 
 def dry_run(api: GitHubApi, repositories: Sequence[str], manifest: Path) -> None:
@@ -524,6 +547,9 @@ def main(
     arguments = parser.parse_args(argv)
     if arguments.dry_run and not arguments.repo:
         parser.error("--dry-run needs at least one --repo OWNER/REPO")
+    # GitHub reads OWNER/REPO without regard to case, so Owner/Repo and owner/repo are one.
+    if len({repository.casefold() for repository in arguments.repo}) < len(arguments.repo):
+        parser.error("--repo names the same repository more than once")
     if arguments.apply and arguments.repo:
         parser.error("--apply takes its repositories from the manifest; --repo is for --dry-run")
     active_clock = clock if clock is not None else SystemClock()
