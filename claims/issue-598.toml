@@ -1,8 +1,0 @@
-claim_id = "550e642dba5d4d559d19a3eee6c5e958"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "570e4b6d13a0828bac866f1ecc61e1ee100ec2ec"
-branch = "claude/issue-598-contract-flip"
-scope = ["README.md", "specs/ask.spec.md", "specs/board.spec.md", "specs/body-block.spec.md", "specs/body.spec.md", "specs/bootstrap.spec.md", "specs/brief.spec.md", "specs/check.spec.md", "specs/claim-record.spec.md", "specs/claim.spec.md", "specs/cut.spec.md", "specs/item.spec.md", "specs/land.spec.md", "specs/next.spec.md", "specs/output.spec.md", "specs/protect.spec.md", "specs/ref-store-cas.spec.md", "specs/release.spec.md", "specs/rescope.spec.md", "specs/reset.spec.md", "specs/rulings.spec.md", "specs/start.spec.md", "specs/status.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/__init__.py", "src/agent_coordination/board.py", "src/agent_coordination/board_html.py", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "src/agent_coordination/items.py", "src/agent_coordination/protect.py", "src/agent_coordination/session.py", "src/agent_coordination/state_board.py", "tests/board_fixtures.py", "tests/test_board.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_items.py", "tests/test_migrate_protocol_names.py", "tests/test_protect.py", "tests/test_state_board.py"]
-opened_commit = "9eb145c057d06763d5a8ef8a4d3e6b15c8ba69e3"
-whole_reason = "the protocol rename touches every spec, the README, the owner constants and every test that prints the names"
