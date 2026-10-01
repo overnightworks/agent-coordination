@@ -269,36 +269,41 @@ def _rate_limit_forever(migration: Migration) -> None:
 
 
 @pytest.mark.parametrize(
-    ("perturb", "stop", "kept"),
+    ("perturb", "stop", "kept", "waits"),
     [
         pytest.param(
             _edit_issue_two,
             "owner/repo#2: the body changed since the dry run",
             {2: EDITED_BODY, 3: PROTOCOL_BODY},
+            [migrate.PACE_SECONDS],
             id="drift",
         ),
         pytest.param(
             _edit_issue_two_during_the_pace,
             "owner/repo#2: the body changed since the dry run",
             {2: EDITED_BODY, 3: PROTOCOL_BODY},
+            [migrate.PACE_SECONDS],
             id="drift-during-the-pace",
         ),
         pytest.param(
             _edit_issue_one_during_a_rate_limit_wait,
             "owner/repo#1: the body changed since the dry run",
             {1: EDITED_BODY, 3: PROTOCOL_BODY},
+            [1.0],
             id="drift-during-a-rate-limit-wait",
         ),
         pytest.param(
             _store_bodies_altered,
             "owner/repo#1: the body read back does not have the new hash",
             {3: PROTOCOL_BODY},
+            [],
             id="read-back-mismatch",
         ),
         pytest.param(
             _refuse_permission,
             "GitHub answered 403 to PATCH repos/owner/repo/issues/1",
             {3: PROTOCOL_BODY},
+            [],
             id="refused-permission",
         ),
         pytest.param(
@@ -306,6 +311,7 @@ def _rate_limit_forever(migration: Migration) -> None:
             f"PATCH repos/owner/repo/issues/1 still rate-limited after "
             f"{migrate.MAX_RATE_LIMIT_WAITS} waits",
             {3: PROTOCOL_BODY},
+            [1.0] * migrate.MAX_RATE_LIMIT_WAITS,
             id="rate-limit-never-lifts",
         ),
     ],
@@ -316,6 +322,7 @@ def test_apply_stops_at_the_first_unsafe_row_and_names_it(
     perturb: Callable[[Migration], None],
     stop: str,
     kept: dict[int, str],
+    waits: list[float],
 ) -> None:
     github = migration.github
     for number in (1, 2, 3):
@@ -328,6 +335,7 @@ def test_apply_stops_at_the_first_unsafe_row_and_names_it(
     assert exit_code == 1
     assert f"stopped: {stop}" in capsys.readouterr().err
     assert {number: github.body(number) for number in kept} == kept
+    assert migration.clock.waits == waits
 
 
 @pytest.mark.parametrize(

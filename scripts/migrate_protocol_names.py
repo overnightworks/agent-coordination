@@ -288,14 +288,15 @@ class GitHubApi:
         arguments = ["api", "--include", "--method", method, path]
         if payload is not None:
             arguments += ["--input", "-"]
-        for _ in range(MAX_RATE_LIMIT_WAITS + 1):
+        for waits_done in range(MAX_RATE_LIMIT_WAITS + 1):
             response = parse_included_response(self._run(arguments, input_data=payload))
             wait = rate_limit_wait(response, self._clock.now())
             if wait is None:
                 return _successful(response, method, path)
-            self._clock.sleep(wait)
-            if before_retry is not None:
-                before_retry()
+            if waits_done < MAX_RATE_LIMIT_WAITS:
+                self._clock.sleep(wait)
+                if before_retry is not None:
+                    before_retry()
         raise MigrationStoppedError(
             f"{method} {path} still rate-limited after {MAX_RATE_LIMIT_WAITS} waits"
         )
