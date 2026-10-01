@@ -47,9 +47,12 @@ mkdir .agent-claim && touch .agent-claim/board.toml
 git add -f .agent-claim/board.toml && git commit -m "adopt aco"
 # once that commit is on main
 aco bootstrap
-aco status
-aco claim 42 --agent "Ada" --scope src/widget.py
-aco release 42 --merged 57
+aco next
+aco start 42 --slug widget
+aco brief 42
+# build in ../<repo>-worktrees/issue-42-widget, push, open pull request 57
+# then, from the clean default-branch checkout
+aco land 57
 ```
 
 Adoption is the one step outside the claim protocol: until this checkout
@@ -59,38 +62,39 @@ fetched trunk lacks the file, merging that trunk when only this branch
 predates it, and restoring the file when this branch removed it itself.
 The commit adding it -- that file alone -- lands without a claim.
 `bootstrap` creates the state ref once per repository; every other command
-here reads or writes it. `specs/bootstrap.spec.md` owns `bootstrap`;
-`specs/claim.spec.md` and `specs/release.spec.md` own `claim` and `release`.
+here reads or writes it. `specs/bootstrap.spec.md` owns `bootstrap`.
 
-## A GitHub workflow: claim, build, land
+## A GitHub workflow: start, build, land
 
-```bash
-git worktree add ../repo-worktrees/issue-42-widget -b Ada/issue-42-widget
-cd ../repo-worktrees/issue-42-widget
-aco claim 42 --agent "Ada" --scope src/widget.py
-# edit, commit, push, open a pull request naming Closes #42 and Work-Item: #42
-aco land 57
-```
+The quick start shows the head path. `aco next` names the
+one item the board recommends pulling now; an item labelled
+`needs-operator` waits on the operator and is never pulled. `aco start 42`
+fetches, creates the linked worktree `../<repo>-worktrees/issue-42-<slug>`
+on the branch `<agent>/issue-42-<slug>` from the trunk, and claims it with
+the scope the item's body names; repeated, it reprints the live claim
+instead of minting a second one. It refuses out-of-order or blocked work by
+name unless overridden with `--out-of-order REASON`. `aco brief 42` prints
+the item's body, live claim, lane tip, and touched files -- what a builder
+starts from. The pull request names `Closes #42` and `Work-Item: #42`.
 
-`claim` refuses before the first edit unless the checkout is already a
-linked, isolated worktree on a non-main branch -- create it first, exactly
-as shown, naming the issue and agent in both the directory and the branch;
-`claim` then opens one live claim there and refuses out-of-order or blocked
-work by name unless overridden with `--out-of-order REASON`. `aco land <pull
-request>`, from a clean default-branch checkout, verifies it against GitHub
+`aco land <pull request>`, from a clean default-branch checkout, verifies it against GitHub
 -- mergeable, checks green, body carrying Closes and Work-Item -- merges it
 with a merge commit, deletes the branch, removes the lane's worktree, closes
 the item, releases the claim, and reports what that landing freed and what
 to pull next. The exact preconditions, identity resolution, and refusals are
-`specs/claim.spec.md`, `specs/land.spec.md`, and `specs/release.spec.md`'s
-own; the claim record itself -- scope, roles, resources, overlap -- is
+`specs/next.spec.md`, `specs/start.spec.md`, `specs/brief.spec.md`,
+`specs/land.spec.md`, and `specs/release.spec.md`'s own; `start` acquires
+its claim exactly as `aco claim` does (`specs/claim.spec.md`), and the
+claim record itself -- scope, roles, resources, overlap -- is
 `specs/claim-record.spec.md`'s.
 
-## Issueless lane claims
+## Issueless lane claims and resources
 
-A `docs/`- or `fix/`-prefixed branch claims and releases the same way
-without a GitHub issue: the branch name is the lane's identity, so `claim`
-and `release` take no positional number in this mode.
+`aco claim` is the path wherever `start` has no item to start from. A
+`docs/`- or `fix/`-prefixed branch claims and releases without a GitHub
+issue: the branch name is the lane's identity, so `claim` and `release`
+take no positional number in this mode. `claim --resource NAME` allocates
+the next free value of a named scarce resource and holds it for the lane.
 
 ```bash
 git worktree add ../repo-worktrees/docs-tidy-readme -b docs/tidy-readme
@@ -339,9 +343,11 @@ by exactly one file below; this table is the map, not a copy.
 | Command / contract | Spec | What it covers |
 |---|---|---|
 | `aco bootstrap` | `specs/bootstrap.spec.md` | creates or reports the state ref |
+| `aco start` | `specs/start.spec.md` | creates an item's worktree and branch, then claims it |
 | `aco claim` | `specs/claim.spec.md` | opens a claim on an issue or an issueless lane |
 | `aco rescope` | `specs/rescope.spec.md` | adds or drops paths on a live claim |
 | `aco release` | `specs/release.spec.md` | ends a claim as merged or abandoned |
+| `aco land` | `specs/land.spec.md` | merges a green pull request, then releases its claim |
 | `aco status` | `specs/status.spec.md` | reads every live claim, repository-wide or by path |
 | `aco reset` | `specs/reset.spec.md` | rebuilds a broken or rewritten state ref |
 | `aco check` | `specs/check.spec.md` | answers whether a pull request, an issue, or a trunk commit is sound |
