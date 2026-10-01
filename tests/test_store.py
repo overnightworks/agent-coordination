@@ -2660,7 +2660,7 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
 
 
 _REPOSITORY_ROOT = Path(__file__).parent.parent
-_STATE_DELETION_ADVICE = re.compile(r"update-ref -d|push (?:--force(?!-with-lease)|-f)\b")
+_STATE_DELETION_ADVICE = re.compile(r"update-ref -d|push (?:--force|-f)\b")
 
 
 def _source_message_literals() -> list[str]:
@@ -2700,6 +2700,21 @@ def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
     first."""
     advice = [text for text in user_facing_texts() if _STATE_DELETION_ADVICE.search(text)]
     assert advice == []
+
+
+@pytest.mark.parametrize(
+    "manual_deletion_advice",
+    [
+        "git update-ref -d refs/aco/state",
+        "git push --force origin refs/aco/state",
+        "git push -f origin refs/aco/state",
+        "git push --force-with-lease origin :refs/aco/state",
+    ],
+)
+def test_the_deletion_advice_guard_flags_every_manual_delete_form(
+    manual_deletion_advice: str,
+) -> None:
+    assert _STATE_DELETION_ADVICE.search(manual_deletion_advice)
 
 
 def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_race(
