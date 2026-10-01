@@ -17595,16 +17595,26 @@ def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: P
 
 
 @pytest.mark.parametrize(
-    ("interfere", "reported_failure", "branch_kept"),
+    ("interfere", "worktree_line", "branch_kept"),
     [
-        pytest.param(_commit_past_the_landed_head, "", True, id="commit-raced-past-the-head"),
+        pytest.param(
+            _commit_past_the_landed_head,
+            "worktree: removed; branch kept -- git failure: ",
+            True,
+            id="commit-raced-past-the-head",
+        ),
         pytest.param(
             _refuse_the_branch_configuration_listing,
-            "fatal: the listing failed\n",
+            "worktree: removed; branch kept -- git failure: fatal: the listing failed\n",
             True,
             id="configuration-listing-refused",
         ),
-        pytest.param(_lock_the_repository_configuration, "", False, id="configuration-locked"),
+        pytest.param(
+            _lock_the_repository_configuration,
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- git failure: ",
+            False,
+            id="configuration-locked",
+        ),
     ],
 )
 def test_land_reports_the_squashed_lane_branch_cleanup_git_refuses(
@@ -17612,7 +17622,7 @@ def test_land_reports_the_squashed_lane_branch_cleanup_git_refuses(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     interfere: Callable[[pytest.MonkeyPatch, Path], None],
-    reported_failure: str,
+    worktree_line: str,
     branch_kept: bool,
 ) -> None:
     """Issue #578 line 4: the squashed lane's branch goes with one
@@ -17643,7 +17653,7 @@ def test_land_reports_the_squashed_lane_branch_cleanup_git_refuses(
 
     output = capsys.readouterr()
     assert (status, output.err) == (0, "")
-    assert f"worktree: removed; branch kept -- git failure: {reported_failure}" in output.out
+    assert worktree_line in output.out
     tip = _real_git(repo, "rev-parse", "--verify", "--quiet", LANDING_BRANCH, check=False)
     assert tip.stdout.split() == (kept_tips if branch_kept else [])
     assert _branch_section(repo, LANDING_BRANCH) == section

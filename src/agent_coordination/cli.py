@@ -6396,12 +6396,17 @@ def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> s
     `--json` value of its `worktree` field (issue #322 review/gate finding
     4): one owner, so the two shapes can never drift apart. A branch-deletion
     failure after the worktree is already gone names both halves -- never a
-    bare `kept`, which would hide that the worktree itself is gone."""
-    if outcome.worktree.removed and outcome.branch.removed:
-        return "removed"
-    if outcome.worktree.removed:
+    bare `kept`, which would hide that the worktree itself is gone; a
+    section git kept after the branch itself went names that section, never
+    the branch (issue #578)."""
+    if not outcome.worktree.removed:
+        return f"kept -- {outcome.worktree.reason}"
+    if not outcome.branch.removed:
         return f"removed; branch kept -- {outcome.branch.reason}"
-    return f"kept -- {outcome.worktree.reason}"
+    section_kept = outcome.branch.section_kept
+    if section_kept is not None:
+        return f"removed; {section_kept.section} section kept -- {section_kept.reason}"
+    return "removed"
 
 
 def _cleanup_landed_worktree(

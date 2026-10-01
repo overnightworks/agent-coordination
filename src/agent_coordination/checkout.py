@@ -1418,15 +1418,28 @@ class WorktreeRemoval:
 
 
 @dataclass(frozen=True)
+class SectionKept:
+    """A deleted squashed branch's own `branch.<name>` section git refused
+    to drop (issue #578): the one cleanup step that can fail once the
+    branch itself is gone, so it is reported on its own and never as a
+    kept branch."""
+
+    section: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class BranchRemoval:
     """Whether the same cleanup also removed the lane's own local branch,
     tracked apart from `WorktreeRemoval` (issue #322 review/gate finding 4):
-    `git worktree remove` and `git branch -d` are two separate git writes,
-    so the first can succeed while the second fails, and that must never
-    read as a bare `kept` that hides the worktree's own removal."""
+    `git worktree remove` and the branch deletion (`_delete_branch`) are
+    separate git writes, so the first can succeed while the second fails,
+    and that must never read as a bare `kept` that hides the worktree's own
+    removal. `section_kept` names a squashed branch's leftover section."""
 
     removed: bool
     reason: str | None
+    section_kept: SectionKept | None = None
 
 
 @dataclass(frozen=True)
@@ -1514,42 +1527,59 @@ def remove_linked_worktree(
     result = _git_run(["worktree", "remove", str(path)])
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
-    branch_refusal = _delete_branch(branch, landed_head)
-    if branch_refusal is not None:
-        return WorktreeCleanupOutcome(
-            worktree=_WORKTREE_REMOVED,
-            branch=BranchRemoval(removed=False, reason=f"git failure: {branch_refusal}"),
-        )
-    return WorktreeCleanupOutcome(worktree=_WORKTREE_REMOVED, branch=_BRANCH_REMOVED)
+    return WorktreeCleanupOutcome(
+        worktree=_WORKTREE_REMOVED, branch=_delete_branch(branch, landed_head)
+    )
 
 
-def _delete_branch(branch: str, landed_head: str | None) -> str | None:
-    """Delete local `branch` and return git's own refusal, or `None` once it
-    is gone: with `git branch -d`, whose own merged check guards a merged
-    lane, or -- for a squash git's merged check cannot see (issue #578) --
-    with `_delete_squashed_branch`."""
+def _delete_branch(branch: str, landed_head: str | None) -> BranchRemoval:
+    """Delete local `branch` and report what git did: with `git branch -d`,
+    whose own merged check guards a merged lane, or -- for a squash git's
+    merged check cannot see (issue #578) -- with `_delete_squashed_branch`."""
     if landed_head is None:
         deleted = _git_run(["branch", "-d", branch])
-        return process.git_failure_detail(deleted) if deleted.exit_status != 0 else None
+        return _BRANCH_REMOVED if deleted.exit_status == 0 else _branch_kept(deleted)
     return _delete_squashed_branch(branch, landed_head)
 
 
-def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
+def _branch_kept(refused: process.CapturedResult) -> BranchRemoval:
+    return BranchRemoval(
+        removed=False, reason=f"git failure: {process.git_failure_detail(refused)}"
+    )
+
+
+def _delete_squashed_branch(branch: str, landed_head: str) -> BranchRemoval:
     """Delete a squashed lane's `branch` with one compare-and-delete against
     `landed_head` (issue #578 line 4), so a branch that moved on is refused
     by git and kept and no commit is ever lost, then drop its own
-    `branch.<name>` section, as `git branch -d` would, but only while no
-    branch of that name exists. Returns git's own refusal of a step, or
-    `None` once both are done. A branch another process creates under that name
-    between the two steps can lose its upstream setting: no commit is lost,
-    and `git branch -u` restores it."""
+    `branch.<name>` section. Once the compare-and-delete succeeded the branch
+    reads removed, and a section git refuses to drop is named on its own."""
     listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
     if listed.exit_status not in (0, 1):
-        return process.git_failure_detail(listed)
+        return _branch_kept(listed)
     deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
     if deleted.exit_status != 0:
-        return process.git_failure_detail(deleted)
-    if not _has_own_branch_section(listed.stdout.decode(), branch):
+        return _branch_kept(deleted)
+    section_refusal = _remove_deleted_branch_section(branch, listed.stdout.decode())
+    if section_refusal is None:
+        return _BRANCH_REMOVED
+    return BranchRemoval(
+        removed=True,
+        reason=None,
+        section_kept=SectionKept(
+            section=f"branch.{branch}", reason=f"git failure: {section_refusal}"
+        ),
+    )
+
+
+def _remove_deleted_branch_section(branch: str, listing: str) -> str | None:
+    """Drop the deleted `branch`'s own `branch.<name>` section, as `git
+    branch -d` would, but only while no branch of that name exists, and
+    return git's own refusal of a step, or `None`. A branch another process
+    creates under that name between the delete and this removal can lose
+    its upstream setting: no commit is lost, and `git branch -u` restores
+    it."""
+    if not _has_own_branch_section(listing, branch):
         return None
     try:
         if branch_exists(branch):
