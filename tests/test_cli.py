@@ -17644,6 +17644,13 @@ def _time_out_the_deletion_and_hold_the_ref_for_the_write_back(
     monkeypatch.setattr(process, "run_git_ref_transaction", hold_the_ref_before_the_second)
 
 
+def _time_out_the_deletion_of_a_branch_without_a_reflog(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    _real_git(lane, "reflog", "expire", "--expire=all", f"refs/heads/{LANDING_BRANCH}")
+    _time_out_the_deletion_once_prepared(monkeypatch, lane)
+
+
 def _deny_the_start(*_arguments: object, **_options: object) -> process.CapturedResult:
     raise process.ProcessStartFailedError("denied")
 
@@ -17719,6 +17726,12 @@ def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
             0,
             id="deletion-timed-out-and-ref-held-for-the-write-back",
         ),
+        pytest.param(
+            _time_out_the_deletion_of_a_branch_without_a_reflog,
+            f"branch.{LANDING_BRANCH} not written back: git keeps no reflog",
+            0,
+            id="deletion-timed-out-for-a-branch-without-a-reflog",
+        ),
     ],
 )
 def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
@@ -17737,11 +17750,13 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     remove keeps the branch too, the failure reported rather than swallowed,
     and so does a deletion git cannot even run. Fourth review finding 3: a
     deletion git never confirms after that
-    section is gone writes the section back onto the kept branch. Every way
+    section is gone writes the section back onto the kept branch, once its
+    reflog proves it the lane's own. Every way
     the kept branch keeps its tip and its own configuration -- unless git
     refuses that write-back, which the report then names -- and then no
     part of the section returns, unless git refuses to take back the part
-    it already wrote, which the report names too."""
+    it already wrote, which the report names too; a branch without a reflog
+    gets nothing back either, and the report says why."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
@@ -17818,6 +17833,43 @@ def _recreate_branch_after_its_deletion(
     return owned_key, "recreated"
 
 
+def _recreate_branch_on_its_tip_after_an_unconfirmed_deletion(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
+) -> tuple[str, str]:
+    """Give `branch` a `branch.<name>.remote` of its own, let git delete it
+    without the cleanup ever hearing so, then let another process create a
+    branch of that name on the very same commit, with its own value of that
+    key, before the cleanup looks at the name again. Return that key with
+    the value it must keep."""
+    owned_key = f"branch.{branch}.remote"
+    _real_git(repo, "config", owned_key, "origin")
+    tip = _real_git(repo, "rev-parse", branch).stdout.strip()
+    communicate = subprocess.Popen.communicate
+    run_transaction = process.run_git_ref_transaction
+    transactions: list[list[str]] = []
+
+    def commit_then_time_out_the_first_decision(
+        self: subprocess.Popen[bytes], decision: bytes | None = None, timeout: float | None = None
+    ) -> tuple[bytes, bytes]:
+        answer = communicate(self, decision, timeout)
+        if decision is not None and len(transactions) == 1:
+            raise subprocess.TimeoutExpired(self.args, timeout or 0)
+        return answer
+
+    def recreate_before_the_second(
+        instructions: list[str], **options: Callable[[], bool]
+    ) -> process.CapturedResult:
+        transactions.append(instructions)
+        if len(transactions) == 2:
+            _real_git(repo, "branch", "-q", branch, tip)
+            _real_git(repo, "config", owned_key, "recreated")
+        return run_transaction(instructions, **options)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", commit_then_time_out_the_first_decision)
+    monkeypatch.setattr(process, "run_git_ref_transaction", recreate_before_the_second)
+    return owned_key, "recreated"
+
+
 def _configure_a_sibling_branch(
     _monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
 ) -> tuple[str, str]:
@@ -17837,6 +17889,10 @@ def _configure_a_sibling_branch(
     [
         pytest.param(_configure_a_sibling_branch, id="sibling-branch-without-an-own-section"),
         pytest.param(_recreate_branch_after_its_deletion, id="same-name-branch-recreated"),
+        pytest.param(
+            _recreate_branch_on_its_tip_after_an_unconfirmed_deletion,
+            id="same-name-branch-recreated-on-its-tip-after-an-unconfirmed-deletion",
+        ),
     ],
 )
 def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_configuration(
@@ -17848,8 +17904,10 @@ def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_
     """Issue #578 review findings 2 and 4: the squashed lane's branch goes
     and reads removed while configuration another branch owns stays intact
     -- a dotted sibling's beside no section of its own, or a same-name
-    branch's created at any moment after the deletion, since nothing the
-    cleanup writes follows that deletion."""
+    branch's created at any moment after the deletion, even on the lane's
+    own commit after a deletion git never confirmed: its fresh reflog tells
+    it from the lane's branch, so the lane's section is never written back
+    into it."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"

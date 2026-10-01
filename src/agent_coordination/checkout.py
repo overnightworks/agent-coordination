@@ -46,6 +46,10 @@ IDENTITY_ENVIRONMENT_ORDER = (
 # launch's exit status their own way.
 _GIT_MISSING_EXECUTABLE_ERROR = "git is required for issue claims"
 _GIT_TIMED_OUT_ERROR = "git timed out while validating the build checkout"
+_UNPROVEN_BRANCH_ERROR = (
+    "branch.{branch} not written back: git keeps no reflog to tell the lane's branch "
+    "from one created again on its commit"
+)
 
 
 def _git_run(arguments: list[str], *, directory: Path | None = None) -> process.CapturedResult:
@@ -1564,7 +1568,8 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
     the transaction. A deletion git fails or never confirms once the section
     is gone writes that section back (`_restore_branch_section`). Every way
     a kept branch stays whole, unless git refuses that write-back, which the
-    returned refusal then names; a branch gone after all reads as deleted."""
+    returned refusal then names; a branch gone after all, or its name taken
+    by a branch created since, reads as deleted."""
     removal = _BranchSectionRemoval()
 
     def remove_the_section_under_the_ref_lock() -> bool:
@@ -1585,7 +1590,8 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
     if failure is None:
         return None
     try:
-        _restore_branch_section(branch, landed_head, removal.removed)
+        if not _restore_branch_section(branch, landed_head, removal):
+            return None
     except ClaimError as error:
         failure = str(error)
     return failure if branch_exists(branch) else None
@@ -1594,10 +1600,12 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
 @dataclass(frozen=True)
 class _BranchSectionRemoval:
     """What `_remove_own_branch_section` did: git's own refusal, or the
-    `(key, value)` entries it removed -- none when there was no section."""
+    `(key, value)` entries it removed -- none when there was no section --
+    with the branch's reflog as it read then, empty when git keeps none."""
 
     refusal: str | None = None
     removed: tuple[tuple[str, str], ...] = ()
+    reflog: str = ""
 
 
 def _remove_own_branch_section(branch: str) -> _BranchSectionRemoval:
@@ -1608,10 +1616,28 @@ def _remove_own_branch_section(branch: str) -> _BranchSectionRemoval:
     entries = _own_branch_section_entries(listed.stdout.decode(), branch)
     if not entries:
         return _BranchSectionRemoval()
+    reflog = _git_run(_branch_reflog_arguments(branch))
+    if reflog.exit_status != 0:
+        return _BranchSectionRemoval(refusal=process.git_failure_detail(reflog))
     removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
     if removed.exit_status != 0:
         return _BranchSectionRemoval(refusal=process.git_failure_detail(removed))
-    return _BranchSectionRemoval(removed=entries)
+    return _BranchSectionRemoval(removed=entries, reflog=reflog.stdout.decode())
+
+
+def _branch_reflog_arguments(branch: str) -> list[str]:
+    """`git log` arguments listing `branch`'s reflog, each entry's commit,
+    raw time and message: deleting a branch deletes its reflog, so a branch
+    created again on the same commit lists a different one."""
+    return [
+        "log",
+        "--walk-reflogs",
+        "--no-color",
+        "--date=raw",
+        "--format=%H %gd %gs",
+        f"refs/heads/{branch}",
+        "--",
+    ]
 
 
 def _own_branch_section_entries(listing: str, branch: str) -> tuple[tuple[str, str], ...]:
@@ -1628,18 +1654,30 @@ def _own_branch_section_entries(listing: str, branch: str) -> tuple[tuple[str, s
     )
 
 
-def _restore_branch_section(
-    branch: str, landed_head: str, entries: tuple[tuple[str, str], ...]
-) -> None:
-    """Write a removed `branch.<name>` section's `entries` back while one
-    more prepared transaction holds `branch`'s ref lock on `landed_head`: a
-    branch that is gone or moved meanwhile gets nothing, so the entries only
-    ever return to the lane's own branch, and git's refusal of that
-    transaction raises as a `ClaimError` naming it."""
+def _restore_branch_section(branch: str, landed_head: str, removal: _BranchSectionRemoval) -> bool:
+    """Write `removal`'s entries back while one more prepared transaction
+    holds `branch`'s ref lock on `landed_head`, and return `False` when the
+    name now belongs to a branch created after the lane's own was deleted.
+    A deletion git never confirmed may have happened, so only the reflog
+    `removal` read proves the branch the lane's own: a branch that is gone
+    or moved meanwhile, one created again on the same commit, and one git
+    keeps no reflog for get nothing. git's refusal of that transaction, or
+    a branch it cannot prove, raises as a `ClaimError` naming it."""
+    entries = removal.removed
     if not entries:
-        return
+        return True
+    if not removal.reflog:
+        raise ClaimError(_UNPROVEN_BRANCH_ERROR.format(branch=branch))
+    recreated = False
 
     def write_back_under_the_ref_lock() -> bool:
+        nonlocal recreated
+        reflog = _git_run(_branch_reflog_arguments(branch))
+        if reflog.exit_status != 0:
+            raise ClaimError(process.git_failure_detail(reflog))
+        recreated = reflog.stdout.decode() != removal.reflog
+        if recreated:
+            return False
         for already_written, (key, value) in enumerate(entries):
             written = _git_run(["config", "--local", "--add", key, value])
             if written.exit_status != 0:
@@ -1655,6 +1693,7 @@ def _restore_branch_section(
     )
     if verified.exit_status != 0:
         raise ClaimError(process.git_failure_detail(verified))
+    return not recreated
 
 
 def _without_a_partial_section(branch: str, refusal: str) -> str:
