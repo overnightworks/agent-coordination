@@ -1788,7 +1788,8 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     `lane_shared` names is writable by any live claim this session holds in
     the checkout, though its scope (`docs`) never names it, whichever tool
     writes it; without a claim on the branch it still denies, and a file the
-    trunk does not share stays bound to the scope -- also one the lane's own
+    trunk does not share stays bound to the scope -- also one below a
+    directory the trunk names (`src`, PIN-41), and one the lane's own
     edit of its worktree's `board.toml` adds, so a lane never authorises
     itself. Each tool's own denial wording is PROT-18's and PROT-33's."""
     home = tmp_path / "home"
@@ -1797,7 +1798,7 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
     _use_real_path_is_tracked(monkeypatch)
     _main, worktree = _protect_real_repo_with_worktree(
-        tmp_path, board_config='lane_shared = ["scripts/registry.txt"]\n'
+        tmp_path, board_config='lane_shared = ["scripts/registry.txt", "src"]\n'
     )
     (worktree / board.CONFIG_PATH).write_text(
         'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'
