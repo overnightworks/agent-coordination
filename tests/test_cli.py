@@ -6788,7 +6788,9 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
         assert isinstance(action, board.CutSliceAction)
 
         command_line = issue_claim._next_action_lines(
-            action, body.Storage.GITHUB, claims_in_place=True
+            action,
+            body.Storage.GITHUB,
+            site=issue_claim._PullSite(claims_in_place=True, scope_is_wide=False),
         )[1]
         cut_arguments = shlex.split(command_line.removeprefix("Next: aco "))
         client = _configured_board_client(
@@ -7041,6 +7043,22 @@ _WIDE_SCOPE = ("src/a.py", "src/b.py", "src/c.py", "src/d.py", "src/e.py")
             _START_BRANCH,
             id="wide_scope_with_whole_claims_as_is",
         ),
+        pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=["src"]),
+            ("src",),
+            False,
+            "aco start aco-00013a --slug=fresh-slug-title --whole <reason>",
+            _START_BRANCH,
+            id="directory_scope_without_whole_starts_with_a_reason",
+        ),
+        pytest.param(
+            _state_ref_item_body("Fresh Slug Title", scope=["src"]),
+            ("src",),
+            True,
+            "aco claim aco-00013a --whole <reason>",
+            _START_BRANCH,
+            id="directory_scope_without_whole_claims_with_a_reason",
+        ),
     ],
 )
 def test_next_advises_a_pull_that_runs_as_printed_where_it_stands(
@@ -7056,10 +7074,16 @@ def test_next_advises_a_pull_that_runs_as_printed_where_it_stands(
     """Issues #562 line 1 and #566 lines 1-2: from the default branch's
     checkout, where `claim` refuses, `next` advises `start` with the slug
     `start` derives from the title, else the item id's own; from a linked
-    lane worktree it advises `claim`. A scope past three paths without a
+    lane worktree it advises `claim`. A scope the width gate calls wide --
+    past three paths, or naming the trunk's `src` directory -- without a
     body `whole` adds `--whole <reason>`. With the reason filled in, the
     line runs in bash and claims the item on the lane branch."""
     repo, _remote, _seeded = _real_state_ref_repository(monkeypatch, tmp_path, {314: item_body})
+    (repo / "src").mkdir()
+    (repo / "src" / "x.py").write_text("x = 1\n")
+    _real_git(repo, "add", "src/x.py")
+    _real_git(repo, "commit", "-q", "-m", "version src/x.py")
+    _push_repository_trunk(repo, "origin")
     if stands_in_lane:
         lane = tmp_path / "lane"
         _real_git(repo, "worktree", "add", "-q", "-b", _START_BRANCH, str(lane))

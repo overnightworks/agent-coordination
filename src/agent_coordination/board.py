@@ -1935,28 +1935,24 @@ def _work_item_scope(
 class PullScope:
     """What pulling a work item claims (issues #510, #566): its own
     top-level `scope`, which `claim` and `start` derive themselves; the
-    `occupied` paths `_work_item_scope` names; and its own `whole` reason,
-    which both read from the body when the scope is wide."""
+    `occupied` paths `_work_item_scope` names; its own `whole` reason,
+    which both read from the body when the scope is wide; and whether the
+    width gate `claim` and `start` apply calls `occupied` wide, as the
+    caller measured it against the tree it stands in."""
 
     own: tuple[str, ...] | None
     occupied: tuple[str, ...] | None
     whole: str | None
+    wide: bool
 
     def advised_paths(self) -> tuple[str, ...] | None:
         """No paths when the item names its own `scope`, else `occupied`."""
         return () if self.own is not None else self.occupied
 
     def placeholders(self) -> tuple[str, ...]:
-        """`WHOLE_PLACEHOLDER` when the width gate `claim` and `start` apply
-        would refuse the occupied paths for want of a reason (issue #566),
-        else none. `next` reads no tree, so only the path-count condition
-        of `protocol.wide_scope_trip` can trip here."""
-        if self.whole is not None or self.occupied is None:
-            return ()
-        trip = protocol.wide_scope_trip(
-            self.occupied, directories=(), covered_file_count=0, versioned_file_count=0
-        )
-        return () if trip is None else (WHOLE_PLACEHOLDER,)
+        """`WHOLE_PLACEHOLDER` when the width gate would refuse the occupied
+        paths for want of a reason (issue #566), else none."""
+        return (WHOLE_PLACEHOLDER,) if self.wide and self.whole is None else ()
 
 
 def work_item_claim_command(number: int, storage: Storage, pull: PullScope) -> str:
@@ -2714,8 +2710,16 @@ def _nested_container_repair(
     if len(parsed.slices) == 1:
         retype = advice_command("item", "edit", item_argument(number, storage), "--kind", "task")
         occupied = _work_item_scope(parsed.scope, parsed.slices)
+        # The board reads no tree, so only the path-count condition of the
+        # width gate can be judged here.
+        wide = occupied is not None and (
+            protocol.wide_scope_trip(
+                occupied, directories=(), covered_file_count=0, versioned_file_count=0
+            )
+            is not None
+        )
         claim = work_item_claim_command(
-            number, storage, PullScope(parsed.scope, occupied, parsed.whole)
+            number, storage, PullScope(parsed.scope, occupied, parsed.whole, wide)
         )
         return (
             f"nested container, which cut refuses; run {retype} "

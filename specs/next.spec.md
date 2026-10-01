@@ -68,7 +68,7 @@ other printable space are text.
 
 - [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>` from a linked worktree on a non-default branch, exit `0` (see E-NEXT-01).
 - [ ] [NEXT-41] From any other checkout, where `claim` refuses, `Run:` is `aco start <n> --slug=<slug>`, the title's slug, else the id: `!!! ???` gives the number under `github`, the id under `state-ref` (E-NEXT-14).
-- [ ] [NEXT-42] A scope of more than three paths and no `whole` in the body ends `Run:` with `--whole <reason>`, which `claim` and `start` then need; with `whole` set, it is left out (E-NEXT-14).
+- [ ] [NEXT-42] A scope `claim` calls wide here (four paths, or a directory such as `src`) and no body `whole` ends `Run:` with `--whole <reason>`; with `whole` set, it is left out (E-NEXT-14).
 - [ ] [NEXT-37] Text shows each display control in a title, `Next`, slice title or `SKIPPED` reason as its escape: `a\x1b[2J` prints as typed; TAB, NBSP and `Größe` as is; `--json` unchanged.
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
 - [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope=<path>` per path of that row, with no `scope unknown`.
