@@ -78,7 +78,7 @@ spec would cite REL-03 rather than restate it.
 - [ ] [REL-10] A `--claim-id` mismatching the one claim already resolved refuses that same `has no active build claim` sentence: never a second selector among several claims.
 - [ ] [REL-11] `--branch` and `--claim-id` naming different branches refuses, quoting both and the claim's own branch, exit `2` (see E-REL-04).
 - [ ] [REL-12] A `release` by the wrong agent/role, no coordinator override, refuses before any write, naming the holder's `<repeat>` (REL-41) before the override (see E-REL-19).
-- [ ] [REL-41] `<repeat>` is `aco release`, the item, `--branch`/`--claim-id` when given, the outcome flag, then `--agent <holder>`, and `--role <holder role>` only when the session's role differs.
+- [ ] [REL-41] `<repeat>` is `aco release`, the item, `--branch`/`--claim-id` when given, the outcome flag, `--keep-worktree` and `--json` when given, then `--agent <holder>`, and `--role <holder role>` only when the session's role differs.
 - [ ] [REL-13] `--coordinator-override --role coordinator` releases a foreign claim with no agent/role match (CLAIM-40's outcome, for release specifically).
 - [ ] [REL-14] Omitting `--role` -- unlike `claim`'s own default `builder` -- reports the claim's own stored role, in text and in `--json` alike.
 - [ ] [REL-15] A release before `aco bootstrap` has created `refs/aco/state` refuses (CAS-03's sentence), before any transition is attempted.

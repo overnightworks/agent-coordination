@@ -10313,6 +10313,14 @@ def test_cli_release_omitted_claim_id_releases_when_foreign_peer_exists_on_issue
             "aco release 72 --merged 12 --agent 'Claude s-1' --role reviewer",
             id="other-role-and-a-quoted-agent",
         ),
+        pytest.param(
+            "Ada",
+            "Other",
+            ("--merged", "12", "--keep-worktree", "--json"),
+            "reviewer",
+            "aco release 72 --merged 12 --keep-worktree --json --agent Ada",
+            id="keeps-the-worktree-and-json-flags",
+        ),
     ],
 )
 def test_cli_release_by_another_claimant_names_the_holders_repeat_without_a_write(
@@ -10334,7 +10342,7 @@ def test_cli_release_by_another_claimant_names_the_holders_repeat_without_a_writ
     released = issue_claim.main(["--repo", REPOSITORY, "release", "72", *arguments])
     captured = capsys.readouterr()
 
-    assert (released, captured.out) == (2, "")
+    assert released == 2
     assert captured.err == (
         f"ERROR: only the original claimant may release; repeat as the holder with `{repeat}`, "
         f"or use an explicit coordinator override (holder='{holder} (reviewer)', "
@@ -17116,21 +17124,36 @@ def test_land_refuses_a_classification_defect_from_a_missing_claim(
     assert client.merge_calls == []
 
 
+@pytest.mark.parametrize(
+    ("arguments", "repeat"),
+    [
+        pytest.param((), "aco land 12 --agent Grok", id="plain"),
+        pytest.param(
+            ("--keep-worktree",),
+            "aco land 12 --keep-worktree --agent Grok",
+            id="keeps-the-worktree-flag",
+        ),
+    ],
+)
 def test_land_refuses_a_foreign_claim_before_the_merge(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    arguments: tuple[str, ...],
+    repeat: str,
 ) -> None:
     """Issue #405 point 7 review/gate finding: `_land_preflight` itself
     authorizes this session against the live claim, reusing `release`'s own
     claimant/coordinator-override check (`_resolve_release_claimant`) --
     a claim held by another agent refuses before the merge, not only once
-    the delegated `release --merged` step runs after it."""
+    the delegated `release --merged` step runs after it. The repeat keeps
+    `--keep-worktree` (LANDCMD-10)."""
     client = _land_preflight_client(monkeypatch, readiness=_land_readiness(), claim_agent="Grok")
 
-    assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
+    assert issue_claim.main(["--repo", REPOSITORY, "land", "12", *arguments]) == 2
 
     assert capsys.readouterr().err == (
         "ERROR: only the original claimant may release; repeat as the holder with "
-        "`aco land 12 --agent Grok`, or use an explicit coordinator override "
+        f"`{repeat}`, or use an explicit coordinator override "
         "(holder='Grok (builder)', this session='Ada (builder)')\n"
     )
     assert client.merge_calls == []

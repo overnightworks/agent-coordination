@@ -376,6 +376,7 @@ def _claim_request(
 
 LANE_ISSUE_HELP = "omit for lane mode, derived from a docs/ or fix/ checkout branch"
 JSON_FLAG = "--json"
+KEEP_WORKTREE_FLAG = "--keep-worktree"
 LONG_OPTION_PREFIX = "--"
 JSON_HELP = "print the result as JSON instead of the human lines"
 # `--html` with no value: `argparse`'s `nargs="?"` const, distinct from the
@@ -625,7 +626,7 @@ def _add_release_parser(commands: argparse._SubParsersAction) -> None:
         help="release another agent's claim as the coordinator; requires --role coordinator",
     )
     release.add_argument(
-        "--keep-worktree",
+        KEEP_WORKTREE_FLAG,
         action="store_true",
         help=(
             "keep the lane's local worktree and branch after a merged landing; by default a "
@@ -649,7 +650,7 @@ def _add_land_parser(commands: argparse._SubParsersAction) -> None:
         help="land another agent's claim as the coordinator; requires --role coordinator",
     )
     land.add_argument(
-        "--keep-worktree",
+        KEEP_WORKTREE_FLAG,
         action="store_true",
         help=(
             "keep the lane's local worktree and branch after landing; by default a clean "
@@ -6154,6 +6155,20 @@ def _release_repeat_command(parsed: argparse.Namespace) -> tuple[str, ...]:
         command += ["--abandoned", parsed.abandoned]
     else:
         command += ["--merged", parsed.merged] if parsed.merged else ["--merged"]
+    if parsed.keep_worktree:
+        command.append(KEEP_WORKTREE_FLAG)
+    if parsed.json:
+        command.append(JSON_FLAG)
+    return tuple(command)
+
+
+def _land_repeat_command(parsed: argparse.Namespace) -> tuple[str, ...]:
+    """The `aco land` command line `parsed` came from, without its identity
+    flags, for `_holder_repeat_command`: `--keep-worktree` stays, since a
+    repeat without it would remove the worktree the operator kept."""
+    command = ["aco", "land", str(parsed.pull_request)]
+    if parsed.keep_worktree:
+        command.append(KEEP_WORKTREE_FLAG)
     return tuple(command)
 
 
@@ -6592,7 +6607,7 @@ def _land_preflight(
         detail.source_branch,
         context.storage,
     )
-    _authorize_releaser(parsed, selected, ("aco", "land", str(number)))
+    _authorize_releaser(parsed, selected, _land_repeat_command(parsed))
     return detail, structural, readiness
 
 
