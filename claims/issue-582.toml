@@ -1,0 +1,8 @@
+claim_id = "c2d41e41b63e4b40b97981266a0e2e67"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "6fb94026bfed118327ca9cc31cf2b0f367eee5de"
+branch = "claude/issue-582-reset-names-refusal"
+scope = ["specs/ref-store-cas.spec.md", "specs/reset.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/protocol.py", "src/agent_coordination/store.py", "tests/test_cli.py", "tests/test_store.py"]
+opened_commit = "c5d1805629881ae821db1bf28d7bd1f7ce505b6d"
+whole_reason = "reset's live-claim refusal with a reason, and the complete deletion-advice guard"
