@@ -50,7 +50,9 @@ def board_config(toplevel: Path) -> board.BoardConfig:
     `protect` and `rescope` pass their payload's own resolved checkout, so a
     foreign cwd can never wrongly deny a valid config or bless an untracked
     one. A file absent altogether is no repair `git add -f` could make
-    (issue #505): `_absent_board_config_refusal` names the repair instead."""
+    (issue #505): `_absent_board_config_refusal` names the repair instead.
+    A `lane_shared` entry naming a directory in this checkout refuses here
+    too (issue #575), the one place a configuration meets its checkout."""
     if not checkout.path_is_tracked(board.CONFIG_PATH.as_posix(), directory=toplevel):
         if not (toplevel / board.CONFIG_PATH).exists():
             raise protocol.ClaimUnavailableError(_absent_board_config_refusal(toplevel))
@@ -58,7 +60,9 @@ def board_config(toplevel: Path) -> board.BoardConfig:
             f"{board.CONFIG_PATH} is not tracked in this checkout, so its "
             f"storage pin cannot be trusted: git add -f {board.CONFIG_PATH}"
         )
-    return board.load_config(toplevel / board.CONFIG_PATH)
+    config = board.load_config(toplevel / board.CONFIG_PATH)
+    board.refuse_lane_shared_directories(config, toplevel)
+    return config
 
 
 def _absent_board_config_refusal(toplevel: Path) -> str:
