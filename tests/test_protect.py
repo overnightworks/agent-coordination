@@ -2395,7 +2395,7 @@ def test_rescope_denies_before_touching_the_store(
     first path's own checkout (`_rescope_scope_entries`) refuses rather than
     silently mis-scoping; a location outside every repository, and gate
     G3's no-commit checkout (`_rescope_checkout`); and a relative
-    `--drop` entry beside an absolute `--add` that did locate a checkout,
+    `--drop` entry beside an absolute `--add` that names a real checkout,
     run from a cwd outside every repository, which has no checkout to read
     it against (RESC-01) -- all refuse before the store is ever touched."""
     home = tmp_path / "home"
