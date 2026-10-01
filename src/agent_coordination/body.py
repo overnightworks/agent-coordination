@@ -46,7 +46,8 @@ BLOCK_CHILD_SKELETON = '```agent-claim\nversion = 1\nnow = ""\nnext = ""\ndone_w
 # beside the block is documentation only") ahead of the same block schema
 # `BLOCK_CHILD_SKELETON` already owns -- one owner for the projection keys,
 # never a second schema for a container's own skeleton.
-BLOCK_CONTAINER_SKELETON = f"Blocked by: nichts\n\n{BLOCK_CHILD_SKELETON}"
+CONTAINER_SKELETON_PROSE = "Blocked by: nichts"
+BLOCK_CONTAINER_SKELETON = f"{CONTAINER_SKELETON_PROSE}\n\n{BLOCK_CHILD_SKELETON}"
 
 # The one fenced-block info string a repository pinned to `body_contract =
 # "block"` (issue #150) reads as its typed work-item body -- any other
@@ -1234,6 +1235,56 @@ def replace_agent_claim_block(body: str, located: LocatedBlock, data: Mapping[st
         + render_block(data, located.newline)
         + body[located.content_end :]
     )
+
+
+def carries_agent_claim_block(body: str) -> bool:
+    """Whether `body` opens any `agent-claim` fence at all, closed or not --
+    a body without one is prose a fresh block goes below (issue #555)."""
+    return bool(_agent_claim_fence_matches(body))
+
+
+_SKELETON_PROJECTION: Mapping[str, object] = {
+    "version": BLOCK_VERSION,
+    "now": "",
+    "next": "",
+    "done_when": "",
+}
+
+
+def prose_above_fresh_block(prose: str, fields: Mapping[str, object]) -> str:
+    """`prose` above a fresh `agent-claim` block holding `fields` (issue
+    #555), every projection key `fields` leaves out written empty the way
+    `BLOCK_CHILD_SKELETON` writes it; the bare block when `prose` is empty."""
+    block = render_block({**_SKELETON_PROJECTION, **fields})
+    fence = f"```{AGENT_CLAIM_FENCE_INFO}\n{block}```\n"
+    return f"{prose}\n\n{fence}" if prose else fence
+
+
+def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
+    """`body` with `fields` written into its one schema-valid `agent-claim`
+    block, every other byte kept -- the one writer behind `item new`'s and
+    `cut`'s own block flags."""
+    located = locate_agent_claim_block(body)
+    return replace_agent_claim_block(body, located, {**located.data, **fields})
+
+
+def _block_field_text(key: str, value: object) -> str:
+    """One block field's value as `render_block` writes it, scope canonical."""
+    return _render_scope_array(value) if key == "scope" else protocol.toml_string(value)
+
+
+def block_field_conflicts(body: str, fields: Mapping[str, object]) -> tuple[str, ...]:
+    """One sentence per field of `fields` that `body`'s schema-valid block
+    already holds with another value (issue #555), naming both values: a
+    flag never silently overrides, nor yields to, a piped block."""
+    data = locate_agent_claim_block(body).data
+    conflicts: list[str] = []
+    for key, value in fields.items():
+        flagged, piped = _block_field_text(key, value), _block_field_text(key, data.get(key, value))
+        if flagged != piped:
+            flag = f"--{key.replace('_', '-')}"
+            conflicts.append(f"{flag} {flagged} contradicts the piped block's {key} = {piped}")
+    return tuple(conflicts)
 
 
 EXPECTATION_LINE_TEXT_MAXIMUM = 100

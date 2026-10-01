@@ -19553,6 +19553,65 @@ def test_item_new_creates_a_github_issue_from_the_piped_body(
     assert (client.created_issues, client.linked_children) == (created, linked)
 
 
+class _Terminal(io.StringIO):
+    """A stdin a person types into: whatever it would hold, nothing was piped."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+_PROSE_ABOVE_BUILT_BLOCK = (
+    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+    'now = "Ready."\nnext = "Build it."\ndone_when = "Merged."\n\nsize = "S"\n```\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("stdin", "flags", "stored"),
+    [
+        pytest.param(
+            io.StringIO("Ship the importer.\n"),
+            ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged.", "--size", "S"),
+            ("Write the docs", _PROSE_ABOVE_BUILT_BLOCK, body.ItemKind.TASK),
+            id="prose_above_a_block_built_from_the_flags",
+        ),
+        pytest.param(
+            io.StringIO(_PROSE_ABOVE_BUILT_BLOCK),
+            ("--now", "Ready.", "--size", "S"),
+            ("Write the docs", _PROSE_ABOVE_BUILT_BLOCK, body.ItemKind.TASK),
+            id="a_piped_block_matching_the_flags_kept_as_piped",
+        ),
+        pytest.param(
+            _Terminal("never read\n"),
+            ("--kind", "container", "--now", "Ready.", "--next", "Cut it.", "--done-when", "Done."),
+            (
+                "Write the docs",
+                "Blocked by: nichts\n\n```agent-claim\nversion = 1\n"
+                'now = "Ready."\nnext = "Cut it."\ndone_when = "Done."\n```\n',
+                body.ItemKind.CONTAINER,
+            ),
+            id="a_terminal_pipes_nothing_and_a_container_keeps_its_skeleton_prose",
+        ),
+    ],
+)
+def test_item_new_on_github_builds_the_block_its_piped_body_lacks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stdin: TextIO,
+    flags: tuple[str, ...],
+    stored: tuple[str, str, body.ItemKind],
+) -> None:
+    """Issue #555 line 1: `item new` builds the block from its flags below
+    the piped prose, keeps a piped block the flags agree with byte for byte,
+    and reads nothing from a terminal."""
+    client = _item_new_github_client(monkeypatch, tmp_path, "")
+    monkeypatch.setattr(sys, "stdin", stdin)
+
+    status = issue_claim.main(["item", "new", "--title", "Write the docs", *flags])
+
+    assert (status, client.created_issues) == (0, [stored])
+
+
 @pytest.mark.parametrize(
     ("retype_dropped", "status", "out", "err", "retyped", "created"),
     [
@@ -19805,11 +19864,25 @@ def test_item_edit_kind_retypes_a_github_issue_or_refuses(
     ("piped_body", "flags", "closed", "err"),
     [
         pytest.param(
-            "no block\n",
-            ("--title", "Write the docs"),
+            "Prose only.\n",
+            ("--title", "Write the docs", "--now", "Ready."),
             (),
-            "ERROR: body malformed: agent-claim: no agent-claim block\n",
-            id="invalid_body",
+            "ERROR: body incomplete: Next, Done when\n",
+            id="prose_whose_flags_leave_the_block_incomplete",
+        ),
+        pytest.param(
+            complete_contract("Ship it.", size="S"),
+            ("--title", "Write the docs", "--size", "M"),
+            (),
+            """ERROR: --size "M" contradicts the piped block's size = "S"\n""",
+            id="a_flag_contradicting_the_piped_block",
+        ),
+        pytest.param(
+            complete_contract("Ship it.", scope=["src/b.py"]),
+            ("--title", "Write the docs", "--scope", "src/a.py", "--next", "Ship it."),
+            (),
+            """ERROR: --scope ["src/a.py"] contradicts the piped block's scope = ["src/b.py"]\n""",
+            id="a_scope_contradicting_the_piped_block",
         ),
         pytest.param(
             _ITEM_NEW_BODY,
@@ -20006,6 +20079,7 @@ def test_item_new_json_reports_ok_reason_created(
     monkeypatch.setattr(client, "create_item", lambda _write: item_id, raising=False)
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
     monkeypatch.setattr(issue_claim, "_state_ref_forge", lambda _context: client)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
 
     status = issue_claim.main(["item", "new", "--title", "Fresh Item", "--json"])
 
@@ -20405,6 +20479,7 @@ def _state_ref_item_new(
         client, "create_item", lambda _write: items.format_item_id(43), raising=False
     )
     monkeypatch.setattr(client, "open_item_titles", tuple, raising=False)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
     return client, ["item", "new", "--title", "Fresh Item"]
 
 

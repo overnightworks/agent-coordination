@@ -67,6 +67,13 @@ EXPECTATION_TEXT = "Does the offline board render without gh?"
 
 
 @pytest.fixture(autouse=True)
+def _nothing_piped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every command reads an empty stdin, a shell that redirected nothing,
+    unless its scenario pipes a body of its own."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+
+@pytest.fixture(autouse=True)
 def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_AUTHOR_NAME", "Test")
     monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@example.com")
@@ -2882,6 +2889,96 @@ class TestCliStateRefForge:
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
         assert locate_agent_claim_block(stored).data["whole"] == reason
 
+    @pytest.mark.parametrize(
+        ("piped", "flags", "err", "prefix", "block"),
+        [
+            pytest.param(
+                "Ship the importer.\n",
+                ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged.", "--size", "S"),
+                "",
+                "Ship the importer.\n\n```agent-claim\n",
+                {"now": "Ready.", "next": "Build it.", "done_when": "Merged.", "size": "S"},
+                id="prose_above_a_block_built_from_the_flags",
+            ),
+            pytest.param(
+                "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+                'now = "Ready."\nnext = ""\ndone_when = ""\n```\n',
+                ("--now", "Ready.", "--size", "S"),
+                "{item} misses Next; aco item edit {item} fills it\n"
+                "{item} misses Done when; aco item edit {item} fills it\n",
+                "Ship the importer.\n\n```agent-claim\n",
+                {"now": "Ready.", "next": "", "done_when": "", "size": "S"},
+                id="a_piped_block_matching_the_flags_kept_and_its_gaps_named",
+            ),
+            pytest.param(
+                "",
+                (),
+                "{item} misses Now; aco item edit {item} fills it\n"
+                "{item} misses Next; aco item edit {item} fills it\n"
+                "{item} misses Done when; aco item edit {item} fills it\n",
+                "```agent-claim\n",
+                {"now": "", "next": "", "done_when": ""},
+                id="nothing_piped_writes_the_skeleton_and_names_each_gap",
+            ),
+        ],
+    )
+    def test_item_new_stores_the_piped_prose_and_the_block_its_flags_build(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        piped: str,
+        flags: tuple[str, ...],
+        err: str,
+        prefix: str,
+        block: dict[str, object],
+    ) -> None:
+        """Issue #555 lines 1-3: under state-ref, `item new` stores the
+        piped body as github does -- prose above a block its flags build,
+        or a piped block the flags agree with -- never dropping it; every
+        section left empty is named on stderr, one line each."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        monkeypatch.setattr(sys, "stdin", io.StringIO(piped))
+
+        status = issue_claim.main(["item", "new", "--title", "Ship the importer", *flags])
+
+        captured = capsys.readouterr()
+        printed = captured.out.strip()
+        assert (status, captured.err) == (0, err.format(item=printed))
+        state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
+        assert state.tip is not None
+        stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
+        stored_block = locate_agent_claim_block(stored).data
+        assert stored.startswith(prefix)
+        assert {key: stored_block[key] for key in block} == block
+
+    def test_item_new_refuses_a_piped_block_its_flags_contradict(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #555 line 1: a flag naming another value than the piped
+        block refuses, naming both, and writes nothing."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        monkeypatch.setattr(sys, "stdin", io.StringIO(_github_body(_CHILD_A_PROJECTION)))
+        command = ["item", "new", "--title", "Ship the importer", "--now", "Elsewhere."]
+
+        status = issue_claim.main(command)
+
+        assert (status, capsys.readouterr().err) == (
+            2,
+            'ERROR: --now "Elsewhere." contradicts the piped block\'s '
+            f'now = "{_CHILD_A_PROJECTION.now}"\n',
+        )
+        state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
+        assert state.tip is not None
+        assert set(store.read_item_files(worktree, state.tip)) == set(_item_files())
+
     def test_item_new_size_refuses_an_invalid_value_before_any_write(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -3718,7 +3815,10 @@ class TestCliStateRefForge:
         item_files = {**_item_files(), f"{CHILD_A_ID}.md": parent_body.encode()}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
-        status = issue_claim.main(["item", "new", "--title", "Fresh Child", "--parent", CHILD_A_ID])
+        command = ["item", "new", "--title", "Fresh Child", "--parent", CHILD_A_ID]
+        projection = ["--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."]
+
+        status = issue_claim.main([*command, *projection])
 
         captured = capsys.readouterr()
         printed = captured.out.strip()
