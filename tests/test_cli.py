@@ -17581,14 +17581,21 @@ def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: P
     (Path(common.stdout.strip()) / "config.lock").touch()
 
 
-def _refuse_the_git_config_call(monkeypatch: pytest.MonkeyPatch, option: str, detail: str) -> None:
+def _refuse_the_git_config_call(
+    monkeypatch: pytest.MonkeyPatch, option: str, detail: str, *, served_first: int = 0
+) -> None:
+    """Refuse every `git config` call naming `option` after the first
+    `served_first` of them."""
     run_git = checkout._git_run
+    calls: list[list[str]] = []
 
     def refuse_the_call(
         arguments: list[str], *, directory: Path | None = None
     ) -> process.CapturedResult:
         if option in arguments:
-            return process.CapturedResult(3, b"", f"{detail}\n".encode())
+            calls.append(arguments)
+            if len(calls) > served_first:
+                return process.CapturedResult(3, b"", f"{detail}\n".encode())
         return run_git(arguments, directory=directory)
 
     monkeypatch.setattr(checkout, "_git_run", refuse_the_call)
@@ -17652,34 +17659,64 @@ def _time_out_the_deletion_and_refuse_the_write_back(
     _refuse_the_git_config_call(monkeypatch, "--add", "error: the write-back failed")
 
 
+def _time_out_the_deletion_and_refuse_the_write_back_midway(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    _time_out_the_deletion_once_prepared(monkeypatch, lane)
+    _refuse_the_git_config_call(
+        monkeypatch, "--add", "error: the write-back failed", served_first=1
+    )
+
+
+def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    _time_out_the_deletion_and_refuse_the_write_back_midway(monkeypatch, lane)
+    _refuse_the_git_config_call(
+        monkeypatch, "--remove-section", "fatal: the undo failed", served_first=1
+    )
+
+
 @pytest.mark.parametrize(
-    ("interfere", "reported_failure", "kept_upstream"),
+    ("interfere", "reported_failure", "kept_entries"),
     [
-        pytest.param(_commit_past_the_landed_head, "", "origin", id="commit-raced-past-the-head"),
-        pytest.param(_lock_the_repository_configuration, "", "origin", id="configuration-locked"),
+        pytest.param(_commit_past_the_landed_head, "", None, id="commit-raced-past-the-head"),
+        pytest.param(_lock_the_repository_configuration, "", None, id="configuration-locked"),
         pytest.param(
             _refuse_the_branch_configuration_listing,
             "fatal: the listing failed\n",
-            "origin",
+            None,
             id="configuration-listing-refused",
         ),
         pytest.param(
             _fail_to_start_the_deletion,
             "git failed to run: denied\n",
-            "origin",
+            None,
             id="deletion-failed-to-start",
         ),
-        pytest.param(_time_out_the_deletion_once_prepared, "", "origin", id="deletion-timed-out"),
+        pytest.param(_time_out_the_deletion_once_prepared, "", None, id="deletion-timed-out"),
         pytest.param(
             _time_out_the_deletion_and_refuse_the_write_back,
             "error: the write-back failed\n",
-            "",
+            0,
             id="deletion-timed-out-and-write-back-refused",
+        ),
+        pytest.param(
+            _time_out_the_deletion_and_refuse_the_write_back_midway,
+            "error: the write-back failed\n",
+            0,
+            id="deletion-timed-out-and-write-back-refused-midway",
+        ),
+        pytest.param(
+            _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo,
+            "error: the write-back failed; fatal: the undo failed\n",
+            1,
+            id="deletion-timed-out-and-write-back-and-its-undo-refused-midway",
         ),
         pytest.param(
             _time_out_the_deletion_and_hold_the_ref_for_the_write_back,
             "fatal: prepare: cannot lock ref",
-            "",
+            0,
             id="deletion-timed-out-and-ref-held-for-the-write-back",
         ),
     ],
@@ -17690,7 +17727,7 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     tmp_path: Path,
     interfere: Callable[[pytest.MonkeyPatch, Path], None],
     reported_failure: str,
-    kept_upstream: str,
+    kept_entries: int | None,
 ) -> None:
     """Issue #578 review finding 3: a clean commit made in the lane after
     cleanup judged its tip to be the squashed head, but before the branch
@@ -17702,12 +17739,15 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     deletion git never confirms after that
     section is gone writes the section back onto the kept branch. Every way
     the kept branch keeps its tip and its own configuration -- unless git
-    refuses that write-back, which the report then names."""
+    refuses that write-back, which the report then names -- and then no
+    part of the section returns, unless git refuses to take back the part
+    it already wrote, which the report names too."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
     _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
     _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
+    section = _branch_section(repo, LANDING_BRANCH)
     pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
     client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
     remove = checkout.remove_linked_worktree
@@ -17726,8 +17766,18 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     assert (status, output.err) == (0, "")
     assert f"worktree: removed; branch kept -- git failure: {reported_failure}" in output.out
     assert [_real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()] == kept_tips
-    upstream = _real_git(repo, "config", f"branch.{LANDING_BRANCH}.remote", check=False)
-    assert upstream.stdout.strip() == kept_upstream
+    assert _branch_section(repo, LANDING_BRANCH) == section[:kept_entries]
+
+
+def _branch_section(repo: Path, branch: str) -> list[str]:
+    """`branch`'s own `branch.<name>` entries, in the order git lists them."""
+    listed = _real_git(repo, "config", "--get-regexp", r"^branch\.", check=False)
+    prefix = f"branch.{branch}."
+    return [
+        line
+        for line in listed.stdout.splitlines()
+        if line.startswith(prefix) and "." not in line.split(" ", 1)[0].removeprefix(prefix)
+    ]
 
 
 def _recreate_branch_after_its_deletion(

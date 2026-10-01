@@ -1640,10 +1640,13 @@ def _restore_branch_section(
         return
 
     def write_back_under_the_ref_lock() -> bool:
-        for key, value in entries:
+        for already_written, (key, value) in enumerate(entries):
             written = _git_run(["config", "--local", "--add", key, value])
             if written.exit_status != 0:
-                raise ClaimError(process.git_failure_detail(written))
+                refusal = process.git_failure_detail(written)
+                raise ClaimError(
+                    _without_a_partial_section(branch, refusal) if already_written else refusal
+                )
         return True
 
     verified = _git_ref_transaction(
@@ -1652,6 +1655,17 @@ def _restore_branch_section(
     )
     if verified.exit_status != 0:
         raise ClaimError(process.git_failure_detail(verified))
+
+
+def _without_a_partial_section(branch: str, refusal: str) -> str:
+    """Remove the entries a write-back put back before git refused the next
+    one with `refusal` -- git writes a section one entry at a time, and a
+    kept branch gets all of its section or none -- and return `refusal`,
+    with git's refusal to remove them appended when it refuses that too."""
+    undone = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
+    if undone.exit_status == 0:
+        return refusal
+    return f"{refusal.rstrip()}; {process.git_failure_detail(undone)}"
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:
