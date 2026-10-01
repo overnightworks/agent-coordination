@@ -1,8 +1,0 @@
-claim_id = "ffcc47f23b574a7396a567c50fa58533"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "d7f465ba1a977603ecfc22e1bf711d64635bbb9a"
-branch = "claude/issue-566-next-advice-wide-slug"
-scope = ["scripts/vulture_whitelist.py", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
-opened_commit = "41d7106b89d840bbe3077cce51f6108c300f1e15"
-whole_reason = "next's advice for wide items and slug-less titles, from the owners start and claim use"
