@@ -855,7 +855,7 @@ def malformed_parsed_body(defects: tuple[ContractDefect, ...]) -> ParsedBody:
 
 
 _NO_BLOCK_PARSED_BODY = malformed_parsed_body(
-    (ContractDefect(BLOCK_FENCE_INFO, "no agent-claim block"),)
+    (ContractDefect(BLOCK_FENCE_INFO, f"no {BLOCK_FENCE_INFO} block"),)
 )
 
 
@@ -976,20 +976,25 @@ def _block_data(body: str) -> dict[str, object] | ParsedBody:
         return malformed_parsed_body(
             (
                 ContractDefect(
-                    BLOCK_FENCE_INFO, "multiple agent-claim blocks; exactly one is allowed"
+                    BLOCK_FENCE_INFO,
+                    f"multiple {BLOCK_FENCE_INFO} blocks; exactly one is allowed",
                 ),
             )
         )
     _start, end, content = fences[0]
     if end is None:
         return malformed_parsed_body(
-            (ContractDefect(BLOCK_FENCE_INFO, "unclosed agent-claim block"),)
+            (ContractDefect(BLOCK_FENCE_INFO, f"unclosed {BLOCK_FENCE_INFO} block"),)
         )
     try:
         data = tomllib.loads(content)
     except tomllib.TOMLDecodeError as error:
         return malformed_parsed_body(
-            (ContractDefect(BLOCK_FENCE_INFO, f"agent-claim block is not valid TOML: {error}"),)
+            (
+                ContractDefect(
+                    BLOCK_FENCE_INFO, f"{BLOCK_FENCE_INFO} block is not valid TOML: {error}"
+                ),
+            )
         )
     return data
 
@@ -1051,10 +1056,10 @@ def locate_block(body: str) -> LocatedBlock:
     lines = body.splitlines(keepends=True)
     matches = _fence_matches(body)
     if not matches:
-        raise protocol.ClaimError("locate_block found no recognized agent-claim fence")
+        raise protocol.ClaimError(f"locate_block found no recognized {BLOCK_FENCE_INFO} fence")
     start_line, end_line, content = matches[0]
     if end_line is None:
-        raise protocol.ClaimError("locate_block found no closed agent-claim fence")
+        raise protocol.ClaimError(f"locate_block found no closed {BLOCK_FENCE_INFO} fence")
     content_start = sum(len(line) for line in lines[: start_line + 1])
     content_end = sum(len(line) for line in lines[:end_line])
     newline = _line_ending(lines[start_line]) or "\n"

@@ -827,16 +827,20 @@ def _add_check_parser(commands: argparse._SubParsersAction) -> None:
 
 
 def _add_body_parser(commands: argparse._SubParsersAction) -> None:
-    body = commands.add_parser(
-        "body", help="check a piped body's fenced agent-claim block for defects before the forge"
+    body_parser = commands.add_parser(
+        "body",
+        help=(
+            f"check a piped body's fenced {body.BLOCK_FENCE_INFO} block for defects "
+            "before the forge"
+        ),
     )
-    body.add_argument(
+    body_parser.add_argument(
         "--check",
         action="store_true",
         required=True,
         help="read a body from stdin and report its defects",
     )
-    _add_json_flag(body)
+    _add_json_flag(body_parser)
 
 
 def _add_brief_parser(commands: argparse._SubParsersAction) -> None:
@@ -849,7 +853,7 @@ def _add_brief_parser(commands: argparse._SubParsersAction) -> None:
         "--step",
         choices=[step.value for step in board.BriefStep],
         default=None,
-        help="also print this lane step's own rules and checks from .agent-claim/brief.toml",
+        help=f"also print this lane step's own rules and checks from {board.BRIEF_CONFIG_PATH}",
     )
     _add_json_flag(brief)
 
@@ -870,7 +874,7 @@ def _add_item_parser(commands: argparse._SubParsersAction) -> None:
         "new",
         help=(
             "create a fresh item and print its id; its body is read from stdin, a piped "
-            "body without an agent-claim block getting one built from the flags"
+            f"body without an {body.BLOCK_FENCE_INFO} block getting one built from the flags"
         ),
     )
     for key, meaning in ITEM_NEW_PROJECTION_FLAGS:
@@ -7701,7 +7705,7 @@ def _located_block_or_refuse(
         defect = parsed.contract.defects[0]
         raise protocol.ClaimUnavailableError(
             f"{board.item_label(number, storage)} {body.body_defect_text(defect)}; "
-            f"{command} needs a valid agent-claim block"
+            f"{command} needs a valid {body.BLOCK_FENCE_INFO} block"
         )
     return body.locate_block(raw_body)
 
@@ -7769,7 +7773,7 @@ def _cut_slice(
             removal = _SliceRowRemoval(
                 container=number,
                 new_body=body.replace_block(target.body, located, new_data),
-                step=f"remove row {link.index} from {label}'s agent-claim block",
+                step=f"remove row {link.index} from {label}'s {body.BLOCK_FENCE_INFO} block",
             )
             _link_created_child(client, removal, child, storage)
     except forge.ForgeIssueTypeNotSetError as error:

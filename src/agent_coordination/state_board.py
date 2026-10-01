@@ -38,6 +38,7 @@ from typing import Protocol, cast
 
 from . import board, forge, items
 from .body import (
+    BLOCK_FENCE_INFO,
     RECORD_KEY,
     BodyReadState,
     ContractDefect,
@@ -269,7 +270,7 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
     parsed = parse_body(text, storage=Storage.STATE_REF)
     if parsed.read_state is not BodyReadState.VALID or parsed.record is None:
         return _MalformedItem(
-            problem="has a malformed agent-claim block",
+            problem=f"has a malformed {BLOCK_FENCE_INFO} block",
             defect=(parsed.contract.defects or (_NO_RECORD,))[0],
             oid=oid,
             text=text,
@@ -282,7 +283,7 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
 def _malformed_item_refusal(item_id: str, malformed: _MalformedItem) -> MalformedStateTreeError:
     return MalformedStateTreeError(
         f"item {item_id} {malformed.problem}; repair it with aco item edit {item_id} "
-        "and a body whose agent-claim block carries a valid [record]"
+        f"and a body whose {BLOCK_FENCE_INFO} block carries a valid [record]"
     )
 
 
