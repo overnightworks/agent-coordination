@@ -446,7 +446,7 @@ class BoardConfig:
 
 
 # The body pin (issue #150) is still a key this file defines, but no longer
-# a setting: the typed `agent-claim` block is the one grammar, so `"block"`
+# a setting: the typed `aco` block is the one grammar, so `"block"`
 # is its only legal value and there is nothing left for `BoardConfig` to
 # carry (issue #204). It must stay *known* all the same -- five repositories
 # pin it, and `_refuse_unknown_config_keys` lies on the path of every store
@@ -454,7 +454,7 @@ class BoardConfig:
 BODY_CONTRACT_KEY = "body_contract"
 BODY_CONTRACT_BLOCK = "block"
 BODY_CONTRACT_PROSE = "prose"
-# Every key `.agent-claim/board.toml` defines; anything else is a typo, and
+# Every key `.aco/board.toml` defines; anything else is a typo, and
 # `_refuse_unknown_config_keys` names it rather than reading past it.
 CONFIG_KEYS = frozenset({setting.name for setting in fields(BoardConfig)}) | {BODY_CONTRACT_KEY}
 
@@ -766,14 +766,14 @@ def parse_config(text: str, path: Path) -> BoardConfig:
 
 # The repository-owned rules a lane step's dispatch brief prints (issue
 # #324): a repository used to carry these ~25 lines by hand in every
-# dispatch, pasted fresh each time. `.agent-claim/brief.toml` gives it one
+# dispatch, pasted fresh each time. `.aco/brief.toml` gives it one
 # tracked owner instead, read only when `aco brief --step` asks for it.
 BRIEF_CONFIG_PATH = Path(".aco/brief.toml")
 
 
 class BriefStep(StrEnum):
     """The four lane steps a dispatch brief can print rules and checks for
-    (issue #324) -- `aco brief --step`'s own choices, and `.agent-claim/
+    (issue #324) -- `aco brief --step`'s own choices, and `.aco/
     brief.toml`'s four section names."""
 
     BUILD = "build"
@@ -784,7 +784,7 @@ class BriefStep(StrEnum):
 
 @dataclass(frozen=True)
 class BriefStepRules:
-    """One `.agent-claim/brief.toml` section's own content: the repository's
+    """One `.aco/brief.toml` section's own content: the repository's
     conduct sentences for this step (`rules`) and the exact commands that
     verify it (`checks`). Either list is empty, never absent, when the
     section names none -- a step no repository has opinions about yet is not
@@ -796,7 +796,7 @@ class BriefStepRules:
 
 @dataclass(frozen=True)
 class BriefConfig:
-    """`.agent-claim/brief.toml`'s own four sections, one `BriefStepRules`
+    """`.aco/brief.toml`'s own four sections, one `BriefStepRules`
     each -- the file `load_brief_config` reads and `for_step` indexes by the
     same `BriefStep` `aco brief --step` accepts."""
 
@@ -814,7 +814,7 @@ class BriefConfig:
         }[step]
 
 
-# Every top-level section `.agent-claim/brief.toml` defines; anything else is
+# Every top-level section `.aco/brief.toml` defines; anything else is
 # a typo, refused by name the same way `_refuse_unknown_config_keys` refuses
 # one in `board.toml`.
 BRIEF_CONFIG_STEPS = frozenset(step.value for step in BriefStep)
@@ -864,7 +864,7 @@ def _refuse_unknown_brief_config_keys(raw: dict[str, object], path: Path) -> Non
 
 
 def load_brief_config(path: Path = BRIEF_CONFIG_PATH) -> BriefConfig | None:
-    """The repository's own `.agent-claim/brief.toml` (issue #324), or `None`
+    """The repository's own `.aco/brief.toml` (issue #324), or `None`
     when it does not exist at `path` at all. Unlike `load_config`, absence
     is not a default to fall back on: `aco brief --step` refuses on it, so
     an agent asking for rules that were never written learns that instead

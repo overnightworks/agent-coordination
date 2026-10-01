@@ -131,7 +131,7 @@ to the clause each names below.
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml`, and `ACO_AGENT` set to `Ada`.
+tracked `.aco/board.toml`, and `ACO_AGENT` set to `Ada`.
 
 ### E-CLM-01 — lane mode without `--scope` refuses by name
 
@@ -229,7 +229,7 @@ exit 2
 
 ### E-CLM-09 — a canonical remote with no URL is named before the checkout check
 
-Setup: bare-remote added as `origin` only, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, a global `[remote "hub"] prune = true`, `refs/remotes/hub/HEAD` left behind naming `main`, a linked worktree on `main`
+Setup: bare-remote added as `origin` only, `.aco/board.toml` tracked naming `canonical_remote = "hub"`, a global `[remote "hub"] prune = true`, `refs/remotes/hub/HEAD` left behind naming `main`, a linked worktree on `main`
 
 ```console
 $ aco claim 42 --scope src/x.py

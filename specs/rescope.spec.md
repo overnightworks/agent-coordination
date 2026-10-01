@@ -89,7 +89,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 
 - [ ] [RESC-22] For an issue claim, one rescope writes the combined scope into the item body's own `scope`, then the claim; a lane claim names no item, so only its claim moves (see E-RESC-01).
 - [ ] [RESC-23] A claim write failing after the body write refuses `<label> body scope now reads <scope>, but the claim was not rescoped: <error>; run the same rescope again`, exit `2` (see E-RESC-08).
-- [ ] [RESC-24] An item body without a valid `agent-claim` block refuses `<label> <defect>; rescope needs a valid agent-claim block`, exit `2`, before either write; a failed body write leaves the claim as it stood.
+- [ ] [RESC-24] An item body without a valid `aco` block refuses `<label> <defect>; rescope needs a valid aco block`, exit `2`, before either write; a failed body write leaves the claim as it stood.
 - [ ] [RESC-25] An issue claim's wide scope is admitted by `--whole`, the stored reason, or the body's own `whole`, as `claim` judges it (CLM-22), and `--whole` is written into the body too.
 
 ## `--json`'s own `reason` vocabulary
@@ -111,8 +111,8 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml`, issue #42 whose body carries a valid
-`agent-claim` block, and `ACO_AGENT` set to `Ada`; `<worktree>` is the
+tracked `.aco/board.toml`, issue #42 whose body carries a valid
+`aco` block, and `ACO_AGENT` set to `Ada`; `<worktree>` is the
 runner's own linked-worktree directory, and every example runs inside it
 unless its setup names another directory.
 
@@ -166,12 +166,12 @@ exit 2
 
 ### E-RESC-09 — an item body without a block refuses before either write
 
-Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`, issue #42's body carrying no `agent-claim` block
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`, issue #42's body carrying no `aco` block
 
 ```console
 $ aco rescope 42 --add AGENTS.md --json
-2> ERROR: #42 body malformed: agent-claim: no agent-claim block; rescope needs a valid agent-claim block
-{"ok": false, "reason": "precondition_failed", "message": "#42 body malformed: agent-claim: no agent-claim block; rescope needs a valid agent-claim block"}
+2> ERROR: #42 body malformed: aco: no aco block; rescope needs a valid aco block
+{"ok": false, "reason": "precondition_failed", "message": "#42 body malformed: aco: no aco block; rescope needs a valid aco block"}
 exit 2
 ```
 
@@ -212,7 +212,7 @@ exit 2
 
 ### E-RESC-06 — a canonical remote with no URL configured is named, as `protect` does
 
-Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, the tracked `.agent-claim/board.toml` naming `canonical_remote = "upstream"`, `upstream` only a URL-less `remote.upstream.fetch` line
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, the tracked `.aco/board.toml` naming `canonical_remote = "upstream"`, `upstream` only a URL-less `remote.upstream.fetch` line
 
 ```console
 $ aco rescope 42 --add <worktree>/README.md

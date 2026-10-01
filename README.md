@@ -24,8 +24,8 @@ repository: GitHub today, forges next. Workspace-recovery (`register`, `run`,
 ## Install and maintain
 
 ```bash
-uv tool install git+https://github.com/overnightworks/agent-coordination.git@v3.2.0
-# or: pipx install git+https://github.com/overnightworks/agent-coordination.git@v3.2.0
+uv tool install git+https://github.com/overnightworks/agent-coordination.git@v4.0.0
+# or: pipx install git+https://github.com/overnightworks/agent-coordination.git@v4.0.0
 uv tool upgrade agent-coordination
 uv tool uninstall agent-coordination
 ```
@@ -49,8 +49,8 @@ block exports it once.
 
 ```bash
 # adopt once, without aco: a pull request adding only this file, merged into main
-mkdir .agent-claim && touch .agent-claim/board.toml
-git add -f .agent-claim/board.toml && git commit -m "adopt aco"
+mkdir .aco && touch .aco/board.toml
+git add -f .aco/board.toml && git commit -m "adopt aco"
 # once that commit is on main
 export ACO_AGENT=Ada
 aco bootstrap
@@ -63,7 +63,7 @@ aco land 57
 ```
 
 Adoption is the one step outside the claim protocol: until this checkout
-carries `.agent-claim/board.toml`, every store command refuses and names
+carries `.aco/board.toml`, every store command refuses and names
 its repair (`specs/storage-pin.spec.md`, PIN-32): this step when the last
 fetched trunk lacks the file, merging that trunk when only this branch
 predates it, and restoring the file when this branch removed it itself.
@@ -133,9 +133,9 @@ instead of issues. The pin's own commit is the adoption step, pushed to
 ```bash
 git init --bare -b main /srv/aco/repo.git
 git clone file:///srv/aco/repo.git repo && cd repo
-mkdir .agent-claim
-printf 'storage = "state-ref"\n' > .agent-claim/board.toml
-git add -f .agent-claim/board.toml && git commit -m "pin state-ref storage"
+mkdir .aco
+printf 'storage = "state-ref"\n' > .aco/board.toml
+git add -f .aco/board.toml && git commit -m "pin state-ref storage"
 git push -u origin main
 git remote set-head origin main
 aco bootstrap
@@ -273,7 +273,7 @@ in a checkout, except the ignored `settings.local.json` that repairs it.
 
 ## Configuration
 
-`.agent-claim/board.toml` defines exactly seven top-level keys; any other key
+`.aco/board.toml` defines exactly seven top-level keys; any other key
 is refused by name.
 
 - `storage` -- `"github"` (default) or `"state-ref"`; the pin and its
@@ -380,7 +380,7 @@ by exactly one file below; this table is the map, not a copy.
 | `aco body --check` | `specs/body.spec.md` | validates a piped body offline |
 | `aco protect` | `specs/protect.spec.md` | the `PreToolUse` hook's write verdict |
 | `aco register/run/login` | `specs/workspace.spec.md` | records, resumes, and autostarts a provider workspace mapping |
-| `agent-claim` block grammar | `specs/body-block.spec.md` | the fenced TOML block every item-reading command parses |
+| `aco` block grammar | `specs/body-block.spec.md` | the fenced TOML block every item-reading command parses |
 | claim record | `specs/claim-record.spec.md` | the stored claim fields `claim`/`release`/`rescope`/`status`/`protect` share |
 | state ref transport | `specs/ref-store-cas.spec.md` | the compare-and-swap `refs/aco/state` every store command reads and writes |
 | landing grammar | `specs/landing-grammar.spec.md` | what counts as a landing, read by `check`, `release --merged`, and `board` |

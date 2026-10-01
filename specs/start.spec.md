@@ -119,7 +119,7 @@ outcome the store cannot tell keeps it and says so (START-25); an interrupt remo
 ## Examples
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local bare repository with
-`main` at one commit, a git identity, `origin/HEAD`, a tracked `.agent-claim/board.toml`, and
+`main` at one commit, a git identity, `origin/HEAD`, a tracked `.aco/board.toml`, and
 `ACO_AGENT` set to `Ada`. A session below also names a fixed, deterministic fake `gh` as a setup
 precondition (the shape `specs/landing-grammar.spec.md` already uses) for reading the item's own
 title and body.
@@ -330,7 +330,7 @@ exit 2
 
 ### E-START-17 -- a canonical remote with no URL configured builds nothing
 
-Setup: as E-START-11, but the body names a scope and `.agent-claim/board.toml` names
+Setup: as E-START-11, but the body names a scope and `.aco/board.toml` names
 `canonical_remote = "hub"`, which this clone never added beside its `origin`; the same
 holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
 

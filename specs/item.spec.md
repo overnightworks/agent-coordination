@@ -232,7 +232,7 @@ already `aco item new --title "Ship it"`
 ````console
 $ aco item show <item-id>
 <item-id> · #<n> · open · parent none · origin none
-```agent-claim
+```aco
 version = 1
 now = ""
 next = ""
@@ -249,7 +249,7 @@ updated_at = "<updated_at>"
 ```
 exit 0
 $ aco item show <item-id> --json
-{"ok": true, "reason": "shown", "item": "<item-id>", "number": <n>, "state": "open", "parent": null, "origin": null, "body": "```agent-claim\nversion = 1\nnow = \"\"\nnext = \"\"\ndone_when = \"\"\n\n[record]\ntitle = \"Ship it\"\nstate = \"open\"\nkind = \"task\"\nlabels = []\nblocked_by = []\ncreated_at = \"<created_at>\"\nupdated_at = \"<updated_at>\"\n```\n"}
+{"ok": true, "reason": "shown", "item": "<item-id>", "number": <n>, "state": "open", "parent": null, "origin": null, "body": "```aco\nversion = 1\nnow = \"\"\nnext = \"\"\ndone_when = \"\"\n\n[record]\ntitle = \"Ship it\"\nstate = \"open\"\nkind = \"task\"\nlabels = []\nblocked_by = []\ncreated_at = \"<created_at>\"\nupdated_at = \"<updated_at>\"\n```\n"}
 exit 0
 ````
 
@@ -260,7 +260,7 @@ already open
 
 ````console
 $ aco item edit <item-id> <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = "Cut on 19.09.2026."
 next = "Build it."
@@ -270,7 +270,7 @@ BODY
 EDITED <item-id>
 exit 0
 $ aco item edit <item-id> --json <<'BODY'
-```agent-claim
+```aco
 version = 1
 now = "Cut on 19.09.2026."
 next = "Ship it."
@@ -299,7 +299,7 @@ exit 0
 
 ### E-ITEM-05 — the `storage = "github"` refusals
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked with no `storage` key
+Setup: bare-remote, `.aco/board.toml` tracked with no `storage` key
 (the default)
 
 ```console
@@ -319,16 +319,16 @@ Setup: bare-remote, `storage = "state-ref"` tracked, bootstrapped, `<item-id>` a
 $ aco item edit <item-id> --json <<'BODY'
 no block
 BODY
-{"ok": false, "reason": "body_invalid", "defects": ["body malformed: agent-claim: no agent-claim block"], "message": "body malformed: agent-claim: no agent-claim block"}
-2> ERROR: body malformed: agent-claim: no agent-claim block
+{"ok": false, "reason": "body_invalid", "defects": ["body malformed: aco: no aco block"], "message": "body malformed: aco: no aco block"}
+2> ERROR: body malformed: aco: no aco block
 exit 2
 ```
 
 ### E-ITEM-07 — a GitHub issue under a container, then a twin
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked with no `storage` key,
+Setup: bare-remote, `.aco/board.toml` tracked with no `storage` key,
 fake `gh`, open container `#90`, open task `#91` titled `Ship the importer`,
-`#92` the next free number; `body.md` a complete `agent-claim` block
+`#92` the next free number; `body.md` a complete `aco` block
 
 ```console
 $ aco item new --title "Write the importer docs" --kind feature --parent 90 < body.md
@@ -382,7 +382,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-3e
 
 ```console
 $ aco item show aco-3e26d9
-2> ERROR: item aco-3e26d9 has a malformed agent-claim block; repair it with aco item edit aco-3e26d9 and a body whose agent-claim block carries a valid [record]
+2> ERROR: item aco-3e26d9 has a malformed aco block; repair it with aco item edit aco-3e26d9 and a body whose aco block carries a valid [record]
 exit 2
 $ aco item new --title "Fresh item"
 <item-id>
@@ -476,8 +476,8 @@ exit 2
 
 ### E-ITEM-16 — prose above a block the flags build, then a contradicting block
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked with no `storage` key,
-fake `gh`, `#95` the next free number; `body.md` a complete `agent-claim`
+Setup: bare-remote, `.aco/board.toml` tracked with no `storage` key,
+fake `gh`, `#95` the next free number; `body.md` a complete `aco`
 block with `size = "S"`
 
 ```console

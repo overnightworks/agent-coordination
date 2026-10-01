@@ -15,8 +15,8 @@ those IDs rather than restating them. `<sha>` is the runner's own commit id.
 
 | state \ trigger | `aco bootstrap` |
 |---|---|
-| `.agent-claim/board.toml` absent | PIN-32 |
-| `.agent-claim/board.toml` present but untracked or ignored | PIN-01 |
+| `.aco/board.toml` absent | PIN-32 |
+| `.aco/board.toml` present but untracked or ignored | PIN-01 |
 | the canonical remote has no URL configured | BOOT-04 |
 | ref absent, proven (`ls-remote` exit 2) | CAS-02 |
 | ref present, valid schema | CAS-01 |
@@ -56,7 +56,7 @@ This command defines no `--json`, so its own sink never invents an error object 
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml` naming no `storage` key, and `ACO_AGENT`
+tracked `.aco/board.toml` naming no `storage` key, and `ACO_AGENT`
 set to `Ada`; `<sha>` is the runner's own commit id. Bootstrap's own
 idempotency and empty-tree shape are `specs/ref-store-cas.spec.md`'s own
 proof (CAS-01, CAS-02, E-CAS-01); the sessions below cover only this file's
@@ -97,7 +97,7 @@ exit 2
 
 ### E-BOOT-05 -- a canonical remote with no URL configured is named
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, which this clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
+Setup: bare-remote, `.aco/board.toml` tracked naming `canonical_remote = "hub"`, which this clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
 
 ```console
 $ aco bootstrap

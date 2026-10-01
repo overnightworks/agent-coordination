@@ -105,7 +105,7 @@ the peer and its claim id, never the meeting paths.
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml` naming no `storage` key, and `ACO_AGENT`
+tracked `.aco/board.toml` naming no `storage` key, and `ACO_AGENT`
 set to `Ada`; `<sha>`, `<tip>`, and `<claim-id>` are the runner's own values.
 
 ### E-STAT-01 -- a live claim, text and `--json`
@@ -193,7 +193,7 @@ exit 0
 
 ### E-STAT-06 -- lane-shared files, an entry naming no file, and a defective trunk copy
 
-Setup: bare-remote, bootstrapped, the trunk's committed `.agent-claim/board.toml` naming
+Setup: bare-remote, bootstrapped, the trunk's committed `.aco/board.toml` naming
 `lane_shared = ["scripts/registry.txt", "src"]` beside a tracked `scripts/registry.txt`, a
 linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
 
@@ -215,10 +215,10 @@ lane fetches it:
 $ aco status
 CLAIMED issue #42: Ada (builder) base=<sha> branch=ada/issue-42 claim=<claim-id> 0h 0m
   README.md
-lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key newer_aco_key)
+lane-shared: unavailable (board configuration refs/remotes/origin/main:.aco/board.toml has unknown top-level key newer_aco_key)
 exit 0
 $ aco status --path scripts/registry.txt
 UNCLAIMED scripts/registry.txt
-lane-shared: unavailable (board configuration refs/remotes/origin/main:.agent-claim/board.toml has unknown top-level key newer_aco_key)
+lane-shared: unavailable (board configuration refs/remotes/origin/main:.aco/board.toml has unknown top-level key newer_aco_key)
 exit 0
 ```

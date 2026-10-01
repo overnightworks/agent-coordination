@@ -1,7 +1,7 @@
 # `aco ask`
 
 `aco ask ITEM --text TEXT`: appends one fresh proposed `[[expectation]]`
-line to an item's `agent-claim` block; `--question`/`--example`/`--picture
+line to an item's `aco` block; `--question`/`--example`/`--picture
 FILE.svg` (issue #295) attach the card fields a picture-owner's mockup
 shows instead of the bare `text`. This file owns the command's own argument
 shape, its `ASKED` line, its own `reason` vocabulary, and the two refusals
@@ -51,7 +51,7 @@ line's 1-based index.
 `<body defect sentence>` is `specs/body-block.spec.md`'s own first-defect
 text (BODY-01..BODY-50); a picture's own content rules are BODY-37..BODY-42.
 
-- [ ] [ASK-05] A MALFORMED item body refuses `#<n> <body defect sentence>; ask needs a valid agent-claim block`, exit `2`, before any write (see E-ASK-03).
+- [ ] [ASK-05] A MALFORMED item body refuses `#<n> <body defect sentence>; ask needs a valid aco block`, exit `2`, before any write (see E-ASK-03).
 - [ ] [ASK-06] `--picture FILE.svg` naming an unreadable file refuses `--picture <path> could not be read: <error>`, exit `2`, before the forge or the item body are touched (see E-ASK-04).
 - [ ] [ASK-07] A `--picture` failing a BODY-37..42 rule refuses `picture <reason>` (no `expectation[0].` prefix), exit `2`, before any write; `<reason>` is the first-matching row below.
 - [ ] [ASK-08] `--text` that is blank or all whitespace refuses `expectation text must be a non-empty string`, exit `2`, before any write.
@@ -144,11 +144,11 @@ exit 0
 
 ### E-ASK-03 — a malformed body refuses before any write
 
-Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `aco` block
 
 ```console
 $ aco ask aco-000001 --text "New question?"
-2> ERROR: aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
+2> ERROR: aco-000001 body malformed: aco: no aco block; ask needs a valid aco block
 exit 2
 ```
 
@@ -164,12 +164,12 @@ exit 2
 
 ### E-ASK-05 — a refusal's own `--json` envelope
 
-Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `agent-claim` block
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-000001.md` hand-written with no `aco` block
 
 ```console
 $ aco ask aco-000001 --text "New question?" --json
-2> ERROR: aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block
-{"ok": false, "reason": "invalid_item", "message": "aco-000001 body malformed: agent-claim: no agent-claim block; ask needs a valid agent-claim block"}
+2> ERROR: aco-000001 body malformed: aco: no aco block; ask needs a valid aco block
+{"ok": false, "reason": "invalid_item", "message": "aco-000001 body malformed: aco: no aco block; ask needs a valid aco block"}
 exit 2
 ```
 

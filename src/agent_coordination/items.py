@@ -1,7 +1,7 @@
 """Pure codec for one state-ref item file's `[record]` table (issue #248).
 
 An item file (`items/<id>.md` in the tree of `refs/aco/state`) is a
-work-item body in the same `agent-claim`-block grammar `body.py` already
+work-item body in the same `aco`-block grammar `body.py` already
 reads and writes, extended with a nested `[record]` table that exists only
 under `storage = "state-ref"`: the identity and relations a GitHub issue
 would otherwise carry through its native type, sub-issue, and blocked-by

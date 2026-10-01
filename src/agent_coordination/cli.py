@@ -1476,7 +1476,7 @@ class ClaimReason(StrEnum):
     scope actually being *derived* from an item's own body can hit before
     those checks ever run: the item itself is unusable (missing, a pull
     request), or its body cannot supply or confirm a scope (a malformed
-    `agent-claim` block, no `scope` field, or one differing from an explicit
+    `aco` block, no `scope` field, or one differing from an explicit
     `--scope`). `claim_conflict` is `apply()`'s own single failure surface
     for a claim write -- identity already claimed, claim id already
     consumed, or a resource conflict or format issue -- never split further
@@ -3705,7 +3705,7 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
     `_cmd_item_edit_whole`/`_cmd_item_edit_kind`, both storages); with none,
     the state-ref item's own body, replaced from
     stdin only -- refused before any write when the piped body carries no
-    valid `agent-claim` block (`body --check`'s own sentences,
+    valid `aco` block (`body --check`'s own sentences,
     `_body_shape_defects`). The CAS `expected` oid is this process's own
     already-read snapshot (`StateRefBoard.update_item_body`'s
     `current.oid`, set once at `_state_ref_forge` construction): a second
@@ -4670,7 +4670,7 @@ def _print_brief_claim(
 def _print_brief_step_rules(step_rules: board.BriefStepRules) -> None:
     """`RULES` and `CHECKS` (issue #324): two more sections after the four
     `_print_brief` always prints, only under `--step` -- the repository's own
-    `.agent-claim/brief.toml` entries for that lane step, one per line,
+    `.aco/brief.toml` entries for that lane step, one per line,
     each as `terminal_text` shows it so no entry can break into a forged
     line or section (issue #548)."""
     print()
@@ -4830,7 +4830,7 @@ def _brief_json(composition: _BriefComposition) -> int:
 
 
 def _brief_config(toplevel: Path) -> board.BriefConfig | None:
-    """`.agent-claim/brief.toml`'s own content, read only when the file is
+    """`.aco/brief.toml`'s own content, read only when the file is
     actually tracked by git (issue #324) -- the same tracked-file
     requirement `board_config` enforces for `board.toml`'s storage pin, so
     an ignored or not-yet-added file never quietly answers for the
@@ -4846,7 +4846,7 @@ def _brief_step_rules_or_refusal(
 ) -> board.BriefStepRules | None:
     """`--step`'s own rules and checks, or `None` when the brief carries no
     `--step` at all -- the one branch that must stay untouched by
-    `.agent-claim/brief.toml`'s presence or content (BRIEF-16)."""
+    `.aco/brief.toml`'s presence or content (BRIEF-16)."""
     if step is None:
         return None
     config = _brief_config(context.toplevel)
@@ -5215,7 +5215,7 @@ RESCOPE_COMMAND = "rescope"
 @dataclass(frozen=True)
 class _RescopedItemBody:
     """The item body a rescope keeps in step with its claim (issue #554):
-    the body as read, its located `agent-claim` block, and the `whole`
+    the body as read, its located `aco` block, and the `whole`
     reason the block names."""
 
     number: int
@@ -5384,7 +5384,7 @@ class _ClaimTargetInvalidError(protocol.ClaimError):
 
 class _ClaimBodyInvalidError(protocol.ClaimError):
     """The item a claim's scope is being *derived* from has a body that
-    cannot supply or confirm one -- a malformed `agent-claim` block (issue
+    cannot supply or confirm one -- a malformed `aco` block (issue
     #310 finding 43: named *before* "item names no scope", reusing the same
     block-defect reader `body --check` uses), no `scope` field at all, or
     one differing from an explicit `--scope` (issue #406). Named so
@@ -7369,7 +7369,7 @@ def _cut_target(
 @dataclass(frozen=True)
 class _SliceRowRemoval:
     """`container`'s rewritten body, the cut row already removed from its
-    `agent-claim` block, and `step`, the words naming that write."""
+    `aco` block, and `step`, the words naming that write."""
 
     container: int
     new_body: str
@@ -7694,7 +7694,7 @@ def _require_matching_title(label: str, link: body.SliceRow, title: str) -> None
 def _located_block_or_refuse(
     number: int, raw_body: str, *, command: str, storage: body.Storage = body.Storage.GITHUB
 ) -> body.LocatedBlock:
-    """`raw_body`'s located `agent-claim` block, or a by-name refusal before
+    """`raw_body`'s located `aco` block, or a by-name refusal before
     any write: `cut`, `rule`, and `ask` all need a body `parse_body` reads as
     VALID before they touch it, and share this one gate so the message is
     the same shape for all three. `storage` is forwarded to `parse_body`

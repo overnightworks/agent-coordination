@@ -5,7 +5,7 @@ otherwise gets assembled from by hand -- the item's own body, its live issue
 claim, that claim's lane tip, and the files the lane itself changes since
 its merge base with trunk. `aco brief <item> --step <step>` adds two more sections, this
 repository's own rules and checks for that lane step, read from the tracked
-`.agent-claim/brief.toml`. This file owns the command's own argument, its
+`.aco/brief.toml`. This file owns the command's own argument, its
 printed section shape, when each section carries a value versus stays empty,
 its own success payload, and its own `reason` vocabulary;
 `specs/output.spec.md` owns the `--json` envelope itself (OUT-nn: key
@@ -63,14 +63,14 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 
 | state \ trigger | `aco brief <item> --step <step>` (text) | `aco brief <item> --step <step> --json` |
 |---|---|---|
-| a tracked `.agent-claim/brief.toml` | BRIEF-12, BRIEF-13, BRIEF-25 | BRIEF-14, BRIEF-25 |
-| no tracked `.agent-claim/brief.toml` | BRIEF-15 | BRIEF-15 |
-| a tracked `.agent-claim/brief.toml` naming an unknown key | BRIEF-24 | BRIEF-24 |
+| a tracked `.aco/brief.toml` | BRIEF-12, BRIEF-13, BRIEF-25 | BRIEF-14, BRIEF-25 |
+| no tracked `.aco/brief.toml` | BRIEF-15 | BRIEF-15 |
+| a tracked `.aco/brief.toml` naming an unknown key | BRIEF-24 | BRIEF-24 |
 
 - [ ] [BRIEF-12] `--step <step>` prints the four sections, then a blank line, `RULES`, one line per `[<step>].rules` entry, empty when it names none (see E-BRIEF-07).
 - [ ] [BRIEF-13] `RULES`' own lines are followed by a blank line, `CHECKS`, one line per `[<step>].checks` entry, empty when it names none (see E-BRIEF-07).
 - [ ] [BRIEF-14] `aco brief <item> --step <step> --json` adds `"rules"` and `"checks"` string-list keys to BRIEF-06/BRIEF-10's own object (see E-BRIEF-08).
-- [ ] [BRIEF-15] `--step <step>` refuses `no .agent-claim/brief.toml in the repository`, exit `2`, before reading the body or claim, when the repository tracks no such file (see E-BRIEF-09).
+- [ ] [BRIEF-15] `--step <step>` refuses `no .aco/brief.toml in the repository`, exit `2`, before reading the body or claim, when the repository tracks no such file (see E-BRIEF-09).
 - [ ] [BRIEF-25] Text shows each `RULES` and `CHECKS` entry on one line, every display control escaped (NEXT-37): a line feed prints as `\n`; `--json`'s `"rules"` and `"checks"` keep each entry as stored.
 - [ ] [BRIEF-24] An unknown key refuses `brief configuration <path> has unknown top-level key <keys>` or `... [<step>] has unknown key <keys>`, each display control escaped (NEXT-37), exit `2` (see E-BRIEF-18).
 
@@ -86,7 +86,7 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 | refusal | `reason` |
 |---|---|
 | PIN-04 (`--repo` under `storage = state-ref`) | `invalid_usage` |
-| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.agent-claim/brief.toml`), BRIEF-24 (an unknown `.agent-claim/brief.toml` key), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 and BRIEF-21 (no `<trunk>`) | `unavailable` |
+| BRIEF-07 (no forge adapter for host), PIN-05 (no resolvable default branch), BRIEF-15 (no tracked `.aco/brief.toml`), BRIEF-24 (an unknown `.aco/brief.toml` key), BRIEF-18 (the lane branch read or `<trunk>` diff fails), BRIEF-19 (the item read fails), BRIEF-20 and BRIEF-21 (no `<trunk>`) | `unavailable` |
 
 ## Never
 
@@ -95,14 +95,14 @@ collection point prints `ERROR: <sentence>` on stderr, exit `2`.
 - `aco brief` never writes: it is a pure composition of the item's body, the store's live claims, and one local `git diff` -- plus, only with `--step`, the tracked brief configuration -- never a new data source and never a transition against the state ref.
 - `aco brief`'s claim line is never `aco status`'s own `CLAIMED`/`CONFLICT` line (CLAIM-01): it carries no verb, no identity prefix, no `claim=` field, and orders `branch=` before `base=`, the reverse of `status`'s own order.
 - `aco brief --json`'s claim object is never `aco status --json`'s own claim object (STAT-07, STAT-09): no `claim_id`, `resource`, `resource_value`, `overlaps`, or `old` key.
-- [ ] [BRIEF-16] Without `--step`, `.agent-claim/brief.toml`'s presence or content changes nothing: `brief` prints exactly BRIEF-01..06's sections either way (see E-BRIEF-10).
-- `aco brief --step` never writes: `.agent-claim/brief.toml` is one more existing read, never a write, and never a new claim or state-ref transition.
+- [ ] [BRIEF-16] Without `--step`, `.aco/brief.toml`'s presence or content changes nothing: `brief` prints exactly BRIEF-01..06's sections either way (see E-BRIEF-10).
+- `aco brief --step` never writes: `.aco/brief.toml` is one more existing read, never a write, and never a new claim or state-ref transition.
 
 ## Examples
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local bare
 repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml` naming no `storage` key, and `ACO_AGENT` set
+tracked `.aco/board.toml` naming no `storage` key, and `ACO_AGENT` set
 to `Ada`; `<base>` and `<tip>` are the runner's own commit ids. A session
 reading an item's body also names a fixed, deterministic fake `gh` as a
 setup precondition.
@@ -214,7 +214,7 @@ exit 0
 Setup: bare-remote, fake `gh`, issue `#42` body `The item's own body.`, a
 linked worktree on `ada/issue-42` already `aco claim 42 --scope README.md`,
 one commit on `ada/issue-42` past `<base>` touching `README.md`, pushed to
-`origin`, `.agent-claim/brief.toml` tracked with:
+`origin`, `.aco/brief.toml` tracked with:
 
 ```toml
 [build]
@@ -254,29 +254,29 @@ $ aco brief 42 --step build --json
 exit 0
 ```
 
-### E-BRIEF-09 -- `--step` with no tracked `.agent-claim/brief.toml`
+### E-BRIEF-09 -- `--step` with no tracked `.aco/brief.toml`
 
-Setup: bare-remote, fake `gh`, no `.agent-claim/brief.toml` in the repository
+Setup: bare-remote, fake `gh`, no `.aco/brief.toml` in the repository
 at all
 
 ```console
 $ aco brief 42 --step build
-2> ERROR: no .agent-claim/brief.toml in the repository
+2> ERROR: no .aco/brief.toml in the repository
 exit 2
 ```
 
-### E-BRIEF-18 -- an unknown `.agent-claim/brief.toml` key carrying a bidi override
+### E-BRIEF-18 -- an unknown `.aco/brief.toml` key carrying a bidi override
 
-Setup: bare-remote checkout at `/repo`, fake `gh`, `.agent-claim/brief.toml`
+Setup: bare-remote checkout at `/repo`, fake `gh`, `.aco/brief.toml`
 tracked with the one line `"a\u202eb" = 1`
 
 ```console
 $ aco brief 42 --step build
-2> ERROR: brief configuration /repo/.agent-claim/brief.toml has unknown top-level key a\u202eb
+2> ERROR: brief configuration /repo/.aco/brief.toml has unknown top-level key a\u202eb
 exit 2
 ```
 
-### E-BRIEF-10 -- a tracked `.agent-claim/brief.toml` changes nothing without `--step`
+### E-BRIEF-10 -- a tracked `.aco/brief.toml` changes nothing without `--step`
 
 Setup: as E-BRIEF-07
 
@@ -379,7 +379,7 @@ exit 2
 
 ### E-BRIEF-17 -- no `<trunk>` for a remote with no URL configured
 
-Setup: as E-BRIEF-04, but `.agent-claim/board.toml` names `canonical_remote = "hub"`,
+Setup: as E-BRIEF-04, but `.aco/board.toml` names `canonical_remote = "hub"`,
 which the work repository never added, and it keeps its local `main`; the same
 holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
 

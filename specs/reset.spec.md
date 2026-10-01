@@ -86,7 +86,7 @@ documents. `<repo>`/`<sha>`/`<tip>`/`<remote>` are the runner's own values;
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml` naming no `storage` key, and `ACO_AGENT`
+tracked `.aco/board.toml` naming no `storage` key, and `ACO_AGENT`
 set to `Ada`; `<remote>`, `<tmp>`, and `<repo>` are the runner's own paths.
 
 ### E-RESET-01 -- nothing yet to export or delete
@@ -180,7 +180,7 @@ exit 0
 
 ### E-RESET-07 -- a canonical remote with no URL configured is named
 
-Setup: bare-remote, `.agent-claim/board.toml` tracked naming `canonical_remote = "hub"`, which this clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
+Setup: bare-remote, `.aco/board.toml` tracked naming `canonical_remote = "hub"`, which this clone never added beside its `origin`; the same holds when `hub` has only a URL-less line such as a local `remote.hub.fetch`
 
 ```console
 $ aco reset --export-dir <tmp>

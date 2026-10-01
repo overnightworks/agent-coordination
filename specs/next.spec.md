@@ -144,7 +144,7 @@ other printable space are text.
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml`, and `ACO_AGENT` set to `Ada`. Every
+tracked `.aco/board.toml`, and `ACO_AGENT` set to `Ada`. Every
 session below also names a fixed, deterministic fake `gh` as a setup
 precondition (the shape `specs/landing-grammar.spec.md` already uses).
 Every session runs from a linked worktree on branch `ada/lane` unless its
@@ -328,16 +328,16 @@ close: none
 
 SKIPPED
 aco-2620d6: body incomplete: Now, Next, Done when
-aco-4470c5: body malformed: agent-claim: agent-claim block is not valid TOML: Illegal character '\x0b' (at line 8, column 18)
+aco-4470c5: body malformed: aco: aco block is not valid TOML: Illegal character '\x0b' (at line 8, column 18)
 exit 3
 $ aco item show aco-4470c5
-2> ERROR: item aco-4470c5 has a malformed agent-claim block; repair it with aco item edit aco-4470c5 and a body whose agent-claim block carries a valid [record]
+2> ERROR: item aco-4470c5 has a malformed aco block; repair it with aco item edit aco-4470c5 and a body whose aco block carries a valid [record]
 exit 2
 ```
 
 ### E-NEXT-12 — a container whose one open child may be an unreadable item
 
-Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked; `aco-000001` is a filled Container whose one readable child is closed, `aco-3e26d9`'s file was hand-written with no `agent-claim` block
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked; `aco-000001` is a filled Container whose one readable child is closed, `aco-3e26d9`'s file was hand-written with no `aco` block
 
 ```console
 $ aco next
@@ -347,11 +347,11 @@ scope unknown: none
 close: none
 
 SKIPPED
-aco-3e26d9: body malformed: agent-claim: no agent-claim block
+aco-3e26d9: body malformed: aco: no aco block
 aco-000001: container; its open children do not read: aco-3e26d9
 exit 3
 $ aco item close aco-000001
-2> ERROR: item aco-3e26d9 has a malformed agent-claim block; repair it with aco item edit aco-3e26d9 and a body whose agent-claim block carries a valid [record]
+2> ERROR: item aco-3e26d9 has a malformed aco block; repair it with aco item edit aco-3e26d9 and a body whose aco block carries a valid [record]
 exit 2
 ```
 

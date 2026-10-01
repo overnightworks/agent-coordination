@@ -1,5 +1,5 @@
 """The body-block codec (issue #419, audit #365 finding 3): parses, validates,
-renders, and names defects for one work-item body's typed `agent-claim`
+renders, and names defects for one work-item body's typed `aco`
 fenced block -- the `[[expectation]]`/`[[slice]]` arrays, `scope`/`size`/
 `whole`, and the state-ref-only `[record]` table. `board.py` imports this
 codec for its own board-builder domain (`Contract`, `ParsedBody`,
@@ -83,7 +83,7 @@ EXPECTATION_PICTURE_MAXIMUM_BYTES = 8 * 1024
 
 
 class Storage(StrEnum):
-    """Where a repository's board and item data live (`.agent-claim/board.toml`
+    """Where a repository's board and item data live (`.aco/board.toml`
     `storage`, issue #248): `GITHUB` reads issues, `STATE_REF` reads
     `items/<id>.md` files in the tree of `refs/aco/state`. The pin decides
     which adapter `RunContext.repository_id` resolves for; it never guesses from
@@ -152,7 +152,7 @@ class ItemKind(StrEnum):
 
 @dataclass(frozen=True)
 class SliceRow:
-    """One `[[slice]]` entry of a body's `agent-claim` block: a slice its
+    """One `[[slice]]` entry of a body's `aco` block: a slice its
     container still has to dispatch. `index` is exactly what `cut --row N`
     names it by, `title` exactly what `cut --title` must match. `scope`
     (issue #331) is the row's own optional `scope = [...]`, validated and
@@ -234,8 +234,8 @@ class BodyReadState(StrEnum):
     """How `parse_body` read one issue's body.
 
     `MALFORMED` covers both a block whose schema was refused and a body
-    with no recognized `agent-claim` block at all -- the latter carries the
-    one defect `no agent-claim block` (issue #273: there is no third state
+    with no recognized `aco` block at all -- the latter carries the
+    one defect `no aco block` (issue #273: there is no third state
     for a body written before the block existed).
     """
 
@@ -303,7 +303,7 @@ def first_line(body: str) -> str:
 
 
 def _fence_matches(body: str) -> list[tuple[int, int | None, str]]:
-    """Every fence in `body` whose info string is exactly `agent-claim`
+    """Every fence in `body` whose info string is exactly `aco`
     (issue #150 §4): `(opening line index, closing line index or None when
     unclosed, interior text)`. Walks `body.splitlines(keepends=True)` --
     stripping only each line's own ending before matching the CommonMark
@@ -947,7 +947,7 @@ def _valid_block_parsed_body(data: dict[str, object], storage: Storage) -> Parse
 
 def parse_body(body: str, *, storage: Storage = Storage.GITHUB) -> ParsedBody:
     """The one read of a work-item body (issue #150, narrowed to one grammar
-    by #204): the typed `agent-claim` block. Every consumer reads the
+    by #204): the typed `aco` block. Every consumer reads the
     returned `ParsedBody` instead of re-parsing the raw body. Human prose
     around the block is never parsed -- another repository may own its own
     section headings in the same body.
@@ -967,7 +967,7 @@ def parse_body(body: str, *, storage: Storage = Storage.GITHUB) -> ParsedBody:
 
 
 def _block_data(body: str) -> dict[str, object] | ParsedBody:
-    """`body`'s one closed `agent-claim` block, decoded as TOML but not yet
+    """`body`'s one closed `aco` block, decoded as TOML but not yet
     schema-checked, or the `ParsedBody` that already says why it cannot be."""
     fences = _fence_matches(body)
     if not fences:
@@ -1040,7 +1040,7 @@ def _readable_record(body: str) -> Mapping[str, object] | None:
 
 @dataclass(frozen=True)
 class LocatedBlock:
-    """A valid `agent-claim` block's decoded TOML, plus the byte-exact span
+    """A valid `aco` block's decoded TOML, plus the byte-exact span
     of its interior -- between the fence lines, which stay byte-identical --
     and the newline convention new interior lines are rendered with (#150
     §4/§7). Callable only on a body `parse_body` already read as `VALID`;
@@ -1201,7 +1201,7 @@ def _render_record(data: Mapping[str, object]) -> list[str]:
 
 
 def render_block(data: Mapping[str, object], newline: str = "\n") -> str:
-    """The canonical `agent-claim` block interior for `data` (#150 §4):
+    """The canonical `aco` block interior for `data` (#150 §4):
     schema key order, TOML-safe strings, unquoted dates, ending in
     `newline` so a following fence line starts clean. Production caller:
     block-mode `cut`; there is no standalone validator."""
@@ -1220,7 +1220,7 @@ def render_block(data: Mapping[str, object], newline: str = "\n") -> str:
 
 
 def replace_block(body: str, located: LocatedBlock, data: Mapping[str, object]) -> str:
-    """`body` with its one `agent-claim` block's interior replaced by
+    """`body` with its one `aco` block's interior replaced by
     `render_block(data, located.newline)` -- pure, changing only that span
     and preserving every other byte, fence lines included."""
     return (
@@ -1231,7 +1231,7 @@ def replace_block(body: str, located: LocatedBlock, data: Mapping[str, object]) 
 
 
 def carries_block(body: str) -> bool:
-    """Whether `body` opens any `agent-claim` fence at all, closed or not --
+    """Whether `body` opens any `aco` fence at all, closed or not --
     a body without one is prose a fresh block goes below (issue #555)."""
     return bool(_fence_matches(body))
 
@@ -1245,7 +1245,7 @@ _SKELETON_PROJECTION: Mapping[str, object] = {
 
 
 def prose_above_fresh_block(prose: str, fields: Mapping[str, object]) -> str:
-    """`prose`, kept byte for byte, above a fresh `agent-claim` block holding
+    """`prose`, kept byte for byte, above a fresh `aco` block holding
     `fields` (issues #555, #567), every projection key `fields` leaves out
     written empty; the bare block when `prose` is empty. The block follows
     one blank line below the prose, in the prose's own line ending."""
@@ -1276,7 +1276,7 @@ BLOCK_CHILD_SKELETON = prose_above_fresh_block("", {})
 
 
 def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
-    """`body` with each field of `fields` its one schema-valid `agent-claim`
+    """`body` with each field of `fields` its one schema-valid `aco`
     block lacks written in, the block re-rendered canonically and every byte
     outside it kept -- `body` itself when it lacks none (ITEM-62). The one
     writer behind `item new`'s and `cut`'s block flags."""
@@ -1335,7 +1335,7 @@ class ExpectationLine:
 def expectation_lines(
     body: str, *, storage: Storage = Storage.GITHUB
 ) -> tuple[ExpectationLine, ...]:
-    """Every `[[expectation]]` entry of `body`'s `agent-claim` block, in
+    """Every `[[expectation]]` entry of `body`'s `aco` block, in
     block order -- the one projection `rulings`, `rule --line`, and `ask`'s
     fresh index all share, so a printed index always matches what `rule`
     accepts. Empty for a body with no block, no expectations, or one
