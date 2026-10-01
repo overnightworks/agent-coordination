@@ -17434,13 +17434,26 @@ def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
     assert _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip() == lane_tip
 
 
-def _commit_past_the_landed_head(lane: Path) -> None:
+def _commit_past_the_landed_head(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
     _real_git(lane, "commit", "-q", "--allow-empty", "-m", "raced past the landed head")
 
 
-def _lock_the_repository_configuration(lane: Path) -> None:
+def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
     common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
     (Path(common.stdout.strip()) / "config.lock").touch()
+
+
+def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+    run_git = checkout._git_run
+
+    def refuse_the_listing(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        if "--get-regexp" in arguments:
+            return process.CapturedResult(3, b"", b"fatal: the configuration listing failed\n")
+        return run_git(arguments, directory=directory)
+
+    monkeypatch.setattr(checkout, "_git_run", refuse_the_listing)
 
 
 @pytest.mark.parametrize(
@@ -17448,21 +17461,22 @@ def _lock_the_repository_configuration(lane: Path) -> None:
     [
         pytest.param(_commit_past_the_landed_head, id="commit-raced-past-the-landed-head"),
         pytest.param(_lock_the_repository_configuration, id="configuration-locked"),
+        pytest.param(_refuse_the_branch_configuration_listing, id="configuration-listing-refused"),
     ],
 )
 def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    interfere: Callable[[Path], None],
+    interfere: Callable[[pytest.MonkeyPatch, Path], None],
 ) -> None:
     """Issue #578 review finding 3: a clean commit made in the lane after
     cleanup judged its tip to be the squashed head, but before the branch
     deletion, keeps the branch on that commit -- the deletion compares and
     deletes in one step, so only the landed head itself is ever deleted.
-    Second review finding 2: a `branch.<name>` section git cannot remove
-    keeps the branch too, the failure reported rather than swallowed. Either
-    way the kept branch keeps its tip and its own configuration."""
+    Second review finding 2: a `branch.<name>` section git cannot list or
+    remove keeps the branch too, the failure reported rather than swallowed.
+    Either way the kept branch keeps its tip and its own configuration."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
@@ -17474,7 +17488,7 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     kept_tips: list[str] = []
 
     def interfere_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
-        interfere(path)
+        interfere(monkeypatch, path)
         kept_tips.append(_real_git(path, "rev-parse", "HEAD").stdout.strip())
         return remove(path, **options)
 
