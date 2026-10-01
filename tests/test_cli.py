@@ -1483,10 +1483,25 @@ def _configured_board_client(
     client.board_dependencies = dict(dependencies)
     monkeypatch.setattr(client, "list_recent_merged_board_pull_requests", lambda _since: ())
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
-    monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
+    _fake_lane_worktree_git(monkeypatch, tmp_path)
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
     _patch_store_write(monkeypatch, *(_store_claim_from_request(claimed) for claimed in standing))
     return client
+
+
+def _fake_lane_worktree_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Every git read answers `tmp_path`, and the run stands in a linked lane
+    worktree, where `next` advises `claim`; its advice from the default
+    branch's checkout is driven against real git in
+    `test_next_advises_a_pull_that_runs_as_printed_where_it_stands`."""
+    monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
+    monkeypatch.setattr(
+        checkout,
+        "resolve_path_checkout",
+        lambda directory: checkout.PathCheckout(
+            directory, "lane", checkout.CheckoutKind.LINKED_WORKTREE, tmp_path, True
+        ),
+    )
 
 
 def _stub_issue_reference(
@@ -1873,7 +1888,7 @@ def test_next_reports_expectation_state(
     monkeypatch.setattr(client, "list_open_board_pull_requests", lambda: ())
     monkeypatch.setattr(client, "list_recent_merged_board_pull_requests", lambda _since: ())
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
-    monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
+    _fake_lane_worktree_git(monkeypatch, tmp_path)
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
 
     assert issue_claim.main(["--repo", REPOSITORY, "next"]) == 0
@@ -1906,7 +1921,7 @@ def test_next_pulls_an_unruled_item_and_names_only_unworkable_ones_as_skipped(
     monkeypatch.setattr(client, "list_open_board_pull_requests", lambda: ())
     monkeypatch.setattr(client, "list_recent_merged_board_pull_requests", lambda _since: ())
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
-    monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
+    _fake_lane_worktree_git(monkeypatch, tmp_path)
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
     _patch_store_write(monkeypatch, _store_claim_from_request(standing))
 
@@ -3018,8 +3033,8 @@ def _seed_state_ref_item(repo: Path, remote: Path, number: int, content: str) ->
 
 
 @pytest.mark.parametrize(
-    "command",
-    [["status"], ["board", "--json"], ["next", "--json"]],
+    ("command", "checkouts_agree"),
+    [(["status"], True), (["board", "--json"], True), (["next", "--json"], False)],
     ids=["status", "board", "next"],
 )
 def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
@@ -3027,25 +3042,31 @@ def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     command: list[str],
+    checkouts_agree: bool,
 ) -> None:
     """Issue #460: a read run from `src/` of a checkout, or of a linked
-    worktree, answers exactly as from the checkout root -- git lists and
+    worktree, answers exactly as from that checkout's root -- git lists and
     archives a tree object relative to its own working directory, so the
-    state tree must be read from the checkout root, never the process cwd."""
+    state tree must be read from the checkout root, never the process cwd.
+    The main checkout and a linked worktree answer alike, except `next`,
+    which advises `start` from the one and `claim` from the other
+    (issue #562)."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     linked = tmp_path / "linked"
     _real_git(repo, "worktree", "add", "-q", "-b", "lane", str(linked))
+    readings = ((repo, repo), (repo, repo / "src"), (linked, linked), (linked, linked / "src"))
     answers: list[tuple[int, str]] = []
-    for toplevel, directory in ((repo, repo), (repo, repo / "src"), (linked, linked / "src")):
+    for toplevel, directory in readings:
         directory.mkdir(exist_ok=True)
         _redirect_toplevel(monkeypatch, toplevel)
         monkeypatch.chdir(directory)
         status = issue_claim.main(command)
         answers.append((status, capsys.readouterr().out))
 
-    root_answer = answers[0]
-    assert root_answer[0] == 0
-    assert answers == [root_answer] * 3
+    main_root, main_subdirectory, linked_root, linked_subdirectory = answers
+    assert (main_root[0], linked_root[0]) == (0, 0)
+    assert (main_subdirectory, linked_subdirectory) == (main_root, linked_root)
+    assert (main_root == linked_root) is checkouts_agree
 
 
 def test_start_under_state_ref_claims_the_worktree_it_builds(
@@ -4011,6 +4032,15 @@ def test_readme_and_help_texts_carry_no_stale_state_ref_read_only_sentence() -> 
             ("--whole", "three paths"),
             id="rescope-names-the-whole-reason",
         ),
+        pytest.param(
+            "next",
+            (
+                "labelled needs-operator waits on the operator",
+                "gh issue edit <n> --add-label/--remove-label needs-operator",
+                "aco item edit <item-id>",
+            ),
+            id="next-names-the-label-that-holds-an-item-for-the-operator",
+        ),
     ],
 )
 def test_help_text_names_the_refusal_or_source_it_documents(
@@ -4019,7 +4049,8 @@ def test_help_text_names_the_refusal_or_source_it_documents(
     """`claim --help` and `rescope --help` each name, in prose, the refusal
     or derivation source their own behaviour documents -- the out-of-order
     and wide-scope refusals, and (issue #337 proof 4, REVISE finding 2)
-    where an omitted `--scope` comes from."""
+    where an omitted `--scope` comes from; `next --help` names the label
+    that holds an item for the operator and how to set it (issue #562)."""
     with pytest.raises(SystemExit) as exited:
         issue_claim.main([command, "--help"])
 
@@ -6300,7 +6331,7 @@ def test_next_skips_a_frozen_item_and_names_it_as_such(
     monkeypatch.setattr(client, "list_open_board_pull_requests", lambda: ())
     monkeypatch.setattr(client, "list_recent_merged_board_pull_requests", lambda _since: ())
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
-    monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
+    _fake_lane_worktree_git(monkeypatch, tmp_path)
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
 
     assert issue_claim.main(["--repo", REPOSITORY, "next"]) == 0
@@ -6608,7 +6639,9 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
         action = board.next_action(isolated)
         assert isinstance(action, board.CutSliceAction)
 
-        command_line = issue_claim._next_action_lines(action, body.Storage.GITHUB)[1]
+        command_line = issue_claim._next_action_lines(
+            action, body.Storage.GITHUB, claims_in_place=True
+        )[1]
         cut_arguments = shlex.split(command_line.removeprefix("Next: aco "))
         client = _configured_board_client(
             monkeypatch, tmp_path, open_issues=(containers_by_number[item.number],)
@@ -6802,6 +6835,63 @@ def test_next_names_a_nested_rows_exact_scope_and_that_claim_runs_as_printed(
     ), capsys.readouterr().err
     claimed = store.fetch_state(worktree=Path("."), remote="origin").claims
     assert tuple(claim.scope for claim in claimed.values()) == (top_level_scope or row_scope,)
+
+
+@pytest.mark.parametrize(
+    ("stands_in_lane", "expected_run"),
+    [
+        pytest.param(
+            False,
+            "aco start aco-00013a --slug=fresh-slug-title",
+            id="default_branch_checkout_starts",
+        ),
+        pytest.param(True, "aco claim aco-00013a", id="linked_worktree_claims"),
+    ],
+)
+def test_next_advises_a_pull_that_runs_as_printed_where_it_stands(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    stands_in_lane: bool,
+    expected_run: str,
+) -> None:
+    """Issue #562 line 1: from the default branch's checkout, where `claim`
+    refuses, `next` advises `start` with the slug `start` derives from the
+    title; from a linked lane worktree it advises `claim`. Either line runs
+    verbatim in bash and claims the item on the lane branch."""
+    repo, _remote, _seeded = _real_state_ref_repository(
+        monkeypatch, tmp_path, {314: _state_ref_item_body("Fresh Slug Title", scope=["src/x.py"])}
+    )
+    if stands_in_lane:
+        lane = tmp_path / "lane"
+        _real_git(repo, "worktree", "add", "-q", "-b", _START_BRANCH, str(lane))
+        _redirect_toplevel(monkeypatch, lane)
+        monkeypatch.chdir(lane)
+
+    next_exit_code = issue_claim.main(["next"])
+    run_line = capsys.readouterr().out.split("\nRun: ", 1)[1].splitlines()[0]
+    bash_exit_code, pull_arguments = _arguments_bash_hands_aco(run_line, tmp_path)
+    pull_exit_code = issue_claim.main(pull_arguments)
+
+    assert (run_line, next_exit_code, bash_exit_code, pull_exit_code) == (expected_run, 0, 0, 0)
+    claims = store.fetch_state(worktree=repo, remote="origin").claims
+    assert tuple((claim.branch, claim.scope) for claim in claims.values()) == (
+        (_START_BRANCH, ("src/x.py",)),
+    )
+
+
+def test_next_leaves_the_slug_to_fill_where_the_title_yields_none(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #562 line 1: a title `start` derives no slug from gets the slug
+    placeholder, as an unknown scope gets its own, never a `start` that
+    refuses as printed."""
+    _real_state_ref_repository(
+        monkeypatch, tmp_path, {314: _state_ref_item_body("!!!", scope=["src/x.py"])}
+    )
+
+    assert issue_claim.main(["next"]) == 0
+    assert f"\nRun: aco start aco-00013a {board.SLUG_PLACEHOLDER}\n" in capsys.readouterr().out
 
 
 # Issue #538: display controls a slice title refuses beside the Cc set --
@@ -7806,7 +7896,8 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
     well below the board's top row, and a landed-but-open recovery item,
     both still appear under `close:` -- unconditionally, never gated by
     which row `next` happens to recommend -- and, named there, never again
-    under `SKIPPED` (issue #510 line 2)."""
+    under `SKIPPED` (issue #510 line 2), nor under `waiting on operator:`
+    when the landed item still carries `needs-operator` (issue #562 line 2)."""
     top_ranked = board_issue(
         70,
         "Top ranked work",
@@ -7824,7 +7915,12 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
         children_closed=2,
         children_total=2,
     )
-    landed_but_open = board_issue(72, "Landed but open", complete_contract("Close it."))
+    landed_but_open = board_issue(
+        72,
+        "Landed but open",
+        complete_contract("Close it."),
+        labels=(board.NEEDS_OPERATOR_LABEL,),
+    )
     client = _configured_board_client(
         monkeypatch, tmp_path, open_issues=(top_ranked, closable_container, landed_but_open)
     )
@@ -7850,7 +7946,11 @@ def test_next_close_names_every_zero_cost_action_regardless_of_rank(
     json_exit_code = issue_claim.main(["--repo", REPOSITORY, "next", "--json"])
     assert json_exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert (payload["close"], payload["skipped"]) == ([71, 72], [])
+    assert (payload["close"], payload["skipped"], payload["waiting_on_operator"]) == (
+        [71, 72],
+        [],
+        [],
+    )
 
 
 _RECOVERY_SHARED_SCOPE = "b"
@@ -14070,7 +14170,7 @@ def test_next_names_an_old_ruling_when_the_item_is_pulled(
     monkeypatch.setattr(client, "list_open_board_pull_requests", lambda: ())
     monkeypatch.setattr(client, "list_recent_merged_board_pull_requests", lambda _since: ())
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
-    monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
+    _fake_lane_worktree_git(monkeypatch, tmp_path)
     monkeypatch.setattr(
         checkout,
         "trunk_landings",
@@ -21323,6 +21423,19 @@ def _state_ref_command(
     return _read_once(argv, toplevel=repo)
 
 
+def _state_ref_next_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
+    """`next` reads its checkout once more, resolved from the held toplevel
+    as `start` resolves it, to tell whether `claim` runs there (issue
+    #562)."""
+    repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    return _CountedRun(
+        ["next", "--json"],
+        toplevel_reads={None: 1, repo: 1},
+        config_reads={repo: 1},
+        observations={repo: 1},
+    )
+
+
 def _state_ref_item_edit_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     monkeypatch.setattr(sys, "stdin", io.StringIO(_state_ref_item_body("Edited Title")))
     return _state_ref_command(["item", "edit", "314"], monkeypatch, tmp_path)
@@ -21506,7 +21619,7 @@ def _start_lost_answer_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     [
         pytest.param(_status_command, id="forge-free-status"),
         pytest.param(_next_command, id="github-read-next"),
-        pytest.param(partial(_state_ref_command, ["next", "--json"]), id="state-ref-read-next"),
+        pytest.param(_state_ref_next_command, id="state-ref-read-next"),
         pytest.param(partial(_state_ref_command, ["status"]), id="state-ref-status"),
         pytest.param(partial(_state_ref_command, ["board", "--json"]), id="state-ref-board"),
         pytest.param(partial(_state_ref_command, ["item", "close", "314"]), id="item-close"),
