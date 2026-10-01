@@ -651,6 +651,14 @@ def _add_land_parser(commands: argparse._SubParsersAction) -> None:
         help="merge a green pull request with its pinned head sha and run its release path",
     )
     land.add_argument("pull_request", type=int, help="the pull request number to land")
+    land.add_argument(
+        "--head",
+        type=_reviewed_head,
+        help=(
+            "the head sha the reviewers saw, in full or as a prefix of at least 7 hex digits; "
+            "land refuses before any write when the pull request's head is another commit"
+        ),
+    )
     land.add_argument("--agent", help=AGENT_HELP)
     land.add_argument("--role", help=ROLE_ON_LIVE_CLAIM_HELP)
     land.add_argument(
@@ -666,6 +674,17 @@ def _add_land_parser(commands: argparse._SubParsersAction) -> None:
             "worktree whose branch is already merged is removed"
         ),
     )
+
+
+REVIEWED_HEAD_PATTERN = re.compile(r"[0-9a-fA-F]{7,40}")
+
+
+def _reviewed_head(value: str) -> str:
+    """`land --head`'s argparse `type=` (issue #590): the sha its reviewers
+    saw, lowercased as git prints it, refused before anything is read."""
+    if REVIEWED_HEAD_PATTERN.fullmatch(value) is None:
+        raise protocol.ClaimUnavailableError("--head must be 7 to 40 hex digits")
+    return value.lower()
 
 
 def _add_rescope_parser(commands: argparse._SubParsersAction) -> None:
@@ -3198,6 +3217,17 @@ class _MergedLandingClose:
     pull_request: int
 
 
+@dataclass(frozen=True)
+class _VerifiedMerge:
+    """What `_verify_merged_release` proved about a merged pull request:
+    `landed_head`, the head the forge recorded as landed -- the one tip a
+    squashed lane's worktree and branch are removed by, on a first run or
+    a rerun alike (issue #590) -- and the still-open item to close, if any."""
+
+    landed_head: str
+    pending_close: _MergedLandingClose | None
+
+
 def _trunk_no_item_landing_defect(
     landings: tuple[checkout.TrunkLanding, ...], sha: str, pull_request: int
 ) -> str | None:
@@ -3237,10 +3267,11 @@ def _verify_merged_release(
     client: github.GitHubForge,
     identity: protocol.ClaimIdentity,
     merged: protocol.MergedRelease,
-) -> _MergedLandingClose | None:
+) -> _VerifiedMerge:
     """Refuse a `--merged` release the landing itself does not support, and
     report -- without yet closing anything -- whether the named work item is
-    still open and needs to be (issue #359 Card 1/R1): `_cmd_release` calls
+    still open and needs to be (issue #359 Card 1/R1), and the head the
+    forge recorded as landed (issue #590): `_cmd_release` calls
     this only after the claim is already resolved and the claimant already
     authorized, and performs the actual close itself afterward, so a defect
     or a transient forge failure there never runs ahead of authorization
@@ -3266,22 +3297,38 @@ def _verify_merged_release(
             f"not the default branch {default_branch!r}"
         )
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
+    pending_close = _pending_landing_close(
+        context, client, identity, detail.number, detail.merge_commit
+    )
+    return _VerifiedMerge(landed_head=detail.head_sha, pending_close=pending_close)
+
+
+def _pending_landing_close(
+    context: RunContext,
+    client: github.GitHubForge,
+    identity: protocol.ClaimIdentity,
+    pull_request: int,
+    merge_commit: str,
+) -> _MergedLandingClose | None:
+    """`_verify_merged_release`'s trailer authority check on the fetched
+    trunk, and the still-open item it leaves for `_cmd_release` to close,
+    or `None`."""
     landings = checkout.trunk_landings(
         context.fetched_default_branch_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
     )
     if isinstance(identity, protocol.LaneIdentity):
-        defect = _trunk_no_item_landing_defect(landings, detail.merge_commit, detail.number)
+        defect = _trunk_no_item_landing_defect(landings, merge_commit, pull_request)
         if defect is not None:
             raise protocol.ClaimUnavailableError(
-                f"merge commit {detail.merge_commit} of pull request #{detail.number} {defect}"
+                f"merge commit {merge_commit} of pull request #{pull_request} {defect}"
             )
         return None
     _verify_merge_commit_authority(
-        landings, detail.number, identity.issue, detail.merge_commit, context.config.storage
+        landings, pull_request, identity.issue, merge_commit, context.config.storage
     )
     reference = _fetch_issue_reference(client, identity.issue)
     if reference.state is forge.ItemState.OPEN:
-        return _MergedLandingClose(identity.issue, detail.number)
+        return _MergedLandingClose(identity.issue, pull_request)
     if reference.state is not forge.ItemState.CLOSED:
         raise protocol.ClaimUnavailableError(
             f"work item #{identity.issue} is {reference.state.value}, not closed"
@@ -6271,9 +6318,12 @@ def _release_repeat_command(parsed: argparse.Namespace) -> tuple[str, ...]:
 
 def _land_repeat_command(parsed: argparse.Namespace) -> tuple[str, ...]:
     """The `aco land` command line `parsed` came from, without its identity
-    flags, for `_holder_repeat_command`: `--keep-worktree` stays, since a
-    repeat without it would remove the worktree the operator kept."""
+    flags, for `_holder_repeat_command`: `--head` and `--keep-worktree`
+    stay, since a repeat without them would land an unreviewed head or
+    remove the worktree the operator kept."""
     command = ["aco", "land", str(parsed.pull_request)]
+    if parsed.head is not None:
+        command.extend(["--head", parsed.head])
     if parsed.keep_worktree:
         command.append(KEEP_WORKTREE_FLAG)
     return tuple(command)
@@ -6289,23 +6339,18 @@ def _cmd_release(
     `precondition_failed`, rather than escaping the envelope entirely."""
     as_json = parsed.json
     try:
-        return _release_transition(parsed, context, release_branch, landed_head=None)
+        return _release_transition(parsed, context, release_branch)
     except protocol.ClaimError as error:
         return _refuse(ReleaseReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
 def _release_transition(
-    parsed: argparse.Namespace,
-    context: RunContext,
-    release_branch: str | None,
-    *,
-    landed_head: str | None,
+    parsed: argparse.Namespace, context: RunContext, release_branch: str | None
 ) -> int:
-    """`landed_head` is the head sha `aco land` pinned for the merge it
-    just made, the only evidence a squashed lane's own tip may be cleaned
-    up by (issue #578); a standalone release has none, since a pull
-    request's head read after its merge is no proof of what landed, so it
-    removes only a branch the trunk itself contains."""
+    """A `--merged` release judges a squashed lane by the head the forge
+    recorded as landed (issue #590), whether `aco land` merged it a moment
+    ago, a rerun resumes it, or a standalone release follows a merge made
+    elsewhere: a merged pull request's head no longer moves."""
     issue = _optional_issue_number(parsed.issue)
     identity = _resolved_identity(issue, release_branch or "")
     storage = context.config.storage
@@ -6317,6 +6362,7 @@ def _release_transition(
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     client: github.GitHubForge | None = None
+    verified: _VerifiedMerge | None = None
     if isinstance(outcome, protocol.MergedRelease):
         # Authorization above gates every forge read and write here (issue
         # #359 R1): an unauthorized or mismatched-claim `--merged` release
@@ -6326,7 +6372,8 @@ def _release_transition(
         # cast is honest, not a suppression: `_build_forge` builds
         # exactly a `github.GitHubForge` for every other storage pin.
         client = cast(github.GitHubForge, context.forge)
-        pending_close = _verify_merged_release(context, client, identity, outcome)
+        verified = _verify_merged_release(context, client, identity, outcome)
+        pending_close = verified.pending_close
         if pending_close is not None:
             # Runs before the release transition below (issue #359 R1): a
             # close failure here -- a transient forge error, most often --
@@ -6362,9 +6409,9 @@ def _release_transition(
             resolved.selected.branch,
             context,
             context.fetched_default_branch_ref,
-            landed_head,
+            verified.landed_head,
         )
-        if isinstance(outcome, protocol.MergedRelease)
+        if verified is not None
         else None
     )
     _print_release_result(
@@ -6431,8 +6478,8 @@ def _cleanup_landed_worktree(
     `fetched_trunk_ref` names the ref the lane must be merged into -- the
     one its release judged the landing on (issue #492) -- asked only here,
     so a failure to resolve it reads as `kept` too. `landed_head` is the
-    head `aco land` pinned for its own merge, `None` for every release that
-    made no merge itself. The remote branch
+    merged pull request's recorded head, `None` under `storage = state-ref`,
+    which has no pull request. The remote branch
     stays the forge merge's own business either way."""
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
@@ -6640,6 +6687,18 @@ def _refuse_land_readiness(readiness: forge.LandingReadiness) -> None:
         raise protocol.ClaimUnavailableError(checks_refusal)
 
 
+def _refuse_unreviewed_head(readiness: forge.LandingReadiness, reviewed_head: str | None) -> None:
+    """`land --head` (issue #590): the head this preflight read -- the one
+    the merge pins -- must be the commit the reviewers saw, so a push after
+    their review never lands unseen."""
+    if reviewed_head is None or readiness.head_sha.startswith(reviewed_head):
+        return
+    raise protocol.ClaimUnavailableError(
+        f"pull request #{readiness.number} head is {readiness.head_sha}, "
+        f"not the reviewed {reviewed_head}; review the new head before landing"
+    )
+
+
 def _land_governing_settings(config: board.BoardConfig) -> dict[str, object]:
     """The settings that decide where `aco land`'s own release half writes
     (issue #505): a pull request may change any other setting and still
@@ -6699,7 +6758,8 @@ def _land_preflight(
     own classification/claim/parent/closing rules (`_structural_classification`/
     `_classification_defect`) rather than a second copy of them.
 
-    In order: readiness (no local git read at all), the pull request's own
+    In order: the reviewed head `--head` names, readiness (neither a local
+    git read), the pull request's own
     shape, its head's board configuration against this checkout's own
     (LANDCMD-22..24, issue #505), then the named item's live open state --
     LANDCMD-08 before claim validation (issue #405 review/gate finding) --
@@ -6717,6 +6777,7 @@ def _land_preflight(
     function itself never repeats that check.
     """
     readiness = client.landing_readiness(number)
+    _refuse_unreviewed_head(readiness, parsed.head)
     _refuse_land_readiness(readiness)
     detail = client.landing(number)
     structural = _structural_classification(context, detail)
@@ -6883,7 +6944,6 @@ def _land_release(
     context: RunContext,
     issue: int | None,
     branch: str,
-    landed_head: str | None,
 ) -> None:
     """`aco land`'s own delegated call into the existing `release --merged`
     path (issue #405): never a second copy of its close/release/report/
@@ -6898,9 +6958,7 @@ def _land_release(
     would otherwise print its sentence a second time. The release reads
     through a fresh `context` (issue #457 proof 6): the fast-forward just
     wrote the landed trunk into this very checkout, so the configuration
-    and forge read before it no longer answer for it. `landed_head` is the
-    head sha this run's own merge was pinned to, `None` on a rerun that
-    found the pull request already merged."""
+    and forge read before it no longer answer for it."""
     release_parsed = argparse.Namespace(
         issue=issue,
         agent=parsed.agent,
@@ -6917,7 +6975,7 @@ def _land_release(
         json=False,
         repo=parsed.repo,
     )
-    _release_transition(release_parsed, context.fresh(), branch, landed_head=landed_head)
+    _release_transition(release_parsed, context.fresh(), branch)
 
 
 def _land_is_own_repository(toplevel: Path) -> bool:
@@ -6959,11 +7017,9 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
     repository = client.repository.path
     detail = client.landing(number)
     classification: board.Classification | None
-    landed_head: str | None
     if detail.merged:
         assert detail.merge_commit is not None  # `merged` is true; github.py guarantees this.
         merge_sha = detail.merge_commit
-        landed_head = None
         checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
         # A rerun: this run's own preflight never ran, so it never verified a
         # classification -- `_land_release_routing` reads the merge commit's
@@ -6988,7 +7044,6 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
         checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
         method = _land_merge_method(config.merge_method, client, number)
         merge_sha = _land_merge(client, detail, readiness, classification, method)
-        landed_head = readiness.head_sha
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)
     )
@@ -7009,7 +7064,6 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
             context,
             _land_release_routing(classification, merge_sha, context),
             detail.source_branch,
-            landed_head,
         ),
     )
     if _land_is_own_repository(toplevel):

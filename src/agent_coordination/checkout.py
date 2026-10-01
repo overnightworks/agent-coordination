@@ -1211,9 +1211,10 @@ def refuse_unsafe_start_branch(branch: str, *, prefix: str) -> None:
 
 def branch_exists(branch: str) -> bool:
     """Whether the calling process's own checkout already has a local
-    branch named `branch` (issue #322) -- `start`'s naming-collision guard
-    and the squashed lane cleanup's section gate
-    (`_remove_deleted_branch_section`, issue #578) -- read the same `-C`-free
+    branch named `branch` (issue #322) -- for `start`'s naming-collision
+    guard, its detached-HEAD repair advice (`_attach_command`), and the
+    squashed lane cleanup's section gate (`_remove_deleted_branch_section`,
+    issue #578) -- read the same `-C`-free
     way `_validate_worktree_branch` reads the checkout's own current branch,
     since both always run from the repository whose sibling worktree they
     create or remove, never from an arbitrary resolved directory."""
@@ -1420,8 +1421,8 @@ class WorktreeRemoval:
 
 @dataclass(frozen=True)
 class SectionKept:
-    """A deleted squashed branch's own `branch.<name>` section git refused
-    to drop (issue #578): the one cleanup step that can fail once the
+    """A deleted squashed branch's own `branch.<name>` section whose removal
+    git refused or never completed (issue #578): the one cleanup step that can fail once the
     branch itself is gone, so it is reported on its own and never as a
     kept branch."""
 
@@ -1438,7 +1439,8 @@ class BranchRemoval:
     removal (issue #578) -- are separate git writes, so the first can
     succeed while a later one fails, and that must never read as a bare
     `kept` that hides the worktree's own removal. `section_kept` names a
-    deleted squashed branch's section git refused to remove."""
+    deleted squashed branch's section whose removal git refused or never
+    completed."""
 
     removed: bool
     reason: str | None
@@ -1486,8 +1488,8 @@ def cleanup_landed_worktree(
     removing a dirty or still-needed worktree is unsafe and the two git
     writes below it are each worth reporting apart. A branch counts as
     landed when the trunk contains its tip, or when its tip is
-    `landed_head`, the head `aco land` pinned for its own squash (issue #578): a
-    squash commit is no descendant of that tip, so ancestry alone would keep
+    `landed_head`, the merged pull request's recorded head (issues #578,
+    #590): a squash commit is no descendant of that tip, so ancestry alone would keep
     every squashed lane. `release`'s own cwd-equality guard and its "no
     worktree matches this branch" decision run before this and stay the
     caller's own job (they need the process's own cwd and worktree listing,
@@ -1566,46 +1568,46 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> BranchRemoval:
     if deleted.exit_status != 0:
         return _branch_kept(process.git_failure_detail(deleted))
     try:
-        section_refusal = _remove_deleted_branch_section(branch)
+        _remove_deleted_branch_section(branch)
     except ClaimError as error:
-        section_refusal = str(error)
-    if section_refusal is None:
-        return _BRANCH_REMOVED
-    return BranchRemoval(
-        removed=True,
-        reason=None,
-        section_kept=SectionKept(
-            section=f"branch.{branch}", reason=f"git failure: {section_refusal}"
-        ),
-    )
+        return BranchRemoval(
+            removed=True,
+            reason=None,
+            section_kept=SectionKept(section=f"branch.{branch}", reason=f"git failure: {error}"),
+        )
+    return _BRANCH_REMOVED
 
 
-def _remove_deleted_branch_section(branch: str) -> str | None:
+def _remove_deleted_branch_section(branch: str) -> None:
     """Drop the deleted `branch`'s own `branch.<name>` section, as `git
     branch -d` would, but only once no branch of that name exists, read
-    after the delete so a section added meanwhile goes too, and return
-    git's own refusal of a step, or `None`; a git run that fails to launch
-    or times out, and a branch check git refuses, raise `ClaimError`. A
+    after the delete so a section added meanwhile goes too. Every step git
+    refuses, or that fails to launch or times out, raises `ClaimError`,
+    which `_delete_squashed_branch` alone turns into a kept section. A
     branch another process creates under that name between the delete and
     this removal can lose its upstream setting: no commit is lost, and `git
     branch -u` restores it."""
     if branch_exists(branch):
-        return None
-    listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
+        return
+    # Key names only (issue #590): a value under `branch.*` -- a
+    # description, say -- may hold bytes that are no UTF-8, and the
+    # cleanup runs after the worktree and branch are already gone.
+    listed = _git_run(["config", "--local", "--null", "--name-only", "--get-regexp", r"^branch\."])
     if listed.exit_status not in (0, 1):
-        return process.git_failure_detail(listed)
-    if not _has_own_branch_section(listed.stdout.decode(), branch):
-        return None
+        raise ClaimError(process.git_failure_detail(listed))
+    keys = listed.stdout.decode(errors="surrogateescape").split("\0")
+    if not _has_own_branch_section(keys, branch):
+        return
     removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
-    return process.git_failure_detail(removed) if removed.exit_status != 0 else None
+    if removed.exit_status != 0:
+        raise ClaimError(process.git_failure_detail(removed))
 
 
-def _has_own_branch_section(listing: str, branch: str) -> bool:
-    """Whether `git config --null --get-regexp` lists a key of `branch`'s
-    own `branch.<name>` section -- never a dotted sibling's, whose
-    `branch.<name>.x.<variable>` keys share the prefix."""
+def _has_own_branch_section(keys: list[str], branch: str) -> bool:
+    """Whether `keys` hold one of `branch`'s own `branch.<name>` section --
+    never a dotted sibling's, whose `branch.<name>.x.<variable>` keys share
+    the prefix."""
     prefix = f"branch.{branch}."
-    keys = (entry.partition("\n")[0] for entry in listing.split("\0") if entry)
     return any(key.startswith(prefix) and "." not in key.removeprefix(prefix) for key in keys)
 
 

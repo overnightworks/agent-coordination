@@ -15,8 +15,9 @@ GitHub's own `mergeable_state`, `<name>`/`<conclusion>` one check's own name
 and conclusion, `<path>` the board configuration `.agent-claim/board.toml`,
 `<setting>` one of the two settings in it a head may not change, `storage`
 and `canonical_remote` (`priority_labels`, `idea_label`, `body_contract`, and
-`merge_method` may change), `<title>` the pull request's own title, and a "head" the pull request's own head commit read during
-preflight. "Checks" is every check run GitHub reports for the head sha
+`merge_method` may change), `<title>` the pull request's own title, a "head" the pull request's own head commit read during
+preflight, `<actual>` that head's full sha, and `--head <sha>` the head its reviewers saw: its
+full sha or a prefix of at least 7 hex digits. "Checks" is every check run GitHub reports for the head sha
 (every page of `check-runs`) plus every combined-status context
 (`commits/<sha>/status`; an external context such as SonarCloud counts);
 "no checks" means both are empty. GitHub owns a check's own name -- no
@@ -40,6 +41,9 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | `<path>` present but untracked or ignored | PIN-01 (cited) |
 | `storage = "state-ref"` | LANDCMD-01 |
 | `--coordinator-override` without `--role coordinator` | LANDCMD-19 |
+| `--head` not 7 to 40 hex digits | LANDCMD-33 |
+| the head no longer starts with `--head`'s sha | LANDCMD-31 |
+| no `--head` given | LANDCMD-32 |
 | pull request not open | LANDCMD-02 |
 | not mergeable | LANDCMD-03 |
 | no CI checks at all | LANDCMD-04 |
@@ -68,6 +72,9 @@ preflight, refused or not, exactly as `reset`'s own read does.
 
 - [ ] [LANDCMD-01] Under `storage = "state-ref"`, `aco land <n>` refuses `aco land is a github command; storage = state-ref has no pull requests to land`, exit `2`, before any read.
 - [ ] [LANDCMD-19] `--coordinator-override` without `--role coordinator` refuses (CLAIM-39's sentence), exit `2`, at `aco land`'s own entry -- before any read, so also before a rerun skips the rest of preflight.
+- [ ] [LANDCMD-33] A `--head` that is not 7 to 40 hex digits refuses `--head must be 7 to 40 hex digits`, exit `2`, at `aco land`'s own entry, before any read (E-LANDCMD-33).
+- [ ] [LANDCMD-31] `--head <sha>` refuses `pull request #<n> head is <actual>, not the reviewed <sha>; review the new head before landing`, exit `2`, unless the head starts with `<sha>` (E-LANDCMD-31).
+- [ ] [LANDCMD-32] Without `--head`, `aco land` pins whatever head preflight reads (LANDCMD-12); a rerun (LANDCMD-18) never compares `--head`, since its merge already happened.
 - [ ] [LANDCMD-02] A pull request that is not open refuses `pull request #<n> is not open; it cannot be landed`, exit `2`.
 - [ ] [LANDCMD-03] A pull request whose own `mergeable_state` is not `clean` refuses `pull request #<n> is not mergeable (<state>)`, exit `2`.
 - [ ] [LANDCMD-04] A pull request exposing no CI checks against its own head commit refuses `pull request #<n> exposes no CI checks; cannot verify green CI`, exit `2`.
@@ -79,7 +86,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-24] A head `<path>` the pin's own validator refuses prints `pull request #<n> carries an invalid <path>: <detail>`, exit `2`.
 - [ ] [LANDCMD-08] A classified work item that is not open refuses `work item #<n> is not open; it cannot be landed`, exit `2`; an issue-less pull request skips this check.
 - [ ] [LANDCMD-09] The classification's own claim, parent, and closing rules then apply (LAND-14..28): a defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
-- [ ] [LANDCMD-10] A claim held by another agent or role, no coordinator override, refuses (REL-12's sentence), exit `2`, before the merge; `<repeat>` is `aco land <n>`, `--keep-worktree` if given, REL-41's identity.
+- [ ] [LANDCMD-10] A claim held by another agent or role, no coordinator override, refuses (REL-12's sentence), exit `2`, before the merge; `<repeat>`: `aco land <n>`, any `--head`/`--keep-worktree`, REL-41's identity.
 - [ ] [LANDCMD-11] This checkout must sit on the forge's default branch with nothing uncommitted, or `aco land` refuses `land must run from a clean checkout of the default branch '<branch>'`, exit `2`.
 - [ ] [LANDCMD-25] A checkout without a git identity refuses `land must run from a checkout with a git identity; set user.name and user.email there so its release can commit to the claim state`, exit `2`.
 - [ ] [LANDCMD-20] The forge names `<branch>` even where the canonical remote records no `HEAD`; LANDCMD-11 never reads one.
@@ -109,7 +116,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - `aco land` never runs `release`'s own close, store transition, `freed`/`next` report, or worktree cleanup a second time; it delegates to the one existing `release --merged` path (`specs/release.spec.md`).
 - A step after the merge never re-merges: recovery always resumes from the pull request's own already-merged state, read fresh on every rerun.
 - Once merged, the delegated release never reads the pull request's own mutable body for routing: a fixer editing it away afterward changes nothing this pull request already landed (LAND-64).
-- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25, LANDCMD-28) refuses.
+- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25, LANDCMD-28, LANDCMD-31, LANDCMD-33) refuses.
 - `aco land` never takes its storage, canonical remote, forge, or claim store from a head's `<path>`: this checkout's own tracked copy governs, and the head's copy is only checked (LANDCMD-22..24).
 
 ## Examples
@@ -118,6 +125,26 @@ preflight, refused or not, exactly as `reset`'s own read does.
 fresh work repository whose `origin` is a local bare repository with `main`
 at one commit, a git identity, `origin/HEAD`, and `ACO_AGENT` set to `Ada`,
 plus a fixed, deterministic fake `gh`.
+
+### E-LANDCMD-33 — a `--head` that is no sha refuses before any read
+
+Setup: bare-remote, fake `gh`
+
+```console
+$ aco land 57 --head main
+2> ERROR: --head must be 7 to 40 hex digits
+exit 2
+```
+
+### E-LANDCMD-31 — a head that moved past the reviewed one refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, its head `1f23527c0ffee0ddba11ab1e5eed5ca1ab1edeed`, reviewed at `9a6383f`
+
+```console
+$ aco land 57 --head 9a6383f
+2> ERROR: pull request #57 head is 1f23527c0ffee0ddba11ab1e5eed5ca1ab1edeed, not the reviewed 9a6383f; review the new head before landing
+exit 2
+```
 
 ### E-LANDCMD-02 — a closed pull request refuses
 
