@@ -405,6 +405,21 @@ class LandingRow:
     evidence: LandingEvidence
 
 
+class MergeMethod(StrEnum):
+    """How GitHub merges a pull request (issue #578), in its own
+    `merge_method` vocabulary."""
+
+    MERGE = "merge"
+    SQUASH = "squash"
+    REBASE = "rebase"
+
+
+# The methods `aco land` merges with, and a `merge_method` pin may name:
+# their one landed commit carries the composed trailer. A rebase lands
+# every lane commit instead, so `land` never uses it.
+LANDING_MERGE_METHODS = frozenset({MergeMethod.MERGE, MergeMethod.SQUASH})
+
+
 @dataclass(frozen=True)
 class BoardConfig:
     priority_labels: tuple[str, ...] = DEFAULT_PRIORITY_LABELS
@@ -424,6 +439,10 @@ class BoardConfig:
     # so no lane can know in advance whether it will need one. Only the
     # trunk's committed copy is obeyed (`session.trunk_lane_shared`).
     lane_shared: tuple[str, ...] = ()
+    # The repository's own history convention for `aco land` (issue #578):
+    # a forge may allow several methods while the repository keeps one, so
+    # a pin here beats the forge's allowed methods; `None` asks the forge.
+    merge_method: MergeMethod | None = None
 
 
 # The body pin (issue #150) is still a key this file defines, but no longer
@@ -652,6 +671,18 @@ def _validated_storage(raw: dict[str, object], path: Path) -> Storage:
     )
 
 
+def _validated_merge_method(raw: dict[str, object], path: Path) -> MergeMethod | None:
+    method_raw = raw.get("merge_method")
+    if method_raw is None:
+        return None
+    if isinstance(method_raw, str) and method_raw in LANDING_MERGE_METHODS:
+        return MergeMethod(method_raw)
+    raise protocol.ClaimError(
+        f"board configuration {path} merge_method must be "
+        f"{MergeMethod.MERGE.value!r} or {MergeMethod.SQUASH.value!r}"
+    )
+
+
 def _validated_lane_shared(raw: dict[str, object], path: Path) -> tuple[str, ...]:
     """`lane_shared`'s entries (issue #575), each in the one canonical
     repository-relative form a claim scope entry takes, so `protect` can
@@ -728,6 +759,7 @@ def parse_config(text: str, path: Path) -> BoardConfig:
         idea_label=_validated_idea_label(raw),
         canonical_remote=_validated_canonical_remote(raw, path),
         storage=_validated_storage(raw, path),
+        merge_method=_validated_merge_method(raw, path),
         lane_shared=_validated_lane_shared(raw, path),
     )
 

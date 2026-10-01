@@ -1804,7 +1804,7 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
         pytest.param(
             "codex/issue-72-widget",
             "scripts/registry.txt",
-            'merge_method = "squash"\n',
+            "newer_aco_key = true\n",
             "deny",
             id="defective-trunk",
         ),

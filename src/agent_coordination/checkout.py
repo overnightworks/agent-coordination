@@ -864,18 +864,30 @@ def is_default_branch(branch: str, default_branch: str | None) -> bool:
     return branch in DEFAULT_BRANCH_FALLBACK
 
 
-def refuse_unclean_default_branch_checkout(default_branch: str, *, directory: Path) -> None:
-    """`land`'s own precondition (issue #405): the checkout at `directory`
-    must already sit on `default_branch` -- the run's own answer, never read
-    here (issue #492) -- with nothing uncommitted, since `land`
-    fast-forwards that exact branch in place once its merge succeeds --
-    raises the ruled refusal otherwise."""
+LAND_MISSING_GIT_IDENTITY_REFUSAL = (
+    "land must run from a checkout with a git identity; set user.name and user.email "
+    "there so its release can commit to the claim state"
+)
+
+
+def refuse_unlandable_checkout(default_branch: str, *, directory: Path) -> None:
+    """`land`'s own checkout precondition (issue #405): the checkout at
+    `directory` must already sit on `default_branch` -- the run's own
+    answer, never read here (issue #492) -- with nothing uncommitted, since
+    `land` fast-forwards that exact branch in place once its merge
+    succeeds, and it must carry a git identity, since its delegated release
+    commits to the claim state from here: a separate landing clone without
+    one merged and only then failed its release (issue #578). Raises the
+    ruled refusal otherwise."""
     current = current_branch(directory=directory)
     dirty = _git_output(["status", "--porcelain"], directory=directory)
     if current != default_branch or dirty:
         raise ClaimError(
             f"land must run from a clean checkout of the default branch {default_branch!r}"
         )
+    for identity in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+        if _git_run(["var", identity], directory=directory).exit_status != 0:
+            raise ClaimError(LAND_MISSING_GIT_IDENTITY_REFUSAL)
 
 
 def trunk_ref(remote: str, *, directory: Path) -> str:
@@ -1076,7 +1088,7 @@ def fast_forward_default_branch(trunk: str, *, directory: Path) -> None:
     issue #492). `--ff-only` refuses loud
     rather than rewriting history if the local branch somehow diverged --
     never true in the ordinary case, since
-    `refuse_unclean_default_branch_checkout` already proved this exact
+    `refuse_unlandable_checkout` already proved this exact
     checkout clean and on the default branch before the merge ever ran."""
     result = _git_run(["merge", "--ff-only", trunk], directory=directory)
     if result.exit_status != 0:
@@ -1199,11 +1211,12 @@ def refuse_unsafe_start_branch(branch: str, *, prefix: str) -> None:
 
 def branch_exists(branch: str) -> bool:
     """Whether the calling process's own checkout already has a local
-    branch named `branch` (issue #322) -- `start`'s naming-collision guard,
-    read the same `-C`-free way `_validate_worktree_branch` reads the
-    checkout's own current branch, since `start` always runs from the
-    repository whose sibling worktree it is about to create, never from an
-    arbitrary resolved directory."""
+    branch named `branch` (issue #322) -- `start`'s naming-collision guard
+    and the squashed lane cleanup's section gate
+    (`_remove_deleted_branch_section`, issue #578) -- read the same `-C`-free
+    way `_validate_worktree_branch` reads the checkout's own current branch,
+    since both always run from the repository whose sibling worktree they
+    create or remove, never from an arbitrary resolved directory."""
     result = _git_run(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"])
     if result.exit_status == 0:
         return True
@@ -1406,15 +1419,30 @@ class WorktreeRemoval:
 
 
 @dataclass(frozen=True)
+class SectionKept:
+    """A deleted squashed branch's own `branch.<name>` section git refused
+    to drop (issue #578): the one cleanup step that can fail once the
+    branch itself is gone, so it is reported on its own and never as a
+    kept branch."""
+
+    section: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class BranchRemoval:
     """Whether the same cleanup also removed the lane's own local branch,
     tracked apart from `WorktreeRemoval` (issue #322 review/gate finding 4):
-    `git worktree remove` and `git branch -d` are two separate git writes,
-    so the first can succeed while the second fails, and that must never
-    read as a bare `kept` that hides the worktree's own removal."""
+    `git worktree remove` and the branch deletion -- `git branch -d`, or for
+    a squashed lane `git update-ref -d` plus the `branch.<name>` section
+    removal (issue #578) -- are separate git writes, so the first can
+    succeed while a later one fails, and that must never read as a bare
+    `kept` that hides the worktree's own removal. `section_kept` names a
+    deleted squashed branch's section git refused to remove."""
 
     removed: bool
     reason: str | None
+    section_kept: SectionKept | None = None
 
 
 @dataclass(frozen=True)
@@ -1449,18 +1477,28 @@ WORKTREE_KEPT_ELSEWHERE_REASON = "branch checked out elsewhere"
 
 
 def cleanup_landed_worktree(
-    matching: Path, branch: str, *, trunk: str, directory: Path
+    matching: Path, branch: str, *, trunk: str, landed_head: str | None, directory: Path
 ) -> WorktreeCleanupOutcome:
     """`release --merged`'s own cleanup policy once a lane's linked worktree
     is already found (issue #322 review/gate finding 4): merged check, then
     checked-out-elsewhere check, then a dirty check, then the worktree
     removal itself, then the branch deletion -- in that order, since
     removing a dirty or still-needed worktree is unsafe and the two git
-    writes below it are each worth reporting apart. `release`'s own
-    cwd-equality guard and its "no worktree matches this branch" decision
-    run before this and stay the caller's own job (they need the process's
-    own cwd and worktree listing, neither of which this function reads)."""
-    if not branch_merged_into_default(branch, trunk=trunk, directory=directory):
+    writes below it are each worth reporting apart. A branch counts as
+    landed when the trunk contains its tip, or when its tip is
+    `landed_head`, the head `aco land` pinned for its own squash (issue #578): a
+    squash commit is no descendant of that tip, so ancestry alone would keep
+    every squashed lane. `release`'s own cwd-equality guard and its "no
+    worktree matches this branch" decision run before this and stay the
+    caller's own job (they need the process's own cwd and worktree listing,
+    neither of which this function reads)."""
+    merged = branch_merged_into_default(branch, trunk=trunk, directory=directory)
+    squash_landed = (
+        not merged
+        and landed_head is not None
+        and resolved_commit(f"refs/heads/{branch}", directory=directory) == landed_head
+    )
+    if not merged and not squash_landed:
         return worktree_cleanup_kept(WORKTREE_KEPT_NOT_MERGED_REASON)
     matching_checkout = resolve_path_checkout(matching)
     if matching_checkout is not None and matching_checkout.kind is CheckoutKind.MAIN:
@@ -1468,15 +1506,20 @@ def cleanup_landed_worktree(
     dirty = _git_output(["status", "--porcelain"], directory=matching)
     if dirty:
         return worktree_cleanup_kept(WORKTREE_KEPT_DIRTY_REASON)
-    return remove_linked_worktree(matching, branch=branch)
+    return remove_linked_worktree(
+        matching, branch=branch, landed_head=landed_head if squash_landed else None
+    )
 
 
-def remove_linked_worktree(path: Path, *, branch: str) -> WorktreeCleanupOutcome:
+def remove_linked_worktree(
+    path: Path, *, branch: str, landed_head: str | None = None
+) -> WorktreeCleanupOutcome:
     """Remove a landed lane's linked worktree and its own local branch
     (issue #322), or the pair a refused `start` had just created (issue
     #479): `git worktree remove` first -- git refuses to delete a
-    branch still checked out anywhere -- then `git branch -d`, both through
-    this module's own `_git_run` chokepoint. Never called on the calling
+    branch still checked out anywhere -- then the branch deletion
+    (`_delete_branch`), both through this module's own `_git_run`
+    chokepoint. Never called on the calling
     process's own checkout: `release`'s own cwd-equality guard runs first,
     since a worktree cannot remove its own cwd, and `start` removes only a
     worktree it created, never the one it runs in. A worktree-removal failure
@@ -1487,15 +1530,83 @@ def remove_linked_worktree(path: Path, *, branch: str) -> WorktreeCleanupOutcome
     result = _git_run(["worktree", "remove", str(path)])
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
-    result = _git_run(["branch", "-d", branch])
-    if result.exit_status != 0:
-        return WorktreeCleanupOutcome(
-            worktree=_WORKTREE_REMOVED,
-            branch=BranchRemoval(
-                removed=False, reason=f"git failure: {process.git_failure_detail(result)}"
-            ),
-        )
-    return WorktreeCleanupOutcome(worktree=_WORKTREE_REMOVED, branch=_BRANCH_REMOVED)
+    return WorktreeCleanupOutcome(
+        worktree=_WORKTREE_REMOVED, branch=_delete_branch(branch, landed_head)
+    )
+
+
+def _delete_branch(branch: str, landed_head: str | None) -> BranchRemoval:
+    """Delete local `branch` and report what git did: with `git branch -d`,
+    whose own merged check guards a merged lane, or -- for a squash git's
+    merged check cannot see (issue #578) -- with `_delete_squashed_branch`."""
+    if landed_head is None:
+        deleted = _git_run(["branch", "-d", branch])
+        if deleted.exit_status != 0:
+            return _branch_kept(process.git_failure_detail(deleted))
+        return _BRANCH_REMOVED
+    return _delete_squashed_branch(branch, landed_head)
+
+
+def _branch_kept(failure: str) -> BranchRemoval:
+    return BranchRemoval(removed=False, reason=f"git failure: {failure}")
+
+
+def _delete_squashed_branch(branch: str, landed_head: str) -> BranchRemoval:
+    """Delete a squashed lane's `branch` with one compare-and-delete against
+    `landed_head` (issue #578 line 4), so a branch that moved on is refused
+    by git and kept and no commit is ever lost, then drop its own
+    `branch.<name>` section. A git run that fails to launch or times out
+    never escapes, since the worktree is already gone: the compare-and-delete
+    reads the branch kept, and once it succeeded the branch reads removed,
+    and a section step git refuses or never completes is named on its own."""
+    try:
+        deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
+    except ClaimError as error:
+        return _branch_kept(str(error))
+    if deleted.exit_status != 0:
+        return _branch_kept(process.git_failure_detail(deleted))
+    try:
+        section_refusal = _remove_deleted_branch_section(branch)
+    except ClaimError as error:
+        section_refusal = str(error)
+    if section_refusal is None:
+        return _BRANCH_REMOVED
+    return BranchRemoval(
+        removed=True,
+        reason=None,
+        section_kept=SectionKept(
+            section=f"branch.{branch}", reason=f"git failure: {section_refusal}"
+        ),
+    )
+
+
+def _remove_deleted_branch_section(branch: str) -> str | None:
+    """Drop the deleted `branch`'s own `branch.<name>` section, as `git
+    branch -d` would, but only once no branch of that name exists, read
+    after the delete so a section added meanwhile goes too, and return
+    git's own refusal of a step, or `None`; a git run that fails to launch
+    or times out, and a branch check git refuses, raise `ClaimError`. A
+    branch another process creates under that name between the delete and
+    this removal can lose its upstream setting: no commit is lost, and `git
+    branch -u` restores it."""
+    if branch_exists(branch):
+        return None
+    listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
+    if listed.exit_status not in (0, 1):
+        return process.git_failure_detail(listed)
+    if not _has_own_branch_section(listed.stdout.decode(), branch):
+        return None
+    removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
+    return process.git_failure_detail(removed) if removed.exit_status != 0 else None
+
+
+def _has_own_branch_section(listing: str, branch: str) -> bool:
+    """Whether `git config --null --get-regexp` lists a key of `branch`'s
+    own `branch.<name>` section -- never a dotted sibling's, whose
+    `branch.<name>.x.<variable>` keys share the prefix."""
+    prefix = f"branch.{branch}."
+    keys = (entry.partition("\n")[0] for entry in listing.split("\0") if entry)
+    return any(key.startswith(prefix) and "." not in key.removeprefix(prefix) for key in keys)
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:

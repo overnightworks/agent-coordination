@@ -81,6 +81,7 @@ from agent_coordination import (
     github,
     items,
     metrics,
+    process,
     protocol,
     state_board,
     store,
@@ -147,16 +148,27 @@ def _live_store_claim() -> protocol.ActiveClaim:
     return next(iter(state.claims.values()))
 
 
-def _merge_on_the_forge(remote: Path, default_branch: str, source_branch: str, message: str) -> str:
-    """The merge commit a forge's own merge of `source_branch` into
-    `default_branch` pushes to the bare `remote`, built in a clone of it
+def _merge_on_the_forge(
+    remote: Path,
+    default_branch: str,
+    source_branch: str,
+    message: str,
+    method: board.MergeMethod,
+) -> str:
+    """The commit a forge's own merge of `source_branch` into
+    `default_branch` with `method` pushes to the bare `remote` -- a merge
+    commit, or one squashed single-parent commit -- built in a clone of it
     beside `remote` so no landing checkout moves with it."""
     clone = remote.parent / "forge-merge"
     _real_git(remote.parent, "clone", "-q", "-b", default_branch, str(remote), str(clone))
     _real_git(clone, "config", "user.name", "Forge")
     _real_git(clone, "config", "user.email", "forge@example.com")
     _real_git(clone, "config", "commit.gpgsign", "false")
-    _real_git(clone, "merge", "-q", "--no-ff", "-m", message, f"origin/{source_branch}")
+    if method is board.MergeMethod.SQUASH:
+        _real_git(clone, "merge", "-q", "--squash", f"origin/{source_branch}")
+        _real_git(clone, "commit", "-q", "-m", message)
+    else:
+        _real_git(clone, "merge", "-q", "--no-ff", "-m", message, f"origin/{source_branch}")
     _real_git(clone, "push", "-q", "origin", f"HEAD:{default_branch}")
     return _real_git(clone, "rev-parse", "HEAD").stdout.strip()
 
@@ -190,9 +202,11 @@ class FakeForge:
     drop_created_issue_type: bool = False
     capability_overrides: dict[forge.ForgeOperation, forge.Capability] = field(default_factory=dict)
     readiness_by_number: dict[int, forge.LandingReadiness] = field(default_factory=dict)
-    merge_calls: list[tuple[int, str, str, str]] = field(default_factory=list)
+    merge_calls: list[tuple[int, str, board.MergeMethod, str, str]] = field(default_factory=list)
     merge_sha: str = MERGE_COMMIT_SHA
     merge_remote: Path | None = None
+    closes_on_merge: bool = False
+    allowed_methods: frozenset[board.MergeMethod] | None = None
     fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
     head_board_config: str | None = ""
@@ -303,25 +317,46 @@ class FakeForge:
             raise ClaimError(f"GitHub has no readiness for pull request #{number}")
         return readiness
 
-    def merge_landing(self, number: int, *, head_sha: str, title: str, body: str) -> str:
+    def allowed_merge_methods(self) -> frozenset[board.MergeMethod] | None:
+        """This fake's mirror of `GitHubForge.allowed_merge_methods` (issue
+        #578): `allowed_methods`, `None` -- settings withheld -- by default."""
+        self._run()
+        return self.allowed_methods
+
+    def merge_landing(
+        self,
+        number: int,
+        *,
+        head_sha: str,
+        method: board.MergeMethod,
+        title: str,
+        body: str,
+    ) -> str:
         """This fake's mirror of `GitHubForge.merge_landing` (issue #405):
         records every call for an adapter-shaped assertion, and, when
         `merge_remote` names a real bare repository (`land`'s own end-to-end
-        tests), merges there into its default branch, as the forge does on
-        its own side, so the landing checkout stands behind until its own
-        real fast-forward."""
+        tests), merges there into its default branch with `method`, as the
+        forge does on its own side, so the landing checkout stands behind
+        until its own real fast-forward. `closes_on_merge` closes every issue
+        the pull request body names with `Closes #<n>`, as GitHub itself does
+        on the merge, before the release ever reads it (issue #578)."""
         self._run()
-        self.merge_calls.append((number, head_sha, title, body))
+        self.merge_calls.append((number, head_sha, method, title, body))
         if self.fail_merge is not None:
             raise self.fail_merge
         sha = self.merge_sha
         landing = self.landings[number]
+        if self.closes_on_merge:
+            self.closed_issues.update(
+                int(closed) for closed in re.findall(r"Closes #(\d+)", landing.body)
+            )
         if self.merge_remote is not None:
             sha = _merge_on_the_forge(
                 self.merge_remote,
                 self.default_branch_name,
                 landing.source_branch,
                 f"{title}\n\n{body}",
+                method,
             )
         self.landings[number] = replace(landing, merged=True, merge_commit=sha)
         return sha
@@ -439,7 +474,9 @@ class ReaderOnlyForge(FakeForge):
     def close_landed_item(self, number: int, *, pull_request: int) -> None:
         pytest.fail("a read-only command must never close a landed item")
 
-    def merge_landing(self, number: int, *, head_sha: str, title: str, body: str) -> str:
+    def merge_landing(
+        self, number: int, *, head_sha: str, method: board.MergeMethod, title: str, body: str
+    ) -> str:
         pytest.fail("a read-only command must never merge a pull request")
 
     def delete_branch(self, branch: str) -> None:
@@ -3146,13 +3183,13 @@ def _trunk_defect(sentence: str) -> str:
         ),
         pytest.param("", [], [], None, "UNCLAIMED", id="none-named"),
         pytest.param(
-            'merge_method = "squash"\nlane_shared = ["scripts/registry.txt"]\n',
+            'newer_aco_key = true\nlane_shared = ["scripts/registry.txt"]\n',
             [
                 "lane-shared: unavailable "
-                f"({_trunk_defect('has unknown top-level key merge_method')})"
+                f"({_trunk_defect('has unknown top-level key newer_aco_key')})"
             ],
             None,
-            _trunk_defect("has unknown top-level key merge_method"),
+            _trunk_defect("has unknown top-level key newer_aco_key"),
             "UNCLAIMED",
             id="a-newer-aco-key",
         ),
@@ -10376,44 +10413,68 @@ def test_cli_release_omitted_claim_id_releases_when_foreign_peer_exists_on_issue
 
 
 @pytest.mark.parametrize(
-    ("agent", "branch", "standing"),
+    ("holder", "session", "arguments", "session_role", "repeat"),
     [
-        (
+        pytest.param(
+            "Ada",
             "Other",
-            "lane-72",
-            (
-                request(
-                    "mine",
-                    "Ada",
-                    issue=72,
-                    role="reviewer",
-                    branch="lane-72",
-                    scope=("src",),
-                ),
-            ),
+            ("--abandoned", "stopped"),
+            "reviewer",
+            "aco release 72 --abandoned stopped --agent Ada",
+            id="abandoned",
+        ),
+        pytest.param(
+            "claude-head",
+            "Claude s-1",
+            ("--merged", "12"),
+            "reviewer",
+            "aco release 72 --merged 12 --agent claude-head",
+            id="merged-by-an-explicit-agent",
+        ),
+        pytest.param(
+            "Claude s-1",
+            "Other",
+            ("--merged", "12", "--role", "builder"),
+            "builder",
+            "aco release 72 --merged 12 --agent 'Claude s-1' --role reviewer",
+            id="other-role-and-a-quoted-agent",
+        ),
+        pytest.param(
+            "Ada",
+            "Other",
+            ("--merged", "12", "--keep-worktree", "--json"),
+            "reviewer",
+            "aco release 72 --merged 12 --keep-worktree --json --agent Ada",
+            id="keeps-the-worktree-and-json-flags",
         ),
     ],
 )
-def test_cli_release_wrong_agent_or_branch_or_two_matches_fails_without_post(
+def test_cli_release_by_another_claimant_names_the_holders_repeat_without_a_write(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    agent: str,
-    branch: str,
-    standing: tuple[ClaimRequest, ...],
+    holder: str,
+    session: str,
+    arguments: tuple[str, ...],
+    session_role: str,
+    repeat: str,
 ) -> None:
-    client = FakeForge()
-    _patch_release_session(monkeypatch, client, *standing, agent=agent, branch=branch)
+    """REL-12 (issue #578 line 3): a release by another agent or role names
+    the exact repeat as the holder before it mentions the coordinator
+    override -- the songmaker case is a claim taken with `--agent
+    claude-head` whose session later falls back to its session id."""
+    standing = request("mine", holder, issue=72, role="reviewer", branch="lane-72", scope=("src",))
+    _patch_release_session(monkeypatch, FakeForge(), standing, agent=session, branch="lane-72")
 
-    released = issue_claim.main(["--repo", REPOSITORY, "release", "72", "--abandoned", "stopped"])
+    released = issue_claim.main(["--repo", REPOSITORY, "release", "72", *arguments])
     captured = capsys.readouterr()
 
-    assert released == 2
-    assert captured.out == ""
+    assert (released, captured.out == "") == (2, "--json" not in arguments)
     assert captured.err == (
-        "ERROR: only the original claimant may release; use an explicit coordinator override "
-        "(holder='Ada (reviewer)', this session='Other (reviewer)')\n"
+        f"ERROR: only the original claimant may release; repeat as the holder with `{repeat}`, "
+        f"or use an explicit coordinator override (holder='{holder} (reviewer)', "
+        f"this session='{session} ({session_role})')\n"
     )
-    assert "conflicting claims" not in captured.err
+    assert store.fetch_state(worktree=Path("."), remote="origin").claims != {}
 
 
 def test_cli_release_without_a_claim_names_the_github_item_by_its_forge_number(
@@ -14818,6 +14879,7 @@ def landing_pull_request(
     author: str = "ada",
     merged: bool = False,
     merge_commit: str | None = None,
+    title: str = "feat: land the lane",
 ) -> forge.Landing:
     """`merge_commit` defaults to a shared, well-formed sha once `merged` is
     true (a real merged pull request always carries one) and to `None`
@@ -14832,6 +14894,7 @@ def landing_pull_request(
         base_ref_name,
         merged,
         merge_commit if merge_commit is not None else (MERGE_COMMIT_SHA if merged else None),
+        title,
     )
 
 
@@ -16809,7 +16872,13 @@ _WORKTREE_CLEANUP_KEPT_SCENARIOS: tuple[
     ),
     ("dirty", _dirty_worktree_scenario, (), "dirty"),
     ("ran-from-inside", _ran_from_inside_scenario, (), "release ran from inside it"),
-    ("no-linked-worktree", _no_linked_worktree_scenario, (), "no linked worktree found"),
+    (
+        "no-linked-worktree",
+        _no_linked_worktree_scenario,
+        (),
+        f"no linked worktree on {_CLEANUP_BRANCH} in this checkout; "
+        "if one exists, it lives in another checkout",
+    ),
     (
         "not-merged-locally",
         _not_merged_locally_scenario,
@@ -17118,6 +17187,13 @@ def _toml_syntax_error(text: str) -> str:
             id="invalid",
         ),
         pytest.param(
+            'merge_method = "rebase"\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml merge_method must be 'merge' or 'squash'",
+            id="invalid-merge-method",
+        ),
+        pytest.param(
             "not toml =",
             False,
             "pull request #12 carries an invalid .agent-claim/board.toml: cannot read board "
@@ -17232,21 +17308,37 @@ def test_land_refuses_a_classification_defect_from_a_missing_claim(
     assert client.merge_calls == []
 
 
+@pytest.mark.parametrize(
+    ("arguments", "repeat"),
+    [
+        pytest.param((), "aco land 12 --agent Grok", id="plain"),
+        pytest.param(
+            ("--keep-worktree",),
+            "aco land 12 --keep-worktree --agent Grok",
+            id="keeps-the-worktree-flag",
+        ),
+    ],
+)
 def test_land_refuses_a_foreign_claim_before_the_merge(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    arguments: tuple[str, ...],
+    repeat: str,
 ) -> None:
     """Issue #405 point 7 review/gate finding: `_land_preflight` itself
     authorizes this session against the live claim, reusing `release`'s own
     claimant/coordinator-override check (`_resolve_release_claimant`) --
     a claim held by another agent refuses before the merge, not only once
-    the delegated `release --merged` step runs after it."""
+    the delegated `release --merged` step runs after it. The repeat keeps
+    `--keep-worktree` (LANDCMD-10)."""
     client = _land_preflight_client(monkeypatch, readiness=_land_readiness(), claim_agent="Grok")
 
-    assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
+    assert issue_claim.main(["--repo", REPOSITORY, "land", "12", *arguments]) == 2
 
     assert capsys.readouterr().err == (
-        "ERROR: only the original claimant may release; use an explicit coordinator "
-        "override (holder='Grok (builder)', this session='Ada (builder)')\n"
+        "ERROR: only the original claimant may release; repeat as the holder with "
+        f"`{repeat}`, or use an explicit coordinator override "
+        "(holder='Grok (builder)', this session='Ada (builder)')\n"
     )
     assert client.merge_calls == []
 
@@ -17314,7 +17406,7 @@ def test_land_merges_a_green_pull_request_and_runs_the_release_path(
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
 
-    [(number, head_sha, _title, body)] = client.merge_calls
+    [(number, head_sha, _method, _title, body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
     assert client.file_reads == [(board.CONFIG_PATH, head_sha)]
     paragraphs = body.strip().split("\n\n")
@@ -17343,12 +17435,346 @@ def test_land_merges_an_issueless_lane_pull_request(
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
 
-    [(number, head_sha, _title, body)] = client.merge_calls
+    [(number, head_sha, _method, _title, body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
     assert body.strip().split("\n\n")[-1] == "No-Item: docs"
     assert client.deleted_branches == [LANE_BRANCH]
     assert client.closed_issues == set()
     assert store.fetch_state(worktree=Path("."), remote="origin").claims == {}
+
+
+_MERGE = board.MergeMethod.MERGE
+_SQUASH = board.MergeMethod.SQUASH
+_REBASE = board.MergeMethod.REBASE
+
+
+@pytest.mark.parametrize(
+    ("pinned", "allowed", "landed"),
+    [
+        pytest.param(None, None, (_MERGE, "Merge pull request #12", 2), id="settings-withheld"),
+        pytest.param(
+            None, frozenset({_MERGE, _SQUASH}), (_MERGE, "Merge pull request #12", 2), id="both"
+        ),
+        pytest.param(
+            None,
+            frozenset({_SQUASH, _REBASE}),
+            (_SQUASH, "feat: land the lane (#12)", 1),
+            id="squash-and-rebase-without-a-merge-commit",
+        ),
+        pytest.param(
+            "squash",
+            frozenset({_MERGE, _SQUASH}),
+            (_SQUASH, "feat: land the lane (#12)", 1),
+            id="pinned-squash-beats-the-forge",
+        ),
+        pytest.param(
+            "merge",
+            frozenset({_SQUASH}),
+            (_MERGE, "Merge pull request #12", 2),
+            id="pinned-merge-beats-the-forge",
+        ),
+        pytest.param(None, frozenset({_REBASE}), None, id="only-rebase-refuses-before-the-merge"),
+    ],
+)
+def test_land_merges_with_the_method_the_repository_allows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    pinned: str | None,
+    allowed: frozenset[board.MergeMethod] | None,
+    landed: tuple[board.MergeMethod, str, int] | None,
+) -> None:
+    """Issue #578 line 2: `land` merges with the board configuration's own
+    `merge_method` pin, else the method the forge allows -- a squash commit
+    titled `<pull request title> (#<n>)` where only squash is allowed -- and
+    the delegated `release --merged` accepts that single-parent commit's own
+    trailer exactly as it accepts a merge commit's, and removes the clean
+    lane worktree whose tip is the head the merge pinned, squashed or not."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = allowed
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
+    lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=lane_tip)
+    if pinned is not None:
+        (repo / ".agent-claim").mkdir()
+        (repo / board.CONFIG_PATH).write_text(f'merge_method = "{pinned}"\n')
+        _real_git(repo, "add", "-f", str(board.CONFIG_PATH))
+        _real_git(repo, "commit", "-q", "-m", "pin the merge method")
+        _real_git(repo, "push", "-q", "origin", "main")
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    error = output.err
+    if landed is None:
+        assert (status, error, client.merge_calls) == (
+            2,
+            "ERROR: pull request #12 cannot land: this repository allows neither a merge "
+            "commit nor a squash merge\n",
+            [],
+        )
+        return
+    [(_number, _head_sha, method, title, body)] = client.merge_calls
+    trunk = _real_git(repo, "rev-parse", "main").stdout.strip()
+    parents = _real_git(repo, "rev-list", "--parents", "-n", "1", trunk).stdout.split()[1:]
+    assert (status, error, method, title, len(parents)) == (0, "", *landed)
+    assert body.strip().split("\n\n")[-1] == f"Work-Item: #{WORK_ITEM_ISSUE}"
+    assert client.closed_issues == {WORK_ITEM_ISSUE}
+    assert "worktree: removed\n" in output.out
+    assert (lane.exists(), checkout.branch_exists(LANDING_BRANCH)) == (False, False)
+    upstream = _real_git(repo, "config", f"branch.{LANDING_BRANCH}.remote", check=False)
+    assert upstream.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "squashed_before_this_run",
+    [
+        pytest.param(False, id="lane-tip-moved-past-the-pinned-head"),
+        pytest.param(True, id="rerun-that-pinned-no-head"),
+    ],
+)
+def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    squashed_before_this_run: bool,
+) -> None:
+    """Issue #578 review finding 2: only the head this run's own squash was
+    pinned to lets a squashed lane go -- a lane commit made after that pin,
+    or a rerun that merged nothing itself, keeps the worktree and its
+    branch, since nothing proves that tip landed."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = frozenset({_SQUASH})
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
+    if squashed_before_this_run:
+        client.merge_landing(
+            12,
+            head_sha=pinned_head,
+            method=_SQUASH,
+            title="feat: land the lane (#12)",
+            body=f"Work-Item: #{WORK_ITEM_ISSUE}",
+        )
+    else:
+        _real_git(lane, "commit", "-q", "--allow-empty", "-m", "after the pin")
+    lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    assert (status, output.err) == (0, "")
+    assert "worktree: kept -- not merged into the default branch\n" in output.out
+    assert lane.exists()
+    assert _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip() == lane_tip
+
+
+def _leave_the_lane_alone(_monkeypatch: pytest.MonkeyPatch, _repo: Path, _lane: Path) -> None:
+    return None
+
+
+def _commit_past_the_landed_head(_monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path) -> str:
+    _real_git(lane, "commit", "-q", "--allow-empty", "-m", "raced past the landed head")
+    return _real_git(lane, "rev-parse", "HEAD").stdout.strip()
+
+
+def _refuse_the_branch_configuration_listing(
+    monkeypatch: pytest.MonkeyPatch, _repo: Path, _lane: Path
+) -> None:
+    run_git = checkout._git_run
+
+    def refuse_the_listing(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        if "--get-regexp" in arguments:
+            return process.CapturedResult(3, b"", b"fatal: the listing failed\n")
+        return run_git(arguments, directory=directory)
+
+    monkeypatch.setattr(checkout, "_git_run", refuse_the_listing)
+
+
+def _fail_the_git_launch(
+    leading_arguments: list[str], failure: Exception
+) -> Callable[[pytest.MonkeyPatch, Path, Path], str | None]:
+    """An arranger whose git call starting with `leading_arguments` raises
+    `failure` instead of running; it returns the lane's tip when that call
+    is the compare-and-delete, which then never ran, or `None`."""
+
+    def fail_that_launch(monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path) -> str | None:
+        tip = _real_git(lane, "rev-parse", "HEAD").stdout.strip()
+        run_git = process.run_git
+
+        def raise_for_that_call(
+            arguments: list[str], *, directory: Path | None = None
+        ) -> process.CapturedResult:
+            if arguments[: len(leading_arguments)] == leading_arguments:
+                raise failure
+            return run_git(arguments, directory=directory)
+
+        monkeypatch.setattr(process, "run_git", raise_for_that_call)
+        return tip if leading_arguments[0] == "update-ref" else None
+
+    return fail_that_launch
+
+
+def _lock_the_repository_configuration(
+    _monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path
+) -> None:
+    common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    (Path(common.stdout.strip()) / "config.lock").touch()
+
+
+def _recreate_the_branch_after_its_deletion(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, lane: Path
+) -> str:
+    """Let another process create the lane's branch again, on the same tip,
+    right after the cleanup's compare-and-delete; return that tip."""
+    tip = _real_git(lane, "rev-parse", "HEAD").stdout.strip()
+    run_git = checkout._git_run
+
+    def run_then_recreate(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        result = run_git(arguments, directory=directory)
+        if arguments[:2] == ["update-ref", "-d"]:
+            _real_git(repo, "branch", "-q", LANDING_BRANCH, tip)
+        return result
+
+    monkeypatch.setattr(checkout, "_git_run", run_then_recreate)
+    return tip
+
+
+def _configure_only_a_dotted_sibling(
+    _monkeypatch: pytest.MonkeyPatch, repo: Path, _lane: Path
+) -> None:
+    """Drop the lane's own `branch.<name>` section and configure a sibling
+    branch whose name extends the lane's with a dot, under `branch.<name>.x`."""
+    _real_git(repo, "config", "--remove-section", f"branch.{LANDING_BRANCH}")
+    sibling = f"{LANDING_BRANCH}.x"
+    _real_git(repo, "branch", "-q", sibling, LANDING_BRANCH)
+    _real_git(repo, "config", f"branch.{sibling}.remote", "origin")
+
+
+def _branch_configuration(repo: Path) -> list[str]:
+    listed = _real_git(repo, "config", "--get-regexp", r"^branch\.", check=False)
+    return listed.stdout.splitlines()
+
+
+@pytest.mark.parametrize(
+    ("interfere", "worktree_line", "lane_section_kept"),
+    [
+        pytest.param(_leave_the_lane_alone, "worktree: removed\n", False, id="clean"),
+        pytest.param(
+            _commit_past_the_landed_head,
+            "worktree: removed; branch kept -- git failure: ",
+            True,
+            id="commit-raced-past-the-head",
+        ),
+        pytest.param(
+            _refuse_the_branch_configuration_listing,
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
+            "git failure: fatal: the listing failed\n",
+            True,
+            id="configuration-listing-refused",
+        ),
+        pytest.param(
+            _lock_the_repository_configuration,
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- git failure: ",
+            True,
+            id="configuration-locked",
+        ),
+        pytest.param(
+            _fail_the_git_launch(["update-ref", "-d"], PermissionError("permission denied")),
+            "worktree: removed; branch kept -- git failure: git failed to launch: "
+            "permission denied\n",
+            True,
+            id="deletion-failed-to-start",
+        ),
+        pytest.param(
+            _fail_the_git_launch(
+                ["config", "--local", "--null", "--get-regexp"], process.ProcessTimedOutError()
+            ),
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
+            "git failure: git timed out while validating the build checkout\n",
+            True,
+            id="configuration-listing-timed-out",
+        ),
+        pytest.param(
+            _fail_the_git_launch(
+                ["config", "--local", "--remove-section"], process.ProcessTimedOutError()
+            ),
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
+            "git failure: git timed out while validating the build checkout\n",
+            True,
+            id="section-removal-timed-out",
+        ),
+        pytest.param(
+            _recreate_the_branch_after_its_deletion,
+            "worktree: removed\n",
+            True,
+            id="same-name-branch-recreated",
+        ),
+        pytest.param(
+            _configure_only_a_dotted_sibling,
+            "worktree: removed\n",
+            False,
+            id="dotted-sibling-without-an-own-section",
+        ),
+    ],
+)
+def test_land_cleans_up_a_squashed_lane_branch_by_compare_and_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    interfere: Callable[[pytest.MonkeyPatch, Path, Path], str | None],
+    worktree_line: str,
+    lane_section_kept: bool,
+) -> None:
+    """Issue #578 line 4: the squashed lane's branch goes with one
+    compare-and-delete against the landed head and its `branch.<name>`
+    section goes only once no branch of that name exists. A commit made in
+    the lane after cleanup judged its tip keeps the branch on that commit;
+    a compare-and-delete git never ran keeps the branch beside the removed
+    worktree; a section listing or removal git refuses, or never runs to
+    completion, after the delete keeps the section beside the removed
+    branch, named on its own; a same-name branch
+    recreated after the delete keeps the section, and a dotted sibling's
+    configuration is never the lane's. `interfere` runs just before the
+    removal and returns the tip the branch must keep, or `None`."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = frozenset({_SQUASH})
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    unconfigured = _branch_configuration(repo)
+    _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
+    lane_section = set(_branch_configuration(repo)) - set(unconfigured)
+    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
+    remove = checkout.remove_linked_worktree
+    kept_tips: list[str] = []
+    configuration: list[str] = []
+
+    def interfere_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
+        kept_tip = interfere(monkeypatch, repo, path)
+        kept_tips.extend([kept_tip] if kept_tip is not None else [])
+        configuration.extend(_branch_configuration(repo))
+        return remove(path, **options)
+
+    monkeypatch.setattr(checkout, "remove_linked_worktree", interfere_then_remove)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    assert (status, output.err) == (0, "")
+    assert worktree_line in output.out
+    assert not lane.exists()
+    tip = _real_git(repo, "rev-parse", "--verify", "--quiet", LANDING_BRANCH, check=False)
+    assert tip.stdout.split() == kept_tips
+    expected = [line for line in configuration if lane_section_kept or line not in lane_section]
+    assert _branch_configuration(repo) == expected
 
 
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(
@@ -17366,7 +17792,7 @@ def test_land_merges_a_foreign_claim_under_a_coordinator_override(
     )
 
     assert status == 0
-    [(number, head_sha, _title, _body)] = client.merge_calls
+    [(number, head_sha, _method, _title, _body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
     assert client.landings[12].merge_commit == _real_git(repo, "rev-parse", "main").stdout.strip()
 
@@ -17382,6 +17808,17 @@ def _break_fetch(monkeypatch: pytest.MonkeyPatch, _client: FakeForge) -> None:
     _stub_one_git_call(monkeypatch, ["fetch", "origin"], exit_status=1, stderr="fatal: unreachable")
 
 
+def _break_fetch_with_terminal_controls(
+    monkeypatch: pytest.MonkeyPatch, _client: FakeForge
+) -> None:
+    _stub_one_git_call(
+        monkeypatch,
+        ["fetch", "origin"],
+        exit_status=1,
+        stderr="fatal: unreachable\n\x1b[2Jhint: \u202eretry",
+    )
+
+
 def _break_fast_forward_merge(monkeypatch: pytest.MonkeyPatch, _client: FakeForge) -> None:
     _stub_one_git_call(
         monkeypatch,
@@ -17392,11 +17829,27 @@ def _break_fast_forward_merge(monkeypatch: pytest.MonkeyPatch, _client: FakeForg
 
 
 @pytest.mark.parametrize(
-    ("arrange", "step"),
+    ("arrange", "step", "detail"),
     [
-        pytest.param(_break_delete_branch, "delete-branch", id="delete-branch"),
-        pytest.param(_break_fetch, "fast-forward", id="fetch-fails"),
-        pytest.param(_break_fast_forward_merge, "fast-forward", id="ff-only-fails"),
+        pytest.param(
+            _break_delete_branch,
+            "delete-branch",
+            "delete branch failed (simulated)",
+            id="delete-branch",
+        ),
+        pytest.param(_break_fetch, "fast-forward", "fatal: unreachable", id="fetch-fails"),
+        pytest.param(
+            _break_fetch_with_terminal_controls,
+            "fast-forward",
+            "fatal: unreachable\\n\\x1b[2Jhint: \\u202eretry",
+            id="fetch-fails-with-terminal-controls-escaped",
+        ),
+        pytest.param(
+            _break_fast_forward_merge,
+            "fast-forward",
+            "fatal: Not possible to fast-forward, aborting.",
+            id="ff-only-fails",
+        ),
     ],
 )
 def test_land_reports_incomplete_follow_up_for_every_post_merge_step(
@@ -17405,10 +17858,12 @@ def test_land_reports_incomplete_follow_up_for_every_post_merge_step(
     tmp_path: Path,
     arrange: Callable[[pytest.MonkeyPatch, FakeForge], None],
     step: str,
+    detail: str,
 ) -> None:
     """Issue #405: every step after a successful merge -- deleting the
     branch, fetching, or fast-forwarding -- names its own step in the one
-    ruled recovery line, the merge itself never repeated."""
+    ruled recovery line, the merge itself never repeated; issue #578: the
+    line carries the step's own failure, never a bare step name."""
     _repo, client = _land_scenario(monkeypatch, tmp_path)
     arrange(monkeypatch, client)
 
@@ -17419,7 +17874,7 @@ def test_land_reports_incomplete_follow_up_for_every_post_merge_step(
     assert merge_commit is not None
     assert capsys.readouterr().err == (
         f"ERROR: MERGED pull request #12 as {merge_commit}; "
-        f"follow-up incomplete: {step}; re-run aco land 12\n"
+        f"follow-up incomplete: {step} ({detail}); re-run aco land 12\n"
     )
     assert len(client.merge_calls) == 1
 
@@ -17456,7 +17911,7 @@ def _land_merged_pending_release(
     assert merge_commit is not None
     assert capsys.readouterr().err == (
         f"ERROR: MERGED pull request #12 as {merge_commit}; "
-        "follow-up incomplete: release; re-run aco land 12\n"
+        "follow-up incomplete: release (forge unreachable (simulated)); re-run aco land 12\n"
     )
     assert len(client.merge_calls) == 1
     assert client.closed_issues == set()
@@ -17485,18 +17940,32 @@ def _land_mark_already_merged(client: FakeForge) -> None:
     client.landings[12] = replace(client.landings[12], merged=True, merge_commit=MERGE_COMMIT_SHA)
 
 
+_OVERRIDE_WITHOUT_COORDINATOR_ROLE = "a coordinator override requires --role coordinator"
+
+
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize(
-    "override_arguments",
+    ("override_arguments", "git_identity", "refusal"),
     [
-        pytest.param(["--coordinator-override"], id="omitted-role"),
-        pytest.param(["--coordinator-override", "--role", "builder"], id="wrong-role"),
+        pytest.param(
+            ["--coordinator-override"], True, _OVERRIDE_WITHOUT_COORDINATOR_ROLE, id="omitted-role"
+        ),
+        pytest.param(
+            ["--coordinator-override", "--role", "builder"],
+            True,
+            _OVERRIDE_WITHOUT_COORDINATOR_ROLE,
+            id="wrong-role",
+        ),
+        pytest.param([], False, checkout.LAND_MISSING_GIT_IDENTITY_REFUSAL, id="no-git-identity"),
     ],
 )
-def test_land_rerun_refuses_a_coordinator_override_with_no_valid_role_before_any_side_effect(
+def test_land_rerun_refuses_a_bad_override_or_a_missing_git_identity_before_any_side_effect(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     override_arguments: list[str],
+    git_identity: bool,
+    refusal: str,
 ) -> None:
     """Issue #405 round-4 finding 1: an already-merged rerun skips
     `_land_preflight` entirely, so a coordinator-override role check placed
@@ -17504,15 +17973,18 @@ def test_land_rerun_refuses_a_coordinator_override_with_no_valid_role_before_any
     and let the delegated `release --merged` step close the item on a bare
     `--coordinator-override` with no coordinator role behind it.
     `_cmd_land`'s own entry validates this before the fresh/rerun split, so
-    none of that runs."""
+    none of that runs. A rerun from a checkout without a git identity
+    refuses the same way (LANDCMD-18 keeps LANDCMD-25)."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     _land_mark_already_merged(client)
+    if not git_identity:
+        _without_git_identity(monkeypatch, repo)
     trunk_before = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12", *override_arguments])
 
     assert status == 2
-    assert capsys.readouterr().err == "ERROR: a coordinator override requires --role coordinator\n"
+    assert capsys.readouterr().err == f"ERROR: {refusal}\n"
     assert client.merge_calls == []
     assert client.deleted_branches == []
     assert client.closed_issues == set()
@@ -17786,6 +18258,114 @@ def test_land_rerun_recovers_release_routing_after_the_body_changed(
 
     assert len(client.merge_calls) == 1
     assert client.closed_issues == {WORK_ITEM_ISSUE}
+
+
+def _land_from_a_separate_clone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, git_identity: bool
+) -> tuple[Path, FakeForge]:
+    """`_land_scenario`'s claim, held for real in `refs/aco/state`, with the
+    lane worktree beside the primary checkout and `aco land` running from a
+    second, clean clone that holds no worktree at all (issue #578, the
+    songmaker landing clone). The forge closes the item through its own
+    `Closes #<n>` on the merge. `git_identity=False` leaves the clone with no
+    user.name or user.email, which git may never guess."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.closes_on_merge = True
+    _use_real_store(monkeypatch)
+    remote = tmp_path / "remote.git"
+    store.bootstrap(worktree=repo, remote=str(remote))
+    store.commit_transition(
+        observed=fresh_observation(repo, remote),
+        subject=store.ClaimTransitionSubject(
+            f"claim issue {WORK_ITEM_ISSUE}", item=str(WORK_ITEM_ISSUE)
+        ),
+        intent=protocol.ClaimIntent(
+            identity=protocol.IssueIdentity(WORK_ITEM_ISSUE),
+            agent="Ada",
+            role="builder",
+            base=protocol.ObjectId("c" * 40),
+            branch=LANDING_BRANCH,
+            scope=("src",),
+            claim_id=protocol.ClaimId("landing-claim"),
+            operation_id="landing-claim-op",
+        ),
+    )
+    _real_git(repo, "worktree", "add", "-q", str(tmp_path / "lane"), LANDING_BRANCH)
+    clone = tmp_path / "landing-clone"
+    _real_git(tmp_path, "clone", "-q", str(remote), str(clone))
+    _without_git_identity(monkeypatch, clone)
+    if git_identity:
+        _real_git(clone, "config", "user.name", "Lander")
+        _real_git(clone, "config", "user.email", "lander@example.com")
+    _redirect_toplevel(monkeypatch, clone)
+    monkeypatch.chdir(clone)
+    return clone, client
+
+
+def _without_git_identity(monkeypatch: pytest.MonkeyPatch, checkout_path: Path) -> None:
+    """`checkout_path` with no git identity git may use or guess: none
+    configured locally or in the environment (the caller isolates the global
+    configuration)."""
+    _real_git(checkout_path, "config", "user.useConfigOnly", "true")
+    _real_git(checkout_path, "config", "--unset-all", "user.name", check=False)
+    _real_git(checkout_path, "config", "--unset-all", "user.email", check=False)
+    for variable in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+
+
+@pytest.mark.usefixtures("isolated_global_git_config")
+@pytest.mark.parametrize(
+    ("git_identity", "expected_status", "expected_error", "expected_merges", "released"),
+    [
+        pytest.param(True, 0, "", 1, True, id="identity-releases"),
+        pytest.param(
+            False,
+            2,
+            f"ERROR: {checkout.LAND_MISSING_GIT_IDENTITY_REFUSAL}\n",
+            0,
+            False,
+            id="no-identity-refuses-before-the-merge",
+        ),
+    ],
+)
+def test_land_from_a_separate_clone_releases_or_refuses_before_the_merge(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    git_identity: bool,
+    expected_status: int,
+    expected_error: str,
+    expected_merges: int,
+    released: bool,
+) -> None:
+    """Issue #578 line 1: a landing clone without the lane worktree, whose
+    item GitHub already closed through `Closes #<n>`, merges and releases
+    the claim, the lane worktree kept where it lives and named as kept. The
+    songmaker cause: a clone with no git identity cannot commit that release
+    to the claim state, so it refuses before anything merges (LANDCMD-25)."""
+    clone, client = _land_from_a_separate_clone(monkeypatch, tmp_path, git_identity=git_identity)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    claims = store.fetch_state(worktree=clone, remote="origin").claims
+    assert (status, output.err, len(client.merge_calls)) == (
+        expected_status,
+        expected_error,
+        expected_merges,
+    )
+    kept_elsewhere = (
+        f"worktree: kept -- no linked worktree on {LANDING_BRANCH} in this checkout; "
+        "if one exists, it lives in another checkout\n"
+    )
+    assert (not claims, kept_elsewhere in output.out) == (released, released)
+    assert (tmp_path / "lane").exists()
 
 
 @pytest.mark.parametrize(

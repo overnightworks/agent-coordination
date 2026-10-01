@@ -10,7 +10,7 @@ trunk walk (`specs/landing-grammar.spec.md`, `## What release --merged
 requires`), the exact `freed`/`next` line and `--json` shapes
 (`specs/landing-grammar.spec.md` LAND-49), the missing-state-ref sentence
 (`specs/ref-store-cas.spec.md` CAS-03), or a claimant refusal
-(`specs/claim-record.spec.md` CLAIM-16, CLAIM-17, CLAIM-38..CLAIM-40) --
+(`specs/claim-record.spec.md` CLAIM-16, CLAIM-17, CLAIM-38..CLAIM-40, beyond REL-12's repeat) --
 each is cited by ID.
 
 `<claim-id>` is the released claim's own id. `<subject>` is the same unquoted
@@ -52,7 +52,7 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | landing board read hits an unreachable forge | — | REL-22 | — |
 | no landing to report | — | — | REL-21 |
 | any refusal past the parser, with `--json` | REL-24 | REL-24 | REL-24 |
-| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34 | REL-33 |
+| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42 | REL-33 |
 
 ## Flags and outcome
 
@@ -77,7 +77,8 @@ spec would cite REL-03 rather than restate it.
 - [ ] [REL-09] An identity/branch pair with no matching live claim refuses `<identity> has no active build claim`, exit `2`.
 - [ ] [REL-10] A `--claim-id` mismatching the one claim already resolved refuses that same `has no active build claim` sentence: never a second selector among several claims.
 - [ ] [REL-11] `--branch` and `--claim-id` naming different branches refuses, quoting both and the claim's own branch, exit `2` (see E-REL-04).
-- [ ] [REL-12] A `release` by the wrong agent/role, no coordinator override, refuses (CLAIM-38's sentence), before any write.
+- [ ] [REL-12] A `release` by the wrong agent/role, no coordinator override, refuses before any write, naming the holder's `<repeat>` (REL-41) before the override (see E-REL-19).
+- [ ] [REL-41] `<repeat>` is `aco release`, the item, then as given `--branch`, `--claim-id`, the outcome flag, `--keep-worktree`, `--json`, then `--agent <holder>`, `--role <holder role>` if the roles differ.
 - [ ] [REL-13] `--coordinator-override --role coordinator` releases a foreign claim with no agent/role match (CLAIM-40's outcome, for release specifically).
 - [ ] [REL-14] Omitting `--role` -- unlike `claim`'s own default `builder` -- reports the claim's own stored role, in text and in `--json` alike.
 - [ ] [REL-15] A release before `aco bootstrap` has created `refs/aco/state` refuses (CAS-03's sentence), before any transition is attempted.
@@ -114,16 +115,20 @@ committed, so a cleanup problem never turns a released claim back into a live on
 branch stays the forge merge's own business: only the local worktree and the local branch move
 here, never anything on `remote`. Every outcome is loud: exactly one `worktree: <outcome>` line
 follows the report in text, and the same text becomes `--json`'s own `worktree` value -- `removed`
-when both are gone, `kept -- <reason>` when neither moves, or `removed; branch kept -- <reason>`
-when the worktree is gone but the branch delete itself failed (REL-34) -- one owner for all three
-shapes so they can never drift apart.
+when both are gone, `kept -- <reason>` when neither moves, `removed; branch kept -- <reason>`
+when the worktree is gone but the branch delete itself failed (REL-34), or
+`removed; branch.<name> section kept -- <reason>` when both are gone but a squashed branch's own
+section stayed (REL-42) -- one owner for all four shapes so they can never drift apart. Accepted residual of REL-42: a same-name branch another process
+creates between its compare-and-delete and the section removal can lose its upstream setting,
+never a commit; `git branch -u` restores it.
 
-- [ ] [REL-25] A clean linked worktree whose branch is already merged into the canonical remote's own trunk is removed together with that local branch: `worktree: removed` (see E-REL-08).
+- [ ] [REL-25] A clean linked worktree whose branch is in the canonical remote's trunk, or whose tip is the head `aco land` pinned for its squash, goes with that local branch: `worktree: removed` (see E-REL-08).
+- [ ] [REL-42] A squashed branch goes by compare-and-delete on its pinned head, a moved one stays (REL-34); its section goes only while no such branch exists, and a refused removal reads `section kept`.
 - [ ] [REL-26] `--keep-worktree` skips that removal outright: `worktree: kept -- --keep-worktree was given`, worktree and branch both left exactly as found (see E-REL-09).
 - [ ] [REL-27] A release run from inside the lane's own worktree cannot remove its own cwd: `worktree: kept -- release ran from inside it`, and keeps both (see E-REL-10).
 - [ ] [REL-28] A dirty worktree keeps it: `worktree: kept -- dirty`, exit code unaffected (see E-REL-11).
 - [ ] [REL-29] A branch not yet provably merged into the default branch keeps it: `worktree: kept -- not merged into the default branch` (see E-REL-12).
-- [ ] [REL-30] No linked worktree found on that branch keeps nothing to report: `worktree: kept -- no linked worktree found` (see E-REL-13).
+- [ ] [REL-30] No linked worktree on that branch in this checkout reads `worktree: kept -- no linked worktree on <branch> in this checkout; if one exists, it lives in another checkout` (see E-REL-13).
 - [ ] [REL-31] The branch checked out on this repository's own shared main checkout, not a linked worktree, keeps it: `worktree: kept -- branch checked out elsewhere` (see E-REL-14).
 - [ ] [REL-32] A git failure resolving which worktree matches the lane's branch keeps both and reports it: `worktree: kept -- git failure: <detail>`, the release itself stays committed regardless (see E-REL-15).
 - [ ] [REL-33] `--abandoned` never attempts this cleanup at all, the same as it never resolves a forge target (LAND-39).
@@ -329,7 +334,7 @@ $ aco release 42 --merged 57
 RELEASED issue #42: <claim-id>
 freed: none
 next: none
-worktree: kept -- no linked worktree found
+worktree: kept -- no linked worktree on ada/issue-42 in this checkout; if one exists, it lives in another checkout
 exit 0
 ```
 
@@ -405,3 +410,13 @@ exit 2
 
 `git branch --list` reads afterwards exactly as before the call: `ada/issue-42` stands, the
 claim on #42 still stands, and no landing comment closed #42.
+
+### E-REL-19 — a claim taken under an explicit `--agent` names its repeat
+
+Setup: bare-remote, fake `gh`, a live claim on issue `#42` taken with `--agent claude-head`, role `builder`; this session's `ACO_AGENT` is unset and its session id falls back to `Claude s-1`
+
+```console
+$ aco release 42 --merged 57
+2> ERROR: only the original claimant may release; repeat as the holder with `aco release 42 --merged 57 --agent claude-head`, or use an explicit coordinator override (holder='claude-head (builder)', this session='Claude s-1 (builder)')
+exit 2
+```

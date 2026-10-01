@@ -86,6 +86,7 @@ ITEM_KIND_TYPE_NAMES: dict[ItemKind, str] = {
 ISSUES_PER_PAGE = 100
 MALFORMED_PULL_REQUEST = "GitHub returned a malformed pull request"
 MALFORMED_FILE_CONTENTS = "GitHub returned malformed file contents"
+MALFORMED_MERGE_SETTINGS = "GitHub returned malformed repository merge settings"
 MALFORMED_CLOSED_ISSUE = "GitHub returned a malformed closed issue"
 # The combined-status endpoint's own aggregate `state` can be `pending`,
 # `failure`, or `error` with a `statuses` page that, this instant, names no
@@ -743,6 +744,7 @@ class GitHubForge:
         if not isinstance(value, dict):
             raise forge.ForgeMalformedResponseError(MALFORMED_PULL_REQUEST)
         number = value.get("number")
+        title = value.get("title")
         body = value.get("body")
         if body is None:
             body = ""
@@ -767,6 +769,7 @@ class GitHubForge:
             isinstance(number, bool)
             or not isinstance(number, int)
             or number < 1
+            or not isinstance(title, str)
             or not isinstance(body, str)
             or not isinstance(base_ref_name, str)
             or not isinstance(head_ref_name, str)
@@ -791,6 +794,7 @@ class GitHubForge:
             base_ref_name,
             merged,
             merge_commit,
+            title,
         )
 
     def landing(self, number: int) -> forge.Landing:
@@ -802,7 +806,7 @@ class GitHubForge:
                 "--repo",
                 self.repository.path,
                 "--json",
-                "number,body,baseRefName,headRefName,headRepository,"
+                "number,title,body,baseRefName,headRefName,headRepository,"
                 "headRepositoryOwner,author,mergedAt,mergeCommit",
                 "--jq",
                 ".",
@@ -975,14 +979,46 @@ class GitHubForge:
         checks = self._check_runs(head_sha) + self._combined_status_checks(head_sha)
         return forge.LandingReadiness(number, state == "open", head_sha, mergeable_state, checks)
 
-    def merge_landing(self, number: int, *, head_sha: str, title: str, body: str) -> str:
-        """Merge pull request `number` with GitHub's real-merge-commit
-        strategy, pinned to `head_sha` (issue #405): never `gh pr merge`,
-        which re-reads the pull request's current head itself rather than
-        merging the exact commit `landing_readiness` already proved green.
-        A 405 or 409 means the pull request changed since that read --
-        translated to `ForgeMergeConflictError` so `aco land` can name the
-        one recovery that ever applies: re-run.
+    def allowed_merge_methods(self) -> frozenset[board.MergeMethod] | None:
+        """Which merge methods this repository allows (issue #578), from its
+        own `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge`
+        settings, or `None` where GitHub withholds them -- it reports them
+        only to a token that may push."""
+        raw = self._run(
+            [
+                "api",
+                f"repos/{self.repository}",
+                "--jq",
+                "{merge:.allow_merge_commit,squash:.allow_squash_merge,rebase:.allow_rebase_merge}",
+            ]
+        )
+        values = self._json_lines(raw, "repository merge settings")
+        if len(values) != 1 or not isinstance(values[0], dict):
+            raise forge.ForgeMalformedResponseError(MALFORMED_MERGE_SETTINGS)
+        settings = {method: values[0].get(method.value) for method in board.MergeMethod}
+        if all(allowed is None for allowed in settings.values()):
+            return None
+        if not all(isinstance(allowed, bool) for allowed in settings.values()):
+            raise forge.ForgeMalformedResponseError(MALFORMED_MERGE_SETTINGS)
+        return frozenset(method for method, allowed in settings.items() if allowed)
+
+    def merge_landing(
+        self,
+        number: int,
+        *,
+        head_sha: str,
+        method: board.MergeMethod,
+        title: str,
+        body: str,
+    ) -> str:
+        """Merge pull request `number` with `method`, pinned to `head_sha`
+        (issues #405, #578): never `gh pr merge`, which re-reads the pull
+        request's current head itself rather than merging the exact commit
+        `landing_readiness` already proved green. `title` and `body` are the
+        landed commit's own message either way. A 405 or 409 means the pull
+        request changed since that read -- translated to
+        `ForgeMergeConflictError` so `aco land` can name the one recovery
+        that ever applies: re-run.
         """
         try:
             raw = self._run(
@@ -997,7 +1033,7 @@ class GitHubForge:
                 input_data=json.dumps(
                     {
                         "sha": head_sha,
-                        "merge_method": "merge",
+                        "merge_method": method.value,
                         "commit_title": title,
                         "commit_message": body,
                     }

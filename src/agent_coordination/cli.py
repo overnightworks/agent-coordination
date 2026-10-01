@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import stat
 import sys
 import threading
@@ -384,6 +385,7 @@ def _claim_request(
 
 LANE_ISSUE_HELP = "omit for lane mode, derived from a docs/ or fix/ checkout branch"
 JSON_FLAG = "--json"
+KEEP_WORKTREE_FLAG = "--keep-worktree"
 LONG_OPTION_PREFIX = "--"
 JSON_HELP = "print the result as JSON instead of the human lines"
 # `--html` with no value: `argparse`'s `nargs="?"` const, distinct from the
@@ -633,7 +635,7 @@ def _add_release_parser(commands: argparse._SubParsersAction) -> None:
         help="release another agent's claim as the coordinator; requires --role coordinator",
     )
     release.add_argument(
-        "--keep-worktree",
+        KEEP_WORKTREE_FLAG,
         action="store_true",
         help=(
             "keep the lane's local worktree and branch after a merged landing; by default a "
@@ -657,7 +659,7 @@ def _add_land_parser(commands: argparse._SubParsersAction) -> None:
         help="land another agent's claim as the coordinator; requires --role coordinator",
     )
     land.add_argument(
-        "--keep-worktree",
+        KEEP_WORKTREE_FLAG,
         action="store_true",
         help=(
             "keep the lane's local worktree and branch after landing; by default a clean "
@@ -6187,6 +6189,17 @@ def _resolve_release_claimant(
     release_branch: str | None,
     storage: body.Storage,
 ) -> _ResolvedRelease:
+    selected = _select_release_claim(parsed, observed, identity, release_branch, storage)
+    return _authorize_releaser(parsed, selected, _release_repeat_command(parsed))
+
+
+def _select_release_claim(
+    parsed: argparse.Namespace,
+    observed: protocol.ClaimState,
+    identity: protocol.ClaimIdentity,
+    release_branch: str | None,
+    storage: body.Storage,
+) -> protocol.ActiveClaim:
     selected = _selected_store_claim(observed, identity, release_branch, parsed.claim_id, storage)
     if (
         parsed.branch is not None
@@ -6197,18 +6210,73 @@ def _resolve_release_claimant(
             f"--branch {parsed.branch!r} and --claim-id {parsed.claim_id!r} disagree: the "
             f"claim's own branch is {selected.branch!r}; drop --branch or pass its own value"
         )
+    return selected
+
+
+def _authorize_releaser(
+    parsed: argparse.Namespace, selected: protocol.ActiveClaim, repeat: Sequence[str]
+) -> _ResolvedRelease:
+    """This session's right to release `selected`: its own claimant, or an
+    explicit coordinator override. `repeat` is the refused command without
+    its identity flags, which the refusal names run as the holder."""
     role = parsed.role
     if not parsed.coordinator_override:
         if role is None:
             role = selected.role
         if (parsed.agent, role) != (selected.agent, selected.role):
             raise protocol.ClaimUnavailableError(
-                "only the original claimant may release; use an explicit coordinator override "
+                "only the original claimant may release; repeat as the holder with "
+                f"`{_holder_repeat_command(repeat, selected, role)}`, or use an explicit "
+                "coordinator override "
                 f"(holder={protocol._claimant_text(selected.agent, selected.role)!r}, "
                 f"this session={protocol._claimant_text(parsed.agent, role)!r})"
             )
     resolved_role = role if role is not None else selected.role
     return _ResolvedRelease(selected, resolved_role)
+
+
+def _holder_repeat_command(
+    repeat: Sequence[str], holder: protocol.ActiveClaim, session_role: str
+) -> str:
+    """`repeat` -- the refused command, without its identity flags -- run
+    as `holder` instead (issue #578): a claim taken under an explicit
+    `--agent` releases from the same session only when it names that agent
+    again, so the refusal spells out that one repeat before any override."""
+    identity = ["--agent", holder.agent]
+    if session_role != holder.role:
+        identity += ["--role", holder.role]
+    return shlex.join([*repeat, *identity])
+
+
+def _release_repeat_command(parsed: argparse.Namespace) -> tuple[str, ...]:
+    """The `aco release` command line `parsed` came from, without its
+    identity flags, for `_holder_repeat_command`."""
+    command = ["aco", "release"]
+    if parsed.issue is not None:
+        command.append(str(_optional_issue_number(parsed.issue)))
+    if parsed.branch is not None:
+        command += ["--branch", parsed.branch]
+    if parsed.claim_id is not None:
+        command += ["--claim-id", parsed.claim_id]
+    if parsed.merged is None:
+        command += ["--abandoned", parsed.abandoned]
+    else:
+        command += ["--merged", parsed.merged] if parsed.merged else ["--merged"]
+    if parsed.keep_worktree:
+        command.append(KEEP_WORKTREE_FLAG)
+    if parsed.json:
+        command.append(JSON_FLAG)
+    return tuple(command)
+
+
+def _land_repeat_command(parsed: argparse.Namespace) -> tuple[str, ...]:
+    """The `aco land` command line `parsed` came from, without its identity
+    flags, for `_holder_repeat_command`: `--keep-worktree` stays, since a
+    repeat without it would remove the worktree the operator kept."""
+    command = ["aco", "land", str(parsed.pull_request)]
+    if parsed.keep_worktree:
+        command.append(KEEP_WORKTREE_FLAG)
+    return tuple(command)
 
 
 def _cmd_release(
@@ -6221,14 +6289,23 @@ def _cmd_release(
     `precondition_failed`, rather than escaping the envelope entirely."""
     as_json = parsed.json
     try:
-        return _release_transition(parsed, context, release_branch)
+        return _release_transition(parsed, context, release_branch, landed_head=None)
     except protocol.ClaimError as error:
         return _refuse(ReleaseReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
 def _release_transition(
-    parsed: argparse.Namespace, context: RunContext, release_branch: str | None
+    parsed: argparse.Namespace,
+    context: RunContext,
+    release_branch: str | None,
+    *,
+    landed_head: str | None,
 ) -> int:
+    """`landed_head` is the head sha `aco land` pinned for the merge it
+    just made, the only evidence a squashed lane's own tip may be cleaned
+    up by (issue #578); a standalone release has none, since a pull
+    request's head read after its merge is no proof of what landed, so it
+    removes only a branch the trunk itself contains."""
     issue = _optional_issue_number(parsed.issue)
     identity = _resolved_identity(issue, release_branch or "")
     storage = context.config.storage
@@ -6281,7 +6358,11 @@ def _release_transition(
     )
     worktree_cleanup = (
         _cleanup_landed_worktree(
-            parsed, resolved.selected.branch, context, context.fetched_default_branch_ref
+            parsed,
+            resolved.selected.branch,
+            context,
+            context.fetched_default_branch_ref,
+            landed_head,
         )
         if isinstance(outcome, protocol.MergedRelease)
         else None
@@ -6303,7 +6384,11 @@ def _release_transition(
 
 WORKTREE_KEPT_FLAG_REASON = "--keep-worktree was given"
 WORKTREE_KEPT_RAN_FROM_INSIDE_REASON = "release ran from inside it"
-WORKTREE_KEPT_NO_WORKTREE_REASON = "no linked worktree found"
+# Names the branch (issue #578): a landing from a separate clone holds no
+# lane worktree, which stays where it lives for that checkout to remove.
+WORKTREE_KEPT_NO_WORKTREE_REASON = (
+    "no linked worktree on {branch} in this checkout; if one exists, it lives in another checkout"
+)
 
 
 def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> str:
@@ -6311,12 +6396,17 @@ def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> s
     `--json` value of its `worktree` field (issue #322 review/gate finding
     4): one owner, so the two shapes can never drift apart. A branch-deletion
     failure after the worktree is already gone names both halves -- never a
-    bare `kept`, which would hide that the worktree itself is gone."""
-    if outcome.worktree.removed and outcome.branch.removed:
-        return "removed"
-    if outcome.worktree.removed:
+    bare `kept`, which would hide that the worktree itself is gone; a
+    section git kept after the branch itself went names that section, never
+    the branch (issue #578)."""
+    if not outcome.worktree.removed:
+        return f"kept -- {outcome.worktree.reason}"
+    if not outcome.branch.removed:
         return f"removed; branch kept -- {outcome.branch.reason}"
-    return f"kept -- {outcome.worktree.reason}"
+    section_kept = outcome.branch.section_kept
+    if section_kept is not None:
+        return f"removed; {section_kept.section} section kept -- {section_kept.reason}"
+    return "removed"
 
 
 def _cleanup_landed_worktree(
@@ -6324,6 +6414,7 @@ def _cleanup_landed_worktree(
     branch: str,
     context: RunContext,
     fetched_trunk_ref: Callable[[], str],
+    landed_head: str | None,
 ) -> checkout.WorktreeCleanupOutcome:
     """After a successful `--merged` release, remove the lane's local
     worktree and local branch when both are safe to remove, and report
@@ -6339,8 +6430,10 @@ def _cleanup_landed_worktree(
     context already holds, never resolved a second time (issue #472).
     `fetched_trunk_ref` names the ref the lane must be merged into -- the
     one its release judged the landing on (issue #492) -- asked only here,
-    so a failure to resolve it reads as `kept` too. The remote branch stays
-    the forge merge's own business either way."""
+    so a failure to resolve it reads as `kept` too. `landed_head` is the
+    head `aco land` pinned for its own merge, `None` for every release that
+    made no merge itself. The remote branch
+    stays the forge merge's own business either way."""
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
     try:
@@ -6350,9 +6443,15 @@ def _cleanup_landed_worktree(
             return checkout.worktree_cleanup_kept(WORKTREE_KEPT_RAN_FROM_INSIDE_REASON)
         matching = checkout.worktree_on_branch(others, branch)
         if matching is None:
-            return checkout.worktree_cleanup_kept(WORKTREE_KEPT_NO_WORKTREE_REASON)
+            return checkout.worktree_cleanup_kept(
+                WORKTREE_KEPT_NO_WORKTREE_REASON.format(branch=branch)
+            )
         return checkout.cleanup_landed_worktree(
-            matching, branch, trunk=fetched_trunk_ref(), directory=toplevel
+            matching,
+            branch,
+            trunk=fetched_trunk_ref(),
+            landed_head=landed_head,
+            directory=toplevel,
         )
     except protocol.ClaimError as error:
         return checkout.worktree_cleanup_kept(f"git failure: {error}")
@@ -6608,7 +6707,7 @@ def _land_preflight(
     the one step that reads `refs/aco/state` locally, so a pull request this
     preflight would refuse on GitHub's own answers alone never pays for that
     read at all, and finally this session's own authorization against the
-    exact claim just proven to exist (`_resolve_release_claimant`, `release`'s
+    exact claim just proven to exist (`_authorize_releaser`, `release`'s
     own claimant/coordinator-override check, issue #405 review finding): a
     claim held by another agent or role refuses here, before the merge,
     rather than only once the delegated `release --merged` step runs after
@@ -6639,19 +6738,14 @@ def _land_preflight(
         if isinstance(structural, board.WorkItemClassification)
         else protocol.LaneIdentity()
     )
-    _resolve_release_claimant(
-        argparse.Namespace(
-            agent=parsed.agent,
-            role=parsed.role,
-            coordinator_override=parsed.coordinator_override,
-            branch=None,
-            claim_id=None,
-        ),
+    selected = _select_release_claim(
+        argparse.Namespace(branch=None, claim_id=None),
         observed,
         identity,
         detail.source_branch,
         context.storage,
     )
+    _authorize_releaser(parsed, selected, _land_repeat_command(parsed))
     return detail, structural, readiness
 
 
@@ -6682,17 +6776,49 @@ def _land_merge_body(body: str, classification: board.Classification) -> str:
     return f"{without_classification}\n\n{trailer}\n"
 
 
+def _land_merge_method(
+    pinned: board.MergeMethod | None, client: github.GitHubForge, number: int
+) -> board.MergeMethod:
+    """The method `aco land` merges pull request `number` with (issue
+    #578): the board configuration's own pin beats the forge; otherwise a
+    merge commit wherever the forge allows one or withholds its settings,
+    and a squash where it allows a squash but no merge commit -- never a
+    rebase, even where the forge allows only that."""
+    if pinned is not None:
+        return pinned
+    allowed = client.allowed_merge_methods()
+    if allowed is None or board.MergeMethod.MERGE in allowed:
+        return board.MergeMethod.MERGE
+    if board.MergeMethod.SQUASH in allowed:
+        return board.MergeMethod.SQUASH
+    raise protocol.ClaimUnavailableError(
+        f"pull request #{number} cannot land: this repository allows neither a merge commit "
+        "nor a squash merge"
+    )
+
+
+def _land_merge_title(method: board.MergeMethod, detail: forge.Landing) -> str:
+    """A merge commit's own title, or a squash commit's: the pull request
+    title plus `(#<n>)`, the convention a squash-only history reads."""
+    if method is board.MergeMethod.SQUASH:
+        return f"{detail.title} (#{detail.number})"
+    return f"Merge pull request #{detail.number}"
+
+
 def _land_merge(
     client: github.GitHubForge,
     detail: forge.Landing,
     readiness: forge.LandingReadiness,
     classification: board.Classification,
+    method: board.MergeMethod,
 ) -> str:
-    title = f"Merge pull request #{detail.number}"
-    body = _land_merge_body(detail.body, classification)
     try:
         return client.merge_landing(
-            detail.number, head_sha=readiness.head_sha, title=title, body=body
+            detail.number,
+            head_sha=readiness.head_sha,
+            method=method,
+            title=_land_merge_title(method, detail),
+            body=_land_merge_body(detail.body, classification),
         )
     except forge.ForgeMergeConflictError as error:
         raise protocol.ClaimUnavailableError(
@@ -6706,13 +6832,15 @@ def _land_step(number: int, sha: str, step: str, action: Callable[[], None]) -> 
     happened -- so it reports the one ruled recovery line instead of the
     generic refusal an earlier precondition would print. A rerun starts
     `_cmd_land` over from the top, finds the pull request already merged,
-    and resumes here without a second merge."""
+    and resumes here without a second merge. The failure is Git's or the
+    forge's own text, so its display controls print escaped and the
+    recovery stays one line."""
     try:
         action()
     except protocol.ClaimError as error:
         raise protocol.ClaimUnavailableError(
-            f"MERGED pull request #{number} as {sha}; follow-up incomplete: {step}; "
-            f"re-run aco land {number}"
+            f"MERGED pull request #{number} as {sha}; follow-up incomplete: {step} "
+            f"({board.terminal_text(str(error))}); re-run aco land {number}"
         ) from error
 
 
@@ -6751,7 +6879,11 @@ def _land_release_routing(
 
 
 def _land_release(
-    parsed: argparse.Namespace, context: RunContext, issue: int | None, branch: str
+    parsed: argparse.Namespace,
+    context: RunContext,
+    issue: int | None,
+    branch: str,
+    landed_head: str | None,
 ) -> None:
     """`aco land`'s own delegated call into the existing `release --merged`
     path (issue #405): never a second copy of its close/release/report/
@@ -6766,7 +6898,9 @@ def _land_release(
     would otherwise print its sentence a second time. The release reads
     through a fresh `context` (issue #457 proof 6): the fast-forward just
     wrote the landed trunk into this very checkout, so the configuration
-    and forge read before it no longer answer for it."""
+    and forge read before it no longer answer for it. `landed_head` is the
+    head sha this run's own merge was pinned to, `None` on a rerun that
+    found the pull request already merged."""
     release_parsed = argparse.Namespace(
         issue=issue,
         agent=parsed.agent,
@@ -6783,7 +6917,7 @@ def _land_release(
         json=False,
         repo=parsed.repo,
     )
-    _release_transition(release_parsed, context.fresh(), branch)
+    _release_transition(release_parsed, context.fresh(), branch, landed_head=landed_head)
 
 
 def _land_is_own_repository(toplevel: Path) -> bool:
@@ -6825,10 +6959,12 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
     repository = client.repository.path
     detail = client.landing(number)
     classification: board.Classification | None
+    landed_head: str | None
     if detail.merged:
         assert detail.merge_commit is not None  # `merged` is true; github.py guarantees this.
         merge_sha = detail.merge_commit
-        checkout.refuse_unclean_default_branch_checkout(context.default_branch, directory=toplevel)
+        landed_head = None
+        checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
         # A rerun: this run's own preflight never ran, so it never verified a
         # classification -- `_land_release_routing` reads the merge commit's
         # own trailer instead (issue #405 point 4).
@@ -6849,8 +6985,10 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
         detail, classification, readiness = _land_preflight(
             client, claims_provider, check_context, number, parsed
         )
-        checkout.refuse_unclean_default_branch_checkout(context.default_branch, directory=toplevel)
-        merge_sha = _land_merge(client, detail, readiness, classification)
+        checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
+        method = _land_merge_method(config.merge_method, client, number)
+        merge_sha = _land_merge(client, detail, readiness, classification, method)
+        landed_head = readiness.head_sha
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)
     )
@@ -6871,6 +7009,7 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
             context,
             _land_release_routing(classification, merge_sha, context),
             detail.source_branch,
+            landed_head,
         ),
     )
     if _land_is_own_repository(toplevel):
@@ -6949,7 +7088,7 @@ def _cmd_release_landed(
     client.mark_landed(write, new_oid)
     landing = _landing_report(context, identity, new_state, storage, trunk_ref)
     worktree_cleanup = _cleanup_landed_worktree(
-        parsed, resolved.selected.branch, context, context.fetched_trunk_ref
+        parsed, resolved.selected.branch, context, context.fetched_trunk_ref, None
     )
     _print_release_result(
         ReleaseReport(

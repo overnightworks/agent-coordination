@@ -86,8 +86,10 @@ starts from. The pull request names `Closes #42` and `Work-Item: #42`.
 
 `aco land <pull request>`, from a clean default-branch checkout, verifies it against GitHub
 -- mergeable, checks green, body carrying Closes and Work-Item -- merges it
-with a merge commit, deletes the branch, removes the lane's worktree, closes
-the item, releases the claim, and reports what that landing freed and what
+with a merge commit, or squashes it where the repository allows no merge
+commit or `merge_method` asks for it, deletes the branch, removes the lane's
+worktree (or names its branch when the worktree lives in another checkout),
+closes the item, releases the claim, and reports what that landing freed and what
 to pull next. The exact preconditions, identity resolution, and refusals are
 `specs/next.spec.md`, `specs/start.spec.md`, `specs/brief.spec.md`,
 `specs/land.spec.md`, and `specs/release.spec.md`'s own; `start` acquires
@@ -270,7 +272,7 @@ in a checkout, except the ignored `settings.local.json` that repairs it.
 
 ## Configuration
 
-`.agent-claim/board.toml` defines exactly six top-level keys; any other key
+`.agent-claim/board.toml` defines exactly seven top-level keys; any other key
 is refused by name.
 
 - `storage` -- `"github"` (default) or `"state-ref"`; the pin and its
@@ -288,6 +290,10 @@ is refused by name.
   `cleanup`).
 - `idea_label` -- the label marking a not-yet-refined idea; `aco next` tells
   the head to refine it before dispatch instead of proposing a build.
+- `merge_method` -- `"merge"` or `"squash"`, the method `aco land` merges
+  with. Absent, `land` reads the repository's allowed methods from the
+  forge: a merge commit unless the forge forbids one, else a squash; the
+  exact rule is `specs/land.spec.md`'s own.
 - `body_contract` -- must be `"block"` (the only work-item body format aco
   reads) when present; absent means the same thing.
 - `lane_shared` -- exact repository file paths, such as a vulture whitelist,

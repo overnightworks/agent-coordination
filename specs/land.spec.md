@@ -14,8 +14,8 @@ is the pull request number as given, `<sha>` its merge commit, `<state>`
 GitHub's own `mergeable_state`, `<name>`/`<conclusion>` one check's own name
 and conclusion, `<path>` the board configuration `.agent-claim/board.toml`,
 `<setting>` one of the two settings in it a head may not change, `storage`
-and `canonical_remote` (`priority_labels`, `idea_label`, and `body_contract`
-may change), and a "head" the pull request's own head commit read during
+and `canonical_remote` (`priority_labels`, `idea_label`, `body_contract`, and
+`merge_method` may change), `<title>` the pull request's own title, and a "head" the pull request's own head commit read during
 preflight. "Checks" is every check run GitHub reports for the head sha
 (every page of `check-runs`) plus every combined-status context
 (`commits/<sha>/status`; an external context such as SonarCloud counts);
@@ -51,7 +51,9 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | classification's own claim/parent/closing defect | LANDCMD-09 (LAND-14..28, cited) |
 | claim held by another agent or role | LANDCMD-10 |
 | checkout unclean or off the default branch | LANDCMD-11 |
-| every precondition holds | LANDCMD-12, LANDCMD-13 |
+| checkout without a git identity | LANDCMD-25 |
+| the repository allows neither a merge commit nor a squash merge | LANDCMD-28 |
+| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-29 |
 | the pull request changed since it was read | LANDCMD-14 |
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
 | this repository's own pull request | LANDCMD-17 |
@@ -77,23 +79,29 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-24] A head `<path>` the pin's own validator refuses prints `pull request #<n> carries an invalid <path>: <detail>`, exit `2`.
 - [ ] [LANDCMD-08] A classified work item that is not open refuses `work item #<n> is not open; it cannot be landed`, exit `2`; an issue-less pull request skips this check.
 - [ ] [LANDCMD-09] The classification's own claim, parent, and closing rules then apply (LAND-14..28): a defect refuses `pull request #<n> <that same defect sentence>`, exit `2`.
-- [ ] [LANDCMD-10] A claim held by another agent or role, with no explicit coordinator override, refuses (REL-12's sentence), exit `2`, before the merge.
+- [ ] [LANDCMD-10] A claim held by another agent or role, no coordinator override, refuses (REL-12's sentence), exit `2`, before the merge; `<repeat>` is `aco land <n>`, `--keep-worktree` if given, REL-41's identity.
 - [ ] [LANDCMD-11] This checkout must sit on the forge's default branch with nothing uncommitted, or `aco land` refuses `land must run from a clean checkout of the default branch '<branch>'`, exit `2`.
+- [ ] [LANDCMD-25] A checkout without a git identity refuses `land must run from a checkout with a git identity; set user.name and user.email there so its release can commit to the claim state`, exit `2`.
 - [ ] [LANDCMD-20] The forge names `<branch>` even where the canonical remote records no `HEAD`; LANDCMD-11 never reads one.
 
 ## Merge, composed by `aco land`
 
-- [ ] [LANDCMD-12] `aco land` merges with a real merge commit pinned to the head sha read during preflight, never a squash and never an unpinned re-read.
-- [ ] [LANDCMD-13] The merge commit's own message is the pull request body with its classification line removed, a blank line, then that classification as the message's own last paragraph, nothing after it.
+- [ ] [LANDCMD-12] `aco land` merges pinned to the head sha read during preflight, never an unpinned re-read, with the method LANDCMD-27 picks: a merge commit or one squash commit, never a rebase.
+- [ ] [LANDCMD-27] `merge_method` `"merge"`/`"squash"` in `<path>` picks the method; else GitHub's `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge`: a merge commit if allowed or withheld, else a squash.
+- [ ] [LANDCMD-28] A repository allowing neither refuses `pull request #<n> cannot land: this repository allows neither a merge commit nor a squash merge`, exit `2`, before any write (E-LANDCMD-28).
+- [ ] [LANDCMD-30] Any other `merge_method` refuses `board configuration <path> merge_method must be 'merge' or 'squash'`, exit `2`; a head carrying one refuses as LANDCMD-24.
+- [ ] [LANDCMD-29] The landed commit's title is `Merge pull request #<n>` for a merge commit and `<title> (#<n>)` for a squash commit.
+- [ ] [LANDCMD-13] Its message is the pull request body with its classification line removed, a blank line, then that classification as the message's own last paragraph, nothing after it.
 - [ ] [LANDCMD-14] A pull request whose head sha changed since preflight refuses the pinned merge with `pull request #<n> changed while it was checked; re-run land`, exit `2`; nothing merges.
 
 ## After the merge
 
-- [ ] [LANDCMD-15] A failure deleting the branch, fast-forwarding, or in the delegated `release --merged` prints `MERGED pull request #<n> as <sha>; follow-up incomplete: <step>; re-run aco land <n>`, exit `2`.
+- [ ] [LANDCMD-15] A failed branch delete, fast-forward, or delegated `release --merged` prints `MERGED pull request #<n> as <sha>; follow-up incomplete: <step> (<error>); re-run aco land <n>`, exit `2`.
+- [ ] [LANDCMD-26] LANDCMD-15's `<error>` is the failed step's own sentence (for `release`, the one `release --merged` would print, without `ERROR: `), display controls escaped as NEXT-37 shows them.
 - [ ] [LANDCMD-21] The fast-forward fetches the canonical remote `<remote>` once per run and moves `<branch>` to `<remote>/<branch>`; the delegated release walks that same ref.
 - [ ] [LANDCMD-16] Deleting the merged branch is idempotent: a forge already reporting it absent is success, not a refusal.
 - [ ] [LANDCMD-17] In this package's own repository, a successful landing's last line is `reinstall: uv tool install --force --from . agent-coordination`; any other repository prints nothing further.
-- [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11 and LANDCMD-19, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.
+- [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11, LANDCMD-19, and LANDCMD-25, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.
 
 ## Never
 
@@ -101,7 +109,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - `aco land` never runs `release`'s own close, store transition, `freed`/`next` report, or worktree cleanup a second time; it delegates to the one existing `release --merged` path (`specs/release.spec.md`).
 - A step after the merge never re-merges: recovery always resumes from the pull request's own already-merged state, read fresh on every rerun.
 - Once merged, the delegated release never reads the pull request's own mutable body for routing: a fixer editing it away afterward changes nothing this pull request already landed (LAND-64).
-- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..24) refuses.
+- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25, LANDCMD-28) refuses.
 - `aco land` never takes its storage, canonical remote, forge, or claim store from a head's `<path>`: this checkout's own tracked copy governs, and the head's copy is only checked (LANDCMD-22..24).
 
 ## Examples
@@ -177,7 +185,7 @@ Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check g
 
 ```console
 $ aco land 57
-2> ERROR: only the original claimant may release; use an explicit coordinator override (holder='Grok (builder)', this session='Ada (builder)')
+2> ERROR: only the original claimant may release; repeat as the holder with `aco land 57 --agent Grok`, or use an explicit coordinator override (holder='Grok (builder)', this session='Ada (builder)')
 exit 2
 ```
 
@@ -188,6 +196,26 @@ Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check g
 ```console
 $ aco land 57
 2> ERROR: land must run from a clean checkout of the default branch 'main'
+exit 2
+```
+
+### E-LANDCMD-25 — a landing clone without a git identity refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, `aco land` running from a second clean clone on `main` with no user.name or user.email
+
+```console
+$ aco land 57
+2> ERROR: land must run from a checkout with a git identity; set user.name and user.email there so its release can commit to the claim state
+exit 2
+```
+
+### E-LANDCMD-28 — a repository allowing neither a merge commit nor a squash refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, no `merge_method` in `<path>`, the repository allowing only rebase merges
+
+```console
+$ aco land 57
+2> ERROR: pull request #57 cannot land: this repository allows neither a merge commit nor a squash merge
 exit 2
 ```
 
@@ -207,7 +235,7 @@ Setup: bare-remote, fake `gh`, pull request `#57` merges cleanly, the delegated 
 
 ```console
 $ aco land 57
-2> ERROR: MERGED pull request #57 as <sha>; follow-up incomplete: release; re-run aco land 57
+2> ERROR: MERGED pull request #57 as <sha>; follow-up incomplete: release (forge unreachable); re-run aco land 57
 exit 2
 ```
 
