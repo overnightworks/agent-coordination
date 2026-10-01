@@ -3097,6 +3097,130 @@ def test_start_under_state_ref_claims_the_worktree_it_builds(
     assert claim.scope == ("src/x.py",)
 
 
+def _lane_on_a_state_ref_board_with_registries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, trunk_lane_shared: str
+) -> None:
+    """A real state-ref board whose trunk tracks `scripts/registry.txt` and
+    `src/x.py` and names both registries lane-shared, and a lane `start`
+    built on it for item #314; the trunk's configuration then moves on to
+    `trunk_lane_shared` -- as a newer aco's landing would -- while the
+    lane's own copy stays as it was cut. The run stands in the lane."""
+    repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    for registry in ("scripts/registry.txt", "src/x.py"):
+        (repo / registry).parent.mkdir(exist_ok=True)
+        (repo / registry).write_text("")
+    configuration = repo / board.CONFIG_PATH
+    pinned = configuration.read_text()
+    configuration.write_text(f'{pinned}lane_shared = ["scripts/registry.txt", "src/x.py"]\n')
+    _real_git(repo, "add", "scripts", "src", board.CONFIG_PATH.as_posix())
+    _real_git(repo, "commit", "-q", "-m", "registries")
+    _push_repository_trunk(repo, "origin")
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    configuration.write_text(f"{pinned}{trunk_lane_shared}")
+    _real_git(repo, "commit", "-q", "-am", "trunk configuration")
+    _push_repository_trunk(repo, "origin")
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    monkeypatch.setattr(checkout, "file_at_revision", _LIVE_FILE_AT_REVISION)
+    monkeypatch.setattr(checkout, "versioned_paths", _REAL_VERSIONED_PATHS)
+
+
+def _trunk_defect(sentence: str) -> str:
+    return f"board configuration refs/remotes/origin/main:.agent-claim/board.toml {sentence}"
+
+
+@pytest.mark.parametrize(
+    ("trunk_lane_shared", "shown", "entries", "defect", "path_answer"),
+    [
+        pytest.param(
+            'lane_shared = ["scripts/registry.txt", "src"]\n',
+            ["lane-shared: scripts/registry.txt, src (names no file)"],
+            [
+                {"path": "scripts/registry.txt", "names_a_file": True},
+                {"path": "src", "names_a_file": False},
+            ],
+            None,
+            "LANE-SHARED",
+            id="a-file-and-a-directory",
+        ),
+        pytest.param("", [], [], None, "UNCLAIMED", id="none-named"),
+        pytest.param(
+            'merge_method = "squash"\nlane_shared = ["scripts/registry.txt"]\n',
+            [
+                "lane-shared: unavailable "
+                f"({_trunk_defect('has unknown top-level key merge_method')})"
+            ],
+            None,
+            _trunk_defect("has unknown top-level key merge_method"),
+            "UNCLAIMED",
+            id="a-newer-aco-key",
+        ),
+        pytest.param(
+            'lane_shared = "scripts/registry.txt"\n',
+            [
+                "lane-shared: unavailable "
+                f"({_trunk_defect('lane_shared must be a list of unique repository file paths')})"
+            ],
+            None,
+            _trunk_defect("lane_shared must be a list of unique repository file paths"),
+            "UNCLAIMED",
+            id="an-invalid-value",
+        ),
+    ],
+)
+def test_status_and_brief_show_the_trunks_lane_shared_files_or_its_defect(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    trunk_lane_shared: str,
+    shown: list[str],
+    entries: list[dict[str, object]] | None,
+    defect: str | None,
+    path_answer: str,
+) -> None:
+    """Issue #586 lines 1-3 on a real state-ref board: `status`, `status
+    --json`, `brief` and `brief --json` name the trunk's lane-shared entries,
+    an entry naming no tracked file marked so; `status --path` names a
+    lane-shared file `LANE-SHARED`. A trunk configuration this aco cannot
+    read costs only that answer -- the claims still show, the defect named
+    in text and `--json` alike, and no file reads as lane-shared."""
+    _lane_on_a_state_ref_board_with_registries(monkeypatch, tmp_path, trunk_lane_shared)
+    item = items.format_item_id(314)
+    registry = "scripts/registry.txt"
+    capsys.readouterr()
+    exits: list[int] = []
+
+    def run(*argv: str) -> list[str]:
+        exits.append(issue_claim.main(list(argv)))
+        return capsys.readouterr().out.splitlines()
+
+    status_lines = run("status")
+    status_json = json.loads(run("status", "--json")[0])
+    path_lines = run("status", "--path", registry)
+    brief_lines = run("brief", item)
+    brief_claim = json.loads(run("brief", item, "--json")[0])["claim"]
+
+    lane_shared = {"lane_shared": entries, "lane_shared_unavailable": defect}
+    assert exits == [0] * 5
+    assert (status_lines[0].split()[0], _lane_shared_lines(status_lines)) == ("CLAIMED", shown)
+    assert (status_json["reason"], _lane_shared_fields(status_json)) == ("claimed", lane_shared)
+    assert path_lines == [f"{path_answer} {registry}", *(shown if defect else [])]
+    assert _lane_shared_lines(brief_lines) == shown
+    assert (brief_claim["branch"], _lane_shared_fields(brief_claim)) == (
+        _START_BRANCH,
+        lane_shared,
+    )
+
+
+def _lane_shared_lines(output: list[str]) -> list[str]:
+    return [line.strip() for line in output if line.strip().startswith("lane-shared:")]
+
+
+def _lane_shared_fields(payload: Mapping[str, object]) -> dict[str, object]:
+    return {key: payload[key] for key in ("lane_shared", "lane_shared_unavailable")}
+
+
 def _relative_add(_worktree: Path) -> tuple[str, ...]:
     return ("--add", "src/y.py")
 
@@ -10903,13 +11027,17 @@ def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
     )
     _patch_status_store(monkeypatch, claimed)
     monkeypatch.setattr(checkout, "file_at_revision", _LIVE_FILE_AT_REVISION)
+    monkeypatch.setattr(checkout, "versioned_paths", _REAL_VERSIONED_PATHS)
     monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
     _real_git(tmp_path, "init", "-q", "-b", initial_branch)
     _real_git(tmp_path, "config", "user.name", "Test")
     _real_git(tmp_path, "config", "user.email", "test@example.com")
     (tmp_path / ".agent-claim").mkdir()
     (tmp_path / board.CONFIG_PATH).write_text('lane_shared = ["scripts/a.py", "scripts/b.txt"]\n')
-    _real_git(tmp_path, "add", "-f", board.CONFIG_PATH.as_posix())
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "a.py").write_text("")
+    (tmp_path / "scripts" / "b.txt").write_text("")
+    _real_git(tmp_path, "add", "-f", board.CONFIG_PATH.as_posix(), "scripts")
     _real_git(tmp_path, "commit", "-q", "-m", "trunk configuration")
     if published_trunk is not None:
         _real_git(tmp_path, "update-ref", published_trunk, "HEAD")
@@ -11136,30 +11264,36 @@ def test_status_direct_empty_claims_prints_unclaimed_repository_without_ledger(
     assert capsys.readouterr().out == "UNCLAIMED repository\n"
 
 
-def test_cli_status_json_empty_store_prints_unclaimed_object(
+def _no_lane_shared() -> dict[str, object]:
+    """`--json`'s lane-shared keys when the trunk names none (issue #586)."""
+    return {"lane_shared": [], "lane_shared_unavailable": None}
+
+
+@pytest.mark.parametrize(
+    ("subject", "issue"),
+    [pytest.param((), None, id="empty-store"), pytest.param(("72",), 72, id="issue-unclaimed")],
+)
+def test_cli_status_json_with_no_matching_claim_prints_unclaimed_object(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    subject: tuple[str, ...],
+    issue: int | None,
 ) -> None:
     _patch_status_store(monkeypatch)
 
-    assert issue_claim.main(["--repo", REPOSITORY, "status", "--json"]) == 0
+    assert issue_claim.main(["--repo", REPOSITORY, "status", *subject, "--json"]) == 0
     assert (
         capsys.readouterr().out
-        == json.dumps({"ok": True, "reason": "unclaimed", "issue": None, "tip": BASE, "claims": []})
-        + "\n"
-    )
-
-
-def test_cli_status_json_issue_with_no_claim_prints_unclaimed_object(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    _patch_status_store(monkeypatch)
-
-    assert issue_claim.main(["--repo", REPOSITORY, "status", "72", "--json"]) == 0
-    assert (
-        capsys.readouterr().out
-        == json.dumps({"ok": True, "reason": "unclaimed", "issue": 72, "tip": BASE, "claims": []})
+        == json.dumps(
+            {
+                "ok": True,
+                "reason": "unclaimed",
+                "issue": issue,
+                "tip": BASE,
+                "claims": [],
+                **_no_lane_shared(),
+            }
+        )
         + "\n"
     )
 
@@ -11201,6 +11335,7 @@ def test_cli_status_json_shows_a_live_store_claim(
                         "old": False,
                     }
                 ],
+                **_no_lane_shared(),
             }
         )
         + "\n"
@@ -11279,6 +11414,7 @@ def test_cli_status_json_overlapping_store_claims_print_claimed_object(
                         "old": False,
                     },
                 ],
+                **_no_lane_shared(),
             }
         )
         + "\n"
@@ -11357,6 +11493,7 @@ def test_cli_status_json_issue_on_overlap_prints_related_claimed_object(
                         "old": False,
                     },
                 ],
+                **_no_lane_shared(),
             }
         )
         + "\n"
@@ -13389,6 +13526,7 @@ def test_cli_status_path_json_prints_holder_or_unclaimed(
         "reason": "unclaimed",
         "path": "src/widget.py",
         "claims": [],
+        **_no_lane_shared(),
     }
 
 
@@ -19598,7 +19736,7 @@ def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
         f"Codex Sol (builder) branch=codex/issue-258-brief base={base} 24h 0m old",
         "  README.md",
         "  whole: lane touches too much to split",
-        "  lane-shared: scripts/registry.txt",
+        "  lane-shared: scripts/registry.txt (names no file)",
         "",
         "TIP",
         tip,
@@ -19749,6 +19887,7 @@ def test_cli_brief_json_prints_one_object_with_body_claim_tip_and_touched(
             "scope": ["README.md"],
             "whole": None,
             "age": "24h 0m",
+            **_no_lane_shared(),
         },
         "tip": tip,
         "touched": ["README.md"],
@@ -20022,6 +20161,7 @@ def test_cli_brief_step_json_adds_rules_and_checks_to_the_existing_object(
             "scope": ["README.md"],
             "whole": None,
             "age": "24h 0m",
+            **_no_lane_shared(),
         },
         "tip": tip,
         "touched": ["README.md"],

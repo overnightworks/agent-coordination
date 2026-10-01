@@ -1782,13 +1782,22 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
     ids=["write", "apply-patch", "bash-sed-in-place", "bash-rm-rf"],
 )
 @pytest.mark.parametrize(
-    ("claimed_branch", "written", "decision"),
+    ("claimed_branch", "written", "trunk_defect", "decision"),
     [
-        pytest.param("codex/issue-72-widget", "scripts/registry.txt", "allow", id="claimed-shared"),
-        pytest.param("codex/issue-99-other", "scripts/registry.txt", "deny", id="unclaimed"),
-        pytest.param("codex/issue-72-widget", "src/y.py", "deny", id="not-shared"),
-        pytest.param("codex/issue-72-widget", "src/x.py", "deny", id="shared-only-by-the-lane"),
-        pytest.param("codex/issue-72-widget", "src", "deny", id="shared-directory-itself"),
+        pytest.param(
+            "codex/issue-72-widget", "scripts/registry.txt", "", "allow", id="claimed-shared"
+        ),
+        pytest.param("codex/issue-99-other", "scripts/registry.txt", "", "deny", id="unclaimed"),
+        pytest.param("codex/issue-72-widget", "src/y.py", "", "deny", id="not-shared"),
+        pytest.param("codex/issue-72-widget", "src/x.py", "", "deny", id="shared-only-by-the-lane"),
+        pytest.param("codex/issue-72-widget", "src", "", "deny", id="shared-directory-itself"),
+        pytest.param(
+            "codex/issue-72-widget",
+            "scripts/registry.txt",
+            'merge_method = "squash"\n',
+            "deny",
+            id="defective-trunk",
+        ),
     ],
 )
 def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
@@ -1797,6 +1806,7 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     capsys: pytest.CaptureFixture[str],
     claimed_branch: str,
     written: str,
+    trunk_defect: str,
     decision: str,
     payload_for: Callable[[Path], dict[str, object]],
 ) -> None:
@@ -1808,14 +1818,16 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     directory the trunk names (`src`, PIN-41) or that directory itself, so
     no `rm -rf` sweeps a tree through it, and one the lane's own
     edit of its worktree's `board.toml` adds, so a lane never authorises
-    itself. Each tool's own denial wording is PROT-18's and PROT-33's."""
+    itself. A trunk copy this aco cannot read (issue #586: a newer aco's
+    key) grants nothing, never falling back to the worktree's own copy.
+    Each tool's own denial wording is PROT-18's and PROT-33's."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
     _use_real_path_is_tracked(monkeypatch)
     _main, worktree = _protect_real_repo_with_worktree(
-        tmp_path, board_config='lane_shared = ["scripts/registry.txt", "src"]\n'
+        tmp_path, board_config=f'{trunk_defect}lane_shared = ["scripts/registry.txt", "src"]\n'
     )
     (worktree / board.CONFIG_PATH).write_text(
         'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'
