@@ -17589,6 +17589,8 @@ def test_land_merges_with_the_method_the_repository_allows(
 
 
 _LAND_AGAIN = ("land", "12")
+# A rerun's merge already happened, so a stale reviewed head changes nothing.
+_LAND_AGAIN_WITH_A_STALE_HEAD = ("land", "12", "--head", "0000000")
 _RELEASE_MERGED = ("release", str(WORK_ITEM_ISSUE), "--merged", "12")
 
 
@@ -17596,7 +17598,9 @@ _RELEASE_MERGED = ("release", str(WORK_ITEM_ISSUE), "--merged", "12")
     ("squashed_before_this_run", "lane_moved_on", "command"),
     [
         pytest.param(False, True, _LAND_AGAIN, id="land-with-the-lane-past-the-pinned-head"),
-        pytest.param(True, False, _LAND_AGAIN, id="land-rerun-on-the-recorded-head"),
+        pytest.param(
+            True, False, _LAND_AGAIN_WITH_A_STALE_HEAD, id="land-rerun-on-the-recorded-head"
+        ),
         pytest.param(True, False, _RELEASE_MERGED, id="release-rerun-on-the-recorded-head"),
         pytest.param(True, True, _RELEASE_MERGED, id="release-rerun-past-the-recorded-head"),
     ],
