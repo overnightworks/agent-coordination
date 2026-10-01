@@ -1,0 +1,8 @@
+claim_id = "8ed42a070890443f8dd92eed10cd4b59"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "d7f465ba1a977603ecfc22e1bf711d64635bbb9a"
+branch = "claude/issue-567-item-edit-stdin-owner"
+scope = ["specs/item.spec.md", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "tests/test_cli.py", "tests/test_state_board.py"]
+opened_commit = "d918a11c94fbc43715e9a5f7ea9c29a969824193"
+whole_reason = "the one stdin owner for every item command, and byte-exact prose"
