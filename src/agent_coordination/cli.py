@@ -6882,9 +6882,11 @@ def _land_merge_body(title: str, body: str, classification: board.Classification
         return f"{trailer}\n"
     joined = f"{without_classification}\n{trailer}"
     body_trailers = checkout.message_trailers(f"{title}\n\n{without_classification}\n")
+    # Read as git reads it: a configured `trailer.<token>.key` renames it.
+    classification_trailers = checkout.message_trailers(f"{title}\n\n{trailer}\n")
     joined_keeps_every_trailer = bool(body_trailers) and checkout.message_trailers(
         f"{title}\n\n{joined}\n"
-    ) == (*body_trailers, trailer)
+    ) == (*body_trailers, *classification_trailers)
     if joined_keeps_every_trailer:
         return f"{joined}\n"
     return f"{without_classification}\n\n{trailer}\n"

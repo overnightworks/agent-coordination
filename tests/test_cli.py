@@ -18321,14 +18321,16 @@ def test_land_trunk_trailer_renders_the_trunk_grammar_for_both_classifications()
     assert issue_claim._land_trunk_trailer(no_item) == "No-Item: docs"
 
 
-def _git_trailers(directory: Path, message: str) -> tuple[str, ...]:
+def _git_trailers(repository: Path, scratch: Path, message: str) -> tuple[str, ...]:
     """The trailers git's own parsing reads in `message`, read as the
-    release's `%(trailers)` reads them: `--no-divider`, so a Markdown `---`
-    rule stays prose."""
-    message_file = directory / "trailer-message"
+    release's `%(trailers)` reads them: inside `repository`, so its own
+    `trailer.*` configuration applies, and `--no-divider`, so a Markdown
+    `---` rule stays prose. The message file stands in `scratch`, outside
+    the checkout."""
+    message_file = scratch / "trailer-message"
     message_file.write_text(message)
     parsed = _real_git(
-        directory, "interpret-trailers", "--parse", "--no-divider", str(message_file)
+        repository, "interpret-trailers", "--parse", "--no-divider", str(message_file)
     )
     return tuple(parsed.stdout.splitlines())
 
@@ -18427,7 +18429,7 @@ def test_land_message_keeps_the_classification_inside_gits_trailer_block(
 
     [(_number, _head_sha, _method, _title, body)] = client.merge_calls
     landed_message = _real_git(repo, "log", "-1", "--format=%B", "main").stdout
-    assert (status, body, _git_trailers(tmp_path, landed_message)) == (0, message, trailers)
+    assert (status, body, _git_trailers(repo, tmp_path, landed_message)) == (0, message, trailers)
     assert client.closed_issues == {WORK_ITEM_ISSUE}
 
 
@@ -18460,12 +18462,36 @@ def test_land_message_keeps_every_trailer_git_reads_at_the_body_end(
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
 
     [(_number, _head_sha, _method, title, _body)] = client.merge_calls
-    body_trailers = _git_trailers(tmp_path, f"{title}\n\n{body_after_removal}\n")
+    body_trailers = _git_trailers(repo, tmp_path, f"{title}\n\n{body_after_removal}\n")
     landed_message = _real_git(repo, "log", "-1", "--format=%B", "main").stdout
-    assert (status, bool(body_trailers), _git_trailers(tmp_path, landed_message)) == (
+    assert (status, bool(body_trailers), _git_trailers(repo, tmp_path, landed_message)) == (
         0,
         True,
         (*body_trailers, _WORK_ITEM_TRAILER),
+    )
+
+
+def test_land_message_joins_the_classification_git_reads_under_a_configured_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #594 line 1, LANDCMD-34: a repository whose `trailer.<token>.key`
+    renames the classification as git reads it still takes that
+    classification into the body's trailer block, so git keeps reading the
+    body's own trailer beside it rather than orphaning it behind a blank
+    line."""
+    repo, client = _land_scenario(
+        monkeypatch, tmp_path, body=f"{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n{_CO_AUTHOR}"
+    )
+    _real_git(repo, "config", "trailer.work-item.key", "WORK-ITEM")
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    [(_number, _head_sha, _method, _title, body)] = client.merge_calls
+    landed_message = _real_git(repo, "log", "-1", "--format=%B", "main").stdout
+    assert (status, body, _git_trailers(repo, tmp_path, landed_message)) == (
+        0,
+        f"{_CLOSES}\n\n{_CO_AUTHOR}\n{_WORK_ITEM_TRAILER}\n",
+        (_CO_AUTHOR, f"WORK-ITEM: #{WORK_ITEM_ISSUE}"),
     )
 
 
