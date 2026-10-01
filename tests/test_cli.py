@@ -13667,9 +13667,7 @@ def test_cli_claim_json_touch_key_set_is_unchanged_by_the_human_overlap_line(
     colliding path on the human line must add no key here, and the full
     scope a touch already carries is how a consumer can compute that path
     itself today."""
-    standing = request(
-        "claim-a", "Ada", issue=1400, scope=("tests/adapters/test_agent_claim_cli.py",)
-    )
+    standing = request("claim-a", "Ada", issue=1400, scope=("tests/adapters/test_claim_cli.py",))
     client = FakeForge()
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
     monkeypatch.setattr(checkout, "_validate_checkout", lambda request, **_where: None)
@@ -13711,7 +13709,7 @@ def test_cli_claim_json_touch_key_set_is_unchanged_by_the_human_overlap_line(
         "lane": None,
         "claim_id": "claim-a",
         "agent": "Ada",
-        "scope": ["tests/adapters/test_agent_claim_cli.py"],
+        "scope": ["tests/adapters/test_claim_cli.py"],
     }
 
 
@@ -13746,7 +13744,7 @@ def test_claim_cost_names_a_directory_scope_meeting_a_single_file_of_a_standing_
     claim already holds, so the overlap line must name that file, not just
     the standing claim's issue."""
     standing = _store_claim_from_request(
-        request("claim-a", issue=1400, scope=("tests/adapters/test_agent_claim_cli.py",))
+        request("claim-a", issue=1400, scope=("tests/adapters/test_claim_cli.py",))
     )
     own_scope = ("tests",)
 
@@ -13755,7 +13753,7 @@ def test_claim_cost_names_a_directory_scope_meeting_a_single_file_of_a_standing_
     )
 
     assert issue_claim._touch_summary(own_scope, touches, body.Storage.GITHUB) == (
-        "overlaps issue #1400 on tests/adapters/test_agent_claim_cli.py"
+        "overlaps issue #1400 on tests/adapters/test_claim_cli.py"
     )
 
 
@@ -14482,7 +14480,7 @@ def test_cli_claim_on_a_directory_names_the_file_a_standing_claim_holds_under_it
             "--branch",
             "codex/issue-1400",
             "--scope",
-            "tests/adapters/test_agent_claim_cli.py",
+            "tests/adapters/test_claim_cli.py",
             "--claim-id",
             "claim-a",
         ]
@@ -14513,7 +14511,7 @@ def test_cli_claim_on_a_directory_names_the_file_a_standing_claim_holds_under_it
     assert first == 0
     assert second == 0
     assert "CONFLICT" not in claimed
-    assert "overlaps issue #1400 on tests/adapters/test_agent_claim_cli.py" in claimed
+    assert "overlaps issue #1400 on tests/adapters/test_claim_cli.py" in claimed
 
 
 def test_cli_status_and_status_path_show_two_directory_claims_as_advisory(

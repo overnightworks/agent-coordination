@@ -1037,7 +1037,7 @@ def test_frozen_item_leaves_actionable_and_thaws_when_the_marker_is_removed() ->
     assert item.score == thawed_item.score
 
 
-def test_a_second_agent_claim_fence_inside_a_documentation_fence_is_not_read() -> None:
+def test_a_second_block_fence_inside_a_documentation_fence_is_not_read() -> None:
     """A body may document the block grammar in a fenced example; only one
     fence is ever open at a time, so the inner delimiter never opens a second
     recognized block and the real one stays the only read (#150 §4)."""
@@ -2409,7 +2409,7 @@ def test_parse_body_treats_a_fenceless_body_as_malformed() -> None:
     assert parsed.contract.defects == (ContractDefect("agent-claim", "no agent-claim block"),)
 
 
-def test_parse_body_refuses_multiple_agent_claim_blocks() -> None:
+def test_parse_body_refuses_multiple_blocks() -> None:
     body = block_body(MINIMAL_BLOCK_TOML) + block_body(MINIMAL_BLOCK_TOML)
 
     parsed = parse_body(body)
@@ -2418,7 +2418,7 @@ def test_parse_body_refuses_multiple_agent_claim_blocks() -> None:
     assert parsed.contract.defects[0].field == "agent-claim"
 
 
-def test_parse_body_refuses_an_unclosed_agent_claim_block() -> None:
+def test_parse_body_refuses_an_unclosed_block() -> None:
     parsed = parse_body(f"```{BLOCK_FENCE_INFO}\nversion = 1\n")
 
     assert parsed.read_state is BodyReadState.MALFORMED
