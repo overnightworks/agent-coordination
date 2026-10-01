@@ -48,9 +48,9 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
-| prose piped without a block, or nothing piped, either storage | ITEM-57, ITEM-59 | — | — | — |
-| a piped block a flag agrees with or contradicts, either storage | ITEM-58 | — | — | — |
-| state-ref pin, a stored body leaving a section empty | ITEM-60 | — | — | — |
+| prose piped without a block, or nothing piped, either storage | ITEM-58, ITEM-60 | — | — | — |
+| a piped block a flag agrees with or contradicts, either storage | ITEM-59 | — | — | — |
+| state-ref pin, a stored body leaving a section empty | ITEM-61 | — | — | — |
 | `--parent` an open Task, or `--kind` given, either storage | ITEM-45, ITEM-46 | — | ITEM-47..ITEM-51 | — |
 | an item, open or closed | — | ITEM-07, ITEM-08, ITEM-56 | — | — |
 | an unknown id | PIN-18 | ITEM-10 | PIN-23 | PIN-28 |
@@ -89,14 +89,14 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 ## The body `item new` stores (issue #555)
 
-- [ ] [ITEM-57] Under either storage, prose piped without a block is stored above a block built from the flags; `--now`/`--next`/`--done-when` fill their keys, a key no flag names stays `""` (see E-ITEM-16).
-- [ ] [ITEM-58] A piped block keeps every byte, a key it lacks written in; a flag naming another value refuses `--<flag> <value> contradicts the piped block's <key> = <value>`, exit `2` (see E-ITEM-16).
-- [ ] [ITEM-59] Under `storage = "state-ref"`, `item new` reads stdin as under github, never dropping a piped body; a terminal on stdin counts as nothing piped, under either storage.
-- [ ] [ITEM-60] Under `storage = "state-ref"`, each section the stored body leaves empty prints `<item-id> misses <Section>; aco item edit <item-id> fills it` on stderr, one line each (see E-ITEM-01).
+- [ ] [ITEM-58] Under either storage, prose piped without a block is stored above a block built from the flags; `--now`/`--next`/`--done-when` fill their keys, a key no flag names stays `""` (see E-ITEM-16).
+- [ ] [ITEM-59] A piped block keeps every byte, a key it lacks written in; a flag naming another value refuses `--<flag> <value> contradicts the piped block's <key> = <value>`, exit `2` (see E-ITEM-16).
+- [ ] [ITEM-60] Under `storage = "state-ref"`, `item new` reads stdin as under github, never dropping a piped body; a terminal on stdin counts as nothing piped, under either storage.
+- [ ] [ITEM-61] Under `storage = "state-ref"`, each section the stored body leaves empty prints `<item-id> misses <Section>; aco item edit <item-id> fills it` on stderr, one line each (see E-ITEM-01).
 
 ## `item new` under `storage = "github"` (issue #444)
 
-- [ ] [ITEM-26] Under `storage = "github"`, `aco item new --title T < BODY` opens one GitHub issue titled `T` whose body is the piped one, its block built or completed from the flags (ITEM-57, ITEM-58).
+- [ ] [ITEM-26] Under `storage = "github"`, `aco item new --title T < BODY` opens one GitHub issue titled `T` whose body is the piped one, its block built or completed from the flags (ITEM-58, ITEM-59).
 - [ ] [ITEM-27] The body to store passes `aco check <n>`'s own body check first; a failing body refuses exactly like ITEM-25, and nothing is created (see E-ITEM-08).
 - [ ] [ITEM-28] `--kind task|feature|container` sets the organization's own issue type `Task`, `Feature`, or `Container`, by name.
 - [ ] [ITEM-29] `--parent N` records the issue as `#N`'s sub-issue; `#N` not open refuses `#N is not an open container`, neither Container nor Task `#N is not a container`, exit `2` (see E-ITEM-08).
