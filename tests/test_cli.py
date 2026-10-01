@@ -17316,6 +17316,7 @@ def test_land_merges_with_the_method_the_repository_allows(
     client.allowed_methods = allowed
     lane = tmp_path / "lane"
     _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
     lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
     client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=lane_tip)
     if pinned is not None:
@@ -17345,6 +17346,8 @@ def test_land_merges_with_the_method_the_repository_allows(
     assert client.closed_issues == {WORK_ITEM_ISSUE}
     assert "worktree: removed\n" in output.out
     assert (lane.exists(), checkout.branch_exists(LANDING_BRANCH)) == (False, False)
+    upstream = _real_git(repo, "config", f"branch.{LANDING_BRANCH}.remote", check=False)
+    assert upstream.stdout == ""
 
 
 @pytest.mark.parametrize(
@@ -17389,6 +17392,36 @@ def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
     assert "worktree: kept -- not merged into the default branch\n" in output.out
     assert lane.exists()
     assert _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip() == lane_tip
+
+
+def test_land_keeps_a_squashed_lane_branch_a_commit_raced_past_the_landed_head(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #578 review finding 3: a clean commit made in the lane after
+    cleanup judged its tip to be the squashed head, but before the branch
+    deletion, keeps the branch on that commit -- the deletion compares and
+    deletes in one step, so only the landed head itself is ever deleted."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = frozenset({_SQUASH})
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
+    remove = checkout.remove_linked_worktree
+
+    def commit_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
+        _real_git(path, "commit", "-q", "--allow-empty", "-m", "raced past the landed head")
+        return remove(path, **options)
+
+    monkeypatch.setattr(checkout, "remove_linked_worktree", commit_then_remove)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    assert (status, output.err) == (0, "")
+    assert "worktree: removed; branch kept -- git failure: " in output.out
+    raced_tip = _real_git(repo, "log", "-1", "--format=%P %s", LANDING_BRANCH).stdout.strip()
+    assert raced_tip == f"{pinned_head} raced past the landed head"
 
 
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(

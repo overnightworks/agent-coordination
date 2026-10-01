@@ -1475,20 +1475,20 @@ def cleanup_landed_worktree(
     dirty = _git_output(["status", "--porcelain"], directory=matching)
     if dirty:
         return worktree_cleanup_kept(WORKTREE_KEPT_DIRTY_REASON)
-    return remove_linked_worktree(matching, branch=branch, squash_landed=squash_landed)
+    return remove_linked_worktree(
+        matching, branch=branch, landed_head=landed_head if squash_landed else None
+    )
 
 
 def remove_linked_worktree(
-    path: Path, *, branch: str, squash_landed: bool = False
+    path: Path, *, branch: str, landed_head: str | None = None
 ) -> WorktreeCleanupOutcome:
     """Remove a landed lane's linked worktree and its own local branch
     (issue #322), or the pair a refused `start` had just created (issue
     #479): `git worktree remove` first -- git refuses to delete a
-    branch still checked out anywhere -- then `git branch -d`, both through
-    this module's own `_git_run` chokepoint. A `squash_landed` branch is
-    deleted with `-D` instead: git's own merged check cannot see a squash,
-    and the caller has just proved the branch's tip is the head that landed
-    (issue #578). Never called on the calling
+    branch still checked out anywhere -- then the branch deletion
+    (`_delete_branch`), both through this module's own `_git_run`
+    chokepoint. Never called on the calling
     process's own checkout: `release`'s own cwd-equality guard runs first,
     since a worktree cannot remove its own cwd, and `start` removes only a
     worktree it created, never the one it runs in. A worktree-removal failure
@@ -1499,7 +1499,7 @@ def remove_linked_worktree(
     result = _git_run(["worktree", "remove", str(path)])
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
-    result = _git_run(["branch", "-D" if squash_landed else "-d", branch])
+    result = _delete_branch(branch, landed_head)
     if result.exit_status != 0:
         return WorktreeCleanupOutcome(
             worktree=_WORKTREE_REMOVED,
@@ -1508,6 +1508,27 @@ def remove_linked_worktree(
             ),
         )
     return WorktreeCleanupOutcome(worktree=_WORKTREE_REMOVED, branch=_BRANCH_REMOVED)
+
+
+def _delete_branch(branch: str, landed_head: str | None) -> process.CapturedResult:
+    """Delete local `branch`: with `git branch -d`, whose own merged check
+    guards a merged lane, or -- for a squash git's merged check cannot see
+    (issue #578) -- only while its tip is still `landed_head`.
+    `update-ref -d` compares and deletes under the ref's own lock, so a
+    commit made after the caller's tip check keeps its branch; its
+    `branch.<name>` configuration then goes as `git branch -d` takes it."""
+    if landed_head is None:
+        return _git_run(["branch", "-d", branch])
+    deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
+    if deleted.exit_status != 0:
+        return deleted
+    listed = _git_run(["config", "--local", "--name-only", "--list"])
+    if listed.exit_status != 0:
+        return listed
+    section = f"branch.{branch}"
+    if not any(name.startswith(f"{section}.") for name in listed.stdout.decode().splitlines()):
+        return listed
+    return _git_run(["config", "--local", "--remove-section", section])
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:
