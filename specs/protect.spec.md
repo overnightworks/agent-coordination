@@ -150,7 +150,7 @@ between separators is malformed like any other (PROT-41).
 - [ ] [PROT-20] The same scope miss under `apply_patch` denies `<path> outside claim scope`, naming the one path the payload's own grammar can name.
 - [ ] [PROT-21] A live claim covering the path allows (PROT-01) (see E-PROT-01).
 - [ ] [PROT-22] A lane (issueless) claim covering the path allows (PROT-01) exactly like an issue claim.
-- [ ] [PROT-46] A path the trunk's `lane_shared` names (PIN-40, PIN-41) allows any live claim of this session on the branch, whatever its scope; PROT-18 still denies without one (see E-PROT-16, E-PROT-17).
+- [ ] [PROT-46] A file the trunk tracks and its `lane_shared` names (PIN-40, PIN-41) allows any live claim of this session on the branch, whatever its scope; PROT-18 still denies with none (see E-PROT-16, E-PROT-17).
 
 ## `apply_patch`'s own multi-path payload
 
@@ -448,7 +448,7 @@ exit 2
 
 ### E-PROT-16 -- a lane-shared registry file is writable by any live claim
 
-Setup: bare-remote, bootstrapped, the trunk's committed `.agent-claim/board.toml` naming `lane_shared = ["scripts/vulture_whitelist.py"]`, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
+Setup: bare-remote, bootstrapped, the trunk's committed `.agent-claim/board.toml` naming `lane_shared = ["scripts/vulture_whitelist.py"]` beside a tracked `scripts/vulture_whitelist.py`, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
 
 ```console
 $ echo '{"toolName": "Write", "toolInput": {"file_path": "<worktree>/scripts/vulture_whitelist.py"}}' | aco protect

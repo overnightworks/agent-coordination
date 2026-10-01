@@ -40,10 +40,14 @@ from . import (
     workspace,
 )
 from .session import (
+    LaneSharedReading,
+    LaneSharedUnavailable,
     RepoMeaninglessUnderStateRefError,
     RunContext,
     board_config,
+    lane_shared_files,
     trunk_lane_shared,
+    trunk_lane_shared_reading,
 )
 
 CLI_ERROR_PREFIX = "ERROR: "
@@ -1236,7 +1240,7 @@ def _status(
     issue: int | None,
     ages: Mapping[str, datetime],
     storage: body.Storage,
-    lane_shared: tuple[str, ...] = (),
+    lane_shared: LaneSharedReading = (),
 ) -> int:
     """Every related claim's block, then the lane-shared files once (issue
     #575), named only beside a claim that may write them."""
@@ -1292,9 +1296,9 @@ def _status_json(
     issue: int | None,
     ages: Mapping[str, datetime],
     tip: protocol.ObjectId | None,
-    now: datetime | None = None,
+    lane_shared: LaneSharedReading = (),
 ) -> int:
-    observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+    observed_at = datetime.now(UTC)
     related, index = _status_claims(claims, issue)
     if not related:
         reason = StatusReason.UNCLAIMED
@@ -1307,18 +1311,39 @@ def _status_json(
         _status_claim_json(claim, claims_by_id, index, ages, observed_at) for claim in related
     ]
     _emit_json(
-        reason is not StatusReason.CONFLICT, reason, issue=issue, tip=tip, claims=claims_payload
+        reason is not StatusReason.CONFLICT,
+        reason,
+        issue=issue,
+        tip=tip,
+        claims=claims_payload,
+        **_lane_shared_json(lane_shared),
     )
     return 2 if reason is StatusReason.CONFLICT else 0
 
 
 def _status_path(
-    claims: tuple[protocol.ActiveClaim, ...], path: str, storage: body.Storage
+    claims: tuple[protocol.ActiveClaim, ...],
+    path: str,
+    storage: body.Storage,
+    lane_shared: LaneSharedReading,
 ) -> None:
+    """`path`'s holders; with none, `LANE-SHARED` for a file the trunk's
+    `lane_shared` names, which any claim may write (issue #586), else
+    `UNCLAIMED`. A defective trunk configuration adds its own line."""
     holders = protocol.claims_holding_path(claims, path)
-    if not holders:
+    if holders:
+        _print_path_holders(holders, path, storage)
+    elif path in lane_shared_files(lane_shared):
+        print(f"LANE-SHARED {path}")
+    else:
         print(f"UNCLAIMED {path}")
-        return
+    if isinstance(lane_shared, LaneSharedUnavailable):
+        print(_lane_shared_unavailable_line(lane_shared))
+
+
+def _print_path_holders(
+    holders: tuple[protocol.ActiveClaim, ...], path: str, storage: body.Storage
+) -> None:
     for claim in holders:
         print(
             f"CLAIMED {path} {_claim_subject(claim, storage)}: {claim.agent} ({claim.role}) "
@@ -1333,7 +1358,44 @@ def _status_path(
         )
 
 
-def _status_path_json(claims: tuple[protocol.ActiveClaim, ...], path: str) -> int:
+def _lane_shared_unavailable_line(unavailable: LaneSharedUnavailable) -> str:
+    return f"lane-shared: unavailable ({unavailable.defect})"
+
+
+def _lane_shared_line(lane_shared: LaneSharedReading) -> str | None:
+    """The one line `status` and `brief` name the repository's lane-shared
+    registry files with (issue #575), so a builder comparing its changes
+    with its claim scope counts them as allowed: an entry naming no file the
+    trunk tracks is marked so, never shown as a grant, and a defective trunk
+    configuration names its defect (issue #586); `None` when none is
+    configured."""
+    if isinstance(lane_shared, LaneSharedUnavailable):
+        return _lane_shared_unavailable_line(lane_shared)
+    if not lane_shared:
+        return None
+    return "lane-shared: " + ", ".join(
+        entry.path if entry.names_a_file else f"{entry.path} (names no file)"
+        for entry in lane_shared
+    )
+
+
+def _lane_shared_json(lane_shared: LaneSharedReading) -> dict[str, object]:
+    """`lane_shared` and `lane_shared_unavailable`, the `--json` form of
+    `_lane_shared_line` (issue #586): the entries with whether each names a
+    trunk-tracked file, or `null` beside the defect that hides them."""
+    if isinstance(lane_shared, LaneSharedUnavailable):
+        return {"lane_shared": None, "lane_shared_unavailable": lane_shared.defect}
+    return {
+        "lane_shared": [
+            {"path": entry.path, "names_a_file": entry.names_a_file} for entry in lane_shared
+        ],
+        "lane_shared_unavailable": None,
+    }
+
+
+def _status_path_json(
+    claims: tuple[protocol.ActiveClaim, ...], path: str, lane_shared: LaneSharedReading
+) -> int:
     holders = protocol.claims_holding_path(claims, path)
     reason = StatusReason.UNCLAIMED if not holders else StatusReason.CLAIMED
     claims_payload = [
@@ -1345,7 +1407,7 @@ def _status_path_json(claims: tuple[protocol.ActiveClaim, ...], path: str) -> in
         }
         for claim in holders
     ]
-    _emit_json(True, reason, path=path, claims=claims_payload)
+    _emit_json(True, reason, path=path, claims=claims_payload, **_lane_shared_json(lane_shared))
     return 0
 
 
@@ -4535,21 +4597,11 @@ def _lane_tip(branch: str) -> str | None:
     return None
 
 
-def _lane_shared_line(lane_shared: tuple[str, ...]) -> str | None:
-    """The one line `status` and `brief` name the repository's lane-shared
-    registry files with (issue #575), so a builder comparing its changes
-    with its claim scope counts them as allowed; `None` when none is
-    configured."""
-    if not lane_shared:
-        return None
-    return "lane-shared: " + ", ".join(lane_shared)
-
-
 def _print_brief_claim(
     claim: protocol.ActiveClaim,
     opened_at: datetime,
     observed_at: datetime,
-    lane_shared: tuple[str, ...],
+    lane_shared: LaneSharedReading,
 ) -> None:
     print(
         f"{claim.agent} ({claim.role}) branch={claim.branch} base={claim.base}"
@@ -4593,7 +4645,7 @@ class _BriefComposition:
     tip: str | None
     touched: tuple[str, ...]
     step_rules: board.BriefStepRules | None
-    lane_shared: tuple[str, ...]
+    lane_shared: LaneSharedReading
 
 
 def _print_brief(composition: _BriefComposition) -> None:
@@ -4692,7 +4744,9 @@ class BriefReason(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-def _brief_claim_json(live: _BriefClaim, observed_at: datetime) -> dict[str, object]:
+def _brief_claim_json(
+    live: _BriefClaim, observed_at: datetime, lane_shared: LaneSharedReading
+) -> dict[str, object]:
     claim = live.claim
     return {
         "agent": claim.agent,
@@ -4702,6 +4756,7 @@ def _brief_claim_json(live: _BriefClaim, observed_at: datetime) -> dict[str, obj
         "scope": list(claim.scope),
         "whole": claim.whole_reason,
         "age": _claim_age_fields(live.opened_at, observed_at)[0],
+        **_lane_shared_json(lane_shared),
     }
 
 
@@ -4709,7 +4764,9 @@ def _brief_json(composition: _BriefComposition) -> int:
     live = composition.live
     payload: dict[str, object] = {
         "body": composition.body,
-        "claim": None if live is None else _brief_claim_json(live, composition.observed_at),
+        "claim": None
+        if live is None
+        else _brief_claim_json(live, composition.observed_at, composition.lane_shared),
         "tip": composition.tip,
         "touched": list(composition.touched),
     }
@@ -4793,7 +4850,7 @@ def _brief_report(parsed: argparse.Namespace, context: RunContext) -> int:
         tip,
         touched,
         step_rules,
-        trunk_lane_shared(context.configured_canonical_remote, context.toplevel),
+        trunk_lane_shared_reading(context.configured_canonical_remote, context.toplevel),
     )
     if parsed.json:
         return _brief_json(composition)
@@ -4820,19 +4877,19 @@ def _status_read(parsed: argparse.Namespace, context: RunContext) -> int:
     worktree = context.toplevel
     state = context.observation
     claims = tuple(state.claims.values())
+    lane_shared = trunk_lane_shared_reading(context.configured_canonical_remote, context.toplevel)
     if parsed.path is not None:
         # `--path` prints no age, so it never reads a claim's ancestry: a
         # lineage break in one unrelated claim must not stop this answer
         # (README "status --path").
         if parsed.json:
-            return _status_path_json(claims, parsed.path)
-        _status_path(claims, parsed.path, context.config.storage)
+            return _status_path_json(claims, parsed.path, lane_shared)
+        _status_path(claims, parsed.path, context.config.storage, lane_shared)
         return 0
     ages = _claim_ages(worktree, state)
     issue = _optional_issue_number(parsed.issue)
     if parsed.json:
-        return _status_json(claims, issue, ages, state.tip, now=datetime.now(UTC))
-    lane_shared = trunk_lane_shared(context.configured_canonical_remote, context.toplevel)
+        return _status_json(claims, issue, ages, state.tip, lane_shared)
     return _status(claims, issue, ages, context.config.storage, lane_shared)
 
 
