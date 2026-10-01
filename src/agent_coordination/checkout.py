@@ -254,7 +254,7 @@ def file_at_revision(path: str, *, revision: str, directory: Path) -> str | None
     which no lane can change from its own worktree). A `revision` that does
     not resolve, or a file git cannot show, is a git failure, never an
     absent file."""
-    if not _git_output(["ls-tree", "--name-only", revision, "--", path], directory=directory):
+    if not path_is_tracked(path, directory=directory, revision=revision):
         return None
     result = _git_run(["show", f"{revision}:{path}"], directory=directory)
     if result.exit_status != 0:
