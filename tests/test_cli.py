@@ -10342,7 +10342,7 @@ def test_cli_release_by_another_claimant_names_the_holders_repeat_without_a_writ
     released = issue_claim.main(["--repo", REPOSITORY, "release", "72", *arguments])
     captured = capsys.readouterr()
 
-    assert released == 2
+    assert (released, captured.out == "") == (2, "--json" not in arguments)
     assert captured.err == (
         f"ERROR: only the original claimant may release; repeat as the holder with `{repeat}`, "
         f"or use an explicit coordinator override (holder='{holder} (reviewer)', "
