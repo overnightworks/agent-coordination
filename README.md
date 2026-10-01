@@ -272,7 +272,7 @@ in a checkout, except the ignored `settings.local.json` that repairs it.
 
 ## Configuration
 
-`.agent-claim/board.toml` defines exactly six top-level keys; any other key
+`.agent-claim/board.toml` defines exactly seven top-level keys; any other key
 is refused by name.
 
 - `storage` -- `"github"` (default) or `"state-ref"`; the pin and its
