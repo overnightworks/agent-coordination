@@ -81,6 +81,7 @@ from agent_coordination import (
     github,
     items,
     metrics,
+    process,
     protocol,
     state_board,
     store,
@@ -17433,60 +17434,103 @@ def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
     assert _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip() == lane_tip
 
 
-def test_land_keeps_a_squashed_lane_branch_a_commit_raced_past_the_landed_head(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+def _commit_past_the_landed_head(lane: Path) -> None:
+    _real_git(lane, "commit", "-q", "--allow-empty", "-m", "raced past the landed head")
+
+
+def _lock_the_repository_configuration(lane: Path) -> None:
+    common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    (Path(common.stdout.strip()) / "config.lock").touch()
+
+
+@pytest.mark.parametrize(
+    "interfere",
+    [
+        pytest.param(_commit_past_the_landed_head, id="commit-raced-past-the-landed-head"),
+        pytest.param(_lock_the_repository_configuration, id="configuration-locked"),
+    ],
+)
+def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    interfere: Callable[[Path], None],
 ) -> None:
     """Issue #578 review finding 3: a clean commit made in the lane after
     cleanup judged its tip to be the squashed head, but before the branch
     deletion, keeps the branch on that commit -- the deletion compares and
-    deletes in one step, so only the landed head itself is ever deleted."""
+    deletes in one step, so only the landed head itself is ever deleted.
+    Second review finding 2: a `branch.<name>` section git cannot remove
+    keeps the branch too, the failure reported rather than swallowed. Either
+    way the kept branch keeps its tip and its own configuration."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
     _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
     pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
     client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
     remove = checkout.remove_linked_worktree
+    kept_tips: list[str] = []
 
-    def commit_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
-        _real_git(path, "commit", "-q", "--allow-empty", "-m", "raced past the landed head")
+    def interfere_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
+        interfere(path)
+        kept_tips.append(_real_git(path, "rev-parse", "HEAD").stdout.strip())
         return remove(path, **options)
 
-    monkeypatch.setattr(checkout, "remove_linked_worktree", commit_then_remove)
+    monkeypatch.setattr(checkout, "remove_linked_worktree", interfere_then_remove)
 
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
 
     output = capsys.readouterr()
     assert (status, output.err) == (0, "")
     assert "worktree: removed; branch kept -- git failure: " in output.out
-    raced_tip = _real_git(repo, "log", "-1", "--format=%P %s", LANDING_BRANCH).stdout.strip()
-    assert raced_tip == f"{pinned_head} raced past the landed head"
+    assert [_real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()] == kept_tips
+    upstream = _real_git(repo, "config", f"branch.{LANDING_BRANCH}.remote", check=False)
+    assert upstream.stdout.strip() == "origin"
 
 
-def _recreate_branch_after_its_deletion(repo: Path, branch: str) -> tuple[str, str]:
-    """Install a `reference-transaction` hook that, the moment `branch`'s
-    deletion commits, creates a branch of the same name again with its own
-    `branch.<name>.remote` -- another process reusing the name -- and
-    return that configuration key with the value it must keep."""
-    owned_key = f"branch.{branch}.remote"
-    hooks = repo / _real_git(repo, "rev-parse", "--git-path", "hooks").stdout.strip()
-    hooks.mkdir(parents=True, exist_ok=True)
-    hook = hooks / "reference-transaction"
-    hook.write_text(
-        "#!/bin/sh\n"
-        '[ "$1" = committed ] || exit 0\n'
-        "while read -r old new ref; do\n"
-        '  case "$new" in *[!0]*) continue ;; esac\n'
-        f'  [ "$ref" = "refs/heads/{branch}" ] || continue\n'
-        '  git update-ref "$ref" "$old"\n'
-        f"  git config {owned_key} recreated\n"
-        "done\n"
-    )
-    hook.chmod(0o755)
+def _recreate_branch_after_its_deletion(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
+) -> tuple[str, str]:
+    """Let another process create a branch of `branch`'s name again, with
+    its own `branch.<name>.remote`, once the lane's branch is deleted: right
+    before the cleanup's next git step naming that section -- the latest
+    moment any check of the name before that step could look -- or, when no
+    such step follows, once the cleanup is done. Return that configuration
+    key with the value it must keep."""
+    owned_section = f"branch.{branch}"
+    owned_key = f"{owned_section}.remote"
+    run_git = checkout._git_run
+    remove = checkout.remove_linked_worktree
+
+    def recreate_once_deleted() -> None:
+        ref = f"refs/heads/{branch}"
+        name_is_free = _real_git(repo, "show-ref", "--verify", "--quiet", ref, check=False)
+        if name_is_free.returncode == 1:
+            _real_git(repo, "branch", "-q", branch, "main")
+            _real_git(repo, "config", owned_key, "recreated")
+
+    def recreate_then_run(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        if owned_section in arguments:
+            recreate_once_deleted()
+        return run_git(arguments, directory=directory)
+
+    def remove_then_recreate(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
+        outcome = remove(path, **options)
+        recreate_once_deleted()
+        return outcome
+
+    monkeypatch.setattr(checkout, "_git_run", recreate_then_run)
+    monkeypatch.setattr(checkout, "remove_linked_worktree", remove_then_recreate)
     return owned_key, "recreated"
 
 
-def _configure_a_sibling_branch(repo: Path, branch: str) -> tuple[str, str]:
+def _configure_a_sibling_branch(
+    _monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
+) -> tuple[str, str]:
     """Give `branch` no `branch.<name>` section of its own but a sibling
     branch whose name extends it with a dot, configured under
     `branch.<name>.x`, and return that sibling's configuration key with the
@@ -17509,20 +17553,20 @@ def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    configure_a_foreign_section: Callable[[Path, str], tuple[str, str]],
+    configure_a_foreign_section: Callable[[pytest.MonkeyPatch, Path, str], tuple[str, str]],
 ) -> None:
-    """Issue #578 review findings 2 and 4: once the squashed lane's ref is
-    deleted, the cleanup reports its branch removed whatever the
-    `branch.<name>` configuration step finds -- no section of its own
-    beside a dotted sibling's, or a same-name branch created right after
-    the deletion -- and leaves configuration another branch owns intact."""
+    """Issue #578 review findings 2 and 4: the squashed lane's branch goes
+    and reads removed while configuration another branch owns stays intact
+    -- a dotted sibling's beside no section of its own, or a same-name
+    branch's created at any moment after the deletion, since nothing the
+    cleanup writes follows that deletion."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
     _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
     pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
     client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
-    foreign_key, foreign_value = configure_a_foreign_section(repo, LANDING_BRANCH)
+    foreign_key, foreign_value = configure_a_foreign_section(monkeypatch, repo, LANDING_BRANCH)
 
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
 

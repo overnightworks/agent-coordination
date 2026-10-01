@@ -1514,46 +1514,75 @@ def remove_linked_worktree(
     result = _git_run(["worktree", "remove", str(path)])
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
-    result = _delete_branch(branch, landed_head)
-    if result.exit_status != 0:
+    branch_refusal = _delete_branch(branch, landed_head)
+    if branch_refusal is not None:
         return WorktreeCleanupOutcome(
             worktree=_WORKTREE_REMOVED,
-            branch=BranchRemoval(
-                removed=False, reason=f"git failure: {process.git_failure_detail(result)}"
-            ),
+            branch=BranchRemoval(removed=False, reason=f"git failure: {branch_refusal}"),
         )
     return WorktreeCleanupOutcome(worktree=_WORKTREE_REMOVED, branch=_BRANCH_REMOVED)
 
 
-def _delete_branch(branch: str, landed_head: str | None) -> process.CapturedResult:
-    """Delete local `branch`: with `git branch -d`, whose own merged check
-    guards a merged lane, or -- for a squash git's merged check cannot see
-    (issue #578) -- only while its tip is still `landed_head`.
-    `update-ref -d` compares and deletes under the ref's own lock, so a
-    commit made after the caller's tip check keeps its branch. Its result
-    alone says whether the branch went; the `branch.<name>` configuration
-    follows apart (`_remove_deleted_branch_configuration`)."""
+def _delete_branch(branch: str, landed_head: str | None) -> str | None:
+    """Delete local `branch` and return git's own refusal, or `None` once it
+    is gone: with `git branch -d`, whose own merged check guards a merged
+    lane, or -- for a squash git's merged check cannot see (issue #578) --
+    with `_delete_squashed_branch`."""
     if landed_head is None:
-        return _git_run(["branch", "-d", branch])
+        deleted = _git_run(["branch", "-d", branch])
+        return process.git_failure_detail(deleted) if deleted.exit_status != 0 else None
+    return _delete_squashed_branch(branch, landed_head)
+
+
+def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
+    """Delete a squashed lane's `branch` only while its tip is still
+    `landed_head`, with the `branch.<name>` section `git branch -d` would
+    drop, and return git's own refusal, or `None` once both are gone.
+    The section goes first, while the ref still holds the name: once the ref
+    is deleted, a branch of that name -- and the section under it -- may
+    already be another process's. `update-ref -d` then compares and deletes
+    under the ref's own lock, so a commit made after the caller's tip check
+    keeps its branch, and that kept branch gets its section back. A refused
+    step before the deletion deletes nothing."""
+    listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
+    if listed.exit_status not in (0, 1):
+        return process.git_failure_detail(listed)
+    configuration = _own_branch_configuration(listed.stdout.decode(), branch)
+    if configuration:
+        removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
+        if removed.exit_status != 0:
+            return process.git_failure_detail(removed)
     deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
     if deleted.exit_status == 0:
-        _remove_deleted_branch_configuration(branch)
-    return deleted
+        return None
+    return _restore_branch_configuration(process.git_failure_detail(deleted), configuration)
 
 
-def _remove_deleted_branch_configuration(branch: str) -> None:
-    """Drop the `branch.<name>` section a squashed lane's `update-ref -d`
-    left behind, as `git branch -d` drops it, but only while no branch of
-    that name exists again: a same-name branch created after the deletion
-    keeps its own configuration. Git has no lock spanning a ref and the
-    configuration file, so this check sits as close as git allows."""
-    name_still_free = _git_run(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"])
-    if name_still_free.exit_status == 1:
-        # The ref is already gone, so this never decides whether the branch
-        # was removed: like `git branch -d`, which only warns when its section
-        # removal fails, a missing section (a lane without an upstream) or a
-        # failed write leaves at most a stale section, never a false report.
-        _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
+def _own_branch_configuration(listing: str, branch: str) -> list[tuple[str, str]]:
+    """The `(key, value)` entries `git config --null --get-regexp` lists
+    under `branch`'s own `branch.<name>` section, in their file order --
+    never a dotted sibling's, whose `branch.<name>.x.<variable>` keys share
+    the prefix."""
+    prefix = f"branch.{branch}."
+    entries = (entry.partition("\n") for entry in listing.split("\0") if entry)
+    return [
+        (key, value)
+        for key, _separator, value in entries
+        if key.startswith(prefix) and "." not in key.removeprefix(prefix)
+    ]
+
+
+def _restore_branch_configuration(refusal: str, configuration: list[tuple[str, str]]) -> str:
+    """Write a kept branch's `configuration` back and return the deletion's
+    `refusal`, with the write's own refusal appended when one fails."""
+    for key, value in configuration:
+        restored = _git_run(["config", "--local", "--add", key, value])
+        if restored.exit_status != 0:
+            return (
+                f"{refusal}; its configuration was not restored: "
+                f"{process.git_failure_detail(restored)}"
+            )
+    return refusal
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:
