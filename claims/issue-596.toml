@@ -1,0 +1,8 @@
+claim_id = "46883ad5f390474e9c0be2223edc4e80"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "7f984a769d03b1165e1a13b4a396ff95407a4d93"
+branch = "claude/issue-596-rename-prep"
+scope = ["scripts/migrate_protocol_names.py", "src/agent_coordination/board.py", "src/agent_coordination/board_html.py", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "src/agent_coordination/items.py", "src/agent_coordination/protect.py", "src/agent_coordination/session.py", "src/agent_coordination/state_board.py", "tests/board_fixtures.py", "tests/conftest.py", "tests/test_board.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_items.py", "tests/test_protect.py", "tests/test_session.py", "tests/test_state_board.py", "tests/test_store.py"]
+opened_commit = "4db6b126e1153b06d852873116d094120ff68d3f"
+whole_reason = "behaviour-neutral rename across every module and test that names the old protocol identifiers"
