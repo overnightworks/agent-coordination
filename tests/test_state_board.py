@@ -44,7 +44,7 @@ from test_cli import (
     main_with_piped_stdin,
     projected_board,
 )
-from test_store import _blob, _push_raw_state_tree, _raw_tree
+from test_store import _blob, _push_raw_state_tree, _raw_tree, _state_ref_listing
 
 from agent_coordination import board, checkout, forge, items, process, protocol, store
 from agent_coordination import cli as issue_claim
@@ -623,7 +623,12 @@ def _fake_oid(seed: str) -> protocol.ObjectId:
 
 
 def _item_oids(item_files: Mapping[str, bytes]) -> dict[str, protocol.ObjectId]:
-    return {items.item_id_from_filename(filename): _fake_oid(filename) for filename in item_files}
+    """Fabricated oids keyed as `store` keys `ClaimState.items`: only the
+    file names that name an item."""
+    named = {filename: protocol.item_id_of_filename(filename) for filename in item_files}
+    return {
+        item_id: _fake_oid(filename) for filename, item_id in named.items() if item_id is not None
+    }
 
 
 def _state_ref_board(
@@ -872,9 +877,38 @@ class TestMalformedItem:
 
         assert (MALFORMED_NUMBER, "Duplicate me") in adapter.open_item_titles()
 
-    def test_a_malformed_filename_fails_loud(self) -> None:
-        with pytest.raises(MalformedStateTreeError, match="not a valid item file name"):
-            _state_ref_board({"not-an-item.md": b"anything"})
+    @pytest.mark.parametrize(
+        "whole_store_read",
+        [
+            pytest.param(StateRefBoard.list_open_board_issues, id="open-board-issues"),
+            pytest.param(StateRefBoard.open_item_titles, id="open-item-titles"),
+            pytest.param(
+                lambda adapter: adapter.list_recently_closed_issues(datetime.now(UTC)),
+                id="recently-closed-issues",
+            ),
+            pytest.param(
+                lambda adapter: adapter.prepare_landing(CHILD_B_NUMBER), id="prepare-landing"
+            ),
+            pytest.param(
+                lambda adapter: adapter.compose_item(
+                    title="Fresh", body="", kind=ItemKind.TASK, parent=None
+                ),
+                id="compose-item",
+            ),
+            pytest.param(StateRefBoard.hold_well_formed, id="ruling-click-hold"),
+        ],
+    )
+    def test_a_whole_store_read_refuses_beside_an_entry_that_names_no_item(
+        self, whole_store_read: Callable[[StateRefBoard], object]
+    ) -> None:
+        """PIN-13 (issue #565): the read names the lowest such entry; the
+        store still builds, since a write to one item goes past it."""
+        adapter = _state_ref_board({**_item_files(), "zz-later": b"z", "NOTANID": b"anything"})
+
+        with pytest.raises(MalformedStateTreeError) as refused:
+            whole_store_read(adapter)
+
+        assert str(refused.value) == "items/NOTANID is not a valid item file name"
 
 
 class TestStateRefBoardMethods:
@@ -3402,12 +3436,23 @@ class TestCliStateRefForge:
                 id="item-close-of-a-child-whose-parent-is-missing",
             ),
             *_unplaced_malformed_child_cases(),
-            pytest.param(
-                ["item", "close", CHILD_B_ID],
-                None,
-                {**_item_files(), "NOTANID": b"anything"},
-                "items/NOTANID is not a valid item file name",
-                id="item-close-of-a-healthy-item-beside-an-entry-that-names-no-item",
+            *(
+                pytest.param(
+                    arguments,
+                    None,
+                    {**_item_files(), "NOTANID": b"anything"},
+                    "items/NOTANID is not a valid item file name",
+                    id=f"{case_id}-beside-an-entry-that-names-no-item",
+                )
+                for case_id, arguments in (
+                    ("board", ["board", "--html"]),
+                    ("next", ["next"]),
+                    ("rulings", ["rulings"]),
+                    ("item-new", ["item", "new", "--title", "Fresh"]),
+                    ("item-new-not-a-twin", ["item", "new", "--title", "Fresh", "--not-a-twin"]),
+                    ("cut", ["cut", CONTAINER_ID, "--title", "Slice C"]),
+                    ("claim", ["claim", CHILD_B_ID, "--agent", "Codex Sol", "--scope", "README"]),
+                )
             ),
         ],
     )
@@ -3430,9 +3475,11 @@ class TestCliStateRefForge:
         Issue #536 (ITEM-53, PIN-16): `item close` of an item whose `parent`
         no `items/` entry carries refuses PIN-16's sentence before the close
         writes, so the item stays open rather than closing and then refusing.
-        Issue #550 (PIN-13): an entry whose file name is no item refuses every
-        write beside it, because a write would rename or collapse it."""
+        Issue #565 (PIN-13, PIN-36): an entry whose file name is no item
+        refuses every read of the whole store and every write that decides
+        over it -- a minted id, a fresh claim -- `--not-a-twin` included."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        _stub_claim_checkout(monkeypatch)
         stdin_source = _closed_stdin if piped_body is None else _piping(piped_body)
         remote_url = f"file://{bare_remote}"
         before = store.fetch_state(worktree=worktree, remote=remote_url)
@@ -3443,6 +3490,167 @@ class TestCliStateRefForge:
 
         assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
         assert store.fetch_state(worktree=worktree, remote=remote_url).tip == before.tip
+
+    @pytest.mark.parametrize(
+        ("arguments", "piped_body", "printed"),
+        [
+            pytest.param(
+                ["item", "close", CHILD_B_ID],
+                None,
+                f"CLOSED {CHILD_B_ID}\nhint: could not read the board to report what this write"
+                " freed (items/NOTANID is not a valid item file name); run `aco board --json`"
+                " once it is repaired\n",
+                id="item-close",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--size", "S"],
+                None,
+                f"EDITED {CHILD_B_ID} size=S\n",
+                id="edit-size",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--whole", "one lock"],
+                None,
+                f"EDITED {CHILD_B_ID} whole=one lock\n",
+                id="edit-whole",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID, "--kind", "container"],
+                None,
+                f"EDITED {CHILD_B_ID} kind=container\n",
+                id="edit-kind",
+            ),
+            pytest.param(
+                ["item", "edit", CHILD_B_ID],
+                _item_files()[f"{CHILD_B_ID}.md"].decode(),
+                f"EDITED {CHILD_B_ID}\n",
+                id="edit-body",
+            ),
+            pytest.param(
+                ["rule", RULABLE_ID, "--line", "1", "--yes"],
+                None,
+                f"RULED {RULABLE_ID} line 1 yes; 1 line(s) still open\n",
+                id="rule",
+            ),
+            pytest.param(
+                ["ask", CHILD_B_ID, "--text", "Does it go past?"],
+                None,
+                f"ASKED {CHILD_B_ID} line 1: Does it go past?\n",
+                id="ask",
+            ),
+        ],
+    )
+    def test_a_write_to_one_item_goes_past_entries_that_name_no_item(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        arguments: list[str],
+        piped_body: str | None,
+        printed: str,
+    ) -> None:
+        """Issue #565 line 1 (PIN-35, CAS-61, E-PIN-39): beside a non-id
+        name and a bare id without `.md`, a write to one healthy item --
+        `item close`, `item edit`, `rule`, `ask` -- lands, and both entries
+        keep their name, mode, and blob."""
+        foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
+        item_files = {**_item_files(), **_rulable_item_files(), **foreign}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        stdin_source = _closed_stdin if piped_body is None else _piping(piped_body)
+        foreign_paths = [f"items/{name}".encode() for name in foreign]
+        before = _state_ref_listing(bare_remote)
+
+        with stdin_source(tmp_path) as stdin:
+            monkeypatch.setattr(sys, "stdin", stdin)
+            status = issue_claim.main(arguments)
+
+        after = _state_ref_listing(bare_remote)
+        assert (status, capsys.readouterr().out, after != before) == (0, printed, True)
+        assert [after[path] for path in foreign_paths] == [before[path] for path in foreign_paths]
+
+    @pytest.mark.parametrize(
+        ("arguments", "printed"),
+        [
+            pytest.param(
+                ["item", "show", CHILD_A_ID],
+                f"{CHILD_A_ID} · #{CHILD_A_NUMBER} · open · parent {CONTAINER_ID} · origin none\n"
+                f"{_item_files()[f'{CHILD_A_ID}.md'].decode()}",
+                id="item-show",
+            ),
+            pytest.param(
+                ["brief", CHILD_A_ID],
+                f"{_item_files()[f'{CHILD_A_ID}.md'].decode()}\n\n"
+                "CLAIM\nno active claim\n\nTIP\n\nTOUCHED\n",
+                id="brief",
+            ),
+            pytest.param(["check", CHILD_A_ID], f"ISSUE {CHILD_A_ID} body ok\n", id="check"),
+        ],
+    )
+    def test_a_read_of_one_item_goes_past_entries_that_name_no_item(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        arguments: list[str],
+        printed: str,
+    ) -> None:
+        """Issue #565 line 1 (PIN-35): beside a non-id name and a bare id
+        without `.md`, a read of one healthy item -- `item show`, `brief`,
+        `check` -- prints it, and the store stays exactly as it was."""
+        foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
+        self._live_state_ref_checkout(
+            monkeypatch, tmp_path, bare_remote, worktree, {**_item_files(), **foreign}
+        )
+        before = _state_ref_listing(bare_remote)
+
+        status = issue_claim.main(arguments)
+
+        assert (status, capsys.readouterr().out) == (0, printed)
+        assert _state_ref_listing(bare_remote) == before
+
+    @pytest.mark.parametrize(
+        ("item_id", "refusal"),
+        [
+            pytest.param(
+                CHILD_A_ID, "items/NOTANID is not a valid item file name", id="its-fresh-claim"
+            ),
+            pytest.param(
+                DANGLING_PARENT_ID,
+                f"issue {DANGLING_PARENT_ID} does not exist here",
+                id="its-missing-item",
+            ),
+        ],
+    )
+    def test_start_reads_its_item_past_an_entry_that_names_no_item_then_refuses(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        item_id: str,
+        refusal: str,
+    ) -> None:
+        """Issue #565 (PIN-35, PIN-36): `start` reads its one item past an
+        entry whose name is no item -- a missing item still refuses as
+        missing -- and only its fresh claim refuses with PIN-13's sentence,
+        before any worktree is built or the store moves."""
+        foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
+        item_files = {**_item_files(), **foreign}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        _stub_claim_checkout(monkeypatch)
+        monkeypatch.setenv(checkout.ACO_AGENT_ENV, "Codex Sol")
+        before = _state_ref_listing(bare_remote)
+
+        status = issue_claim.main(["start", item_id, "--slug", "s", "--scope", "README"])
+
+        assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+        assert _state_ref_listing(bare_remote) == before
+        assert not (worktree.parent / f"{worktree.name}-worktrees").exists()
 
     @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
