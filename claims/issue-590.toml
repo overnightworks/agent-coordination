@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "19110628b3041158d0f4b1b24e6e83f4d851afad"
 branch = "claude/issue-590-land-head-pin"
-scope = ["specs/land.spec.md", "specs/release.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "tests/test_cli.py"]
+scope = ["README.md", "specs/land.spec.md", "specs/release.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/forge.py", "src/agent_coordination/github.py", "tests/test_cli.py", "tests/test_github.py"]
 opened_commit = "8c8cad6ad5d09718b181fc1c9dff15a36482b112"
 whole_reason = "aco land --head plus the squash-cleanup gaps of #578 in the same land/release files"
