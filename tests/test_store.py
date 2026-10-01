@@ -2662,7 +2662,10 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
 _REPOSITORY_ROOT = Path(__file__).parent.parent
 _STATE_DELETION_ADVICE = re.compile(
     r"update-ref\b[^\n`]*\s(?:-d|--delete)\b"
-    r"|push\b[^\n`]*(?:--force|--delete|\s-[fd]\b"
+    r"|update-ref(?:\s+-\S+)*\s+(?:refs/|\{)\S*\s+[^\s-]"
+    r"|update-ref\b[^\n`]*--stdin[^\n`]*\bdelete\s+(?:refs/|\{)"
+    r"|\bdelete\s+(?:refs/|\{)[^\n`]*update-ref\b[^\n`]*--stdin"
+    r"|push\b[^\n`]*(?:--force|--delete|--mirror|--prune|\s-[fd]\b"
     r"|\s['\"]?:(?:refs/|\{)|\s\+(?:refs/|\{|[^\s:]+:))"
 )
 
@@ -2716,14 +2719,17 @@ def _spec_texts() -> list[str]:
 @pytest.mark.parametrize(
     "user_facing_texts", [_source_message_texts, _spec_texts], ids=["src", "specs"]
 )
-def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
+def test_no_src_message_or_spec_advises_a_hand_run_ref_delete_overwrite_or_force_push(
     user_facing_texts: Callable[[], list[str]],
 ) -> None:
-    """Issue #579: a hand-run ref deletion or force-push wipes every claim
-    and state-ref item; a stuck ref is `aco reset`'s job, which exports
-    first."""
+    """Issues #579/#582: a hand-run ref deletion, overwrite or force-push
+    wipes every claim and state-ref item; a stuck ref is `aco reset`'s job,
+    which exports first by default. The corpus must hold the retry-budget
+    refusal that sends a stuck agent to `aco reset`, so a collector that
+    reads nothing cannot pass."""
     texts = user_facing_texts()
-    assert any("`aco reset`" in text for text in texts), "the guard must read the texts it protects"
+    assert texts != []
+    assert any("without the ref ever" in text and "`aco reset`" in text for text in texts)
     advice = [text for text in texts if _STATE_DELETION_ADVICE.search(text)]
     assert advice == []
 
@@ -2743,6 +2749,12 @@ def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
         "git push origin +refs/aco/state",
         "git push origin +HEAD:refs/aco/state",
         "git update-ref --no-deref -d refs/aco/state",
+        "printf 'delete refs/aco/state' | git update-ref --stdin",
+        "git update-ref --stdin <<< 'delete refs/aco/state'",
+        "git update-ref refs/aco/state 0123abcd",
+        "git update-ref --no-deref refs/aco/state <sha>",
+        "git push --mirror origin",
+        "git push --prune origin refs/aco/*:refs/aco/*",
     ],
 )
 def test_the_deletion_advice_guard_flags_every_manual_delete_form(
@@ -2760,6 +2772,7 @@ def test_the_deletion_advice_guard_flags_every_manual_delete_form(
         'message = f"if stuck, `git push {remote} --force {STATE_REF}` clears it"',
         'message = f"if stuck, `git push {remote} +{local}:{STATE_REF}` clears it"',
         'message = "if stuck, `git push origin :refs/aco/state` clears it"',
+        'message = f"if stuck, `git update-ref {STATE_REF} {tip}` resets it"',
         '"""Usage: if stuck, `git update-ref -d refs/aco/state` clears it."""',
     ],
 )
