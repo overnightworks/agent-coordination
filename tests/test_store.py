@@ -2942,9 +2942,10 @@ def test_commit_transition_two_writers_different_item_ids_both_land(
     bare_remote: Path, worktree: Path
 ) -> None:
     """Same shape as the two-racer claim test on different keys (issue
-    #176): two item creates on distinct ids both land, because a retry
-    rebuilds `items/` from the full id -> oid map, never a copy of the
-    parent tree's `items/` oid (issue #279)."""
+    #176): two item creates on distinct ids both land, because every
+    attempt patches its own tip's `items/` children with only the ids it
+    writes, never a copy of the parent tree's `items/` oid (issues #279,
+    #558)."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
         observed=fresh_observation(worktree, bare_remote),
