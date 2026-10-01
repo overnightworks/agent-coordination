@@ -8171,7 +8171,7 @@ def _reset_state(parsed: argparse.Namespace, context: RunContext) -> int:
     worktree, remote, state = _reset_observation(context)
     if isinstance(state, protocol.ClaimState) and state.claims:
         ages = _claim_ages(worktree, state)
-        _status(tuple(state.claims.values()), None, ages, context.config.storage)
+        _status(tuple(state.claims.values()), None, ages, context.config)
         return 2
     export = _resolved_reset_export_config(parsed, context.toplevel)
     plan = _build_reset_plan(
