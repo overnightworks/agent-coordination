@@ -1937,7 +1937,28 @@ def work_item_claim_command(
     derives itself, else the `occupied_scope` `_work_item_scope` named --
     so a nested container's pre-retype advice and `next`'s `Run:` line
     after the retype name the same claim."""
-    return claim_command(number, storage, () if own_scope is not None else occupied_scope)
+    return claim_command(number, storage, _advised_scope(own_scope, occupied_scope))
+
+
+def work_item_start_command(
+    number: int,
+    storage: Storage,
+    slug: str | None,
+    own_scope: tuple[str, ...] | None,
+    occupied_scope: tuple[str, ...] | None,
+) -> str:
+    """The `start` advice for work item `number` (issue #562), scoped as its
+    `work_item_claim_command` is, for a caller standing where `claim`
+    refuses."""
+    return start_command(number, storage, slug, _advised_scope(own_scope, occupied_scope))
+
+
+def _advised_scope(
+    own_scope: tuple[str, ...] | None, occupied_scope: tuple[str, ...] | None
+) -> tuple[str, ...] | None:
+    """No paths when the item names its own top-level `scope`, which
+    `claim` and `start` derive themselves, else `occupied_scope`."""
+    return () if own_scope is not None else occupied_scope
 
 
 def _qualifying_actions(board: Board) -> Iterator[NextAction]:
@@ -2411,11 +2432,13 @@ def item_json_reference(number: int, storage: Storage) -> int | str:
     return _storage_item_name(number, storage, number)
 
 
-# What an advice line names where it knows no paths to claim, or no reason
-# to claim out of order: an agent reads it as "fill these in", which is why
+# What an advice line names where it knows no paths to claim, no reason to
+# claim out of order, or no slug a title yields: an agent reads it as "fill
+# these in", which is why
 # it stays outside `advice_command`'s quoting rather than becoming one
 # quoted `'<paths>'` argument.
 SCOPE_PLACEHOLDER = "--scope <paths>"
+SLUG_PLACEHOLDER = "--slug <slug>"
 OUT_OF_ORDER_PLACEHOLDER = "--out-of-order <reason>"
 
 
@@ -2481,14 +2504,36 @@ def _quoted_prose(text: str) -> str:
     return f'"{escaped}"'
 
 
-def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
-    """The `claim` advice for item `number` (issue #510): one `--scope` per
-    path of `scope`, none at all for `()` -- the item's own body scope, which
-    `claim` derives itself -- and `SCOPE_PLACEHOLDER` when no paths are
-    known (`None`)."""
+def _pull_command(
+    arguments: Sequence[str | AdviceOption],
+    scope: tuple[str, ...] | None,
+    placeholders: tuple[str, ...],
+) -> str:
+    """A `claim` or `start` advice (issues #510, #562): one `--scope` per
+    path of `scope`, none at all for `()` -- the item's own body scope,
+    which both derive themselves -- and `SCOPE_PLACEHOLDER` when no paths
+    are known (`None`), ahead of every further `placeholders`."""
     scope_options = (AdviceOption("--scope", path) for path in scope or ())
-    command = advice_command("claim", item_argument(number, storage), *scope_options)
-    return command if scope is not None else f"{command} {SCOPE_PLACEHOLDER}"
+    unknown = placeholders if scope is not None else (SCOPE_PLACEHOLDER, *placeholders)
+    return " ".join((advice_command(*arguments, *scope_options), *unknown))
+
+
+def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
+    """The `claim` advice for item `number`, scoped as `_pull_command` says."""
+    return _pull_command(("claim", item_argument(number, storage)), scope, ())
+
+
+def start_command(
+    number: int, storage: Storage, slug: str | None, scope: tuple[str, ...] | None
+) -> str:
+    """The `start` advice for item `number` (issue #562), scoped as
+    `_pull_command` says, naming `slug` -- or `SLUG_PLACEHOLDER` when the
+    title yields none (`None`) -- so the worktree and branch it builds are
+    the ones the advice shows."""
+    if slug is None:
+        return _pull_command(("start", item_argument(number, storage)), scope, (SLUG_PLACEHOLDER,))
+    arguments = ("start", item_argument(number, storage), AdviceOption("--slug", slug))
+    return _pull_command(arguments, scope, ())
 
 
 def cut_command(number: int, storage: Storage, title: str) -> str:

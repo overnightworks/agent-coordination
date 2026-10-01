@@ -1956,26 +1956,56 @@ def _ruling_pull_hint(item: board.BoardItem) -> str | None:
 
 
 def _next_action_command(
-    action: board.WorkItemAction | board.CutSliceAction, storage: body.Storage
+    action: board.WorkItemAction | board.CutSliceAction,
+    storage: body.Storage,
+    *,
+    claims_in_place: bool,
 ) -> str:
     """The exact `aco` invocation `_next` prints and `_next --json` carries
     as `command` -- one owner so text and JSON never name a different
     command for the same action. `close_container` has none: there is no
     command to run, and neither grammar invents one.
 
-    A `WorkItemAction` whose item carries its own top-level `scope` (issue
-    #348, #337's own derivation) drops `--scope` entirely -- `claim`
-    derives it from the same body this command already names; an item
-    whose one `[[slice]]` row names paths claims exactly those; only an
-    item naming neither still prints the placeholder, alongside
-    `SCOPE_UNKNOWN_NOTE`. Both render through `board.advice_command`, so
-    the line runs as printed (issue #510).
+    A `WorkItemAction` is `claim` where `next` runs in a checkout `claim`
+    accepts (`claims_in_place`), else `start` with the slug `start` itself
+    derives from the title (issue #562), so the advice runs as printed from
+    the default branch's checkout too. Either drops `--scope` entirely for
+    an item carrying its own top-level `scope` (issue #348, #337's own
+    derivation); an item whose one `[[slice]]` row names paths claims
+    exactly those; only an item naming neither still prints the
+    placeholder, alongside `SCOPE_UNKNOWN_NOTE`. All render through
+    `board.advice_command`, so the line runs as printed (issue #510).
     """
-    if isinstance(action, board.WorkItemAction):
-        return board.work_item_claim_command(
-            action.item.number, storage, action.item.scope, action.scope
-        )
-    return board.cut_command(action.container.number, storage, action.cut_title)
+    if isinstance(action, board.CutSliceAction):
+        return board.cut_command(action.container.number, storage, action.cut_title)
+    item = action.item
+    if claims_in_place:
+        return board.work_item_claim_command(item.number, storage, item.scope, action.scope)
+    return board.work_item_start_command(
+        item.number, storage, _advised_slug(item.title), item.scope, action.scope
+    )
+
+
+def _advised_slug(title: str) -> str | None:
+    """The slug `start` derives from `title`, or `None` when it would refuse
+    for want of one, which the advice then leaves for the agent to fill."""
+    try:
+        return checkout.slug_from_title(title)
+    except protocol.ClaimError:
+        return None
+
+
+def _claims_in_place(context: RunContext) -> bool:
+    """Whether `claim` accepts a build claim in this run's checkout: a
+    linked worktree on an attached branch other than the default one, the
+    isolation `claim` itself requires (CLAIM_DESCRIPTION)."""
+    here = checkout.resolve_path_checkout(context.toplevel)
+    return (
+        here is not None
+        and here.kind is checkout.CheckoutKind.LINKED_WORKTREE
+        and not checkout.is_detached_head(here.branch)
+        and not checkout.is_default_branch(here.branch, context.recorded_default_branch)
+    )
 
 
 class NextReason(StrEnum):
@@ -2009,7 +2039,9 @@ def _next_action_reason(action: board.NextAction) -> NextReason:
     return NextReason.CLOSE_CONTAINER
 
 
-def _next_action_payload(action: board.NextAction, storage: body.Storage) -> dict[str, object]:
+def _next_action_payload(
+    action: board.NextAction, storage: body.Storage, *, claims_in_place: bool
+) -> dict[str, object]:
     """The action-specific fields `_next_json` adds beyond `recovery`/`skipped`
     -- `_next_action_reason` now carries what an `"action"` key used to."""
     number = board.item_json_reference(_next_action_item(action).number, storage)
@@ -2020,7 +2052,7 @@ def _next_action_payload(action: board.NextAction, storage: body.Storage) -> dic
             "score": item.score,
             "title": item.title,
             "next": item.next_step,
-            "command": _next_action_command(action, storage),
+            "command": _next_action_command(action, storage, claims_in_place=claims_in_place),
             "ruling_landings": item.ruling_landings,
             "ruling_old": item.ruling_old,
         }
@@ -2034,7 +2066,7 @@ def _next_action_payload(action: board.NextAction, storage: body.Storage) -> dic
             "title": action.container.title,
             "slice": action.next_step,
             "cut_title": action.cut_title,
-            "command": _next_action_command(action, storage),
+            "command": _next_action_command(action, storage, claims_in_place=claims_in_place),
         }
     return {
         "number": number,
@@ -2114,7 +2146,9 @@ class _NextReport:
     ceiling (issue #348): the board's own first action (`None` when nothing
     qualifies), the unworkable rows `SKIPPED` names, the landed-but-open
     `RECOVERY` rows, the parallel-capacity projection, the zero-cost
-    `close:` list, and the items waiting on the operator (issue #553)."""
+    `close:` list, the items waiting on the operator (issue #553), and
+    whether `claim` accepts this checkout, which picks `claim` or `start`
+    as the advice (issue #562)."""
 
     action: board.NextAction | None
     skipped: tuple[board.BoardItem, ...]
@@ -2122,6 +2156,7 @@ class _NextReport:
     parallel: board.ParallelSet
     close: tuple[int, ...]
     waiting: tuple[int, ...]
+    claims_in_place: bool
 
 
 def _next_json(report: _NextReport, storage: body.Storage) -> None:
@@ -2151,11 +2186,15 @@ def _next_json(report: _NextReport, storage: body.Storage) -> None:
         "waiting_on_operator": _next_json_numbers(report.waiting, storage),
     }
     if report.action is not None:
-        payload.update(_next_action_payload(report.action, storage))
+        payload.update(
+            _next_action_payload(report.action, storage, claims_in_place=report.claims_in_place)
+        )
     _emit_json(report.action is not None, reason, **payload)
 
 
-def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[str]:
+def _next_action_lines(
+    action: board.NextAction, storage: body.Storage, *, claims_in_place: bool
+) -> list[str]:
     """The action-specific lines `_next` prints before `parallel:`/`close:`."""
     if isinstance(action, board.WorkItemAction):
         item = action.item
@@ -2163,7 +2202,7 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
         lines = [
             f"{label} score {item.score}: {board.terminal_text(item.title)}",
             f"Next: {board.terminal_text(str(item.next_step))}",
-            f"Run: {_next_action_command(action, storage)}",
+            f"Run: {_next_action_command(action, storage, claims_in_place=claims_in_place)}",
         ]
         if action.scope is None:
             lines.append(SCOPE_UNKNOWN_NOTE)
@@ -2175,7 +2214,7 @@ def _next_action_lines(action: board.NextAction, storage: body.Storage) -> list[
     if isinstance(action, board.CutSliceAction):
         return [
             f"cut_slice {container_label}: {board.terminal_text(action.next_step)}",
-            f"Next: {_next_action_command(action, storage)}",
+            f"Next: {_next_action_command(action, storage, claims_in_place=claims_in_place)}",
         ]
     if isinstance(action, board.CheckContainerAction):
         return [
@@ -2204,7 +2243,7 @@ def _next(report: _NextReport, storage: body.Storage) -> None:
         )
         lines.append("")
     lines.extend(
-        _next_action_lines(report.action, storage)
+        _next_action_lines(report.action, storage, claims_in_place=report.claims_in_place)
         if report.action is not None
         else ["No actionable item."]
     )
@@ -4775,6 +4814,7 @@ def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
     try:
         observed = _observed_board(context)
         storage = context.config.storage
+        claims_in_place = _claims_in_place(context)
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(NextReason.INVALID_USAGE, error, as_json=as_json)
     except protocol.ClaimError as error:
@@ -4792,6 +4832,7 @@ def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
         parallel=board.parallel_set(projected, observed.live_claims, action),
         close=close,
         waiting=waiting,
+        claims_in_place=claims_in_place,
     )
     if as_json:
         _next_json(report, storage)
