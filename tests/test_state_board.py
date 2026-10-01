@@ -3603,6 +3603,44 @@ class TestCliStateRefForge:
         assert (status, capsys.readouterr().out) == (0, printed)
         assert _state_ref_listing(bare_remote) == before
 
+    @pytest.mark.parametrize(
+        ("item_id", "refusal"),
+        [
+            pytest.param(
+                CHILD_A_ID, "items/NOTANID is not a valid item file name", id="its-fresh-claim"
+            ),
+            pytest.param(
+                DANGLING_PARENT_ID,
+                f"issue {DANGLING_PARENT_ID} does not exist here",
+                id="its-missing-item",
+            ),
+        ],
+    )
+    def test_start_reads_its_item_past_an_entry_that_names_no_item_then_refuses(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        item_id: str,
+        refusal: str,
+    ) -> None:
+        """Issue #565 (PIN-35, PIN-36): `start` reads its one item past an
+        entry whose name is no item -- a missing item still refuses as
+        missing -- and only its fresh claim refuses with PIN-13's sentence,
+        before any worktree is built or the store moves."""
+        item_files = {**_item_files(), "NOTANID": b"anything"}
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+        _stub_claim_checkout(monkeypatch)
+        before = _state_ref_listing(bare_remote)
+
+        status = issue_claim.main(["start", item_id, "--scope", "README"])
+
+        assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+        assert _state_ref_listing(bare_remote) == before
+        assert not (worktree.parent / f"{worktree.name}-worktrees").exists()
+
     @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_an_unreadable_item_is_named_by_board_and_next_while_the_others_stay_usable(
         self,

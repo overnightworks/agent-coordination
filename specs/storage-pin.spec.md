@@ -92,7 +92,7 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 ## The state-ref item file, one layer above the block
 
 - [ ] [PIN-13] An `items/` entry whose file name is not `aco-` plus six lowercase hex characters plus `.md` makes a whole-store read refuse `items/<name> is not a valid item file name` (E-PIN-39).
-- [ ] [PIN-35] A command on one item goes past such an entry, which stays byte for byte (CAS-61): `item show`, `item edit`, `item close`, `ask`, `rule`, `brief`, and `check`.
+- [ ] [PIN-35] A command on one item goes past such an entry, which stays byte for byte (CAS-61): `item show`, `item edit`, `item close`, `ask`, `rule`, `brief`, `check`, and `start` up to its fresh claim (PIN-36).
 - [ ] [PIN-36] A command over the whole store refuses with PIN-13's sentence: `board` and its `--serve` ruling click, `next`, `rulings`, `cut`, `item new` (`--not-a-twin` too), a fresh `claim`, `release --merged`.
 - [ ] [PIN-14] A read of an `items/<id>.md` entry whose bytes are not valid UTF-8 refuses `item <id> is not valid UTF-8`, then ITEM-38's repair clause.
 - [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `agent-claim` block and `[record]` refuses `item <id> has a malformed agent-claim block`, then ITEM-38's repair clause (see E-PIN-07).
