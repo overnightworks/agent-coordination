@@ -2296,6 +2296,9 @@ def board_payload(board: Board) -> dict[str, object]:
             item.pop("terminal_actionable_reason")
             item.pop("read_state")
             item.pop("childless_verdict")
+            # `whole` feeds `next`'s advice only (issue #566); board.spec
+            # names no such `--json` key.
+            item.pop("whole")
             _project_blocker_references(item, "open_blockers", repository)
             container = item["container"]
             if container is not None:
