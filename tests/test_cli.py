@@ -17496,18 +17496,32 @@ def _land_mark_already_merged(client: FakeForge) -> None:
     client.landings[12] = replace(client.landings[12], merged=True, merge_commit=MERGE_COMMIT_SHA)
 
 
+_OVERRIDE_WITHOUT_COORDINATOR_ROLE = "a coordinator override requires --role coordinator"
+
+
+@pytest.mark.usefixtures("isolated_global_git_config")
 @pytest.mark.parametrize(
-    "override_arguments",
+    ("override_arguments", "git_identity", "refusal"),
     [
-        pytest.param(["--coordinator-override"], id="omitted-role"),
-        pytest.param(["--coordinator-override", "--role", "builder"], id="wrong-role"),
+        pytest.param(
+            ["--coordinator-override"], True, _OVERRIDE_WITHOUT_COORDINATOR_ROLE, id="omitted-role"
+        ),
+        pytest.param(
+            ["--coordinator-override", "--role", "builder"],
+            True,
+            _OVERRIDE_WITHOUT_COORDINATOR_ROLE,
+            id="wrong-role",
+        ),
+        pytest.param([], False, checkout.LAND_MISSING_GIT_IDENTITY_REFUSAL, id="no-git-identity"),
     ],
 )
-def test_land_rerun_refuses_a_coordinator_override_with_no_valid_role_before_any_side_effect(
+def test_land_rerun_refuses_a_bad_override_or_a_missing_git_identity_before_any_side_effect(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     override_arguments: list[str],
+    git_identity: bool,
+    refusal: str,
 ) -> None:
     """Issue #405 round-4 finding 1: an already-merged rerun skips
     `_land_preflight` entirely, so a coordinator-override role check placed
@@ -17515,15 +17529,18 @@ def test_land_rerun_refuses_a_coordinator_override_with_no_valid_role_before_any
     and let the delegated `release --merged` step close the item on a bare
     `--coordinator-override` with no coordinator role behind it.
     `_cmd_land`'s own entry validates this before the fresh/rerun split, so
-    none of that runs."""
+    none of that runs. A rerun from a checkout without a git identity
+    refuses the same way (LANDCMD-18 keeps LANDCMD-25)."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     _land_mark_already_merged(client)
+    if not git_identity:
+        _without_git_identity(monkeypatch, repo)
     trunk_before = _real_git(repo, "rev-parse", "main").stdout.strip()
 
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12", *override_arguments])
 
     assert status == 2
-    assert capsys.readouterr().err == "ERROR: a coordinator override requires --role coordinator\n"
+    assert capsys.readouterr().err == f"ERROR: {refusal}\n"
     assert client.merge_calls == []
     assert client.deleted_branches == []
     assert client.closed_issues == set()
@@ -17832,10 +17849,22 @@ def _land_from_a_separate_clone(
     _real_git(repo, "worktree", "add", "-q", str(tmp_path / "lane"), LANDING_BRANCH)
     clone = tmp_path / "landing-clone"
     _real_git(tmp_path, "clone", "-q", str(remote), str(clone))
-    _real_git(clone, "config", "user.useConfigOnly", "true")
+    _without_git_identity(monkeypatch, clone)
     if git_identity:
         _real_git(clone, "config", "user.name", "Lander")
         _real_git(clone, "config", "user.email", "lander@example.com")
+    _redirect_toplevel(monkeypatch, clone)
+    monkeypatch.chdir(clone)
+    return clone, client
+
+
+def _without_git_identity(monkeypatch: pytest.MonkeyPatch, checkout_path: Path) -> None:
+    """`checkout_path` with no git identity git may use or guess: none
+    configured locally or in the environment (the caller isolates the global
+    configuration)."""
+    _real_git(checkout_path, "config", "user.useConfigOnly", "true")
+    _real_git(checkout_path, "config", "--unset-all", "user.name", check=False)
+    _real_git(checkout_path, "config", "--unset-all", "user.email", check=False)
     for variable in (
         "GIT_AUTHOR_NAME",
         "GIT_AUTHOR_EMAIL",
@@ -17844,9 +17873,6 @@ def _land_from_a_separate_clone(
         "EMAIL",
     ):
         monkeypatch.delenv(variable, raising=False)
-    _redirect_toplevel(monkeypatch, clone)
-    monkeypatch.chdir(clone)
-    return clone, client
 
 
 @pytest.mark.usefixtures("isolated_global_git_config")
