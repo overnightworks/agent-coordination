@@ -126,7 +126,6 @@ to the clause each names below.
 - Lane mode never runs a slice-rule check at all: there is no target issue to weigh against the board.
 - `aco claim` never re-derives a replayed claim's scope from the item's body: it takes the live claim's own stored scope outright (CLAIM-53).
 - Lane mode never reads a body `whole` field either: a lane names no item to read one from, so its width gate keeps CLM-18's own wording, never CLM-21/22's.
-- `aco rescope` never reads a target's body `whole` field: only `--whole` or the live claim's own already-stored reason justifies a wide rescope.
 
 ## Examples
 

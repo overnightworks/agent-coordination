@@ -95,8 +95,8 @@ an item as `specs/landing-grammar.spec.md` names it: `#<n>` under
 
 ## Width
 
-- [ ] [CLAIM-25] A scope of four paths refuses `scope is wide: 4 paths exceeds three; pass --whole REASON`, exit `2`, for a lane claim or rescope; issue-mode claim ends it `or set whole in the body` instead.
-- [ ] [CLAIM-26] A scope naming a directory refuses `scope is wide: 1 directory in scope (docs); pass --whole REASON`, exit `2` for a lane claim or rescope, any path count; issue-mode adds `or set whole in the body`.
+- [ ] [CLAIM-25] A scope of four paths refuses `scope is wide: 4 paths exceeds three; pass --whole REASON`, exit `2`, for a lane claim or a lane rescope; issue-mode claim ends it `or set whole in the body` instead.
+- [ ] [CLAIM-26] Any directory in scope refuses `scope is wide: 1 directory in scope (docs); pass --whole REASON`, exit `2`, for a lane claim or a lane rescope; issue mode adds `or set whole in the body`.
 - CLAIM-27 (retired 19.09.2026, issue #326): described a share-based wide-scope refusal `aco claim` can never produce — the path-count refusal (CLAIM-25) always trips first, capping the covered file count at three, which can never exceed a quarter once the share floor is met.
 - [ ] [CLAIM-28] Under twelve versioned files a single named path is never wide on share: `aco claim 42 --scope README.md` prints its `CLAIMED` line, exit `0`.
 - [ ] [CLAIM-29] `--whole "<one sentence>"` admits a wide scope, lands in the record, and `aco status` prints it as an indented `whole: <one sentence>` line (see E-CLAIM-04).
@@ -161,9 +161,7 @@ an item as `specs/landing-grammar.spec.md` names it: `#<n>` under
 repository with `main` at one commit, a git identity, `origin/HEAD`, and
 `ACO_AGENT` set to `Ada`; `<remote>`, `<tmp>` and `<home>` are the runner's own
 paths, `<sha>`, `<oid>` and `<claim-id>` the values the session itself
-produced, and `<worktree>` the runner's own linked-worktree directory -- an
-`--add`/`--drop` example names a path under it, since `rescope` accepts only
-an absolute path (RESC-01).
+produced, and `<worktree>` the runner's own linked-worktree directory.
 
 ### E-CLAIM-01 — the golden claim, seen in the state ref
 
