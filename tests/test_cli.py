@@ -17572,11 +17572,18 @@ def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
     assert _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip() == lane_tip
 
 
-def _commit_past_the_landed_head(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
+def _leave_the_lane_alone(_monkeypatch: pytest.MonkeyPatch, _repo: Path, _lane: Path) -> None:
+    return None
+
+
+def _commit_past_the_landed_head(_monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path) -> str:
     _real_git(lane, "commit", "-q", "--allow-empty", "-m", "raced past the landed head")
+    return _real_git(lane, "rev-parse", "HEAD").stdout.strip()
 
 
-def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+def _refuse_the_branch_configuration_listing(
+    monkeypatch: pytest.MonkeyPatch, _repo: Path, _lane: Path
+) -> None:
     run_git = checkout._git_run
 
     def refuse_the_listing(
@@ -17589,14 +17596,53 @@ def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _l
     monkeypatch.setattr(checkout, "_git_run", refuse_the_listing)
 
 
-def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
+def _lock_the_repository_configuration(
+    _monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path
+) -> None:
     common = _real_git(lane, "rev-parse", "--path-format=absolute", "--git-common-dir")
     (Path(common.stdout.strip()) / "config.lock").touch()
 
 
+def _recreate_the_branch_after_its_deletion(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, lane: Path
+) -> str:
+    """Let another process create the lane's branch again, on the same tip,
+    right after the cleanup's compare-and-delete; return that tip."""
+    tip = _real_git(lane, "rev-parse", "HEAD").stdout.strip()
+    run_git = checkout._git_run
+
+    def run_then_recreate(
+        arguments: list[str], *, directory: Path | None = None
+    ) -> process.CapturedResult:
+        result = run_git(arguments, directory=directory)
+        if arguments[:2] == ["update-ref", "-d"]:
+            _real_git(repo, "branch", "-q", LANDING_BRANCH, tip)
+        return result
+
+    monkeypatch.setattr(checkout, "_git_run", run_then_recreate)
+    return tip
+
+
+def _configure_only_a_dotted_sibling(
+    _monkeypatch: pytest.MonkeyPatch, repo: Path, _lane: Path
+) -> None:
+    """Drop the lane's own `branch.<name>` section and configure a sibling
+    branch whose name extends the lane's with a dot, under `branch.<name>.x`."""
+    _real_git(repo, "config", "--remove-section", f"branch.{LANDING_BRANCH}")
+    sibling = f"{LANDING_BRANCH}.x"
+    _real_git(repo, "branch", "-q", sibling, LANDING_BRANCH)
+    _real_git(repo, "config", f"branch.{sibling}.remote", "origin")
+
+
+def _branch_configuration(repo: Path) -> list[str]:
+    listed = _real_git(repo, "config", "--get-regexp", r"^branch\.", check=False)
+    return listed.stdout.splitlines()
+
+
 @pytest.mark.parametrize(
-    ("interfere", "worktree_line", "branch_kept"),
+    ("interfere", "worktree_line", "lane_section_kept"),
     [
+        pytest.param(_leave_the_lane_alone, "worktree: removed\n", False, id="clean"),
         pytest.param(
             _commit_past_the_landed_head,
             "worktree: removed; branch kept -- git failure: ",
@@ -17607,45 +17653,63 @@ def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: P
             _refuse_the_branch_configuration_listing,
             f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
             "git failure: fatal: the listing failed\n",
-            False,
+            True,
             id="configuration-listing-refused",
         ),
         pytest.param(
             _lock_the_repository_configuration,
             f"worktree: removed; branch.{LANDING_BRANCH} section kept -- git failure: ",
-            False,
+            True,
             id="configuration-locked",
+        ),
+        pytest.param(
+            _recreate_the_branch_after_its_deletion,
+            "worktree: removed\n",
+            True,
+            id="same-name-branch-recreated",
+        ),
+        pytest.param(
+            _configure_only_a_dotted_sibling,
+            "worktree: removed\n",
+            False,
+            id="dotted-sibling-without-an-own-section",
         ),
     ],
 )
-def test_land_reports_the_squashed_lane_branch_cleanup_git_refuses(
+def test_land_cleans_up_a_squashed_lane_branch_by_compare_and_delete(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    interfere: Callable[[pytest.MonkeyPatch, Path], None],
+    interfere: Callable[[pytest.MonkeyPatch, Path, Path], str | None],
     worktree_line: str,
-    branch_kept: bool,
+    lane_section_kept: bool,
 ) -> None:
     """Issue #578 line 4: the squashed lane's branch goes with one
-    compare-and-delete against the landed head, so a commit made in the
-    lane after cleanup judged its tip keeps the branch on that commit with
-    its `branch.<name>` section; a section listing or removal git refuses
-    after the delete leaves the section beside the removed branch. Each
-    refusal is reported as git's own, never swallowed."""
+    compare-and-delete against the landed head and its `branch.<name>`
+    section goes only once no branch of that name exists. A commit made in
+    the lane after cleanup judged its tip keeps the branch on that commit;
+    a section listing or removal git refuses after the delete keeps the
+    section beside the removed branch, named on its own; a same-name branch
+    recreated after the delete keeps the section, and a dotted sibling's
+    configuration is never the lane's. `interfere` runs just before the
+    removal and returns the tip the branch must keep, or `None`."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"
     _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    unconfigured = _branch_configuration(repo)
     _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
-    section = _branch_section(repo, LANDING_BRANCH)
+    lane_section = set(_branch_configuration(repo)) - set(unconfigured)
     pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
     client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
     remove = checkout.remove_linked_worktree
     kept_tips: list[str] = []
+    configuration: list[str] = []
 
     def interfere_then_remove(path: Path, **options: str) -> checkout.WorktreeCleanupOutcome:
-        interfere(monkeypatch, path)
-        kept_tips.append(_real_git(path, "rev-parse", "HEAD").stdout.strip())
+        kept_tip = interfere(monkeypatch, repo, path)
+        kept_tips.extend([kept_tip] if kept_tip is not None else [])
+        configuration.extend(_branch_configuration(repo))
         return remove(path, **options)
 
     monkeypatch.setattr(checkout, "remove_linked_worktree", interfere_then_remove)
@@ -17655,92 +17719,11 @@ def test_land_reports_the_squashed_lane_branch_cleanup_git_refuses(
     output = capsys.readouterr()
     assert (status, output.err) == (0, "")
     assert worktree_line in output.out
-    tip = _real_git(repo, "rev-parse", "--verify", "--quiet", LANDING_BRANCH, check=False)
-    assert tip.stdout.split() == (kept_tips if branch_kept else [])
-    assert _branch_section(repo, LANDING_BRANCH) == section
-
-
-def _branch_section(repo: Path, branch: str) -> list[str]:
-    """`branch`'s own `branch.<name>` entries, in the order git lists them."""
-    listed = _real_git(repo, "config", "--get-regexp", r"^branch\.", check=False)
-    prefix = f"branch.{branch}."
-    return [
-        line
-        for line in listed.stdout.splitlines()
-        if line.startswith(prefix) and "." not in line.split(" ", 1)[0].removeprefix(prefix)
-    ]
-
-
-def _recreate_branch_after_its_deletion(
-    monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
-) -> tuple[str, str]:
-    """Give `branch` a `branch.<name>.remote` of its own, then let another
-    process create a branch of that name again, with its own value of that
-    key, right after the cleanup's compare-and-delete. Return that key with
-    the value it must keep."""
-    owned_key = f"branch.{branch}.remote"
-    _real_git(repo, "config", owned_key, "origin")
-    run_git = checkout._git_run
-
-    def run_then_recreate(
-        arguments: list[str], *, directory: Path | None = None
-    ) -> process.CapturedResult:
-        result = run_git(arguments, directory=directory)
-        if arguments[:2] == ["update-ref", "-d"]:
-            _real_git(repo, "branch", "-q", branch, "main")
-            _real_git(repo, "config", owned_key, "recreated")
-        return result
-
-    monkeypatch.setattr(checkout, "_git_run", run_then_recreate)
-    return owned_key, "recreated"
-
-
-def _configure_a_sibling_branch(
-    _monkeypatch: pytest.MonkeyPatch, repo: Path, branch: str
-) -> tuple[str, str]:
-    """Give `branch` no `branch.<name>` section of its own but a sibling
-    branch whose name extends it with a dot, configured under
-    `branch.<name>.x`, and return that sibling's configuration key with the
-    value it must keep."""
-    sibling = f"{branch}.x"
-    _real_git(repo, "branch", "-q", sibling, branch)
-    owned_key = f"branch.{sibling}.remote"
-    _real_git(repo, "config", owned_key, "origin")
-    return owned_key, "origin"
-
-
-@pytest.mark.parametrize(
-    "configure_a_foreign_section",
-    [
-        pytest.param(_configure_a_sibling_branch, id="sibling-branch-without-an-own-section"),
-        pytest.param(_recreate_branch_after_its_deletion, id="same-name-branch-recreated"),
-    ],
-)
-def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_configuration(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-    configure_a_foreign_section: Callable[[pytest.MonkeyPatch, Path, str], tuple[str, str]],
-) -> None:
-    """Issue #578 line 4: the squashed lane's branch goes and reads removed
-    while configuration another branch owns stays intact -- a dotted
-    sibling's beside no section of its own, or a same-name branch's that
-    exists by the time the cleanup would remove the lane's section."""
-    repo, client = _land_scenario(monkeypatch, tmp_path)
-    client.allowed_methods = frozenset({_SQUASH})
-    lane = tmp_path / "lane"
-    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
-    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
-    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
-    foreign_key, foreign_value = configure_a_foreign_section(monkeypatch, repo, LANDING_BRANCH)
-
-    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
-
-    output = capsys.readouterr()
-    assert (status, output.err) == (0, "")
-    assert "worktree: removed\n" in output.out
     assert not lane.exists()
-    assert _real_git(repo, "config", foreign_key, check=False).stdout.strip() == foreign_value
+    tip = _real_git(repo, "rev-parse", "--verify", "--quiet", LANDING_BRANCH, check=False)
+    assert tip.stdout.split() == kept_tips
+    expected = [line for line in configuration if lane_section_kept or line not in lane_section]
+    assert _branch_configuration(repo) == expected
 
 
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(
