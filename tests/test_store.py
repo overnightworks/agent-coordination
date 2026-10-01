@@ -9,6 +9,7 @@ semantics in Python.
 
 from __future__ import annotations
 
+import ast
 import errno
 import re
 import subprocess
@@ -2655,6 +2656,51 @@ def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_s
         )
     assert "without the ref ever moving" in str(raised.value)
     assert "held by" not in str(raised.value)
+    assert "`aco reset`" in str(raised.value)
+
+
+_REPOSITORY_ROOT = Path(__file__).parent.parent
+_STATE_DELETION_ADVICE = re.compile(r"update-ref -d|push (?:--force(?!-with-lease)|-f)\b")
+
+
+def _source_message_literals() -> list[str]:
+    """Every string literal under `src/` that can reach a reader at run
+    time; a bare string statement (a docstring) explains code, never
+    advises an operator."""
+    docstrings: set[int] = set()
+    literals: list[str] = []
+    for path in sorted((_REPOSITORY_ROOT / "src").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        nodes = list(ast.walk(tree))
+        docstrings.update(id(node.value) for node in nodes if isinstance(node, ast.Expr))
+        literals.extend(
+            node.value
+            for node in nodes
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+        )
+    return literals
+
+
+def _spec_texts() -> list[str]:
+    return [
+        path.read_text(encoding="utf-8")
+        for path in sorted((_REPOSITORY_ROOT / "specs").glob("*.spec.md"))
+    ]
+
+
+@pytest.mark.parametrize(
+    "user_facing_texts", [_source_message_literals, _spec_texts], ids=["src", "specs"]
+)
+def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
+    user_facing_texts: Callable[[], list[str]],
+) -> None:
+    """Issue #579: a hand-run ref deletion or force-push wipes every claim
+    and state-ref item; a stuck ref is `aco reset`'s job, which exports
+    first."""
+    advice = [text for text in user_facing_texts() if _STATE_DELETION_ADVICE.search(text)]
+    assert advice == []
 
 
 def test_commit_transition_a_different_key_loser_that_exhausts_retries_names_a_race(
