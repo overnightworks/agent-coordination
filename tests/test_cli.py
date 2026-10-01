@@ -3126,6 +3126,50 @@ def test_rescope_under_state_ref_moves_the_claim_and_the_item_body_scope_togethe
     assert (claim.scope, item_body.scope) == (scope, scope)
 
 
+def _into_another_repository(worktree: Path) -> Path:
+    other = worktree.parent / "other"
+    _real_git(worktree.parent, "init", "-q", str(other))
+    return other / "f.md"
+
+
+def _into_the_primary_checkout(worktree: Path) -> Path:
+    return worktree.parent.parent / worktree.parent.name.removesuffix("-worktrees") / "README.md"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        pytest.param(_into_another_repository, id="another-repository"),
+        pytest.param(_into_the_primary_checkout, id="primary-checkout"),
+    ],
+)
+def test_rescope_refuses_a_relative_entry_that_climbs_out_of_the_run_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    target: Callable[[Path], Path],
+) -> None:
+    """RESC-05: a relative entry whose `..` leaves the checkout the command
+    runs in refuses with the entry as typed, before the checkout it lands
+    in is ever read, and writes nothing."""
+    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    entry = os.path.relpath(target(worktree), worktree)
+    state_before = store.fetch_state(worktree=worktree, remote="origin").tip
+    capsys.readouterr()
+
+    status = issue_claim.main(["rescope", "314", "--add", entry])
+
+    assert (status, capsys.readouterr().err) == (
+        2,
+        f"ERROR: --add path {entry!r} is outside the resolved checkout {worktree}\n",
+    )
+    assert store.fetch_state(worktree=worktree, remote="origin").tip == state_before
+
+
 def _relative_outside_every_repository(cwd: Path) -> tuple[tuple[str, ...], str]:
     return (
         ("--add", "src/new.py"),

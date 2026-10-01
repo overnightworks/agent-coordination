@@ -4036,11 +4036,21 @@ def _rescope_paths(add: list[str] | None, drop: list[str] | None) -> _RescopePat
 
 def _absolute_rescope_entries(raw_paths: list[str] | None, *, flag: str) -> tuple[str, ...]:
     return tuple(
-        raw_path
-        if Path(raw_path).is_absolute()
-        else str(_run_checkout_toplevel(raw_path, flag=flag) / raw_path)
+        raw_path if Path(raw_path).is_absolute() else _joined_to_run_checkout(raw_path, flag=flag)
         for raw_path in raw_paths or ()
     )
+
+
+def _joined_to_run_checkout(raw_path: str, *, flag: str) -> str:
+    """A relative entry joined to the run checkout's toplevel. One that
+    climbs out of that checkout refuses here (RESC-05), naming the entry as
+    typed: the joined path would otherwise locate whichever checkout it
+    lands in and be judged there instead."""
+    toplevel = _run_checkout_toplevel(raw_path, flag=flag)
+    joined = toplevel / raw_path
+    if not joined.resolve().is_relative_to(toplevel):
+        raise _RescopeInvalidUsageError(_outside_checkout_reason(flag, raw_path, toplevel))
+    return str(joined)
 
 
 def _run_checkout_toplevel(raw_path: str, *, flag: str) -> Path:
@@ -4073,11 +4083,13 @@ def _rescope_scope_entries(
             raise _RescopeInvalidUsageError(unscopable)
         relative = checkout.relative_scope_entry(raw_path, toplevel=toplevel)
         if relative is None:
-            raise _RescopeInvalidUsageError(
-                f"{flag} path {raw_path!r} is outside the resolved checkout {toplevel}"
-            )
+            raise _RescopeInvalidUsageError(_outside_checkout_reason(flag, raw_path, toplevel))
         canonical.append(relative)
     return protocol.valid_scope(canonical)
+
+
+def _outside_checkout_reason(flag: str, path: str, toplevel: Path) -> str:
+    return f"{flag} path {path!r} is outside the resolved checkout {toplevel}"
 
 
 def _rescope_checkout(paths: _RescopePaths) -> checkout.PathCheckout:

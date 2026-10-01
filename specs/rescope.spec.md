@@ -31,6 +31,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 | state \ trigger | `--add PATH` | `--drop PATH` | neither given | `--whole REASON` |
 |---|---|---|---|---|
 | a relative entry | RESC-01 | RESC-01 | — | — |
+| a relative entry climbs out of the run checkout | RESC-05 | RESC-05 | — | — |
 | the path's directories do not exist yet | RESC-18 | RESC-18 | — | — |
 | resolved checkout is outside every repository | RESC-26 | RESC-26 | RESC-26 | — |
 | the path is inside a git directory itself | PROT-43 | PROT-43 | — | — |
@@ -64,7 +65,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 - [ ] [RESC-20] RESC-03, RESC-04 and PROT-13 judge the default branch the resolved checkout's canonical remote records, after its board configuration (PIN-01/PIN-32) is read.
 - [ ] [RESC-21] A canonical `<remote>` with no URL configured refuses PROT-45's sentence, exit `2`, before RESC-03/RESC-04 (see E-RESC-06).
 - [ ] [RESC-04] On the repository's own trunk branch, rescope refuses `build claims require an isolated non-main worktree branch; run this command from this claim's own worktree, not the primary checkout`, exit `2`.
-- [ ] [RESC-05] A `--add`/`--drop` path resolving outside the resolved checkout refuses `<flag> path '<path>' is outside the resolved checkout <toplevel>`, exit `2`.
+- [ ] [RESC-05] A `--add`/`--drop` path resolving outside the resolved checkout refuses `<flag> path '<path>' is outside the resolved checkout <toplevel>`, exit `2`; a relative one first, against the run checkout.
 - [ ] [RESC-18] A `--add`/`--drop` path whose directories do not exist yet resolves its checkout from the nearest existing ancestor, as `protect` judges it (PROT-39).
 - [ ] [RESC-26] A `--add`/`--drop` path outside every repository refuses `<flag> path '<path>' is not in a repository`, exit `2`; with neither flag, PROT-10's own sentence (see E-RESC-07).
 - [ ] [RESC-19] A `--add`/`--drop` path below a file or a dangling symlink, or naming the checkout root, refuses PROT-42's or PROT-14's own sentence, exit `2`, as `protect` denies it (see E-RESC-05).
