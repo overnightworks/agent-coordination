@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import subprocess
 import sys
@@ -303,7 +304,7 @@ def read_manifest(manifest: Path) -> list[ManifestRow]:
     return [ManifestRow(**row) for row in json.loads(manifest.read_text())]
 
 
-def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow]) -> None:
+def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_seconds: float) -> None:
     migrated = 0
     for row in rows:
         reference = item_reference(row.repository, row.number)
@@ -315,7 +316,7 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow]) -> None:
         if current_hash != row.old_hash:
             raise MigrationStoppedError(f"{reference}: the body changed since the dry run")
         if migrated:
-            clock.sleep(PACE_SECONDS)
+            clock.sleep(pace_seconds)
         api.update_body(row.repository, row.number, _migrated_body(reference, body))
         migrated += 1
         if body_hash(api.issue_body(row.repository, row.number)) != row.new_hash:
@@ -339,6 +340,13 @@ def _repository(value: str) -> str:
     return value
 
 
+def _pace_seconds(value: str) -> float:
+    seconds = float(value)
+    if not (math.isfinite(seconds) and seconds > 0):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a positive number of seconds")
+    return seconds
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Rewrite the ```agent-claim fence in GitHub issue bodies to ```aco."
@@ -348,6 +356,12 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--apply", action="store_true", help="patch the manifest's rows")
     parser.add_argument("--repo", action="append", type=_repository, default=[])
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--pace-seconds",
+        type=_pace_seconds,
+        default=PACE_SECONDS,
+        help=f"wait between two PATCHes (default {PACE_SECONDS:g})",
+    )
     return parser
 
 
@@ -367,7 +381,7 @@ def main(
         if arguments.dry_run:
             dry_run(api, arguments.repo, arguments.manifest)
         else:
-            apply(api, active_clock, read_manifest(arguments.manifest))
+            apply(api, active_clock, read_manifest(arguments.manifest), arguments.pace_seconds)
     except MigrationStoppedError as stopped:
         print(f"stopped: {stopped}", file=sys.stderr)
         return 1

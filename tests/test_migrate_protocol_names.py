@@ -97,8 +97,8 @@ class Migration:
         arguments = ["--dry-run", *repository_arguments, "--manifest", str(self.manifest)]
         return migrate.main(arguments, run=self.github, clock=self.clock)
 
-    def apply(self) -> int:
-        arguments = ["--apply", "--manifest", str(self.manifest)]
+    def apply(self, *options: str) -> int:
+        arguments = ["--apply", "--manifest", str(self.manifest), *options]
         return migrate.main(arguments, run=self.github, clock=self.clock)
 
     def manifest_rows(self) -> list[tuple[str, int]]:
@@ -253,21 +253,39 @@ def test_apply_stops_at_the_first_unsafe_row_and_names_it(
 
 
 @pytest.mark.parametrize(
-    ("status", "headers", "wait"),
+    ("status", "headers", "wait", "pace_arguments", "pace"),
     [
-        pytest.param(429, {"Retry-After": "30"}, 30.0, id="429-retry-after"),
-        pytest.param(403, {"Retry-After": "45"}, 45.0, id="403-retry-after"),
+        pytest.param(
+            429, {"Retry-After": "30"}, 30.0, [], migrate.PACE_SECONDS, id="429-retry-after"
+        ),
+        pytest.param(
+            403, {"Retry-After": "45"}, 45.0, ["--pace-seconds", "2.5"], 2.5, id="given-pace"
+        ),
         pytest.param(
             403,
             {"X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": "1000090"},
             90.0,
+            [],
+            migrate.PACE_SECONDS,
             id="403-primary-limit-reset",
         ),
-        pytest.param(429, {}, migrate.FALLBACK_RATE_LIMIT_WAIT_SECONDS, id="429-without-headers"),
+        pytest.param(
+            429,
+            {},
+            migrate.FALLBACK_RATE_LIMIT_WAIT_SECONDS,
+            [],
+            migrate.PACE_SECONDS,
+            id="429-without-headers",
+        ),
     ],
 )
 def test_apply_paces_its_patches_and_waits_out_a_rate_limit(
-    migration: Migration, status: int, headers: dict[str, str], wait: float
+    migration: Migration,
+    status: int,
+    headers: dict[str, str],
+    wait: float,
+    pace_arguments: list[str],
+    pace: float,
 ) -> None:
     github = migration.github
     for number in (1, 2, 3):
@@ -275,9 +293,8 @@ def test_apply_paces_its_patches_and_waits_out_a_rate_limit(
     migration.dry_run(REPOSITORY)
     github.patch_answers.append(_included(status, {"message": "slow down"}, headers))
 
-    exit_code = migration.apply()
+    exit_code = migration.apply(*pace_arguments)
 
-    pace = migrate.PACE_SECONDS
     assert exit_code == 0
     assert migration.clock.waits == [wait, pace, pace]
     assert [github.body(number) for number in (1, 2, 3)] == [MIGRATED_BODY] * 3
