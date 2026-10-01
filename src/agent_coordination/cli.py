@@ -189,9 +189,7 @@ def _reject_wide_scope(
     the scope entries that name a directory in the tree `versioned` lists
     (`checkout._scope_directories`)."""
     n, total, share = _scope_cost(versioned, scope)
-    trip = protocol.wide_scope_trip(
-        scope, directories=directories, covered_file_count=n, versioned_file_count=total
-    )
+    trip = _wide_scope_trip(scope, versioned, directories=directories)
     if trip is None:
         return n, total, share, whole_reason
     effective = whole_reason
@@ -202,6 +200,28 @@ def _reject_wide_scope(
             _wide_scope_refusal(trip, names_body_fallback=whole_from_body is not None)
         )
     return n, total, share, effective
+
+
+def _wide_scope_trip(
+    scope: tuple[str, ...], versioned: tuple[str, ...], *, directories: tuple[str, ...]
+) -> protocol.WideScopeTrip | None:
+    """`scope`'s width judged against the tree `versioned` lists, whose
+    entries naming a directory are `directories` -- the one measure the
+    width gate refuses by and `next`'s advice anticipates (issue #566)."""
+    n, total, _share = _scope_cost(versioned, scope)
+    return protocol.wide_scope_trip(
+        scope, directories=directories, covered_file_count=n, versioned_file_count=total
+    )
+
+
+def _checkout_scope_is_wide(scope: tuple[str, ...], context: RunContext) -> bool:
+    """Whether the width gate calls `scope` wide in `context`'s checkout,
+    measured as `_scope_versioning` measures a claim there."""
+    directories = checkout._scope_directories(
+        scope, directory=context.directory, toplevel=lambda: context.toplevel
+    )
+    versioned = checkout.versioned_paths(directory=context.directory)
+    return _wide_scope_trip(scope, versioned, directories=directories) is not None
 
 
 def _reject_ungrounded_comma_scope(
@@ -1974,7 +1994,7 @@ def _next_action_command(
     action: board.WorkItemAction | board.CutSliceAction,
     storage: body.Storage,
     *,
-    claims_in_place: bool,
+    site: _PullSite,
 ) -> str:
     """The exact `aco` invocation `_next` prints and `_next --json` carries
     as `command` -- one owner so text and JSON never name a different
@@ -1982,32 +2002,53 @@ def _next_action_command(
     command to run, and neither grammar invents one.
 
     A `WorkItemAction` is `claim` where `next` runs in a checkout `claim`
-    accepts (`claims_in_place`), else `start` with the slug `start` itself
+    accepts (`site.claims_in_place`), else `start` with the slug `start` itself
     derives from the title (issue #562), so the advice runs as printed from
     the default branch's checkout too. Either drops `--scope` entirely for
     an item carrying its own top-level `scope` (issue #348, #337's own
     derivation); an item whose one `[[slice]]` row names paths claims
     exactly those; only an item naming neither still prints the
-    placeholder, alongside `SCOPE_UNKNOWN_NOTE`. All render through
-    `board.advice_command`, so the line runs as printed (issue #510).
+    placeholder, alongside `SCOPE_UNKNOWN_NOTE`. A scope the width gate
+    calls wide in this checkout, with no `whole` in the body, adds
+    `--whole <reason>` (issue #566). All render through `board.advice_command`, so the line runs as
+    printed (issue #510).
     """
     if isinstance(action, board.CutSliceAction):
         return board.cut_command(action.container.number, storage, action.cut_title)
     item = action.item
-    if claims_in_place:
-        return board.work_item_claim_command(item.number, storage, item.scope, action.scope)
-    return board.work_item_start_command(
-        item.number, storage, _advised_slug(item.title), item.scope, action.scope
-    )
+    pull = board.PullScope(item.scope, action.scope, item.whole, site.scope_is_wide)
+    if site.claims_in_place:
+        return board.work_item_claim_command(item.number, storage, pull)
+    slug = _advised_slug(item.number, item.title, storage)
+    return board.work_item_start_command(item.number, storage, slug, pull)
 
 
-def _advised_slug(title: str) -> str | None:
-    """The slug `start` derives from `title`, or `None` when it would refuse
-    for want of one, which the advice then leaves for the agent to fill."""
+def _advised_slug(number: int, title: str, storage: body.Storage) -> str:
+    """The slug `start` derives from `title`, else, for a title with no
+    usable slug (issue #566), the one item `number`'s own id yields -- a
+    value `start --slug` accepts, so the advice runs as printed."""
     try:
         return checkout.slug_from_title(title)
     except protocol.ClaimError:
-        return None
+        return checkout.slug_from_title(board.item_argument(number, storage))
+
+
+@dataclass(frozen=True)
+class _PullSite:
+    """What the checkout `next` runs in says about pulling its action:
+    whether `claim` accepts it in place, and whether the width gate calls
+    the action's scope wide there (issue #566)."""
+
+    claims_in_place: bool
+    scope_is_wide: bool
+
+
+def _pull_site(action: board.NextAction | None, context: RunContext) -> _PullSite:
+    scope = action.scope if isinstance(action, board.WorkItemAction) else None
+    return _PullSite(
+        claims_in_place=_claims_in_place(context),
+        scope_is_wide=scope is not None and _checkout_scope_is_wide(scope, context),
+    )
 
 
 def _claims_in_place(context: RunContext) -> bool:
@@ -2055,7 +2096,7 @@ def _next_action_reason(action: board.NextAction) -> NextReason:
 
 
 def _next_action_payload(
-    action: board.NextAction, storage: body.Storage, *, claims_in_place: bool
+    action: board.NextAction, storage: body.Storage, *, site: _PullSite
 ) -> dict[str, object]:
     """The action-specific fields `_next_json` adds beyond `recovery`/`skipped`
     -- `_next_action_reason` now carries what an `"action"` key used to."""
@@ -2067,7 +2108,7 @@ def _next_action_payload(
             "score": item.score,
             "title": item.title,
             "next": item.next_step,
-            "command": _next_action_command(action, storage, claims_in_place=claims_in_place),
+            "command": _next_action_command(action, storage, site=site),
             "ruling_landings": item.ruling_landings,
             "ruling_old": item.ruling_old,
         }
@@ -2081,7 +2122,7 @@ def _next_action_payload(
             "title": action.container.title,
             "slice": action.next_step,
             "cut_title": action.cut_title,
-            "command": _next_action_command(action, storage, claims_in_place=claims_in_place),
+            "command": _next_action_command(action, storage, site=site),
         }
     return {
         "number": number,
@@ -2171,7 +2212,7 @@ class _NextReport:
     parallel: board.ParallelSet
     close: tuple[int, ...]
     waiting: tuple[int, ...]
-    claims_in_place: bool
+    site: _PullSite
 
 
 def _next_json(report: _NextReport, storage: body.Storage) -> None:
@@ -2201,14 +2242,12 @@ def _next_json(report: _NextReport, storage: body.Storage) -> None:
         "waiting_on_operator": _next_json_numbers(report.waiting, storage),
     }
     if report.action is not None:
-        payload.update(
-            _next_action_payload(report.action, storage, claims_in_place=report.claims_in_place)
-        )
+        payload.update(_next_action_payload(report.action, storage, site=report.site))
     _emit_json(report.action is not None, reason, **payload)
 
 
 def _next_action_lines(
-    action: board.NextAction, storage: body.Storage, *, claims_in_place: bool
+    action: board.NextAction, storage: body.Storage, *, site: _PullSite
 ) -> list[str]:
     """The action-specific lines `_next` prints before `parallel:`/`close:`."""
     if isinstance(action, board.WorkItemAction):
@@ -2217,7 +2256,7 @@ def _next_action_lines(
         lines = [
             f"{label} score {item.score}: {board.terminal_text(item.title)}",
             f"Next: {board.terminal_text(str(item.next_step))}",
-            f"Run: {_next_action_command(action, storage, claims_in_place=claims_in_place)}",
+            f"Run: {_next_action_command(action, storage, site=site)}",
         ]
         if action.scope is None:
             lines.append(SCOPE_UNKNOWN_NOTE)
@@ -2229,7 +2268,7 @@ def _next_action_lines(
     if isinstance(action, board.CutSliceAction):
         return [
             f"cut_slice {container_label}: {board.terminal_text(action.next_step)}",
-            f"Next: {_next_action_command(action, storage, claims_in_place=claims_in_place)}",
+            f"Next: {_next_action_command(action, storage, site=site)}",
         ]
     if isinstance(action, board.CheckContainerAction):
         return [
@@ -2258,7 +2297,7 @@ def _next(report: _NextReport, storage: body.Storage) -> None:
         )
         lines.append("")
     lines.extend(
-        _next_action_lines(report.action, storage, claims_in_place=report.claims_in_place)
+        _next_action_lines(report.action, storage, site=report.site)
         if report.action is not None
         else ["No actionable item."]
     )
@@ -4967,13 +5006,13 @@ def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
     try:
         observed = _observed_board(context)
         storage = context.config.storage
-        claims_in_place = _claims_in_place(context)
+        projected = observed.board
+        action = board.next_action(projected)
+        site = _pull_site(action, context)
     except RepoMeaninglessUnderStateRefError as error:
         return _refuse(NextReason.INVALID_USAGE, error, as_json=as_json)
     except protocol.ClaimError as error:
         return _refuse(NextReason.UNAVAILABLE, error, as_json=as_json)
-    projected = observed.board
-    action = board.next_action(projected)
     close = board.zero_cost_closes(projected)
     waiting = board.waiting_on_operator(projected)
     already_named = {_next_action_container_number(action), *close, *waiting}
@@ -4985,7 +5024,7 @@ def _cmd_next(parsed: argparse.Namespace, context: RunContext) -> int:
         parallel=board.parallel_set(projected, observed.live_claims, action),
         close=close,
         waiting=waiting,
-        claims_in_place=claims_in_place,
+        site=site,
     )
     if as_json:
         _next_json(report, storage)
