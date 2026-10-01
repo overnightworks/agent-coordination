@@ -159,8 +159,11 @@ def _mention_refusal(line: str, block: FencedBlock | None) -> Refusal | None:
 
 
 def fenced_blocks(lines: Sequence[str]) -> list[FencedBlock]:
-    """CommonMark fenced code blocks: a fence closes on a bare line of its own marker
-    character at least as long as its opening marker."""
+    """CommonMark fenced code blocks: a fence closes on a line of its own marker character,
+    at least as long as its opening marker, followed by nothing but spaces or tabs.
+
+    The rule is aco's own (`body.FENCE_CLOSING_PATTERN`), repeated here because #587 line 6
+    keeps this script free of aco imports."""
     blocks: list[FencedBlock] = []
     index = 0
     while index < len(lines):
@@ -183,7 +186,7 @@ def _closing_index(lines: Sequence[str], opening_index: int, marker: str) -> int
             closing is not None
             and closing["marker"][0] == marker[0]
             and len(closing["marker"]) >= len(marker)
-            and not closing["info"].strip()
+            and not closing["info"].strip(" \t")
         ):
             return index
     return None
