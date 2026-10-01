@@ -363,7 +363,6 @@ def run_git_ref_transaction(
     *,
     while_prepared: Callable[[], bool],
     directory: Path | None = None,
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> CapturedResult:
     """Run `instructions` -- `git update-ref --stdin` lines such as
     `delete <ref> <old value>` -- as one prepared transaction: git locks
@@ -378,20 +377,34 @@ def run_git_ref_transaction(
     command = git_command(["update-ref", "--stdin"], directory=directory)
     process_handle = _start_process(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        assert process_handle.stdin is not None
-        os.write(process_handle.stdin.fileno(), _prepared_transaction_input(instructions))
+        _send_transaction_input(process_handle, _prepared_transaction_input(instructions))
         replies = _read_until_reply(
-            process_handle, _REF_TRANSACTION_PREPARED_REPLY, time.monotonic() + timeout
+            process_handle,
+            _REF_TRANSACTION_PREPARED_REPLY,
+            time.monotonic() + DEFAULT_TIMEOUT_SECONDS,
         )
         decision = None
         if replies.endswith(_REF_TRANSACTION_PREPARED_REPLY):
             decision = b"commit\n" if while_prepared() else b"abort\n"
-        stdout, stderr = process_handle.communicate(decision, timeout=timeout)
+        stdout, stderr = process_handle.communicate(decision, timeout=DEFAULT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
         raise ProcessTimedOutError from error
     finally:
         _reap_bounded_process(None, process_handle)
     return CapturedResult(process_handle.returncode, replies + stdout, stderr)
+
+
+def _send_transaction_input(process_handle: subprocess.Popen[bytes], data: bytes) -> None:
+    """Write `data` to `process_handle`'s stdin the way `_write_process_input`
+    does: a git that already exited counts as served, since its own refusal
+    waits on stderr, and any other write failure is a `ProcessIoFailedError`."""
+    assert process_handle.stdin is not None
+    try:
+        os.write(process_handle.stdin.fileno(), data)
+    except BrokenPipeError:
+        return
+    except OSError as error:
+        raise ProcessIoFailedError(IoStage.SENDING, str(error)) from error
 
 
 def _prepared_transaction_input(instructions: list[str]) -> bytes:

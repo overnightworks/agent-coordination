@@ -491,3 +491,54 @@ def test_run_git_ref_transaction_times_out_and_leaves_the_ref_unlocked_and_whole
     monkeypatch.undo()
     assert _git(repository, "rev-parse", "lane").stdout.strip() == landed
     assert _git(repository, "branch", "-f", "lane", later).returncode == 0
+
+
+def test_run_git_ref_transaction_returns_gits_own_refusal_once_git_closed_its_input(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A git that exits before it reads the transaction -- here, outside any
+    repository -- answers with its own nonzero result, never a broken pipe."""
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    start_process = process._start_process
+    write = os.write
+    started: list[subprocess.Popen[bytes]] = []
+
+    def start_and_keep(
+        command: list[str], *, stdin: int | None, stderr: int
+    ) -> subprocess.Popen[bytes]:
+        started.append(start_process(command, stdin=stdin, stderr=stderr))
+        return started[-1]
+
+    def write_once_git_exited(descriptor: int, data: bytes) -> int:
+        started[-1].wait()
+        return write(descriptor, data)
+
+    monkeypatch.setattr(process, "_start_process", start_and_keep)
+    monkeypatch.setattr(os, "write", write_once_git_exited)
+
+    result = process.run_git_ref_transaction(
+        ["delete refs/heads/lane"], while_prepared=lambda: True, directory=tmp_path
+    )
+
+    monkeypatch.undo()
+    assert (result.exit_status != 0, result.stderr != b"") == (True, True)
+
+
+def test_run_git_ref_transaction_fails_typed_when_its_input_cannot_be_sent(
+    monkeypatch: pytest.MonkeyPatch, lane_repository: tuple[Path, str, str]
+) -> None:
+    repository, landed, _later = lane_repository
+
+    def fail_to_write(_descriptor: int, _data: bytes) -> int:
+        raise OSError("the pipe is gone")
+
+    monkeypatch.setattr(os, "write", fail_to_write)
+
+    with pytest.raises(process.ProcessIoFailedError) as failure:
+        process.run_git_ref_transaction(
+            [f"delete refs/heads/lane {landed}"], while_prepared=lambda: True, directory=repository
+        )
+
+    monkeypatch.undo()
+    assert failure.value.stage is process.IoStage.SENDING
+    assert _git(repository, "rev-parse", "lane").stdout.strip() == landed
