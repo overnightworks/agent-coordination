@@ -46,9 +46,10 @@ compatibility). The exact tree shape, versioning, and transport contract are
 mkdir .agent-claim && touch .agent-claim/board.toml
 git add -f .agent-claim/board.toml && git commit -m "adopt aco"
 # once that commit is on main
+export ACO_AGENT=Ada
 aco bootstrap
 aco next
-ACO_AGENT=Ada aco start 42 --slug widget
+aco start 42 --slug widget
 aco brief 42
 # build in ../<repo>-worktrees/issue-42-widget, push, open pull request 57
 # then, from the clean default-branch checkout
@@ -136,6 +137,7 @@ land the same way a GitHub lane does -- except a landing is verified from
 the trunk commit's own `Work-Item:` trailer instead of a pull request:
 
 ```bash
+export ACO_AGENT=Ada
 aco item new --kind container --title "Ship the widget"
 aco item new --title "Build the widget" --parent <container-id>
 aco item edit <item-id> < body.md
