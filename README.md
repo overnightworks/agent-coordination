@@ -86,8 +86,8 @@ starts from. The pull request names `Closes #42` and `Work-Item: #42`.
 
 `aco land <pull request>`, from a clean default-branch checkout, verifies it against GitHub
 -- mergeable, checks green, body carrying Closes and Work-Item -- merges it
-with a merge commit, or squashes it where the repository allows only squash
-merges or `merge_method` asks for it, deletes the branch, removes the lane's
+with a merge commit, or squashes it where the repository allows no merge
+commit or `merge_method` asks for it, deletes the branch, removes the lane's
 worktree (or names its branch when the worktree lives in another checkout),
 closes the item, releases the claim, and reports what that landing freed and what
 to pull next. The exact preconditions, identity resolution, and refusals are
