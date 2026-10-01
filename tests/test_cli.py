@@ -18462,6 +18462,38 @@ def test_land_message_keeps_every_trailer_git_reads_at_the_body_end(
     )
 
 
+def _trace_git_to_stderr(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
+    monkeypatch.setenv("GIT_TRACE", "1")
+
+
+def _warn_about_the_trailer_configuration(_monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+    _real_git(repo, "config", "trailer.foo.where", "bogus")
+
+
+@pytest.mark.parametrize(
+    "make_git_noisy",
+    [
+        pytest.param(_trace_git_to_stderr, id="git-trace"),
+        pytest.param(_warn_about_the_trailer_configuration, id="trailer-configuration-warning"),
+    ],
+)
+def test_land_message_reads_no_trailer_from_what_git_writes_to_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    make_git_noisy: Callable[[pytest.MonkeyPatch, Path], None],
+) -> None:
+    """Issue #594 line 1, LANDCMD-36: git writing a trace or a warning to
+    stderr while it parses a prose ending still leaves a blank line before
+    the classification, so the landed message keeps a trailer git reads."""
+    repo, client = _land_scenario(monkeypatch, tmp_path, body=f"{_WORK_ITEM_TRAILER}\n\n{_CLOSES}")
+    make_git_noisy(monkeypatch, repo)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    [(_number, _head_sha, _method, _title, body)] = client.merge_calls
+    assert (status, body) == (0, f"{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n")
+
+
 def test_land_release_routing_reuses_the_verified_classification_for_a_fresh_merge() -> None:
     """Issue #405 point 4: a fresh merge routes `release --merged` straight
     from the classification this same run's own preflight already verified

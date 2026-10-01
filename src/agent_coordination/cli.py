@@ -31,7 +31,6 @@ from . import (
     github,
     items,
     metrics,
-    process,
     protect,
     protocol,
     providers,
@@ -6864,21 +6863,6 @@ def _body_without_classification(body: str) -> str:
     return composed.strip()
 
 
-def _ends_in_trailer_block(title: str, body: str) -> bool:
-    """Whether the commit message `title` + `body` ends in a trailer block
-    as git's own trailer parsing reads it -- asked of git itself, never a
-    hand-written look-alike (issue #594). `--no-divider` matches the
-    `%(trailers)` read the release relies on (`checkout.trunk_landings`)."""
-    command = ["git", "interpret-trailers", "--parse", "--no-divider"]
-    try:
-        result = process.run_bounded(command, input_data=f"{title}\n\n{body}\n".encode())
-    except process.ProcessError as error:
-        raise protocol.ClaimError(f"git could not parse the landing's trailers: {error}") from error
-    if result.exit_status != 0:
-        raise protocol.ClaimError(process.git_failure_detail_from_bounded(result))
-    return bool(result.output.strip())
-
-
 def _land_merge_body(title: str, body: str, classification: board.Classification) -> str:
     """The merge commit message `aco land` composes itself (issue #405,
     Befund 42 on #310): the pull request's own body with its classification
@@ -6893,7 +6877,7 @@ def _land_merge_body(title: str, body: str, classification: board.Classification
     trailer = _land_trunk_trailer(classification)
     if not without_classification:
         return f"{trailer}\n"
-    joins_trailer_block = _ends_in_trailer_block(title, without_classification)
+    joins_trailer_block = bool(checkout.message_trailers(f"{title}\n\n{without_classification}\n"))
     separator = "\n" if joins_trailer_block else "\n\n"
     return f"{without_classification}{separator}{trailer}\n"
 

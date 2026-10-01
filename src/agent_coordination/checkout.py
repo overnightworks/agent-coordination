@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import os
 import re
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -1079,6 +1080,19 @@ def trunk_landings(trunk: str, depth: int, *, directory: Path) -> tuple[TrunkLan
         )
         for index in range(0, len(fields), 4)
     )
+
+
+def message_trailers(message: str) -> tuple[str, ...]:
+    """The trailers git's own parsing reads in commit message `message`,
+    one `Token: value` line each -- the same block `trunk_landings` reads
+    through `%(trailers)`, so `--no-divider` keeps a Markdown `---` rule
+    prose (issue #594). Only git's stdout is the answer: a warning or trace
+    git writes to stderr while exiting 0 is never a trailer."""
+    with tempfile.TemporaryDirectory(prefix="aco-trailers-") as scratch:
+        message_path = Path(scratch) / "message"
+        message_path.write_text(message, encoding="utf-8")
+        parsed = _git_output(["interpret-trailers", "--parse", "--no-divider", str(message_path)])
+    return tuple(parsed.splitlines())
 
 
 def fast_forward_default_branch(trunk: str, *, directory: Path) -> None:
