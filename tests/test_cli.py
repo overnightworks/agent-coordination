@@ -17714,10 +17714,14 @@ def _time_out_the_deletion_and_refuse_the_write_backs_reflog_read(
     )
 
 
+def _expire_the_branchs_whole_reflog(_monkeypatch: pytest.MonkeyPatch, lane: Path) -> None:
+    _real_git(lane, "reflog", "expire", "--expire=all", f"refs/heads/{LANDING_BRANCH}")
+
+
 def _time_out_the_deletion_of_a_branch_without_a_reflog(
     monkeypatch: pytest.MonkeyPatch, lane: Path
 ) -> None:
-    _real_git(lane, "reflog", "expire", "--expire=all", f"refs/heads/{LANDING_BRANCH}")
+    _expire_the_branchs_whole_reflog(monkeypatch, lane)
     _time_out_the_deletion_once_prepared(monkeypatch, lane)
 
 
@@ -17755,6 +17759,13 @@ def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
 ) -> None:
     _time_out_the_deletion_and_refuse_the_write_back_midway(monkeypatch, lane)
     _refuse_the_git_call(monkeypatch, "--remove-section", "fatal: the undo failed", served_first=1)
+
+
+def _time_out_the_deletion_and_refuse_the_write_backs_publication(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    _time_out_the_deletion_once_prepared(monkeypatch, lane)
+    _refuse_the_git_call(monkeypatch, "--rename-section", "error: the publication failed")
 
 
 @pytest.mark.parametrize(
@@ -17801,8 +17812,14 @@ def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
         pytest.param(
             _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo,
             "error: the write-back failed; fatal: the undo failed\n",
-            1,
+            0,
             id="deletion-timed-out-and-write-back-and-its-undo-refused-midway",
+        ),
+        pytest.param(
+            _time_out_the_deletion_and_refuse_the_write_backs_publication,
+            "error: the publication failed\n",
+            0,
+            id="deletion-timed-out-and-write-backs-publication-refused",
         ),
         pytest.param(
             _time_out_the_deletion_and_hold_the_ref_for_the_write_back,
@@ -17811,9 +17828,15 @@ def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
             id="deletion-timed-out-and-ref-held-for-the-write-back",
         ),
         pytest.param(
+            _expire_the_branchs_whole_reflog,
+            f"branch.{LANDING_BRANCH} not removed: git keeps no reflog",
+            None,
+            id="branch-without-a-reflog",
+        ),
+        pytest.param(
             _time_out_the_deletion_of_a_branch_without_a_reflog,
-            f"branch.{LANDING_BRANCH} not written back: git keeps no reflog",
-            0,
+            "git timed out while validating the build checkout\n",
+            None,
             id="deletion-timed-out-for-a-branch-without-a-reflog",
         ),
         pytest.param(
@@ -17867,7 +17890,10 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     gets nothing back either, and the report says why. Review findings 1
     and 5 on be6cfb0: a reflog git itself deleted with a deletion it then refused
     proves nothing and gets nothing back, named; a reflog that only lost
-    its oldest entry still proves the branch the lane's own."""
+    its oldest entry still proves the branch the lane's own. Finding 4: a
+    branch without a reflog keeps its section and its tip, and a write-back
+    publishes the whole section in one write, so no refusal leaves part of
+    it on the branch."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})
     lane = tmp_path / "lane"

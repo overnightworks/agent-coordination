@@ -46,10 +46,14 @@ IDENTITY_ENVIRONMENT_ORDER = (
 # launch's exit status their own way.
 _GIT_MISSING_EXECUTABLE_ERROR = "git is required for issue claims"
 _GIT_TIMED_OUT_ERROR = "git timed out while validating the build checkout"
-_UNPROVEN_BRANCH_ERROR = (
-    "branch.{branch} not written back: git keeps no reflog to tell the lane's branch "
-    "from one created again on its commit"
+_NO_REFLOG_REASON = (
+    "git keeps no reflog to tell the lane's branch from one created again on its commit"
 )
+_UNREMOVABLE_SECTION_ERROR = "branch.{branch} not removed: " + _NO_REFLOG_REASON
+_UNPROVEN_BRANCH_ERROR = "branch.{branch} not written back: " + _NO_REFLOG_REASON
+# A write-back assembles a squashed lane branch's section under this name, so
+# the branch's own section appears in one configuration write, whole.
+_STAGED_BRANCH_SECTION = "aco-staged-branch"
 
 
 def _git_run(arguments: list[str], *, directory: Path | None = None) -> process.CapturedResult:
@@ -1564,8 +1568,10 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
     before the section goes, and deletes the ref only after: while git holds
     that lock no other process can move or recreate the name, so the section
     removed is always the lane's own. A commit made after the caller's tip
-    check refuses the prepare, and a section git refuses to remove aborts
-    the transaction. A deletion git fails or never confirms once the section
+    check refuses the prepare, and a section git refuses to remove -- or
+    one whose branch keeps no reflog to prove it the lane's own when the
+    section must be written back -- aborts the transaction. A deletion git
+    fails or never confirms once the section
     is gone writes that section back (`_restore_branch_section`). Every way
     a kept branch stays whole, unless git refuses that write-back, which the
     returned refusal then names; a branch gone after all, or its name taken
@@ -1624,12 +1630,13 @@ def _remove_own_branch_section(branch: str) -> _BranchSectionRemoval:
     reflog = _git_run(_branch_reflog_arguments(branch))
     if reflog.exit_status != 0:
         return _BranchSectionRemoval(refusal=process.git_failure_detail(reflog))
+    reflog_entries = frozenset(reflog.stdout.decode().splitlines())
+    if not reflog_entries:
+        return _BranchSectionRemoval(refusal=_UNREMOVABLE_SECTION_ERROR.format(branch=branch))
     removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
     if removed.exit_status != 0:
         return _BranchSectionRemoval(refusal=process.git_failure_detail(removed))
-    return _BranchSectionRemoval(
-        removed=entries, reflog_entries=frozenset(reflog.stdout.decode().splitlines())
-    )
+    return _BranchSectionRemoval(removed=entries, reflog_entries=reflog_entries)
 
 
 def _still_the_lane_branch(branch: str, reflog_entries: frozenset[str]) -> bool:
@@ -1685,14 +1692,13 @@ def _restore_branch_section(branch: str, landed_head: str, removal: _BranchSecti
     name now belongs to a branch created after the lane's own was deleted.
     A deletion git never confirmed may have happened, so only the reflog
     `removal` read proves the branch the lane's own: a branch that is gone
-    or moved meanwhile, one created again on the same commit, and one git
-    keeps no reflog for get nothing. git's refusal of that transaction, or
-    a branch it cannot prove, raises as a `ClaimError` naming it."""
+    or moved meanwhile, one created again on the same commit, and one whose
+    reflog git deleted get nothing. git's refusal of that transaction or of
+    the write-back, or a branch it cannot prove, raises as a `ClaimError`
+    naming it."""
     entries = removal.removed
     if not entries:
         return True
-    if not removal.reflog_entries:
-        raise ClaimError(_UNPROVEN_BRANCH_ERROR.format(branch=branch))
     recreated = False
 
     def write_back_under_the_ref_lock() -> bool:
@@ -1700,13 +1706,7 @@ def _restore_branch_section(branch: str, landed_head: str, removal: _BranchSecti
         recreated = not _still_the_lane_branch(branch, removal.reflog_entries)
         if recreated:
             return False
-        for already_written, (key, value) in enumerate(entries):
-            written = _git_run(["config", "--local", "--add", key, value])
-            if written.exit_status != 0:
-                refusal = process.git_failure_detail(written)
-                raise ClaimError(
-                    _without_a_partial_section(branch, refusal) if already_written else refusal
-                )
+        _publish_branch_section(branch, entries)
         return True
 
     verified = _git_ref_transaction(
@@ -1718,15 +1718,41 @@ def _restore_branch_section(branch: str, landed_head: str, removal: _BranchSecti
     return not recreated
 
 
-def _without_a_partial_section(branch: str, refusal: str) -> str:
-    """Remove the entries a write-back put back before git refused the next
-    one with `refusal` -- git writes a section one entry at a time, and a
-    kept branch gets all of its section or none -- and return `refusal`,
-    with git's refusal to remove them appended when it refuses that too."""
-    undone = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
+def _publish_branch_section(branch: str, entries: tuple[tuple[str, str], ...]) -> None:
+    """Give `branch` its `branch.<name>` section `entries` in one
+    configuration write: git writes a section one entry at a time, so they
+    are assembled under `_STAGED_BRANCH_SECTION` first, then renamed into
+    place -- a kept branch gets all of its section or none. git's refusal
+    raises as a `ClaimError` naming it, once the staged entries are gone."""
+    section = f"branch.{branch}"
+    staged_section = f"{_STAGED_BRANCH_SECTION}.{branch}"
+    for already_staged, (key, value) in enumerate(entries):
+        staged_key = staged_section + key.removeprefix(section)
+        staged = _git_run(["config", "--local", "--add", staged_key, value])
+        if staged.exit_status != 0:
+            refusal = process.git_failure_detail(staged)
+            raise ClaimError(
+                _without_the_staged_section(staged_section, refusal) if already_staged else refusal
+            )
+    published = _git_run(["config", "--local", "--rename-section", staged_section, section])
+    if published.exit_status != 0:
+        refusal = process.git_failure_detail(published)
+        raise ClaimError(_without_the_staged_section(staged_section, refusal))
+
+
+def _without_the_staged_section(staged_section: str, refusal: str) -> str:
+    """Remove `staged_section`, whose publication git refused with
+    `refusal`, and return `refusal`, with git's refusal to remove it
+    appended when it refuses that too."""
+    undone = _git_run(["config", "--local", "--remove-section", staged_section])
     if undone.exit_status == 0:
         return refusal
-    return f"{refusal.rstrip()}; {process.git_failure_detail(undone)}"
+    return _joined_failures(refusal, process.git_failure_detail(undone))
+
+
+def _joined_failures(first: str, second: str) -> str:
+    """Two failures' details in one report line, in the order they came."""
+    return f"{first.rstrip()}; {second}"
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:
