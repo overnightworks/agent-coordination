@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import stat
 import sys
 import threading
@@ -6080,6 +6081,17 @@ def _resolve_release_claimant(
     release_branch: str | None,
     storage: body.Storage,
 ) -> _ResolvedRelease:
+    selected = _select_release_claim(parsed, observed, identity, release_branch, storage)
+    return _authorize_releaser(parsed, selected, _release_repeat_command(parsed))
+
+
+def _select_release_claim(
+    parsed: argparse.Namespace,
+    observed: protocol.ClaimState,
+    identity: protocol.ClaimIdentity,
+    release_branch: str | None,
+    storage: body.Storage,
+) -> protocol.ActiveClaim:
     selected = _selected_store_claim(observed, identity, release_branch, parsed.claim_id, storage)
     if (
         parsed.branch is not None
@@ -6090,18 +6102,59 @@ def _resolve_release_claimant(
             f"--branch {parsed.branch!r} and --claim-id {parsed.claim_id!r} disagree: the "
             f"claim's own branch is {selected.branch!r}; drop --branch or pass its own value"
         )
+    return selected
+
+
+def _authorize_releaser(
+    parsed: argparse.Namespace, selected: protocol.ActiveClaim, repeat: Sequence[str]
+) -> _ResolvedRelease:
+    """This session's right to release `selected`: its own claimant, or an
+    explicit coordinator override. `repeat` is the refused command without
+    its identity flags, which the refusal names run as the holder."""
     role = parsed.role
     if not parsed.coordinator_override:
         if role is None:
             role = selected.role
         if (parsed.agent, role) != (selected.agent, selected.role):
             raise protocol.ClaimUnavailableError(
-                "only the original claimant may release; use an explicit coordinator override "
+                "only the original claimant may release; repeat as the holder with "
+                f"`{_holder_repeat_command(repeat, selected, role)}`, or use an explicit "
+                "coordinator override "
                 f"(holder={protocol._claimant_text(selected.agent, selected.role)!r}, "
                 f"this session={protocol._claimant_text(parsed.agent, role)!r})"
             )
     resolved_role = role if role is not None else selected.role
     return _ResolvedRelease(selected, resolved_role)
+
+
+def _holder_repeat_command(
+    repeat: Sequence[str], holder: protocol.ActiveClaim, session_role: str
+) -> str:
+    """`repeat` -- the refused command, without its identity flags -- run
+    as `holder` instead (issue #578): a claim taken under an explicit
+    `--agent` releases from the same session only when it names that agent
+    again, so the refusal spells out that one repeat before any override."""
+    identity = ["--agent", holder.agent]
+    if session_role != holder.role:
+        identity += ["--role", holder.role]
+    return shlex.join([*repeat, *identity])
+
+
+def _release_repeat_command(parsed: argparse.Namespace) -> tuple[str, ...]:
+    """The `aco release` command line `parsed` came from, without its
+    identity flags, for `_holder_repeat_command`."""
+    command = ["aco", "release"]
+    if parsed.issue is not None:
+        command.append(str(_optional_issue_number(parsed.issue)))
+    if parsed.branch is not None:
+        command += ["--branch", parsed.branch]
+    if parsed.claim_id is not None:
+        command += ["--claim-id", parsed.claim_id]
+    if parsed.merged is None:
+        command += ["--abandoned", parsed.abandoned]
+    else:
+        command += ["--merged", parsed.merged] if parsed.merged else ["--merged"]
+    return tuple(command)
 
 
 def _cmd_release(
@@ -6501,7 +6554,7 @@ def _land_preflight(
     the one step that reads `refs/aco/state` locally, so a pull request this
     preflight would refuse on GitHub's own answers alone never pays for that
     read at all, and finally this session's own authorization against the
-    exact claim just proven to exist (`_resolve_release_claimant`, `release`'s
+    exact claim just proven to exist (`_authorize_releaser`, `release`'s
     own claimant/coordinator-override check, issue #405 review finding): a
     claim held by another agent or role refuses here, before the merge,
     rather than only once the delegated `release --merged` step runs after
@@ -6532,19 +6585,14 @@ def _land_preflight(
         if isinstance(structural, board.WorkItemClassification)
         else protocol.LaneIdentity()
     )
-    _resolve_release_claimant(
-        argparse.Namespace(
-            agent=parsed.agent,
-            role=parsed.role,
-            coordinator_override=parsed.coordinator_override,
-            branch=None,
-            claim_id=None,
-        ),
+    selected = _select_release_claim(
+        argparse.Namespace(branch=None, claim_id=None),
         observed,
         identity,
         detail.source_branch,
         context.storage,
     )
+    _authorize_releaser(parsed, selected, ("aco", "land", str(number)))
     return detail, structural, readiness
 
 

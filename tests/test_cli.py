@@ -10258,44 +10258,60 @@ def test_cli_release_omitted_claim_id_releases_when_foreign_peer_exists_on_issue
 
 
 @pytest.mark.parametrize(
-    ("agent", "branch", "standing"),
+    ("holder", "session", "arguments", "session_role", "repeat"),
     [
-        (
+        pytest.param(
+            "Ada",
             "Other",
-            "lane-72",
-            (
-                request(
-                    "mine",
-                    "Ada",
-                    issue=72,
-                    role="reviewer",
-                    branch="lane-72",
-                    scope=("src",),
-                ),
-            ),
+            ("--abandoned", "stopped"),
+            "reviewer",
+            "aco release 72 --abandoned stopped --agent Ada",
+            id="abandoned",
+        ),
+        pytest.param(
+            "claude-head",
+            "Claude s-1",
+            ("--merged", "12"),
+            "reviewer",
+            "aco release 72 --merged 12 --agent claude-head",
+            id="merged-by-an-explicit-agent",
+        ),
+        pytest.param(
+            "Claude s-1",
+            "Other",
+            ("--merged", "12", "--role", "builder"),
+            "builder",
+            "aco release 72 --merged 12 --agent 'Claude s-1' --role reviewer",
+            id="other-role-and-a-quoted-agent",
         ),
     ],
 )
-def test_cli_release_wrong_agent_or_branch_or_two_matches_fails_without_post(
+def test_cli_release_by_another_claimant_names_the_holders_repeat_without_a_write(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    agent: str,
-    branch: str,
-    standing: tuple[ClaimRequest, ...],
+    holder: str,
+    session: str,
+    arguments: tuple[str, ...],
+    session_role: str,
+    repeat: str,
 ) -> None:
-    client = FakeForge()
-    _patch_release_session(monkeypatch, client, *standing, agent=agent, branch=branch)
+    """REL-12 (issue #578 line 3): a release by another agent or role names
+    the exact repeat as the holder before it mentions the coordinator
+    override -- the songmaker case is a claim taken with `--agent
+    claude-head` whose session later falls back to its session id."""
+    standing = request("mine", holder, issue=72, role="reviewer", branch="lane-72", scope=("src",))
+    _patch_release_session(monkeypatch, FakeForge(), standing, agent=session, branch="lane-72")
 
-    released = issue_claim.main(["--repo", REPOSITORY, "release", "72", "--abandoned", "stopped"])
+    released = issue_claim.main(["--repo", REPOSITORY, "release", "72", *arguments])
     captured = capsys.readouterr()
 
-    assert released == 2
-    assert captured.out == ""
+    assert (released, captured.out) == (2, "")
     assert captured.err == (
-        "ERROR: only the original claimant may release; use an explicit coordinator override "
-        "(holder='Ada (reviewer)', this session='Other (reviewer)')\n"
+        f"ERROR: only the original claimant may release; repeat as the holder with `{repeat}`, "
+        f"or use an explicit coordinator override (holder='{holder} (reviewer)', "
+        f"this session='{session} ({session_role})')\n"
     )
-    assert "conflicting claims" not in captured.err
+    assert store.fetch_state(worktree=Path("."), remote="origin").claims != {}
 
 
 def test_cli_release_without_a_claim_names_the_github_item_by_its_forge_number(
@@ -17075,8 +17091,9 @@ def test_land_refuses_a_foreign_claim_before_the_merge(
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
 
     assert capsys.readouterr().err == (
-        "ERROR: only the original claimant may release; use an explicit coordinator "
-        "override (holder='Grok (builder)', this session='Ada (builder)')\n"
+        "ERROR: only the original claimant may release; repeat as the holder with "
+        "`aco land 12 --agent Grok`, or use an explicit coordinator override "
+        "(holder='Grok (builder)', this session='Ada (builder)')\n"
     )
     assert client.merge_calls == []
 

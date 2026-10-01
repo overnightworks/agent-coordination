@@ -10,7 +10,7 @@ trunk walk (`specs/landing-grammar.spec.md`, `## What release --merged
 requires`), the exact `freed`/`next` line and `--json` shapes
 (`specs/landing-grammar.spec.md` LAND-49), the missing-state-ref sentence
 (`specs/ref-store-cas.spec.md` CAS-03), or a claimant refusal
-(`specs/claim-record.spec.md` CLAIM-16, CLAIM-17, CLAIM-38..CLAIM-40) --
+(`specs/claim-record.spec.md` CLAIM-16, CLAIM-17, CLAIM-38..CLAIM-40, beyond REL-12's repeat) --
 each is cited by ID.
 
 `<claim-id>` is the released claim's own id. `<subject>` is the same unquoted
@@ -77,7 +77,8 @@ spec would cite REL-03 rather than restate it.
 - [ ] [REL-09] An identity/branch pair with no matching live claim refuses `<identity> has no active build claim`, exit `2`.
 - [ ] [REL-10] A `--claim-id` mismatching the one claim already resolved refuses that same `has no active build claim` sentence: never a second selector among several claims.
 - [ ] [REL-11] `--branch` and `--claim-id` naming different branches refuses, quoting both and the claim's own branch, exit `2` (see E-REL-04).
-- [ ] [REL-12] A `release` by the wrong agent/role, no coordinator override, refuses (CLAIM-38's sentence), before any write.
+- [ ] [REL-12] A `release` by the wrong agent/role, no coordinator override, refuses before any write, naming the holder's `<repeat>` (REL-41) before the override (see E-REL-19).
+- [ ] [REL-41] `<repeat>` is `aco release`, the item, `--branch`/`--claim-id` when given, the outcome flag, then `--agent <holder>`, and `--role <holder role>` only when the session's role differs.
 - [ ] [REL-13] `--coordinator-override --role coordinator` releases a foreign claim with no agent/role match (CLAIM-40's outcome, for release specifically).
 - [ ] [REL-14] Omitting `--role` -- unlike `claim`'s own default `builder` -- reports the claim's own stored role, in text and in `--json` alike.
 - [ ] [REL-15] A release before `aco bootstrap` has created `refs/aco/state` refuses (CAS-03's sentence), before any transition is attempted.
@@ -405,3 +406,13 @@ exit 2
 
 `git branch --list` reads afterwards exactly as before the call: `ada/issue-42` stands, the
 claim on #42 still stands, and no landing comment closed #42.
+
+### E-REL-19 — a claim taken under an explicit `--agent` names its repeat
+
+Setup: bare-remote, fake `gh`, a live claim on issue `#42` taken with `--agent claude-head`, role `builder`; this session's `ACO_AGENT` is unset and its session id falls back to `Claude s-1`
+
+```console
+$ aco release 42 --merged 57
+2> ERROR: only the original claimant may release; repeat as the holder with `aco release 42 --merged 57 --agent claude-head`, or use an explicit coordinator override (holder='claude-head (builder)', this session='Claude s-1 (builder)')
+exit 2
+```
