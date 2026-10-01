@@ -45,6 +45,7 @@ from test_cli import (
     _real_state_ref_start_scenario,
     _single_item_board_environment,
     _state_ref_item_body,
+    main_with_piped_stdin,
 )
 from test_state_board import (
     _blank_title_item,
@@ -518,8 +519,7 @@ def _state_ref_served_board(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
     repo, _remote, _oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     rulable = _state_ref_item_body("Rulable", expectation=[proposed_expectation(OPEN_LINE_TEXT)])
-    monkeypatch.setattr(sys, "stdin", io.StringIO(rulable))
-    assert issue_claim.main(["item", "edit", "314"]) == 0
+    assert main_with_piped_stdin(monkeypatch, rulable, ["item", "edit", "314"]) == 0
     return _CountedServe(None, repo, 314, ruling_observes=True)
 
 
