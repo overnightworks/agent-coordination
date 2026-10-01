@@ -123,7 +123,7 @@ instead of issues. The pin's own commit is the adoption step, pushed to
 
 ```bash
 git init --bare -b main /srv/aco/repo.git
-git clone /srv/aco/repo.git repo && cd repo
+git clone file:///srv/aco/repo.git repo && cd repo
 mkdir .agent-claim
 printf 'storage = "state-ref"\n' > .agent-claim/board.toml
 git add -f .agent-claim/board.toml && git commit -m "pin state-ref storage"
