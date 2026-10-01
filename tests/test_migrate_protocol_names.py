@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import runpy
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -140,6 +141,16 @@ def migration(tmp_path: Path) -> Migration:
             id="fence-inside-documentation",
         ),
         pytest.param(
+            "> ```agent-claim\n> version = 1\n> ```\n",
+            "does not read exactly",
+            id="fence-inside-a-blockquote",
+        ),
+        pytest.param(
+            "- ```agent-claim\n  version = 1\n  ```\n",
+            "does not read exactly",
+            id="fence-inside-a-list-item",
+        ),
+        pytest.param(
             PROTOCOL_BODY.replace("```agent-claim", "```agent-claim toml"),
             "does not read exactly",
             id="info-after-the-name",
@@ -208,6 +219,7 @@ def test_dry_run_lists_every_issue_body_to_change_across_pages_and_writes_nothin
     github.add(200, PROTOCOL_BODY, state="closed")
     github.add(201, PROTOCOL_BODY, pull_request={"url": "a pull request"})
     github.add(202, None)
+    github.add(203, "- ```agent-claim``` blocks are prose here, inline code and no fence")
     github.add(1, PROTOCOL_BODY, repository="owner/other")
 
     exit_code = migration.dry_run(REPOSITORY, "owner/other")
@@ -338,37 +350,53 @@ def test_apply_stops_at_the_first_unsafe_row_and_names_it(
     assert migration.clock.waits == waits
 
 
+def _slow_down(status: int, headers: dict[str, str] | None = None) -> str:
+    return _included(status, {"message": "slow down"}, headers)
+
+
 @pytest.mark.parametrize(
-    ("status", "headers", "wait", "pace_arguments", "pace"),
+    ("rate_limited", "wait", "pace_arguments", "pace"),
     [
         pytest.param(
-            429, {"Retry-After": "30"}, 30.0, [], migrate.PACE_SECONDS, id="429-retry-after"
+            _slow_down(429, {"Retry-After": "30"}),
+            30.0,
+            [],
+            migrate.PACE_SECONDS,
+            id="429-retry-after",
         ),
         pytest.param(
-            403, {"Retry-After": "45"}, 45.0, ["--pace-seconds", "2.5"], 2.5, id="given-pace"
+            _slow_down(403, {"Retry-After": "45"}),
+            45.0,
+            ["--pace-seconds", "2.5"],
+            2.5,
+            id="given-pace",
         ),
         pytest.param(
-            403,
-            {"X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": "1000090"},
+            _slow_down(403, {"X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": "1000090"}),
             90.0,
             [],
             migrate.PACE_SECONDS,
             id="403-primary-limit-reset",
         ),
         pytest.param(
-            429,
-            {},
+            _slow_down(429),
             migrate.FALLBACK_RATE_LIMIT_WAIT_SECONDS,
             [],
             migrate.PACE_SECONDS,
             id="429-without-headers",
         ),
+        pytest.param(
+            _included(403, {"message": "You have exceeded a secondary rate limit."}),
+            migrate.FALLBACK_RATE_LIMIT_WAIT_SECONDS,
+            [],
+            migrate.PACE_SECONDS,
+            id="403-secondary-limit-without-headers",
+        ),
     ],
 )
 def test_apply_paces_its_patches_and_waits_out_a_rate_limit(
     migration: Migration,
-    status: int,
-    headers: dict[str, str],
+    rate_limited: str,
     wait: float,
     pace_arguments: list[str],
     pace: float,
@@ -377,7 +405,7 @@ def test_apply_paces_its_patches_and_waits_out_a_rate_limit(
     for number in (1, 2, 3):
         github.add(number, PROTOCOL_BODY)
     migration.dry_run(REPOSITORY)
-    github.patch_answers.append(_included(status, {"message": "slow down"}, headers))
+    github.patch_answers.append(rate_limited)
 
     exit_code = migration.apply(*pace_arguments)
 
@@ -403,3 +431,20 @@ def test_apply_resumes_from_its_manifest_after_a_stopped_run(
     assert f"already migrated {REPOSITORY}#1" in output
     assert f"migrated {REPOSITORY}#2" in output
     assert [github.body(number) for number in (1, 2)] == [MIGRATED_BODY] * 2
+
+
+def test_a_gh_call_that_hangs_stops_the_run_and_names_the_call(
+    migration: Migration, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def hang(command: list[str], **_: object) -> None:
+        raise subprocess.TimeoutExpired(command, migrate.GH_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(subprocess, "run", hang)
+    command_line = ["--dry-run", "--repo", REPOSITORY, "--manifest", str(migration.manifest)]
+
+    exit_code = migrate.main(command_line, clock=migration.clock)
+
+    assert exit_code == 1
+    assert "stopped: gh api --include --method GET repos/owner/repo/issues" in (
+        capsys.readouterr().err
+    )

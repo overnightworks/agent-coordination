@@ -43,8 +43,12 @@ PAGE_SIZE = 100
 GH_TIMEOUT_SECONDS = 60
 
 _FENCE = re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
-_PROTOCOL_MENTION = re.compile(r"^\s*(?:`{3,}|~{3,})\s*agent-claim")
-_NEW_PROTOCOL_MENTION = re.compile(r"^\s*(?:`{3,}|~{3,})\s*aco\b")
+# A fence opening anywhere a reader would see one: after any indent and any blockquote or
+# list-item markers. A backtick run followed by another backtick on its line is inline code,
+# which CommonMark never reads as a fence.
+_MENTION_PREFIX = r"^(?:\s|>|[-*+]\s|\d{1,9}[.)]\s)*(?:`{3,}(?=[^`]*$)|~{3,})\s*"
+_PROTOCOL_MENTION = re.compile(_MENTION_PREFIX + "agent-claim")
+_NEW_PROTOCOL_MENTION = re.compile(_MENTION_PREFIX + r"aco\b")
 _HEADER_END = re.compile(r"\r?\n\r?\n")
 # aco's own OWNER/REPO judge (`github.repository_id`), repeated here because #587 line 6
 # keeps this script free of aco imports.
@@ -211,8 +215,9 @@ def parse_included_response(output: str) -> ApiResponse:
 def rate_limit_wait(response: ApiResponse, now: float) -> float | None:
     """Seconds to wait before retrying a rate-limited answer, or None when it is not one.
 
-    Follows GitHub's REST guidance: retry-after first, then the primary limit's reset time;
-    a 403 carrying neither sign is a refused permission, not a rate limit."""
+    Follows GitHub's REST guidance: retry-after first, then the primary limit's reset time,
+    then a minute for a 429 or for a 403 whose message names the secondary rate limit; any
+    other 403 is a refused permission, not a rate limit."""
     if response.status not in _RATE_LIMIT_STATUSES:
         return None
     retry_after = response.headers.get("retry-after")
@@ -220,21 +225,30 @@ def rate_limit_wait(response: ApiResponse, now: float) -> float | None:
         return float(retry_after)
     if response.headers.get("x-ratelimit-remaining") == "0":
         return max(float(response.headers["x-ratelimit-reset"]) - now, 0.0)
-    if response.status == HTTPStatus.TOO_MANY_REQUESTS:
+    if response.status == HTTPStatus.TOO_MANY_REQUESTS or _names_secondary_limit(response):
         return FALLBACK_RATE_LIMIT_WAIT_SECONDS
     return None
+
+
+def _names_secondary_limit(response: ApiResponse) -> bool:
+    return "secondary rate limit" in response.body.lower()
 
 
 def run_gh(arguments: list[str], *, input_data: bytes | None = None) -> str:
     """Run gh and return its stdout even on a non-zero exit: with --include the HTTP status
     of a refused request is printed there, and the caller decides what it means."""
-    completed = subprocess.run(
-        ["gh", *arguments],
-        input=input_data,
-        capture_output=True,
-        timeout=GH_TIMEOUT_SECONDS,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["gh", *arguments],
+            input=input_data,
+            capture_output=True,
+            timeout=GH_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as timeout:
+        raise MigrationStoppedError(
+            f"gh {' '.join(arguments)} did not answer within {GH_TIMEOUT_SECONDS} s"
+        ) from timeout
     if not completed.stdout:
         raise MigrationStoppedError(f"gh {' '.join(arguments)} failed: {completed.stderr.decode()}")
     return completed.stdout.decode()
