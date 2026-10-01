@@ -65,7 +65,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `item show`/`edit`/`close --json` | — | ITEM-09 | ITEM-15 | ITEM-16 |
 | a malformed piped body | ITEM-27 | — | ITEM-25 | — |
 | another item malformed | ITEM-37, ITEM-42 | ITEM-37 | ITEM-53, ITEM-54, PIN-29 | ITEM-53, ITEM-54, PIN-29 |
-| an `items/` entry whose file name names no item | PIN-13 | — | PIN-35 | PIN-35 |
+| an `items/` entry whose file name names no item | PIN-36 | PIN-35 | PIN-35 | PIN-35 |
 | the item itself malformed | — | ITEM-38 | ITEM-39..ITEM-41 | ITEM-38 |
 | another item naming a blocker `items/` lacks | — | — | — | ITEM-55 |
 | a refusal reached with `--json` | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 | ITEM-17, ITEM-18 |

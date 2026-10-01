@@ -3446,7 +3446,7 @@ class TestCliStateRefForge:
         Issue #536 (ITEM-53, PIN-16): `item close` of an item whose `parent`
         no `items/` entry carries refuses PIN-16's sentence before the close
         writes, so the item stays open rather than closing and then refusing.
-        Issue #565 (PIN-13, PIN-35): an entry whose file name is no item
+        Issue #565 (PIN-13, PIN-36): an entry whose file name is no item
         refuses every read of the whole store and every write that decides
         over it -- a minted id, a fresh claim -- `--not-a-twin` included."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
@@ -3495,6 +3495,18 @@ class TestCliStateRefForge:
                 f"EDITED {CHILD_B_ID}\n",
                 id="edit-body",
             ),
+            pytest.param(
+                ["rule", RULABLE_ID, "--line", "1", "--yes"],
+                None,
+                f"RULED {RULABLE_ID} line 1 yes; 1 line(s) still open\n",
+                id="rule",
+            ),
+            pytest.param(
+                ["ask", CHILD_B_ID, "--text", "Does it go past?"],
+                None,
+                f"ASKED {CHILD_B_ID} line 1: Does it go past?\n",
+                id="ask",
+            ),
         ],
     )
     def test_a_write_to_one_item_goes_past_entries_that_name_no_item(
@@ -3509,10 +3521,11 @@ class TestCliStateRefForge:
         printed: str,
     ) -> None:
         """Issue #565 line 1 (PIN-35, CAS-61, E-PIN-39): beside a non-id
-        name and a bare id without `.md`, a write to a healthy item lands,
-        and both entries keep their name, mode, and blob."""
+        name and a bare id without `.md`, a write to one healthy item --
+        `item close`, `item edit`, `rule`, `ask` -- lands, and both entries
+        keep their name, mode, and blob."""
         foreign = {"NOTANID": b"anything", "aco-000001": b"a bare id\n"}
-        item_files = {**_item_files(), **foreign}
+        item_files = {**_item_files(), **_rulable_item_files(), **foreign}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         monkeypatch.setattr(sys, "stdin", io.StringIO(piped_body or ""))
         foreign_paths = [f"items/{name}".encode() for name in foreign]

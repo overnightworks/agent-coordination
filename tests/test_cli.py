@@ -9035,7 +9035,7 @@ def test_release_merged_under_state_ref_hints_a_runnable_board_read_beside_an_un
 def test_release_merged_refuses_beside_an_items_entry_that_names_no_item(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """PIN-13, PIN-35 (issue #565): `release --merged` refuses by the
+    """PIN-13, PIN-36 (issue #565): `release --merged` refuses by the
     foreign entry's name before it closes the item or releases its claim."""
     _repo, client = _landing_scenario(monkeypatch, tmp_path, foreign_entry="NOTANID")
 
