@@ -34,6 +34,7 @@ exit `2`, exactly as `specs/claim-record.spec.md` already documents.
 | a subtree malformed | — | — | CAS-27..33 |
 | a resource file malformed | — | — | CAS-34..36 |
 | an item write's `expected` is stale or `None` | — | CAS-19, CAS-20 | — |
+| `items/` holds an entry that is no item's file name | — | CAS-61 | — |
 | a claim lands on the item an `item close` retries | — | CAS-52 | — |
 | a close or edit lands on the item a claim retries | — | CAS-59, CAS-60 | — |
 
@@ -105,7 +106,8 @@ transition), and which of the three causes applies.
 
 - [ ] [CAS-19] An item write whose `expected` is `None` (must not exist yet) against an id another writer already created refuses `item '<id>' already exists`.
 - [ ] [CAS-20] An item write whose `expected` no longer matches the item's current stored oid refuses `item '<id>' was written since it was read (expected <oid>, found <oid-or-None>); re-read and retry`.
-- [ ] [CAS-21] Two item writes on distinct ids racing for the same tip both land (except CAS-51): `items/` is rebuilt from the full id -> oid map on every write, never a copy of the parent tree's own `items/` oid.
+- [ ] [CAS-21] Two item writes on distinct ids racing for the same tip both land (except CAS-51): each attempt places its own id into the `items/` of the tip it read, so the other writer's id stays.
+- [ ] [CAS-61] A write carries every `items/` entry it does not write unchanged by name, mode and blob, foreign names included; `items/` stays while only such entries remain.
 - [ ] [CAS-51] An item write holding the whole `items/` it checked (a `board --serve` ruling click) refuses `items/ was written since this write checked it; re-read and retry` once any other item changed.
 - [ ] [CAS-52] `item close` re-checks PIN-26 on every attempt: a claim that lands on the item between a rejected push and its retry refuses the close with PIN-26's sentence, the item left open.
 - [ ] [CAS-59] A `state-ref` claim re-checks on every attempt that its item is the blob its checks read open: a close or edit landed since refuses with CAS-20's sentence and writes no claim.

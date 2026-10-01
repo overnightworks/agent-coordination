@@ -258,7 +258,7 @@ def parse_item_reference(value: str) -> int:
     a git trailer never carries the `OWNER/REPO#n` form `WORK_ITEM_VALUE_PATTERN`
     accepts for a pull request body, since a commit is always local to the
     repository whose history it lands on."""
-    if items.ITEM_ID_PATTERN.fullmatch(value) is not None:
+    if protocol.ITEM_ID_PATTERN.fullmatch(value) is not None:
         return items.item_number(value)
     digits = value.removeprefix("#")
     if digits.isdigit():
