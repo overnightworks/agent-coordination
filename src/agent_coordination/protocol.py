@@ -690,8 +690,11 @@ def _combined_scope(
     return valid_scope(list(combined))
 
 
+COORDINATOR_ROLE = "coordinator"
+
+
 def _require_coordinator_override(role: str | None) -> None:
-    if role != "coordinator":
+    if role != COORDINATOR_ROLE:
         raise ClaimUnavailableError("a coordinator override requires --role coordinator")
 
 
@@ -734,8 +737,8 @@ class StateLineageError(ClaimError):
 
     Distinct from `MalformedStateTreeError`: the tree itself may parse fine --
     it is this client's history of the ref that no longer lines up, which
-    `git push --force` recovery (documented, never automatic) is the only
-    sanctioned way to cause.
+    `aco reset` (exporting the state first by default, never automatic) is
+    the only sanctioned way to cause.
     """
 
 

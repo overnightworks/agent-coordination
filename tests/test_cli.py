@@ -21341,6 +21341,38 @@ def _reset_repository(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[
     return repository, bare_remote
 
 
+def _reset_repository_with_live_claims(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, Path]:
+    """`_reset_repository` bootstrapped with three live claims a reset
+    refuses over (issue #582): issue 42 held by the running agent, issue 43
+    and the issueless lane `fix/reset-docs` held by another agent."""
+    _use_real_store(monkeypatch)
+    monkeypatch.setenv(checkout.ACO_AGENT_ENV, "Codex Sol")
+    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
+    store.bootstrap(worktree=repository, remote=str(bare_remote))
+    other_agents_issue = replace(_real_claim_intent(43), agent="Grok Ada")
+    other_agents_lane = replace(
+        other_agents_issue,
+        identity=protocol.LaneIdentity(),
+        branch="fix/reset-docs",
+        claim_id=protocol.ClaimId("claim-lane"),
+        operation_id="op-lane",
+    )
+    for subject, intent in (
+        (store.ClaimTransitionSubject("claim issue 42", item="42"), _real_claim_intent(42)),
+        (store.ClaimTransitionSubject("claim issue 43", item="43"), other_agents_issue),
+        (
+            store.ClaimTransitionSubject("claim lane fix/reset-docs", item="fix/reset-docs"),
+            other_agents_lane,
+        ),
+    ):
+        store.commit_transition(
+            observed=fresh_observation(repository, bare_remote), subject=subject, intent=intent
+        )
+    return repository, bare_remote
+
+
 def _real_claim_intent(issue: int) -> protocol.ClaimIntent:
     return protocol.ClaimIntent(
         identity=protocol.IssueIdentity(issue),
@@ -21458,50 +21490,97 @@ def test_cli_reset_confirm_exports_a_verifiable_bundle_and_bootstraps_a_fresh_re
     assert not store.local_state_ref_exists(repository)
 
 
-@pytest.mark.parametrize(
-    "force_unreadable",
-    [pytest.param([], id="plain"), pytest.param(["--force-unreadable"], id="forced")],
+_RELEASES_AS_THE_HOLDER_OF_ISSUE_42 = (
+    "aco release 42 --claim-id claim-42 --abandoned <reason>",
+    "aco release 43 --claim-id claim-43 --role coordinator --coordinator-override "
+    "--abandoned <reason>",
+    "aco release --branch fix/reset-docs --role coordinator --coordinator-override "
+    "--abandoned <reason>",
 )
-def test_cli_reset_refuses_when_a_claim_is_live_and_touches_nothing(
+_RELEASES_WITHOUT_A_SESSION_IDENTITY = (
+    "aco release 42 --claim-id claim-42 --agent 'Codex Sol' --abandoned <reason>",
+    "aco release 43 --claim-id claim-43 --agent 'Grok Ada' --abandoned <reason>",
+    "aco release --branch fix/reset-docs --agent 'Grok Ada' --abandoned <reason>",
+)
+
+
+@pytest.mark.parametrize(
+    ("mode", "identified", "releases"),
+    [
+        pytest.param([], True, _RELEASES_AS_THE_HOLDER_OF_ISSUE_42, id="dry-run"),
+        pytest.param(["--confirm"], True, _RELEASES_AS_THE_HOLDER_OF_ISSUE_42, id="confirm"),
+        pytest.param(
+            ["--confirm", "--force-unreadable"],
+            True,
+            _RELEASES_AS_THE_HOLDER_OF_ISSUE_42,
+            id="forced",
+        ),
+        pytest.param([], False, _RELEASES_WITHOUT_A_SESSION_IDENTITY, id="no-identity"),
+    ],
+)
+def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    force_unreadable: list[str],
+    mode: list[str],
+    identified: bool,
+    releases: tuple[str, str, str],
 ) -> None:
-    """`--force-unreadable` (issue #341) only lifts the refusal over a
-    schema this aco cannot read; a readable tree's live claim still refuses."""
-    _use_real_store(monkeypatch)
-    repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
-    store.bootstrap(worktree=repository, remote=str(bare_remote))
-    store.commit_transition(
-        observed=fresh_observation(repository, bare_remote),
-        subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
-        intent=_real_claim_intent(42),
-    )
-    tip_before = _real_git(repository, "ls-remote", str(bare_remote), store.STATE_REF).stdout.split(
-        "\t"
-    )[0]
+    """CAS-40/CAS-62..64 (issue #582): confirmed or not, a live claim
+    refuses with one sentence on stderr naming why and every claim to
+    release; `--force-unreadable` (issue #341) only lifts the refusal over
+    a schema this aco cannot read. Every release command it prints, its
+    `<reason>` filled in, runs through bash into `release`, which accepts
+    it, after which `reset` no longer refuses. Without a session identity
+    every release names its holder with `--agent`, so it still runs."""
+    repository, bare_remote = _reset_repository_with_live_claims(monkeypatch, tmp_path)
+    if not identified:
+        for variable in (
+            checkout.ACO_AGENT_ENV,
+            checkout.GROK_SESSION_ID_ENV,
+            checkout.CLAUDE_CODE_SESSION_ID_ENV,
+        ):
+            monkeypatch.delenv(variable, raising=False)
+    tip_before = _remote_state_tip(repository, bare_remote)
     lineage_before = _lineage_observation(repository)
     assert lineage_before != (None, None)
     export_dir = tmp_path / "export"
     export_dir.mkdir()
     monkeypatch.chdir(repository)
 
-    command = ["reset", "--confirm", *force_unreadable, "--export-dir", str(export_dir)]
-
-    status = issue_claim.main(command)
+    status = issue_claim.main(["reset", *mode, "--export-dir", str(export_dir)])
 
     assert status == 2
-    out = capsys.readouterr().out
-    assert "CLAIMED issue #42" in out
-    assert "codex/issue-42-reset" in out
-    tip_after = _real_git(repository, "ls-remote", str(bare_remote), store.STATE_REF).stdout.split(
-        "\t"
-    )[0]
-    assert tip_after == tip_before
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "ERROR: refs/aco/state holds 3 live claim(s); release them first, "
+        "or reset after they are gone: "
+        "issue #42 by Codex Sol (builder) branch=codex/issue-42-reset claim=claim-42, "
+        f"release: {releases[0]}; "
+        "issue #43 by Grok Ada (builder) branch=codex/issue-43-reset claim=claim-43, "
+        f"release: {releases[1]}; "
+        "lane fix/reset-docs by Grok Ada (builder) branch=fix/reset-docs claim=claim-lane, "
+        f"release: {releases[2]}\n"
+    )
+    assert _remote_state_tip(repository, bare_remote) == tip_before
     assert list(export_dir.iterdir()) == []
     assert not store.local_state_ref_exists(repository)
     assert _lineage_observation(repository) == lineage_before
+
+    # Reset needs no attached branch, so neither may the advice it prints.
+    _real_git(repository, "checkout", "-q", "--detach")
+    printed_releases = [
+        claim.split(", release: ", 1)[1]
+        for claim in captured.err.rstrip("\n").split("gone: ", 1)[1].split("; ")
+    ]
+    for command in printed_releases:
+        filled = command.replace("<reason>", shlex.quote("a stuck state ref"))
+        bash_exit_code, arguments = _arguments_bash_hands_aco(filled, tmp_path)
+        assert (bash_exit_code, arguments[:1]) == (0, ["release"])
+        assert issue_claim.main(arguments) == 0, capsys.readouterr().err
+    capsys.readouterr()
+    assert issue_claim.main(["reset"]) == 0
 
 
 _UNREADABLE_SCHEMA_ONE_LINE = (

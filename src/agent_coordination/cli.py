@@ -8116,6 +8116,49 @@ def _build_reset_plan(
     )
 
 
+_ABANDONED_PLACEHOLDER = "--abandoned <reason>"
+
+
+def _abandoned_release_command(
+    claim: protocol.ActiveClaim, storage: body.Storage, running_agent: str | None
+) -> str:
+    """The `release --abandoned` advice that ends live `claim` (issue #582):
+    an item claim by its item and claim id (so no attached branch is
+    needed, as reset needs none), a docs/ or fix/ lane claim by `--branch`;
+    from a session that names no identity, as its holder by `--agent`,
+    since `release` refuses without one and the holder is the only agent
+    reset knows; otherwise, unless `running_agent` holds it, as the
+    coordinator -- each the form `release` itself accepts, so the line runs
+    as printed once `<reason>` is filled in."""
+    target = (
+        ("--branch", claim.branch)
+        if isinstance(claim.identity, protocol.LaneIdentity)
+        else (board.item_argument(claim.identity.issue, storage), "--claim-id", claim.claim_id)
+    )
+    if running_agent is None:
+        releaser: tuple[str, ...] = ("--agent", claim.agent)
+    elif running_agent == claim.agent:
+        releaser = ()
+    else:
+        releaser = ("--role", protocol.COORDINATOR_ROLE, "--coordinator-override")
+    return f"{board.advice_command('release', *target, *releaser)} {_ABANDONED_PLACEHOLDER}"
+
+
+def _reset_live_claims_sentence(
+    claims: Iterable[protocol.ActiveClaim], storage: body.Storage, running_agent: str | None
+) -> str:
+    named = [
+        f"{_claim_subject(claim, storage)} by {claim.agent} ({claim.role}) "
+        f"branch={claim.branch} claim={claim.claim_id}, release: "
+        + _abandoned_release_command(claim, storage, running_agent)
+        for claim in claims
+    ]
+    return (
+        f"{store.STATE_REF} holds {len(named)} live claim(s); release them first, "
+        f"or reset after they are gone: {'; '.join(named)}"
+    )
+
+
 def _reset_unreadable_line(schema_version: int) -> str:
     return (
         f"schema {schema_version} not readable by this aco; live claims unknown "
@@ -8225,16 +8268,18 @@ def _reset_state(parsed: argparse.Namespace, context: RunContext) -> int:
     with a lease and locally if present, clears every worktree's lineage
     stamp and fetch anchor, and bootstraps a fresh empty state. Forge-free,
     like `bootstrap`. A live claim always refuses -- `--confirm` or not --
-    printing its claim lines instead of touching anything: a reset over live
+    naming every live claim instead of touching anything: a reset over live
     work is data loss with no owner. A state whose schema this aco cannot
     read has unknown live claims, so executing over it additionally needs
     `--force-unreadable` (issue #341); its bundle is still exported.
     """
     worktree, remote, state = _reset_observation(context)
     if isinstance(state, protocol.ClaimState) and state.claims:
-        ages = _claim_ages(worktree, state)
-        _status(tuple(state.claims.values()), None, ages, context.config.storage)
-        return 2
+        raise protocol.ClaimError(
+            _reset_live_claims_sentence(
+                state.claims.values(), context.config.storage, checkout.session_agent()
+            )
+        )
     export = _resolved_reset_export_config(parsed, context.toplevel)
     plan = _build_reset_plan(
         worktree=worktree,
