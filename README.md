@@ -48,7 +48,7 @@ git add -f .agent-claim/board.toml && git commit -m "adopt aco"
 # once that commit is on main
 aco bootstrap
 aco next
-aco start 42 --slug widget
+ACO_AGENT=Ada aco start 42 --slug widget
 aco brief 42
 # build in ../<repo>-worktrees/issue-42-widget, push, open pull request 57
 # then, from the clean default-branch checkout
