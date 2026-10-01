@@ -92,6 +92,9 @@ TOML_SUFFIX = ".toml"
 # from `_list_tree` back into `_mktree` byte for byte.
 _TREE_NAME_ENCODING = "utf-8"
 _TREE_NAME_ERRORS = "surrogateescape"
+# git's two file modes: a symlink (120000) also lists as a blob, yet
+# `git archive` yields no file for it, so the mode decides (issue #565).
+_FILE_MODES = frozenset({"100644", "100755"})
 _STATE_TOP_LEVEL_NAMES = frozenset(
     {SCHEMA_TOML_FILENAME, CLAIMS_DIRECTORY, IDS_DIRECTORY, RESOURCES_DIRECTORY, ITEMS_DIRECTORY}
 )
@@ -933,11 +936,19 @@ def _parse_resources_subtree(
     return MappingProxyType(resources)
 
 
+def _require_item_file(name: str, entry: _ListedEntry, *, tip: ObjectId) -> None:
+    """CAS-32: every `items/` entry is a file -- never a directory, a
+    submodule, or a symlink, which a read would otherwise leave out without
+    a word (issue #565)."""
+    if entry.mode not in _FILE_MODES:
+        raise MalformedStateTreeError(f"{ITEMS_DIRECTORY}/{name} at {tip} is not a file")
+
+
 def _parse_items_subtree(
     entries: dict[str, _ListedEntry], *, present: bool, tip: ObjectId
 ) -> Mapping[str, ObjectId]:
     """`items/`'s id -> blob oid mapping (issue #279): every entry must be a
-    blob, the same doctrine `claims/`/`ids/`/`resources/` already enforce.
+    file (`_require_item_file`).
     Only an entry `protocol.item_id_of_filename` names an item is keyed
     (issue #558); a foreign entry stays in the tree, carried over by every
     write (`_patch_items_subtree`), and is the whole-board read's to refuse.
@@ -947,8 +958,7 @@ def _parse_items_subtree(
         return MappingProxyType({})
     items: dict[str, ObjectId] = {}
     for name, entry in _direct_children(entries, ITEMS_DIRECTORY).items():
-        if entry.kind != "blob":
-            raise MalformedStateTreeError(f"{ITEMS_DIRECTORY}/{name} at {tip} is not a file")
+        _require_item_file(name, entry, tip=tip)
         item_id = item_id_of_filename(name)
         if item_id is not None:
             items[item_id] = entry.oid
@@ -1021,10 +1031,10 @@ def read_item_files(worktree: Path, tip: ObjectId) -> Mapping[str, bytes]:
     not exist -- the proven-empty-board case a fresh or GitHub-pinned
     repository is in.
 
-    Structural shape only: every entry must be a blob, the same doctrine
-    `claims/`/`ids/`/`resources/` already enforce (a broken tree is corrupt
-    state, ruling 9c). The file-name rule is `protocol.item_id_of_filename`'s
-    and the `[record]` content grammar stays `items.py`'s.
+    Structural shape only: every entry must be a file (`_require_item_file`;
+    a broken tree is corrupt state, ruling 9c). The file-name rule is
+    `protocol.item_id_of_filename`'s and the `[record]` content grammar
+    stays `items.py`'s.
     """
     tree_oid = _tree_oid(worktree, tip)
     top_entries = _list_tree(worktree, tree_oid, tip=tip, context="state")
@@ -1034,8 +1044,7 @@ def read_item_files(worktree: Path, tip: ObjectId) -> Mapping[str, bytes]:
         return MappingProxyType({})
     item_entries = _list_tree(worktree, items_oid, tip=tip, context=ITEMS_DIRECTORY)
     for name, entry in item_entries.items():
-        if entry.kind != "blob":
-            raise MalformedStateTreeError(f"{ITEMS_DIRECTORY}/{name} at {tip} is not a file")
+        _require_item_file(name, entry, tip=tip)
     return MappingProxyType(_read_state_archive(worktree, items_oid, tip=tip))
 
 
@@ -1387,6 +1396,13 @@ def _existing_subtree(existing: dict[str, _ListedEntry], directory: str) -> _Exi
     )
 
 
+def _carried_entry(entries: Mapping[str, _ListedEntry], name: str) -> _TreeEntry:
+    """`name`'s entry exactly as the observed tree holds it -- name, mode,
+    kind, blob -- for a write that does not change it (CAS-61, issue #565)."""
+    entry = entries[name]
+    return (entry.mode, entry.kind, entry.oid, name)
+
+
 def _reuse_or_write_mapping_subtree(
     worktree: Path,
     *,
@@ -1394,21 +1410,25 @@ def _reuse_or_write_mapping_subtree(
     old_members: Mapping[str, _SubtreeValueT],
     new_members: Mapping[str, _SubtreeValueT],
     serialize: Callable[[_SubtreeValueT], str],
-) -> ObjectId:
+) -> ObjectId | None:
     """A `claims/`- or `resources/`-shaped subtree's new oid, reusing every
     member unchanged since `old_members` (issue #241): frozen-dataclass
     equality on the parsed record is exactly serialization equality --
     `serialize` is a pure function of the record's fields -- so an identical
     record needs neither a new blob nor a new tree; only `mktree` for a
     directory that actually changed, never once per unchanged entry.
+    An unchanged directory, an empty one included, is carried as it stands
+    (CAS-61, issue #565); `None` while it is absent or this write empties it.
     """
-    if old_members == new_members and existing.oid is not None:
+    if old_members == new_members:
         return existing.oid
+    if not new_members:
+        return None
     entries: list[_TreeEntry] = []
     for name, value in new_members.items():
         entry_name = f"{name}{TOML_SUFFIX}"
         if old_members.get(name) == value:
-            entries.append(("100644", "blob", existing.children[entry_name].oid, entry_name))
+            entries.append(_carried_entry(existing.children, entry_name))
         else:
             entries.append(("100644", "blob", _write_blob(worktree, serialize(value)), entry_name))
     return _mktree(worktree, entries)
@@ -1420,18 +1440,20 @@ def _reuse_or_write_ids_subtree(
     existing: _ExistingSubtree,
     old_ids: frozenset[ClaimId],
     new_ids: frozenset[ClaimId],
-) -> ObjectId:
+) -> ObjectId | None:
     """`ids/`'s new subtree oid (issue #241): every id's blob is the same
     empty content, so reuse is membership-only -- the empty blob is written
-    at most once per call, never once per newly consumed id.
+    at most once per call, never once per newly consumed id. An unchanged
+    `ids/` is carried as it stands (CAS-61, issue #565), `None` while it is
+    absent; `protocol.apply` only ever adds ids, so a write never empties it.
     """
-    if old_ids == new_ids and existing.oid is not None:
+    if old_ids == new_ids:
         return existing.oid
     empty_blob: ObjectId | None = None
     entries: list[_TreeEntry] = []
     for claim_id in new_ids:
         if claim_id in old_ids:
-            entries.append(("100644", "blob", existing.children[claim_id].oid, claim_id))
+            entries.append(_carried_entry(existing.children, claim_id))
         else:
             if empty_blob is None:
                 empty_blob = _empty_blob_oid(worktree)
@@ -1462,9 +1484,7 @@ def _patch_items_subtree(
     written = {item_id: oid for item_id, oid in new_items.items() if old_items.get(item_id) != oid}
     if not written:
         return existing.oid
-    children = {
-        name: (entry.mode, entry.kind, entry.oid, name) for name, entry in existing.children.items()
-    }
+    children = {name: _carried_entry(existing.children, name) for name in existing.children}
     for item_id, oid in written.items():
         children[item_filename(item_id)] = ("100644", "blob", oid, item_filename(item_id))
     return _mktree(worktree, list(children.values()))
@@ -1480,70 +1500,50 @@ def _write_incremental_state_tree(
     loop, never cached on `ClaimState` itself, which stays free of this
     adapter detail.
 
-    `schema.toml` never changes after bootstrap, so its oid is always
-    reused; each of `claims/`/`ids/`/`resources/`/`items/` costs `mktree`
-    only when it actually differs from `observed`, plus one `mktree` for the
-    top -- the process count below is fixed regardless of the tree's size.
+    `schema.toml` never changes after bootstrap, so it is always carried
+    over; every entry a write does not change keeps its name, mode, and blob
+    (`_carried_entry`, CAS-61); each of `claims/`/`ids/`/`resources/`/
+    `items/` costs `mktree` only when it actually differs from `observed`,
+    plus one `mktree` for the top -- the process count below is fixed
+    regardless of the tree's size.
     Unlike `_write_bootstrap_tree`, which has no prior commit to diff
     against on a ref's very first write.
     """
     assert observed.tip is not None  # commit_transition already refused a missing ref
     existing = _list_tree(worktree, observed.tip, tip=observed.tip, context="state")
-    top_entries: list[_TreeEntry] = [
-        ("100644", "blob", existing[SCHEMA_TOML_FILENAME].oid, SCHEMA_TOML_FILENAME)
-    ]
+    top_entries: list[_TreeEntry] = [_carried_entry(existing, SCHEMA_TOML_FILENAME)]
     items_subtree = _patch_items_subtree(
         worktree,
         existing=_existing_subtree(existing, ITEMS_DIRECTORY),
         old_items=observed.items,
         new_items=new_state.items,
     )
-    if items_subtree is not None:
-        top_entries.append(("040000", "tree", items_subtree, ITEMS_DIRECTORY))
-    if new_state.claims:
-        top_entries.append(
-            (
-                "040000",
-                "tree",
-                _reuse_or_write_mapping_subtree(
-                    worktree,
-                    existing=_existing_subtree(existing, CLAIMS_DIRECTORY),
-                    old_members=observed.claims,
-                    new_members=new_state.claims,
-                    serialize=serialize_claim_toml,
-                ),
-                CLAIMS_DIRECTORY,
-            )
-        )
-    if new_state.consumed_ids:
-        top_entries.append(
-            (
-                "040000",
-                "tree",
-                _reuse_or_write_ids_subtree(
-                    worktree,
-                    existing=_existing_subtree(existing, IDS_DIRECTORY),
-                    old_ids=observed.consumed_ids,
-                    new_ids=new_state.consumed_ids,
-                ),
-                IDS_DIRECTORY,
-            )
-        )
-    if new_state.resources:
-        top_entries.append(
-            (
-                "040000",
-                "tree",
-                _reuse_or_write_mapping_subtree(
-                    worktree,
-                    existing=_existing_subtree(existing, RESOURCES_DIRECTORY),
-                    old_members=observed.resources,
-                    new_members=new_state.resources,
-                    serialize=serialize_resource_toml,
-                ),
-                RESOURCES_DIRECTORY,
-            )
-        )
+    subtrees = {
+        ITEMS_DIRECTORY: items_subtree,
+        CLAIMS_DIRECTORY: _reuse_or_write_mapping_subtree(
+            worktree,
+            existing=_existing_subtree(existing, CLAIMS_DIRECTORY),
+            old_members=observed.claims,
+            new_members=new_state.claims,
+            serialize=serialize_claim_toml,
+        ),
+        IDS_DIRECTORY: _reuse_or_write_ids_subtree(
+            worktree,
+            existing=_existing_subtree(existing, IDS_DIRECTORY),
+            old_ids=observed.consumed_ids,
+            new_ids=new_state.consumed_ids,
+        ),
+        RESOURCES_DIRECTORY: _reuse_or_write_mapping_subtree(
+            worktree,
+            existing=_existing_subtree(existing, RESOURCES_DIRECTORY),
+            old_members=observed.resources,
+            new_members=new_state.resources,
+            serialize=serialize_resource_toml,
+        ),
+    }
+    top_entries.extend(
+        ("040000", "tree", oid, directory) for directory, oid in subtrees.items() if oid is not None
+    )
     return _mktree(worktree, top_entries)
 
 

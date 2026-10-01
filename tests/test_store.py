@@ -10,6 +10,7 @@ semantics in Python.
 from __future__ import annotations
 
 import errno
+import re
 import subprocess
 import threading
 from collections import Counter
@@ -940,43 +941,63 @@ def test_read_item_files_reads_every_blob_under_items(bare_remote: Path, worktre
     assert store.read_item_files(worktree, tip) == {"aco-000001.md": b"item body\n"}
 
 
-def test_read_item_files_rejects_a_non_blob_entry(bare_remote: Path, worktree: Path) -> None:
+@pytest.fixture(
+    params=[
+        pytest.param(("040000", "tree", "aco-000001.md"), id="a-directory"),
+        pytest.param(("120000", "blob", "aco-000001.md"), id="a-symlink-named-as-an-item"),
+        pytest.param(("120000", "blob", "NOTANID"), id="a-symlink-naming-no-item"),
+        pytest.param(("160000", "commit", "aco-000001.md"), id="a-submodule"),
+    ]
+)
+def non_file_items_store(
+    request: pytest.FixtureRequest, bare_remote: Path, worktree: Path
+) -> tuple[protocol.ObjectId, str]:
+    """A pushed state ref whose `items/` holds one entry that is no file;
+    returns the tip and CAS-32's sentence for that entry."""
+    mode, kind, name = request.param
+    match kind:
+        case "tree":
+            target = _raw_tree(worktree, [])
+        case "commit":
+            target = _git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+        case _:
+            target = _blob(worktree, b"aco-000002.md")
+    items_tree = _raw_tree(worktree, [(mode, kind, target, name)])
     schema_blob = _blob(worktree, protocol.serialize_empty_schema_toml().encode())
-    inner_tree = _raw_tree(worktree, [])
-    items_tree = _raw_tree(worktree, [("040000", "tree", inner_tree, "aco-000001.md")])
     tip = protocol.ObjectId(
         _push_raw_state_tree(
             bare_remote,
             worktree,
             [
-                ("100644", "blob", schema_blob, "schema.toml"),
+                ("100644", "blob", schema_blob, store.SCHEMA_TOML_FILENAME),
                 ("040000", "tree", items_tree, store.ITEMS_DIRECTORY),
             ],
         )
     )
+    return tip, f"items/{name} at {tip} is not a file"
 
-    with pytest.raises(protocol.MalformedStateTreeError, match="is not a file"):
+
+def test_read_item_files_refuses_an_entry_that_is_no_file(
+    worktree: Path, non_file_items_store: tuple[protocol.ObjectId, str]
+) -> None:
+    """CAS-32 (issue #565): a directory, a symlink, or a submodule under
+    `items/` refuses by name, never left out of the read without a word."""
+    tip, refusal = non_file_items_store
+
+    with pytest.raises(protocol.MalformedStateTreeError, match=re.escape(refusal)):
         store.read_item_files(worktree, tip)
 
 
-def test_fetch_state_rejects_a_non_blob_entry_in_items(bare_remote: Path, worktree: Path) -> None:
-    """`ClaimState.items` (issue #279) enforces the same "every entry is a
-    blob" structural shape `read_item_files` already enforces -- proven here
-    through the state-parsing side rather than the lazy content read."""
-    schema_blob = _blob(worktree, protocol.serialize_empty_schema_toml().encode())
-    inner_tree = _raw_tree(worktree, [])
-    items_tree = _raw_tree(worktree, [("040000", "tree", inner_tree, "aco-000001.md")])
-    _push_raw_state_tree(
-        bare_remote,
-        worktree,
-        [
-            ("100644", "blob", schema_blob, "schema.toml"),
-            ("040000", "tree", items_tree, store.ITEMS_DIRECTORY),
-        ],
-    )
+def test_fetch_state_refuses_an_items_entry_that_is_no_file(
+    bare_remote: Path, worktree: Path, non_file_items_store: tuple[protocol.ObjectId, str]
+) -> None:
+    """`ClaimState.items` (issue #279) enforces the same CAS-32 shape
+    `read_item_files` does, through the state-parsing side."""
+    refusal = non_file_items_store[1]
+    remote = str(bare_remote)
 
-    with pytest.raises(protocol.MalformedStateTreeError, match="is not a file"):
-        store.fetch_state(worktree=worktree, remote=str(bare_remote))
+    with pytest.raises(protocol.MalformedStateTreeError, match=re.escape(refusal)):
+        store.fetch_state(worktree=worktree, remote=remote)
 
 
 def test_read_state_archive_short_circuits_on_an_empty_paths_list(worktree: Path) -> None:
@@ -2404,21 +2425,52 @@ def _push_items_store(
     return oids
 
 
-def _listing_outside_the_claim_ledger(remote: Path) -> dict[bytes, bytes]:
+def _state_ref_listing(remote: Path) -> dict[bytes, bytes]:
     """`git ls-tree -r -z` of the state ref in `remote`, raw path -> raw
-    `mode kind oid`, without the `claims/`/`ids/`/`resources/` a claim and
-    its release are meant to write."""
-    ledger = tuple(
-        f"{directory}/".encode()
-        for directory in (store.CLAIMS_DIRECTORY, store.IDS_DIRECTORY, store.RESOURCES_DIRECTORY)
-    )
+    `mode kind oid`."""
     listing = subprocess.run(
         ["git", "--git-dir", str(remote), "ls-tree", "-r", "-z", store.STATE_REF],
         check=True,
         capture_output=True,
     ).stdout
     records = (record.split(b"\t", 1) for record in listing.split(b"\0") if record)
-    return {path: header for header, path in records if not path.startswith(ledger)}
+    return {path: header for header, path in records}
+
+
+def _listing_outside_the_claim_ledger(remote: Path) -> dict[bytes, bytes]:
+    """`_state_ref_listing` without the `claims/`/`ids/`/`resources/` a
+    claim and its release are meant to write."""
+    ledger = tuple(
+        f"{directory}/".encode()
+        for directory in (store.CLAIMS_DIRECTORY, store.IDS_DIRECTORY, store.RESOURCES_DIRECTORY)
+    )
+    return {
+        path: header
+        for path, header in _state_ref_listing(remote).items()
+        if not path.startswith(ledger)
+    }
+
+
+def _claim_and_release_issue_42(worktree: Path, bare_remote: Path) -> None:
+    """A claim on issue 42, then its abandoned release, each committed onto
+    the state ref's fresh tip."""
+    transitions = (
+        (store.ClaimTransitionSubject("claim issue 42", item="42"), _issue_claim_intent(42)),
+        (
+            store.ClaimTransitionSubject("release issue 42", item="42"),
+            protocol.ReleaseIntent(
+                claim_id=protocol.ClaimId("a1"),
+                agent="Ada",
+                role="builder",
+                outcome=protocol.AbandonedRelease("done"),
+                operation_id="op-release",
+            ),
+        ),
+    )
+    for subject, intent in transitions:
+        store.commit_transition(
+            observed=fresh_observation(worktree, bare_remote), subject=subject, intent=intent
+        )
 
 
 @pytest.mark.parametrize(
@@ -2442,28 +2494,73 @@ def test_commit_transition_carries_every_items_entry_it_does_not_write_byte_for_
     item_write = _hashed_item_intent(
         worktree, item_id="aco-000002", content=b"second\n", operation_id="op-item"
     )
-    transitions = (
-        (store.ClaimTransitionSubject("claim issue 42", item="42"), _issue_claim_intent(42)),
-        (
-            store.ClaimTransitionSubject("release issue 42", item="42"),
-            protocol.ReleaseIntent(
-                claim_id=protocol.ClaimId("a1"),
-                agent="Ada",
-                role="builder",
-                outcome=protocol.AbandonedRelease("done"),
-                operation_id="op-release",
-            ),
-        ),
-        (store.TransitionSubject("write item aco-000002"), item_write),
-    )
 
-    for subject, intent in transitions:
-        store.commit_transition(
-            observed=fresh_observation(worktree, bare_remote), subject=subject, intent=intent
-        )
+    _claim_and_release_issue_42(worktree, bare_remote)
+    store.commit_transition(
+        observed=fresh_observation(worktree, bare_remote),
+        subject=store.TransitionSubject("write item aco-000002"),
+        intent=item_write,
+    )
 
     written = {b"items/aco-000002.md": f"100644 blob {item_write.new_oid}".encode()}
     assert _listing_outside_the_claim_ledger(bare_remote) == before | written
+
+
+def test_a_claim_and_its_release_keep_every_entry_they_do_not_write_by_mode(
+    bare_remote: Path, worktree: Path
+) -> None:
+    """CAS-61 across the whole tree (issue #565): an executable `schema.toml`
+    and `ids/` entry stay executable, same blob, through a claim and its
+    release."""
+    schema_blob = _blob(worktree, protocol.serialize_empty_schema_toml().encode())
+    ids_tree = _raw_tree(worktree, [("100755", "blob", _blob(worktree, b""), "earlier")])
+    _push_raw_state_tree(
+        bare_remote,
+        worktree,
+        [
+            ("100755", "blob", schema_blob, store.SCHEMA_TOML_FILENAME),
+            ("040000", "tree", ids_tree, store.IDS_DIRECTORY),
+        ],
+    )
+    untouched = (b"schema.toml", b"ids/earlier")
+    before = _state_ref_listing(bare_remote)
+
+    _claim_and_release_issue_42(worktree, bare_remote)
+
+    after = _state_ref_listing(bare_remote)
+    assert [after[path] for path in untouched] == [before[path] for path in untouched]
+
+
+def test_an_item_write_keeps_the_empty_ledger_directories_it_does_not_write(
+    bare_remote: Path, worktree: Path
+) -> None:
+    """CAS-61 across the whole tree (issue #565): an empty `claims/`,
+    `ids/`, and `resources/` stay through a write to one item."""
+    schema_blob = _blob(worktree, protocol.serialize_empty_schema_toml().encode())
+    empty_tree = _raw_tree(worktree, [])
+    ledger = (store.CLAIMS_DIRECTORY, store.IDS_DIRECTORY, store.RESOURCES_DIRECTORY)
+    _push_raw_state_tree(
+        bare_remote,
+        worktree,
+        [
+            ("100644", "blob", schema_blob, store.SCHEMA_TOML_FILENAME),
+            *(("040000", "tree", empty_tree, directory) for directory in ledger),
+        ],
+    )
+
+    store.commit_transition(
+        observed=fresh_observation(worktree, bare_remote),
+        subject=store.TransitionSubject("write item aco-000001"),
+        intent=_hashed_item_intent(worktree),
+    )
+
+    top_level = subprocess.run(
+        ["git", "--git-dir", str(bare_remote), "ls-tree", "--name-only", store.STATE_REF],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert sorted(top_level) == sorted([store.SCHEMA_TOML_FILENAME, store.ITEMS_DIRECTORY, *ledger])
 
 
 def test_fetch_state_keys_only_the_entries_the_item_file_name_rule_names(

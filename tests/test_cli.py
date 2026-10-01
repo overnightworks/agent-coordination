@@ -8950,6 +8950,7 @@ def _landing_scenario(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     unrelated_blocked_by: tuple[str, ...] = (),
+    foreign_entry: str | None = None,
 ) -> tuple[Path, state_board.StateRefBoard]:
     """The shared fixture every atomic-landing test builds on (issue #359):
     `storage = "state-ref"`, a real trunk history (`_landing_repository`),
@@ -8959,7 +8960,8 @@ def _landing_scenario(
     path) and `prepare_landing`/`mark_landed` (`state_board.py`'s) are
     exercised together, exactly as a real run composes them.
     `unrelated_blocked_by`, when given, seeds one further unclaimed item
-    carrying exactly those stored blockers (issue #546)."""
+    carrying exactly those stored blockers (issue #546); `foreign_entry`,
+    one further `items/` entry whose file name names no item (issue #565)."""
     monkeypatch.setattr(checkout, "trunk_landings", _LIVE_TRUNK_LANDINGS)
     repo = _landing_repository(tmp_path)
     _write_state_ref_pin(repo)
@@ -8977,6 +8979,8 @@ def _landing_scenario(
         item_oids[_UNRELATED_LANDING_ITEM_ID] = _landing_item_oid(
             items.item_number(_UNRELATED_LANDING_ITEM_ID)
         )
+    if foreign_entry is not None:
+        item_files[foreign_entry] = b"anything"
     client = state_board.StateRefBoard(
         repository=forge.RepositoryId("file", ("acme",), "items"),
         default_branch="main",
@@ -9087,6 +9091,24 @@ def test_release_merged_under_state_ref_hints_a_runnable_board_read_beside_an_un
     assert _arguments_bash_hands_aco(advice, tmp_path) == (0, ["board", "--json"])
     advised = issue_claim.main(["board", "--json"])
     assert (advised, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+
+
+def test_release_merged_refuses_beside_an_items_entry_that_names_no_item(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """PIN-13, PIN-36 (issue #565): `release --merged` refuses by the
+    foreign entry's name before it closes the item or releases its claim."""
+    _repo, client = _landing_scenario(monkeypatch, tmp_path, foreign_entry="NOTANID")
+
+    status = issue_claim.main(
+        ["release", "10", "--agent", "Codex Sol", "--claim-id", "claim-10", "--merged"]
+    )
+
+    assert (status, capsys.readouterr().err) == (
+        2,
+        "ERROR: items/NOTANID is not a valid item file name\n",
+    )
+    assert client.item_reference(10).state is forge.ItemState.OPEN
 
 
 def test_release_merged_refuses_a_trunk_item_the_state_ref_has_no_entry_for(
@@ -20126,6 +20148,14 @@ def _piping(text: str) -> Callable[[Path], contextlib.AbstractContextManager[Tex
 _piped_body_on_stdin = _piping(_ITEM_NEW_BODY)
 
 
+def main_with_piped_stdin(monkeypatch: pytest.MonkeyPatch, text: str, argv: list[str]) -> int:
+    """`printf ... | aco <argv>`: one run with `text` on a pipe as its
+    stdin, the pipe closed once the run returns."""
+    with _read_end_of_a_pipe_carrying(text) as stdin:
+        monkeypatch.setattr(sys, "stdin", stdin)
+        return issue_claim.main(argv)
+
+
 @contextlib.contextmanager
 def _terminal_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
     """A stdin a person types into, holding a line nobody piped."""
@@ -21153,7 +21183,7 @@ def _state_ref_item_edit(
     client = _state_ref_item_client(tmp_path)
     monkeypatch.setattr(client, "holds", lambda _number: True, raising=False)
     monkeypatch.setattr(client, "item_oid", lambda _number: "a" * 40, raising=False)
-    monkeypatch.setattr(sys, "stdin", io.StringIO(_state_ref_item_body("Edited Title")))
+    pipe(_state_ref_item_body("Edited Title"))
     return client, ["item", "edit", "42"]
 
 
@@ -21210,9 +21240,7 @@ def test_item_edit_json_reports_body_invalid_with_defects(
     `reason: "body_invalid"`, with `body --check`'s own `defects` list as a
     structured sibling, before any forge is ever resolved."""
     _write_state_ref_pin(tmp_path)
-    monkeypatch.setattr(sys, "stdin", io.StringIO("no block"))
-
-    status = issue_claim.main(["item", "edit", "42", "--json"])
+    status = main_with_piped_stdin(monkeypatch, "no block", ["item", "edit", "42", "--json"])
 
     assert status == 2
     captured = capsys.readouterr()
@@ -21776,13 +21804,15 @@ class _CountedRun:
     toplevel reads keyed by the directory git ran in (`None`: the process's
     own cwd), board configuration reads by the toplevel they read, and
     observations of `refs/aco/state`, a transition's own included, by the
-    worktree they fetched into (issues #477, #494)."""
+    worktree they fetched into (issues #477, #494); `piped`, the body a
+    command reading one gets on a pipe."""
 
     argv: list[str]
     toplevel_reads: dict[Path | None, int]
     config_reads: dict[Path | None, int]
     observations: dict[Path, int]
     exit_code: int = 0
+    piped: str | None = None
 
 
 def _read_once(
@@ -21832,8 +21862,8 @@ def _state_ref_next_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
 
 def _state_ref_item_edit_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    monkeypatch.setattr(sys, "stdin", io.StringIO(_state_ref_item_body("Edited Title")))
-    return _state_ref_command(["item", "edit", "314"], monkeypatch, tmp_path)
+    run = _state_ref_command(["item", "edit", "314"], monkeypatch, tmp_path)
+    return replace(run, piped=_state_ref_item_body("Edited Title"))
 
 
 def _state_ref_release_merged_command(
@@ -22038,6 +22068,7 @@ def _start_lost_answer_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
 def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    pipe_onto_stdin: Callable[[str], None],
     arrange: Callable[[pytest.MonkeyPatch, Path], _CountedRun],
 ) -> None:
     """Issue #457 proof 3: a run's static facts are read the first time a
@@ -22050,6 +22081,8 @@ def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
     command refused before it needs the state ref never makes (issue #477,
     CAS-53)."""
     run = arrange(monkeypatch, tmp_path)
+    if run.piped is not None:
+        pipe_onto_stdin(run.piped)
     reads = count_context_reads(monkeypatch)
 
     exit_code = main_exit_code(run.argv)

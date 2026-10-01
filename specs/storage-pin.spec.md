@@ -23,7 +23,8 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 | a key the configuration does not define | PIN-33 | PIN-33 | PIN-33 | PIN-33 | — |
 | `lane_shared` is no list of unique files inside the repository | PIN-36..PIN-38 | PIN-36..PIN-38 | PIN-36..PIN-38 | PIN-36..PIN-38 | — |
 | `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08, PIN-31 |
-| a state-ref item file itself is malformed | PIN-13..17, PIN-34, PIN-29 | ITEM-37 | ITEM-39, PIN-29 | BOARD-54 | — |
+| a state-ref item file itself is malformed | PIN-14..17, PIN-34, PIN-29 | ITEM-37 | ITEM-39, PIN-29 | BOARD-54 | — |
+| an `items/` entry whose file name names no item | PIN-36 (a whole-store command), PIN-35 (a one-item command) | PIN-36 | PIN-35 | PIN-36 | — |
 | a fresh item id, minted | PIN-06, PIN-07 | PIN-06, PIN-07 | — | — | — |
 
 \* PIN-04/PIN-05 gate only a command that resolves this repository's item
@@ -103,7 +104,9 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 
 ## The state-ref item file, one layer above the block
 
-- [ ] [PIN-13] An `items/<id>.md` entry whose filename is not `aco-` plus six lowercase hex characters plus `.md` makes a state-ref read refuse `items/<name> is not a valid item file name`.
+- [ ] [PIN-13] An `items/` entry whose file name is not `aco-` plus six lowercase hex characters plus `.md` makes a whole-store read refuse `items/<name> is not a valid item file name` (E-PIN-39).
+- [ ] [PIN-35] A command on one item goes past such an entry, which stays byte for byte (CAS-61): `item show`, `item edit`, `item close`, `ask`, `rule`, `brief`, `check`, and `start` up to its fresh claim (PIN-36).
+- [ ] [PIN-36] A command over the whole store refuses with PIN-13's sentence: `board` and its `--serve` ruling click, `next`, `rulings`, `cut`, `item new` (`--not-a-twin` too), a fresh `claim`, `release --merged`.
 - [ ] [PIN-14] A read of an `items/<id>.md` entry whose bytes are not valid UTF-8 refuses `item <id> is not valid UTF-8`, then ITEM-38's repair clause.
 - [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `agent-claim` block and `[record]` refuses `item <id> has a malformed agent-claim block`, then ITEM-38's repair clause (see E-PIN-07).
 - [ ] [PIN-16] An item whose own `record.parent` names an id no `items/` entry carries refuses `item <parent-id> is referenced as a parent but does not exist`.
@@ -343,6 +346,20 @@ exit 2
 $ aco item close <item-a>
 CLOSED <item-a>
 hint: could not read the board to report what this write freed (item <item-m> lists blocker <item-b> more than once); run `aco board --json` once it is repaired
+exit 0
+```
+
+### E-PIN-39 — an entry whose file name names no item
+
+Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/NOTANID` and `items/aco-000001` (no `.md`) hand-written, `<item-id>` open with no live claim
+
+```console
+$ aco next
+2> ERROR: items/NOTANID is not a valid item file name
+exit 2
+$ aco item close <item-id>
+CLOSED <item-id>
+hint: could not read the board to report what this write freed (items/NOTANID is not a valid item file name); run `aco board --json` once it is repaired
 exit 0
 ```
 
