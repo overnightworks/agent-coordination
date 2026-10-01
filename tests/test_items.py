@@ -269,6 +269,7 @@ class TestItemFilenames:
             pytest.param("aco-8F3A2C.md", id="uppercase-hex"),
             pytest.param("aco-8f3a2.md", id="too-short"),
             pytest.param("issue-42.md", id="wrong-prefix"),
+            pytest.param("aco-8f3a2c", id="no-suffix"),
         ],
     )
     def test_item_id_from_filename_refuses_a_malformed_name(self, filename: str) -> None:
@@ -303,7 +304,7 @@ class TestFormatItemId:
 
 class TestMintItemId:
     def test_mint_item_id_matches_the_item_id_pattern(self) -> None:
-        assert items.ITEM_ID_PATTERN.fullmatch(items.mint_item_id(()))
+        assert protocol.ITEM_ID_PATTERN.fullmatch(items.mint_item_id(()))
 
     def test_mint_item_id_skips_a_known_id_before_settling_on_a_fresh_one(self) -> None:
         candidates = iter(("aaaaaa", "aaaaaa", "bbbbbb"))
