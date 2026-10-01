@@ -1594,7 +1594,11 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> str | None:
             return None
     except ClaimError as error:
         failure = str(error)
-    return failure if branch_exists(branch) else None
+    try:
+        still_there = branch_exists(branch)
+    except ClaimError:
+        return failure
+    return failure if still_there else None
 
 
 @dataclass(frozen=True)

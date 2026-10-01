@@ -17581,10 +17581,10 @@ def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: P
     (Path(common.stdout.strip()) / "config.lock").touch()
 
 
-def _refuse_the_git_config_call(
+def _refuse_the_git_call(
     monkeypatch: pytest.MonkeyPatch, option: str, detail: str, *, served_first: int = 0
 ) -> None:
-    """Refuse every `git config` call naming `option` after the first
+    """Refuse every git call naming `option` after the first
     `served_first` of them."""
     run_git = checkout._git_run
     calls: list[list[str]] = []
@@ -17602,7 +17602,7 @@ def _refuse_the_git_config_call(
 
 
 def _refuse_the_branch_configuration_listing(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
-    _refuse_the_git_config_call(monkeypatch, "--get-regexp", "fatal: the listing failed")
+    _refuse_the_git_call(monkeypatch, "--get-regexp", "fatal: the listing failed")
 
 
 def _time_out_the_deletion_once_prepared(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
@@ -17659,29 +17659,32 @@ def _fail_to_start_the_deletion(monkeypatch: pytest.MonkeyPatch, _lane: Path) ->
     monkeypatch.setattr(process, "run_git_ref_transaction", _deny_the_start)
 
 
+def _fail_to_start_the_deletion_and_to_look_for_the_branch(
+    monkeypatch: pytest.MonkeyPatch, lane: Path
+) -> None:
+    _fail_to_start_the_deletion(monkeypatch, lane)
+    _refuse_the_git_call(monkeypatch, "show-ref", "fatal: the lookup failed")
+
+
 def _time_out_the_deletion_and_refuse_the_write_back(
     monkeypatch: pytest.MonkeyPatch, lane: Path
 ) -> None:
     _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    _refuse_the_git_config_call(monkeypatch, "--add", "error: the write-back failed")
+    _refuse_the_git_call(monkeypatch, "--add", "error: the write-back failed")
 
 
 def _time_out_the_deletion_and_refuse_the_write_back_midway(
     monkeypatch: pytest.MonkeyPatch, lane: Path
 ) -> None:
     _time_out_the_deletion_once_prepared(monkeypatch, lane)
-    _refuse_the_git_config_call(
-        monkeypatch, "--add", "error: the write-back failed", served_first=1
-    )
+    _refuse_the_git_call(monkeypatch, "--add", "error: the write-back failed", served_first=1)
 
 
 def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
     monkeypatch: pytest.MonkeyPatch, lane: Path
 ) -> None:
     _time_out_the_deletion_and_refuse_the_write_back_midway(monkeypatch, lane)
-    _refuse_the_git_config_call(
-        monkeypatch, "--remove-section", "fatal: the undo failed", served_first=1
-    )
+    _refuse_the_git_call(monkeypatch, "--remove-section", "fatal: the undo failed", served_first=1)
 
 
 @pytest.mark.parametrize(
@@ -17701,7 +17704,18 @@ def _time_out_the_deletion_then_refuse_the_write_back_midway_and_its_undo(
             None,
             id="deletion-failed-to-start",
         ),
-        pytest.param(_time_out_the_deletion_once_prepared, "", None, id="deletion-timed-out"),
+        pytest.param(
+            _fail_to_start_the_deletion_and_to_look_for_the_branch,
+            "git failed to run: denied\n",
+            None,
+            id="deletion-failed-to-start-and-branch-lookup-refused",
+        ),
+        pytest.param(
+            _time_out_the_deletion_once_prepared,
+            "git timed out while validating the build checkout\n",
+            None,
+            id="deletion-timed-out",
+        ),
         pytest.param(
             _time_out_the_deletion_and_refuse_the_write_back,
             "error: the write-back failed\n",
