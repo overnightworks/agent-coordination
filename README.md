@@ -131,7 +131,7 @@ git remote set-head origin main
 aco bootstrap
 ```
 
-Cut the epic and its first slice, fill in each body, then claim, build, and
+Cut the epic and its first slice, fill in each body, then start, build, and
 land the same way a GitHub lane does -- except a landing is verified from
 the trunk commit's own `Work-Item:` trailer instead of a pull request:
 
@@ -139,8 +139,8 @@ the trunk commit's own `Work-Item:` trailer instead of a pull request:
 aco item new --kind container --title "Ship the widget"
 aco item new --title "Build the widget" --parent <container-id>
 aco item edit <item-id> < body.md
-aco claim <item-id> --scope src/widget.py
-# build, then land a commit carrying "Work-Item: <item-id>" on main
+aco start <item-id>
+# build in the printed worktree, then land a commit carrying "Work-Item: <item-id>" on main
 aco release <item-id> --merged
 ```
 
