@@ -3560,7 +3560,7 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
     try:
         if context.config.storage is not body.Storage.STATE_REF:
             raise protocol.ClaimUnavailableError(ITEM_EDIT_GITHUB_REFUSAL)
-        new_body = _read_body_check_input()
+        new_body = _read_item_edit_body(parsed.item)
         defects = _body_shape_defects(new_body, storage=body.Storage.STATE_REF)
         if defects:
             return _refuse_item_body_invalid(defects, as_json=as_json)
@@ -3577,6 +3577,19 @@ def _cmd_item_edit(parsed: argparse.Namespace, context: RunContext) -> int:
         return 0
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
+
+
+def _read_item_edit_body(number: int) -> str:
+    """`item edit`'s new body, read only when stdin carries one
+    (`_stdin_carries_a_body`, issue #572): an idle socket, a terminal,
+    `/dev/null` or a closed stdin refuses at once, naming the redirect,
+    rather than hanging on a read or replacing the body with nothing."""
+    if not _stdin_carries_a_body():
+        item_id = items.format_item_id(number)
+        raise protocol.ClaimUnavailableError(
+            f"item edit {item_id} needs the new body on stdin: aco item edit {item_id} < body.md"
+        )
+    return _read_body_check_input()
 
 
 ITEM_EDIT_SIZE_COMMAND = "item edit --size"
