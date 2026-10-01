@@ -21448,7 +21448,8 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     assert captured.out == ""
     assert captured.err == (
         "ERROR: refs/aco/state holds 2 live claim(s); release them first "
-        "(aco release <id> --abandoned <reason>), or reset after they are gone: "
+        "(aco release <item>|--branch <branch> --abandoned <reason>), "
+        "or reset after they are gone: "
         "issue #42 by Codex Sol (builder) branch=codex/issue-42-reset claim=claim-42, "
         "issue #43 by Codex Sol (builder) branch=codex/issue-43-reset claim=claim-43\n"
     )

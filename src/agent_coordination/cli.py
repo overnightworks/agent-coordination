@@ -8076,7 +8076,8 @@ def _reset_live_claims_sentence(
     ]
     return (
         f"{store.STATE_REF} holds {len(named)} live claim(s); release them first "
-        f"(aco release <id> --abandoned <reason>), or reset after they are gone: {', '.join(named)}"
+        f"(aco release <item>|--branch <branch> --abandoned <reason>), "
+        f"or reset after they are gone: {', '.join(named)}"
     )
 
 
