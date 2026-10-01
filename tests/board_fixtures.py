@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
+from pathlib import Path
 from types import MappingProxyType
 
 from agent_coordination import board, metrics, protocol
-from agent_coordination.body import ItemKind, render_block
+from agent_coordination.body import BLOCK_FENCE_INFO, ItemKind, render_block
 from agent_coordination.protocol import ClaimRequest
 
 BASE = "a" * 40
@@ -213,10 +214,28 @@ def blocked_issue(
     return issue, {number: dependencies}
 
 
-def agent_claim_body(toml_text: str, *, fence: str = "```") -> str:
-    """A body carrying one recognized `agent-claim` fence around `toml_text`,
-    with ordinary prose before and after it (issue #150 §4)."""
-    return f"Prose before.\n\n{fence}agent-claim\n{toml_text}\n{fence}\n\nProse after.\n"
+def block_body(
+    toml_text: str,
+    *,
+    fence: str = "```",
+    before: str = "Prose before.\n\n",
+    after: str = "\nProse after.\n",
+) -> str:
+    """A body carrying one recognized block fence around `toml_text`, with
+    `before` above it and `after` below its closing line -- ordinary prose
+    on both sides by default (issue #150 §4)."""
+    return f"{before}{fence}{BLOCK_FENCE_INFO}\n{toml_text}\n{fence}\n{after}"
+
+
+def write_repository_config(
+    toplevel: Path, content: str = "", *, path: Path = board.CONFIG_PATH
+) -> None:
+    """`content` written as the repository configuration file `path` under
+    `toplevel` -- the board's by default, `board.BRIEF_CONFIG_PATH` for the
+    brief's -- its directory created when missing."""
+    config = toplevel / path
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(content, encoding="utf-8")
 
 
 MINIMAL_BLOCK_TOML = 'version = 1\nnow = "N"\nnext = "X"\ndone_when = "D"\n'
@@ -241,7 +260,7 @@ def complete_contract(
         "done_when": done_when,
         **block_entries,
     }
-    return agent_claim_body(render_block(data).rstrip("\n"))
+    return block_body(render_block(data).rstrip("\n"))
 
 
 FROZEN_TRIGGER = "eine zweite Maschine bekommt einen Grund"

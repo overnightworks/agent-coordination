@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from board_fixtures import BASE, request
+from board_fixtures import BASE, request, write_repository_config
 from cli_fixtures import (
     _git_checkout,
     _push_repository_trunk,
@@ -714,9 +714,7 @@ def test_path_is_tracked_reads_the_git_ls_files_exit_status(
 
 
 def _untracked_board_config(repository: Path) -> None:
-    config = repository / board.CONFIG_PATH.as_posix()
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text("version = 1\n")
+    write_repository_config(repository, "version = 1\n")
 
 
 def _write_gitignore_for_dot_directories(repository: Path) -> None:

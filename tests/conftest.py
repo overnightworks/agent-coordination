@@ -31,7 +31,7 @@ def _isolate_git_toplevel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
     `board.CONFIG_PATH` is read relative to `rev-parse --show-toplevel`, so a
     test that never overrides it would otherwise load and be governed by this
-    checkout's own `.agent-claim/board.toml`. A test that needs a specific
+    checkout's own `board.CONFIG_PATH`. A test that needs a specific
     toplevel keeps its own `monkeypatch.setattr(checkout, "_git_output", ...)`,
     which takes precedence over this default.
     """

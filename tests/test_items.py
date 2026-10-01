@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 import pytest
+from board_fixtures import MINIMAL_BLOCK_TOML, block_body
 
 from agent_coordination import items, protocol
 from agent_coordination.body import (
@@ -43,7 +44,7 @@ def _item_body(record: Mapping[str, object]) -> str:
     never hand-serialized, so a test fixture and the real writer can never
     drift apart (issue #248)."""
     data = {"version": 1, "now": "N", "next": "X", "done_when": "D", "record": dict(record)}
-    return f"Item body.\n\n```agent-claim\n{render_block(data)}```\n"
+    return block_body(render_block(data).removesuffix("\n"), before="Item body.\n\n", after="")
 
 
 def _defect_message(defects: tuple[ContractDefect, ...], field: str) -> str:
@@ -120,7 +121,7 @@ class TestRecordRefusedUnderGithub:
     def test_record_is_never_populated_under_github_storage(self) -> None:
         # A body with no record table at all is exactly what every existing
         # GitHub-stored item already parses as; `.record` must stay `None`.
-        body = '```agent-claim\nversion = 1\nnow = "N"\nnext = "X"\ndone_when = "D"\n```\n'
+        body = block_body(MINIMAL_BLOCK_TOML.removesuffix("\n"), before="", after="")
 
         parsed = parse_body(body)
 
@@ -143,9 +144,8 @@ _VALID_RECORD_TOML_LINES = {
 def _item_body_with_record_toml(overrides: Mapping[str, str]) -> str:
     fields = {**_VALID_RECORD_TOML_LINES, **overrides}
     record_lines = "\n".join(f"{key} = {value}" for key, value in fields.items())
-    return (
-        'Item body.\n\n```agent-claim\nversion = 1\nnow = "N"\nnext = "X"\n'
-        f'done_when = "D"\n\n[record]\n{record_lines}\n```\n'
+    return block_body(
+        f"{MINIMAL_BLOCK_TOML}\n[record]\n{record_lines}", before="Item body.\n\n", after=""
     )
 
 
@@ -240,10 +240,7 @@ class TestMalformedRecordDefects:
     def test_a_non_table_record_fails_loud(self) -> None:
         # `render_block` always renders `record` as a `[record]` table;
         # build the non-table shape by hand, the one case it cannot produce.
-        body = (
-            'Item body.\n\n```agent-claim\nversion = 1\nnow = "N"\nnext = "X"\n'
-            'done_when = "D"\nrecord = 1\n```\n'
-        )
+        body = block_body(f"{MINIMAL_BLOCK_TOML}record = 1", before="Item body.\n\n", after="")
 
         parsed = parse_body(body, storage=Storage.STATE_REF)
 

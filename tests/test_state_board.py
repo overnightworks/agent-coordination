@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TextIO
 
 import pytest
+from board_fixtures import MINIMAL_BLOCK_TOML, block_body, write_repository_config
 from cli_fixtures import count_context_reads, fresh_observation, stub_board_config_tracked
 from test_cli import (
     FakeForge,
@@ -50,12 +51,13 @@ from agent_coordination import board, checkout, forge, items, process, protocol,
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import (
     BLOCK_CHILD_SKELETON,
+    BLOCK_FENCE_INFO,
     CONTAINER_SKELETON_PROSE,
     ExpectationLine,
     ItemKind,
     Storage,
     expectation_lines,
-    locate_agent_claim_block,
+    locate_block,
     parse_body,
     render_block,
 )
@@ -153,13 +155,19 @@ class _Projection:
         return data
 
 
+def _prose_body(interior: str) -> str:
+    """A body of one prose line above the block holding `interior`, a
+    rendered block interior ending in its newline."""
+    return block_body(interior.removesuffix("\n"), before="Prose.\n\n", after="")
+
+
 def _github_body(projection: _Projection) -> str:
-    return f"Prose.\n\n```agent-claim\n{render_block(projection.block_data())}```\n"
+    return _prose_body(render_block(projection.block_data()))
 
 
 def _state_ref_body(projection: _Projection, record: dict[str, object]) -> str:
     data = {**projection.block_data(), "record": record}
-    return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
+    return _prose_body(render_block(data))
 
 
 def _record(
@@ -297,7 +305,7 @@ def _container_body_with_slices(
             title="Epic", state="open", kind="container", blocked_by=blocked_by, parent=parent
         ),
     }
-    return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
+    return _prose_body(render_block(data))
 
 
 def _item_files_with_container_slices(
@@ -326,7 +334,7 @@ def _item_files_with_one_scoped_slice(
         "slice": [entry],
         "record": _record(title="Epic", state="open", kind="container"),
     }
-    container_body = f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
+    container_body = _prose_body(render_block(data))
     return {**_item_files(), f"{CONTAINER_ID}.md": container_body.encode()}
 
 
@@ -483,7 +491,7 @@ def _edit_target_body(
         .replace('"RECORD-TITLE"', json.dumps(record_title))
         .replace('"SLICE-TITLE"', json.dumps(slice_title))
     )
-    return f"Prose.\n\n```agent-claim\n{block}```\n"
+    return _prose_body(block)
 
 
 def _edit_target_item_files() -> dict[str, bytes]:
@@ -710,8 +718,9 @@ _MALFORMED_CONTENTS = (
     ("content", "problem"),
     [
         pytest.param(
-            b'```agent-claim\nversion = 1\nnow = "N"\nnext = "X"\ndone_when = "D"\n\n'
-            b'[record]\ntitle = "Bare"\n```\n',
+            block_body(
+                f'{MINIMAL_BLOCK_TOML}\n[record]\ntitle = "Bare"', before="", after=""
+            ).encode(),
             "has a malformed agent-claim block",
             id="record-missing-required-fields",
         ),
@@ -1444,7 +1453,7 @@ class TestStateRefBoardWrites:
             'created_at = "2026-09-10T00:00:00Z"\n'
             'updated_at = "2026-09-15T00:00:00Z"\n'
         )
-        return f"Prose.\n\n```agent-claim\n{projection_block}{record_lines}```\n"
+        return _prose_body(f"{projection_block}{record_lines}")
 
     def _no_delivered_record_body(self) -> str:
         return _github_body(_CHILD_B_PROJECTION)
@@ -1587,7 +1596,8 @@ class TestStateRefBoardWrites:
         )
         stored_body = adapter.item_reference(CHILD_A_NUMBER).body
         assert stored_body is not None
-        oversized = stored_body.replace("```agent-claim\n", '```agent-claim\nsize = "XL"\n', 1)
+        opening = f"```{BLOCK_FENCE_INFO}\n"
+        oversized = stored_body.replace(opening, f'{opening}size = "XL"\n', 1)
         before = store.fetch_state(worktree=worktree, remote=str(bare_remote))
 
         with pytest.raises(ClaimUnavailableError) as refused:
@@ -1810,10 +1820,8 @@ class TestCliStateRefForge:
         `path_is_tracked` to report the pin tracked (#315): its `board.toml`
         is never actually `git add`ed, so a real `git ls-files` check would
         otherwise never see it."""
-        config_dir = worktree / ".agent-claim"
-        config_dir.mkdir()
-        (config_dir / "board.toml").write_text(
-            f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
+        write_repository_config(
+            worktree, f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
         )
         stub_board_config_tracked(monkeypatch)
         _redirect_toplevel(monkeypatch, worktree)
@@ -2125,7 +2133,7 @@ class TestCliStateRefForge:
         before_container = store.read_item_files(worktree, before_state.tip)[
             f"{CONTAINER_ID}.md"
         ].decode()
-        before_located = locate_agent_claim_block(before_container)
+        before_located = locate_block(before_container)
 
         status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "Slice C"])
 
@@ -2144,7 +2152,7 @@ class TestCliStateRefForge:
         child_record = _decoded_record(item_files_after[f"{child_id}.md"].decode(), child_id)
         assert child_record.parent == CONTAINER_ID
         after_container = item_files_after[f"{CONTAINER_ID}.md"].decode()
-        after_located = locate_agent_claim_block(after_container)
+        after_located = locate_block(after_container)
         assert (
             before_container[: before_located.content_start]
             == (after_container[: after_located.content_start])
@@ -2197,7 +2205,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
-        remaining = locate_agent_claim_block(container_body).data
+        remaining = locate_block(container_body).data
         assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
 
     @pytest.mark.parametrize(
@@ -2235,7 +2243,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
-        remaining = locate_agent_claim_block(container_body).data
+        remaining = locate_block(container_body).data
         assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
 
     @pytest.mark.parametrize(
@@ -2386,7 +2394,7 @@ class TestCliStateRefForge:
             for name in item_files_after
             if items.item_number(items.item_id_from_filename(name)) == child_number
         ]
-        data = locate_agent_claim_block(item_files_after[f"{child_id}.md"].decode()).data
+        data = locate_block(item_files_after[f"{child_id}.md"].decode()).data
         scope = data.get("scope")
         return None if scope is None else protocol.valid_scope(scope)
 
@@ -2509,7 +2517,7 @@ class TestCliStateRefForge:
         container = store.read_item_files(worktree, after.tip)[f"{CONTAINER_ID}.md"].decode()
         assert (status, observations) == (0, {worktree: 1})
         assert len(set(after.items) - before_ids) == 1
-        assert locate_agent_claim_block(container).data["slice"] == []
+        assert locate_block(container).data["slice"] == []
 
     def test_cut_adopts_the_child_after_a_partial_failure_from_a_competing_write(
         self,
@@ -2562,9 +2570,7 @@ class TestCliStateRefForge:
                     "slice": [{"index": 1, "title": "Slice C"}],
                     "record": _record(title="Epic", state="open", kind="container"),
                 }
-                competing_body = (
-                    f"Prose.\n\n```agent-claim\n{render_block(competing_data)}```\n"
-                ).encode()
+                competing_body = _prose_body(render_block(competing_data)).encode()
                 competing_intent = protocol.ItemWriteIntent(
                     item_id=CONTAINER_ID,
                     expected=container_oid_before,
@@ -2601,7 +2607,7 @@ class TestCliStateRefForge:
         raced_container = store.read_item_files(worktree, after_first.tip)[
             f"{CONTAINER_ID}.md"
         ].decode()
-        raced_data = locate_agent_claim_block(raced_container).data
+        raced_data = locate_block(raced_container).data
         assert raced_data["now"] == "Competing edit landed mid-cut."
         assert raced_data["slice"] == [{"index": 1, "title": "Slice C"}]
 
@@ -2617,7 +2623,7 @@ class TestCliStateRefForge:
         first_item_files = store.read_item_files(worktree, after_first.tip)
         assert len(second_item_files) == len(first_item_files)
         final_container = second_item_files[f"{CONTAINER_ID}.md"].decode()
-        assert locate_agent_claim_block(final_container).data["slice"] == []
+        assert locate_block(final_container).data["slice"] == []
 
     def test_cut_adopts_a_child_created_by_item_new_with_the_matching_title(
         self,
@@ -2661,7 +2667,7 @@ class TestCliStateRefForge:
             created_id,
         }
         container_body = item_files_after[f"{CONTAINER_ID}.md"].decode()
-        assert locate_agent_claim_block(container_body).data["slice"] == []
+        assert locate_block(container_body).data["slice"] == []
         adopted_body = item_files_after[f"{created_id}.md"].decode()
         adopted_record = _decoded_record(adopted_body, created_id)
         assert adopted_record.parent == CONTAINER_ID
@@ -2888,7 +2894,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        assert locate_agent_claim_block(stored).data["scope"] == ["src/a.py", "src/b.py"]
+        assert locate_block(stored).data["scope"] == ["src/a.py", "src/b.py"]
 
     def test_item_new_size_writes_the_top_level_field(
         self,
@@ -2912,7 +2918,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        assert locate_agent_claim_block(stored).data["size"] == "M"
+        assert locate_block(stored).data["size"] == "M"
 
     def test_item_new_whole_writes_the_top_level_field(
         self,
@@ -2936,7 +2942,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=remote_url)
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        assert locate_agent_claim_block(stored).data["whole"] == reason
+        assert locate_block(stored).data["whole"] == reason
 
     @pytest.mark.parametrize(
         ("stdin_source", "flags", "err", "prefix", "block"),
@@ -2975,7 +2981,7 @@ class TestCliStateRefForge:
             ),
             pytest.param(
                 _piping(
-                    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+                    f"Ship the importer.\n\n```{BLOCK_FENCE_INFO}\nversion = 1\n"
                     'now = "Ready."\nnext = ""\ndone_when = ""\n```\n'
                 ),
                 ("--now", "Ready.", "--size", "S"),
@@ -3038,7 +3044,7 @@ class TestCliStateRefForge:
         state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
         assert state.tip is not None
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
-        stored_block = locate_agent_claim_block(stored).data
+        stored_block = locate_block(stored).data
         assert stored.startswith(prefix)
         assert {key: stored_block[key] for key in block} == block
 
@@ -3907,7 +3913,8 @@ class TestCliStateRefForge:
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
-        assert after_body.split("```agent-claim", 1)[0] == edited_body.split("```agent-claim", 1)[0]
+        opening = f"```{BLOCK_FENCE_INFO}"
+        assert after_body.split(opening, 1)[0] == edited_body.split(opening, 1)[0]
         after_record = _decoded_record(after_body, CHILD_A_ID)
         assert after_record.created_at == before_record.created_at
         assert after_record.parent == before_record.parent
@@ -3939,7 +3946,7 @@ class TestCliStateRefForge:
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
-        assert locate_agent_claim_block(after_body).data["size"] == "L"
+        assert locate_block(after_body).data["size"] == "L"
         before_record = _decoded_record(before_body, CHILD_A_ID)
         after_record = _decoded_record(after_body, CHILD_A_ID)
         assert replace(after_record, updated_at=before_record.updated_at) == before_record
@@ -3969,7 +3976,7 @@ class TestCliStateRefForge:
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
-        assert locate_agent_claim_block(after_body).data["whole"] == reason
+        assert locate_block(after_body).data["whole"] == reason
         before_record = _decoded_record(before_body, CHILD_A_ID)
         after_record = _decoded_record(after_body, CHILD_A_ID)
         assert replace(after_record, updated_at=before_record.updated_at) == before_record

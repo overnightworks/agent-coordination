@@ -22,7 +22,7 @@ from board_fixtures import (
     MINIMAL_BLOCK_TOML,
     REPOSITORY,
     _store_claim_from_request,
-    agent_claim_body,
+    block_body,
     block_dependency,
     blocked_issue,
     board_issue,
@@ -38,6 +38,7 @@ from board_fixtures import (
 from agent_coordination import board, checkout, metrics, protocol
 from agent_coordination.body import (
     BLOCK_CHILD_SKELETON,
+    BLOCK_FENCE_INFO,
     EXPECTATION_LINE_TEXT_MAXIMUM,
     EXPECTATION_PICTURE_MAXIMUM_BYTES,
     EXPECTATION_QUESTION_MAXIMUM_CHARACTERS,
@@ -57,11 +58,11 @@ from agent_coordination.body import (
     expectation_line_state,
     expectation_line_summary,
     expectation_lines,
-    locate_agent_claim_block,
+    locate_block,
     missing_or_empty_sections,
     parse_body,
     render_block,
-    replace_agent_claim_block,
+    replace_block,
     rule_expectation,
 )
 from agent_coordination.protocol import ClaimError, ClaimRequest
@@ -100,7 +101,7 @@ def issue_230_body(*, default: str = "later") -> str:
             "expectation": [{"text": ISSUE_230_EXPECTATION_TEXT, "default": default}],
         }
     ).rstrip("\n")
-    return f"{ISSUE_230_PROSE}```agent-claim\n{interior}\n```\n\nProse after.\n"
+    return block_body(interior, before=ISSUE_230_PROSE)
 
 
 # --- rule_expectation ---
@@ -108,7 +109,7 @@ def issue_230_body(*, default: str = "later") -> str:
 
 @pytest.mark.parametrize("ruling", ["yes", "no", "later"])
 def test_rule_expectation_rules_a_proposed_line(ruling: str) -> None:
-    body = agent_claim_body(
+    body = block_body(
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
     )
 
@@ -123,7 +124,7 @@ def test_rule_expectation_rules_a_proposed_line(ruling: str) -> None:
 @pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_rule_expectation_preserves_every_byte_outside_the_ruled_line(newline: str) -> None:
     body = issue_230_body().replace("\n", newline)
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     prefix, suffix = body[: located.content_start], body[located.content_end :]
 
     new_body = rule_expectation(body, 1, "yes", date(2026, 9, 15))
@@ -136,7 +137,7 @@ def test_rule_expectation_preserves_every_byte_outside_the_ruled_line(newline: s
 
 
 def test_rule_expectation_refuses_an_already_ruled_line() -> None:
-    body = agent_claim_body(
+    body = block_body(
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\n'
         'ruling = "yes"\nruled_on = 2026-09-01\n'
     )
@@ -149,7 +150,7 @@ def test_rule_expectation_refuses_an_already_ruled_line() -> None:
 
 @pytest.mark.parametrize("index", [0, 2])
 def test_rule_expectation_refuses_an_out_of_range_line(index: int) -> None:
-    body = agent_claim_body(
+    body = block_body(
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
     )
 
@@ -160,7 +161,7 @@ def test_rule_expectation_refuses_an_out_of_range_line(index: int) -> None:
 
 
 def test_rule_expectation_refuses_an_unknown_ruling_value() -> None:
-    body = agent_claim_body(
+    body = block_body(
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
     )
 
@@ -171,7 +172,7 @@ def test_rule_expectation_refuses_an_unknown_ruling_value() -> None:
 
 
 def test_rule_expectation_appends_a_note_to_the_ruled_line_text() -> None:
-    body = agent_claim_body(
+    body = block_body(
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
     )
 
@@ -185,22 +186,20 @@ def test_rule_expectation_appends_a_note_to_the_ruled_line_text() -> None:
 
 @pytest.mark.parametrize("default", ["yes", "no", "later"])
 def test_append_expectation_adds_a_proposed_line(default: str) -> None:
-    body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML)
 
     new_body = append_expectation(body, "New question?", default)
 
     assert expectation_lines(new_body) == (
         ExpectationLine(1, "New question?", None, None, default=default),
     )
-    entries = locate_agent_claim_block(new_body).data["expectation"]
+    entries = locate_block(new_body).data["expectation"]
     assert entries == [{"text": "New question?", "default": default}]
     assert parse_body(new_body).expectation_state is ExpectationState.PROPOSED
 
 
 def test_append_expectation_appends_after_existing_lines() -> None:
-    body = agent_claim_body(
-        f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "First"\ndefault = "yes"\n'
-    )
+    body = block_body(f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "First"\ndefault = "yes"\n')
 
     new_body = append_expectation(body, "Second", "no")
 
@@ -213,7 +212,7 @@ def test_append_expectation_appends_after_existing_lines() -> None:
 @pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_append_expectation_preserves_every_byte_outside_the_appended_line(newline: str) -> None:
     body = issue_230_body(default="yes").replace("\n", newline)
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     prefix, suffix = body[: located.content_start], body[located.content_end :]
 
     new_body = append_expectation(body, "New question?", "yes")
@@ -226,14 +225,14 @@ def test_append_expectation_preserves_every_byte_outside_the_appended_line(newli
 
 
 def test_append_expectation_refuses_empty_text() -> None:
-    body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML)
 
     with pytest.raises(protocol.ClaimError, match="non-empty"):
         append_expectation(body, "   ", "yes")
 
 
 def test_append_expectation_refuses_an_unknown_default() -> None:
-    body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML)
 
     with pytest.raises(protocol.ClaimError, match="default must be"):
         append_expectation(body, "New question?", "maybe")
@@ -247,7 +246,7 @@ def test_append_expectation_writes_the_card_fields() -> None:
     line, `expectation_lines` surfaces all three, and a body with none of
     them (every earlier `append_expectation` test) keeps reading `None` --
     absent keys leave the line unchanged."""
-    body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML)
     card = ExpectationCardFields(
         question="Ship it?", example="Release on Friday.", picture=VALID_SVG_PICTURE
     )
@@ -266,7 +265,7 @@ def test_append_expectation_writes_the_card_fields() -> None:
             picture=VALID_SVG_PICTURE,
         ),
     )
-    entries = locate_agent_claim_block(new_body).data["expectation"]
+    entries = locate_block(new_body).data["expectation"]
     assert entries == [
         {
             "text": "New question?",
@@ -400,7 +399,7 @@ def test_expectation_picture_is_refused_by_both_the_parser_and_the_writer(
     picture reads MALFORMED at `expectation[0].picture`, and
     `append_expectation` refuses the same picture before any write --
     `_expectation_picture_defect` is the one owner both share."""
-    malformed_body = agent_claim_body(
+    malformed_body = block_body(
         render_block(
             {
                 "version": 1,
@@ -417,7 +416,7 @@ def test_expectation_picture_is_refused_by_both_the_parser_and_the_writer(
         ContractDefect("expectation[0].picture", f"expectation[0].picture {match}"),
     )
 
-    valid_body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    valid_body = block_body(MINIMAL_BLOCK_TOML)
     card = ExpectationCardFields(picture=picture)
     with pytest.raises(protocol.ClaimError, match=re.escape(match)):
         append_expectation(valid_body, "New question?", "yes", card=card)
@@ -432,7 +431,7 @@ def test_expectation_picture_allows_an_internal_anchor_href_with_surrounding_spa
     picture = '<svg><a href = "#x"><circle cx="5" cy="5" r="4"/></a></svg>'
     assert _expectation_picture_defect(picture) is None
 
-    body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML)
     updated = append_expectation(
         body, "New question?", "yes", card=ExpectationCardFields(picture=picture)
     )
@@ -461,7 +460,7 @@ def test_expectation_picture_allows_an_animated_href_with_every_values_segment_i
 
 
 def test_append_expectation_refuses_an_overlong_question() -> None:
-    body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML)
     card = ExpectationCardFields(question="Q" * (EXPECTATION_QUESTION_MAXIMUM_CHARACTERS + 1))
 
     with pytest.raises(protocol.ClaimError, match="question must be at most"):
@@ -469,7 +468,7 @@ def test_append_expectation_refuses_an_overlong_question() -> None:
 
 
 def test_append_expectation_refuses_an_empty_example() -> None:
-    body = agent_claim_body(MINIMAL_BLOCK_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML)
     card = ExpectationCardFields(example="   ")
 
     with pytest.raises(protocol.ClaimError, match="example must be a non-empty string"):
@@ -481,7 +480,7 @@ def test_parse_body_still_refuses_an_unknown_expectation_key() -> None:
     `picture`; any other key stays refused by name, unchanged."""
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "E"\ndefault = "yes"\nnote = "x"\n'
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects == (
@@ -495,7 +494,7 @@ def test_parse_body_refuses_a_non_string_expectation_question() -> None:
     case uses, not a TOML type error."""
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "E"\ndefault = "yes"\nquestion = 1\n'
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects == (
@@ -510,7 +509,7 @@ def test_parse_body_refuses_a_non_string_expectation_picture() -> None:
     is refused before any SVG-shape check runs."""
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "E"\ndefault = "yes"\npicture = 1\n'
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects == (
@@ -581,7 +580,7 @@ def test_render_block_round_trips_a_picture_carrying_any_control_character(
 
 
 def test_expectation_lines_reports_index_text_ruling_and_ruled_on() -> None:
-    body = agent_claim_body(
+    body = block_body(
         f"{MINIMAL_BLOCK_TOML}"
         '[[expectation]]\ntext = "Open one"\ndefault = "later"\n'
         '[[expectation]]\ntext = "Settled one"\nruling = "no"\nruled_on = 2026-09-01\n'
@@ -594,7 +593,7 @@ def test_expectation_lines_reports_index_text_ruling_and_ruled_on() -> None:
 
 
 def test_expectation_lines_reads_question_example_and_picture() -> None:
-    body = agent_claim_body(
+    body = block_body(
         render_block(
             {
                 "version": 1,
@@ -631,7 +630,7 @@ def test_expectation_lines_reads_question_example_and_picture() -> None:
     "body",
     [
         "No agent-claim fence at all.",
-        agent_claim_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n'),
+        block_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n'),
     ],
     ids=["no_block", "malformed"],
 )
@@ -683,7 +682,7 @@ def test_render_block_round_trips_every_field() -> None:
         '[[slice]]\nindex = 4\ntitle = "Block contract in issue bodies"\n'
         'scope = ["src/agent_coordination/board.py"]\n'
     )
-    located = locate_agent_claim_block(agent_claim_body(toml_text))
+    located = locate_block(block_body(toml_text))
 
     reparsed = tomllib.loads(render_block(located.data))
 
@@ -758,7 +757,7 @@ def test_render_block_re_renders_a_canonical_scope_body_byte_exact() -> None:
         scope=["docs/plan.md", "src/widget.py"],
         slice=[{"index": 1, "title": "Row", "scope": ["src/agent_coordination/board.py"]}],
     )
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     interior = body[located.content_start : located.content_end]
 
     assert render_block(located.data, located.newline) == interior
@@ -766,24 +765,19 @@ def test_render_block_re_renders_a_canonical_scope_body_byte_exact() -> None:
 
 def test_render_block_escapes_quotes_and_backslashes() -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Quote \\" and back\\\\slash"\n'
-    located = locate_agent_claim_block(agent_claim_body(toml_text))
+    located = locate_block(block_body(toml_text))
 
     reparsed = tomllib.loads(render_block(located.data))
 
     assert reparsed == located.data
 
 
-def test_replace_agent_claim_block_preserves_crlf_and_surrounding_bytes() -> None:
-    body = (
-        "Prose before.\r\n\r\n"
-        "```agent-claim\r\n"
-        'version = 1\r\nnow = "N"\r\nnext = "X"\r\ndone_when = "D"\r\n'
-        "```\r\n\r\nProse after.\r\n"
-    )
-    located = locate_agent_claim_block(body)
+def test_replace_block_preserves_crlf_and_surrounding_bytes() -> None:
+    body = block_body(MINIMAL_BLOCK_TOML.removesuffix("\n")).replace("\n", "\r\n")
+    located = locate_block(body)
     new_data = {**located.data, "now": "Changed"}
 
-    new_body = replace_agent_claim_block(body, located, new_data)
+    new_body = replace_block(body, located, new_data)
 
     assert new_body.startswith("Prose before.\r\n\r\n```agent-claim\r\n")
     assert new_body.endswith("```\r\n\r\nProse after.\r\n")
@@ -793,7 +787,7 @@ def test_replace_agent_claim_block_preserves_crlf_and_surrounding_bytes() -> Non
 
 def test_render_block_emits_an_empty_slice_array_after_removing_the_final_entry() -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Only slice"\n'
-    located = locate_agent_claim_block(agent_claim_body(toml_text))
+    located = locate_block(block_body(toml_text))
     new_data = {**located.data, "slice": []}
 
     rendered = render_block(new_data)
@@ -807,7 +801,7 @@ def test_uncut_is_empty_when_the_block_carries_no_slice_entry() -> None:
         79,
         "Container",
         (),
-        agent_claim_body(MINIMAL_BLOCK_TOML),
+        block_body(MINIMAL_BLOCK_TOML),
         "2026-08-20T00:00:00Z",
         "2026-08-20T00:00:00Z",
         kind=ItemKind.CONTAINER,
@@ -899,7 +893,7 @@ def test_child_skeleton_is_an_incomplete_contract_with_no_defects() -> None:
             id="closed_dependency",
         ),
         pytest.param(
-            board_issue(10, "Incomplete", agent_claim_body('version = 1\nnow = "Investigate."\n')),
+            board_issue(10, "Incomplete", block_body('version = 1\nnow = "Investigate."\n')),
             (),
             (),
             (False, "body malformed: next: next is required"),
@@ -1043,13 +1037,13 @@ def test_frozen_item_leaves_actionable_and_thaws_when_the_marker_is_removed() ->
     assert item.score == thawed_item.score
 
 
-def test_a_second_agent_claim_fence_inside_a_documentation_fence_is_not_read() -> None:
+def test_a_second_block_fence_inside_a_documentation_fence_is_not_read() -> None:
     """A body may document the block grammar in a fenced example; only one
     fence is ever open at a time, so the inner delimiter never opens a second
     recognized block and the real one stays the only read (#150 §4)."""
     body = (
-        agent_claim_body(MINIMAL_BLOCK_TOML)
-        + '\n~~~\n```agent-claim\nversion = 1\nnow = "Example only."\n```\n~~~\n'
+        block_body(MINIMAL_BLOCK_TOML)
+        + f'\n~~~\n```{BLOCK_FENCE_INFO}\nversion = 1\nnow = "Example only."\n```\n~~~\n'
     )
 
     parsed = parse_body(body)
@@ -1554,7 +1548,7 @@ def test_board_json_splits_a_container_childs_foreign_blocker() -> None:
         120,
         "Container",
         (),
-        agent_claim_body(MINIMAL_BLOCK_TOML),
+        block_body(MINIMAL_BLOCK_TOML),
         "2026-08-20T00:00:00Z",
         "2026-08-20T00:00:00Z",
         kind=ItemKind.CONTAINER,
@@ -1565,7 +1559,7 @@ def test_board_json_splits_a_container_childs_foreign_blocker() -> None:
         121,
         "Open child",
         (),
-        agent_claim_body(MINIMAL_BLOCK_TOML),
+        block_body(MINIMAL_BLOCK_TOML),
         "2026-08-20T00:00:00Z",
         "2026-08-20T00:00:00Z",
         blocked_by_count=1,
@@ -2369,7 +2363,7 @@ def test_load_brief_config_refuses_a_malformed_rules_or_checks_list(
 
 
 def test_parse_body_reads_a_valid_minimal_block() -> None:
-    parsed = parse_body(agent_claim_body(MINIMAL_BLOCK_TOML))
+    parsed = parse_body(block_body(MINIMAL_BLOCK_TOML))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.contract == Contract("N", "X", "D", ())
@@ -2380,7 +2374,7 @@ def test_parse_body_reads_a_valid_minimal_block() -> None:
 def test_parse_body_reads_a_skeleton_block_as_incomplete_but_valid() -> None:
     skeleton = 'version = 1\nnow = ""\nnext = ""\ndone_when = ""\n'
 
-    parsed = parse_body(agent_claim_body(skeleton))
+    parsed = parse_body(block_body(skeleton))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.contract_complete is False
@@ -2403,7 +2397,7 @@ def test_missing_or_empty_sections_never_names_a_dependency_key(
 ) -> None:
     """A body carries no dependency key at all -- dependencies live on the
     forge -- so naming one would refuse every correctly migrated body."""
-    contract = parse_body(agent_claim_body(toml_text)).contract
+    contract = parse_body(block_body(toml_text)).contract
 
     assert missing_or_empty_sections(contract) == missing
 
@@ -2415,8 +2409,8 @@ def test_parse_body_treats_a_fenceless_body_as_malformed() -> None:
     assert parsed.contract.defects == (ContractDefect("agent-claim", "no agent-claim block"),)
 
 
-def test_parse_body_refuses_multiple_agent_claim_blocks() -> None:
-    body = agent_claim_body(MINIMAL_BLOCK_TOML) + agent_claim_body(MINIMAL_BLOCK_TOML)
+def test_parse_body_refuses_multiple_blocks() -> None:
+    body = block_body(MINIMAL_BLOCK_TOML) + block_body(MINIMAL_BLOCK_TOML)
 
     parsed = parse_body(body)
 
@@ -2424,15 +2418,15 @@ def test_parse_body_refuses_multiple_agent_claim_blocks() -> None:
     assert parsed.contract.defects[0].field == "agent-claim"
 
 
-def test_parse_body_refuses_an_unclosed_agent_claim_block() -> None:
-    parsed = parse_body("```agent-claim\nversion = 1\n")
+def test_parse_body_refuses_an_unclosed_block() -> None:
+    parsed = parse_body(f"```{BLOCK_FENCE_INFO}\nversion = 1\n")
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects == (ContractDefect("agent-claim", "unclosed agent-claim block"),)
 
 
 def test_parse_body_refuses_invalid_toml() -> None:
-    parsed = parse_body(agent_claim_body("this is not toml ="))
+    parsed = parse_body(block_body("this is not toml ="))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0].field == "agent-claim"
@@ -2450,7 +2444,7 @@ def test_parse_body_orders_schema_defects_deterministically() -> None:
         "weird = 1\n"
     )
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert [defect.field for defect in parsed.contract.defects] == [
@@ -2497,7 +2491,7 @@ def test_parse_body_validates_the_expectation_variant_union(
 ) -> None:
     toml_text = f"{MINIMAL_BLOCK_TOML}[[expectation]]\n{entry_toml}"
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0].field == expected_field
@@ -2510,7 +2504,7 @@ def test_parse_body_ruling_date_is_the_oldest_across_non_monotonic_expectations(
         '[[expectation]]\ntext = "B"\nruling = "yes"\nruled_on = 2026-08-01\n'
     )
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.expectation_state is ExpectationState.RULED
@@ -2520,7 +2514,7 @@ def test_parse_body_ruling_date_is_the_oldest_across_non_monotonic_expectations(
 def test_parse_body_refuses_a_frozen_until_that_is_not_a_table() -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}frozen_until = "not a table"\n'
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0].field == "frozen_until.trigger"
@@ -2529,7 +2523,7 @@ def test_parse_body_refuses_a_frozen_until_that_is_not_a_table() -> None:
 def test_parse_body_refuses_a_non_table_expectation_entry() -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}expectation = ["oops"]\n'
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0].field == "expectation[0]"
@@ -2538,7 +2532,7 @@ def test_parse_body_refuses_a_non_table_expectation_entry() -> None:
 def test_parse_body_refuses_a_non_table_slice_entry() -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}slice = ["oops"]\n'
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0].field == "slice[0]"
@@ -2550,7 +2544,7 @@ def test_parse_body_refuses_a_duplicate_slice_index() -> None:
         '[[slice]]\nindex = 1\ntitle = "Second"\n'
     )
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0].field == "slice[1].index"
@@ -2566,7 +2560,7 @@ def test_parse_body_refuses_a_duplicate_slice_index() -> None:
 def test_parse_body_refuses_a_top_level_array_key_that_is_not_a_list(
     key: str, malformed_toml: str
 ) -> None:
-    parsed = parse_body(agent_claim_body(f"{MINIMAL_BLOCK_TOML}{malformed_toml}"))
+    parsed = parse_body(block_body(f"{MINIMAL_BLOCK_TOML}{malformed_toml}"))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0].field == key
@@ -2590,7 +2584,7 @@ def test_parse_body_refuses_an_invalid_top_level_scope(
     other refusal (absolute, `..`, an empty entry) is `protocol.valid_scope`'s
     own sentence, forwarded verbatim -- the one path grammar `claim` already
     owns, never a second one (issue #331)."""
-    parsed = parse_body(agent_claim_body(f"{MINIMAL_BLOCK_TOML}{scope_toml}"))
+    parsed = parse_body(block_body(f"{MINIMAL_BLOCK_TOML}{scope_toml}"))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     defect = parsed.contract.defects[0]
@@ -2615,7 +2609,7 @@ def test_parse_body_refuses_an_invalid_slice_scope(
     only prefixed with the row (issue #331)."""
     toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Row"\n{scope_toml}'
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     defect = parsed.contract.defects[0]
@@ -2628,21 +2622,21 @@ def test_parse_body_reads_a_valid_size(size: str) -> None:
     """Issue #357: `size` is a plain top-level block field -- valid under
     every storage, never nested under `[record]` (a `state-ref`-only table,
     BODY-15), since a GitHub-stored item has no such table at all."""
-    parsed = parse_body(agent_claim_body(f'{MINIMAL_BLOCK_TOML}size = "{size}"\n'))
+    parsed = parse_body(block_body(f'{MINIMAL_BLOCK_TOML}size = "{size}"\n'))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.size is metrics.Size(size)
 
 
 def test_parse_body_reads_no_size_as_none() -> None:
-    parsed = parse_body(agent_claim_body(MINIMAL_BLOCK_TOML))
+    parsed = parse_body(block_body(MINIMAL_BLOCK_TOML))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.size is None
 
 
 def test_parse_body_refuses_an_invalid_size() -> None:
-    parsed = parse_body(agent_claim_body(f'{MINIMAL_BLOCK_TOML}size = "XL"\n'))
+    parsed = parse_body(block_body(f'{MINIMAL_BLOCK_TOML}size = "XL"\n'))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0] == ContractDefect("size", "size must be S, M, or L")
@@ -2652,7 +2646,7 @@ def test_parse_body_refuses_a_non_scalar_size_without_crashing() -> None:
     """A list or table `size` value must never reach the `in SIZE_VALUES`
     membership test unchecked (issue #357 G1): a type check ahead of it
     reports the same defect sentence instead of raising `TypeError`."""
-    parsed = parse_body(agent_claim_body(f'{MINIMAL_BLOCK_TOML}size = ["M"]\n'))
+    parsed = parse_body(block_body(f'{MINIMAL_BLOCK_TOML}size = ["M"]\n'))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0] == ContractDefect("size", "size must be S, M, or L")
@@ -2680,21 +2674,21 @@ def test_parse_body_reads_a_valid_whole() -> None:
     """Issue #399: `whole` is a plain top-level block field -- `claim`/
     `start`'s own fallback for `--whole` when the call itself names none."""
     reason = "the four adapters share one lock"
-    parsed = parse_body(agent_claim_body(f'{MINIMAL_BLOCK_TOML}whole = "{reason}"\n'))
+    parsed = parse_body(block_body(f'{MINIMAL_BLOCK_TOML}whole = "{reason}"\n'))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.whole == reason
 
 
 def test_parse_body_reads_no_whole_as_none() -> None:
-    parsed = parse_body(agent_claim_body(MINIMAL_BLOCK_TOML))
+    parsed = parse_body(block_body(MINIMAL_BLOCK_TOML))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.whole is None
 
 
 def test_parse_body_refuses_a_blank_whole() -> None:
-    parsed = parse_body(agent_claim_body(f'{MINIMAL_BLOCK_TOML}whole = "   "\n'))
+    parsed = parse_body(block_body(f'{MINIMAL_BLOCK_TOML}whole = "   "\n'))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0] == ContractDefect("whole", "whole must be a non-empty string")
@@ -2704,7 +2698,7 @@ def test_parse_body_refuses_a_non_string_whole_without_crashing() -> None:
     """A list or table `whole` value must never reach `.strip()` unchecked
     (mirrors issue #357 G1's own `size` guard): a type check ahead of it
     reports the same defect sentence instead of raising `AttributeError`."""
-    parsed = parse_body(agent_claim_body(f"{MINIMAL_BLOCK_TOML}whole = [1]\n"))
+    parsed = parse_body(block_body(f"{MINIMAL_BLOCK_TOML}whole = [1]\n"))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0] == ContractDefect("whole", "whole must be a non-empty string")
@@ -2737,7 +2731,7 @@ def test_parse_body_refuses_scope_as_an_unknown_expectation_key() -> None:
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "E"\ndefault = "later"\nscope = ["src"]\n'
     )
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.MALFORMED
     assert parsed.contract.defects[0] == ContractDefect(
@@ -2750,7 +2744,7 @@ def test_parse_body_scope_defects_surface_through_the_body_check_rendering_path(
     <item>` both call -- is exactly `parse_body` plus
     `body_defect_text` over its defects; proven at that board.py level
     so this does not need `cli.py` at all (issue #331)."""
-    body = agent_claim_body(f"{MINIMAL_BLOCK_TOML}scope = []\n")
+    body = block_body(f"{MINIMAL_BLOCK_TOML}scope = []\n")
 
     parsed = parse_body(body)
 
@@ -2763,27 +2757,27 @@ def test_parse_body_handles_a_body_with_no_trailing_newline() -> None:
     """`_line_ending` (used while walking every line for a fenced block)
     must also return `""` for the last line of a body that ends without a
     newline at all -- an ordinary GitHub body shape, not just a CRLF/LF one."""
-    body = agent_claim_body(MINIMAL_BLOCK_TOML).rstrip("\n") + "\nProse with no trailing newline"
+    body = block_body(MINIMAL_BLOCK_TOML).rstrip("\n") + "\nProse with no trailing newline"
 
     parsed = parse_body(body)
 
     assert parsed.read_state is BodyReadState.VALID
 
 
-def test_locate_agent_claim_block_fails_loud_with_no_recognized_fence() -> None:
+def test_locate_block_fails_loud_with_no_recognized_fence() -> None:
     with pytest.raises(ClaimError, match="found no recognized agent-claim fence"):
-        locate_agent_claim_block("## Now\nOld prose.\n")
+        locate_block("## Now\nOld prose.\n")
 
 
-def test_locate_agent_claim_block_fails_loud_with_an_unclosed_fence() -> None:
+def test_locate_block_fails_loud_with_an_unclosed_fence() -> None:
     with pytest.raises(ClaimError, match="found no closed agent-claim fence"):
-        locate_agent_claim_block("```agent-claim\nversion = 1\n")
+        locate_block(f"```{BLOCK_FENCE_INFO}\nversion = 1\n")
 
 
 def test_parse_body_reads_an_emptied_slice_array_as_nothing_left_to_cut() -> None:
     toml_text = f"{MINIMAL_BLOCK_TOML}slice = []\n"
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.slices == ()
@@ -2794,7 +2788,7 @@ def test_parse_body_reads_slice_entries_as_still_uncut() -> None:
         f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 4\ntitle = "Block contract in issue bodies"\n'
     )
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.slices == (SliceRow(4, "Block contract in issue bodies"),)
 
@@ -2813,7 +2807,7 @@ def test_parse_body_projects_scope_top_level_and_per_slice_canonically() -> None
         '[[slice]]\nindex = 1\ntitle = "Row"\nscope = ["b.py", "a.py"]\n'
     )
 
-    parsed = parse_body(agent_claim_body(toml_text))
+    parsed = parse_body(block_body(toml_text))
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.scope == ("docs/plan.md", "src/widget.py")
@@ -2821,12 +2815,7 @@ def test_parse_body_projects_scope_top_level_and_per_slice_canonically() -> None
 
 
 def test_parse_body_recognizes_a_crlf_fenced_block() -> None:
-    body = (
-        "Prose before.\r\n\r\n"
-        "```agent-claim\r\n"
-        'version = 1\r\nnow = "N"\r\nnext = "X"\r\ndone_when = "D"\r\n'
-        "```\r\n\r\nProse after.\r\n"
-    )
+    body = block_body(MINIMAL_BLOCK_TOML.removesuffix("\n")).replace("\n", "\r\n")
 
     parsed = parse_body(body)
 
@@ -2857,7 +2846,7 @@ def test_next_action_skips_a_blockless_childless_container() -> None:
 
 
 def test_next_action_skips_a_malformed_childless_container() -> None:
-    body = agent_claim_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n')
+    body = block_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n')
     container = replace(
         board_issue(211, "Malformed container", body),
         kind=ItemKind.CONTAINER,
@@ -2915,7 +2904,7 @@ PARENT_ISSUE_REFERENCE = board.IssueReference(REPOSITORY, 79)
         pytest.param(
             ItemKind.CONTAINER,
             (board.ChildItem(80, board.ChildState.CLOSED),),
-            agent_claim_body('version = 2\nnow = "N"\nnext = "keiner"\ndone_when = "D"\n'),
+            block_body('version = 2\nnow = "N"\nnext = "keiner"\ndone_when = "D"\n'),
             None,
             id="a_malformed_parent_body_is_never_named",
         ),
@@ -2942,7 +2931,7 @@ def test_closable_container_number_decides_by_kind_children_uncut_rows_next_line
 
 
 def test_a_complete_block_item_is_body_complete_with_no_dependency_projection() -> None:
-    issue = board_issue(230, "Complete block item", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(230, "Complete block item", block_body(MINIMAL_BLOCK_TOML))
     projected = projected_board(
         (issue,),
         (),
@@ -2959,7 +2948,7 @@ def test_a_complete_block_item_is_body_complete_with_no_dependency_projection() 
 
 
 def test_board_reports_open_local_and_foreign_dependencies_as_blockers() -> None:
-    issue = board_issue(300, "Depends on two", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(300, "Depends on two", block_body(MINIMAL_BLOCK_TOML))
     dependencies = {
         300: (
             block_dependency(3),
@@ -2988,7 +2977,7 @@ def test_board_reports_open_local_and_foreign_dependencies_as_blockers() -> None
 def test_board_json_splits_local_and_foreign_blockers_only_in_block_mode() -> None:
     """A2 (#150): `open_blockers` keeps its pre-#150 local-int-only shape;
     `foreign_blockers` is a separate key, present only under the block pin."""
-    issue = board_issue(300, "Depends on two", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(300, "Depends on two", block_body(MINIMAL_BLOCK_TOML))
     dependencies = {
         300: (
             block_dependency(3),
@@ -3033,7 +3022,7 @@ def test_board_json_carries_an_empty_foreign_blockers_list_without_a_foreign_dep
 
 
 def test_board_never_frees_on_a_closed_foreign_dependency_alone() -> None:
-    issue = board_issue(302, "Foreign-only", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(302, "Foreign-only", block_body(MINIMAL_BLOCK_TOML))
     dependencies = {
         302: (
             block_dependency(
@@ -3063,7 +3052,7 @@ def test_board_never_frees_on_a_closed_foreign_dependency_alone() -> None:
 def test_board_treats_a_same_repository_pull_request_dependency_like_any_other() -> None:
     """Block mode has no `blocker-is-a-PR` check (prose-only): a same-
     repository PR dependency follows its own open/closed state."""
-    issue = board_issue(303, "PR blocker", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(303, "PR blocker", block_body(MINIMAL_BLOCK_TOML))
     dependencies = {303: (block_dependency(88, is_pull_request=True),)}
     projected = projected_board(
         (issue,),

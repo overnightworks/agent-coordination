@@ -326,7 +326,7 @@ class RunContext:
         except protocol.ClaimError as error:
             raise protocol.ClaimUnavailableError(
                 "this command reads the repository's body contract from "
-                ".agent-claim/board.toml and needs a checkout (a shallow one is "
+                f"{board.CONFIG_PATH} and needs a checkout (a shallow one is "
                 f"enough): {error}"
             ) from error
 

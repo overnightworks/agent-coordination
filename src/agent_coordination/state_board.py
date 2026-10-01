@@ -38,6 +38,7 @@ from typing import Protocol, cast
 
 from . import board, forge, items
 from .body import (
+    BLOCK_FENCE_INFO,
     RECORD_KEY,
     BodyReadState,
     ContractDefect,
@@ -45,11 +46,11 @@ from .body import (
     Storage,
     UnreadParent,
     body_defect_text,
-    locate_agent_claim_block,
+    locate_block,
     parse_body,
     readable_record_parent,
     readable_record_title,
-    replace_agent_claim_block,
+    replace_block,
 )
 from .protocol import (
     ClaimUnavailableError,
@@ -269,7 +270,7 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
     parsed = parse_body(text, storage=Storage.STATE_REF)
     if parsed.read_state is not BodyReadState.VALID or parsed.record is None:
         return _MalformedItem(
-            problem="has a malformed agent-claim block",
+            problem=f"has a malformed {BLOCK_FENCE_INFO} block",
             defect=(parsed.contract.defects or (_NO_RECORD,))[0],
             oid=oid,
             text=text,
@@ -282,7 +283,7 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
 def _malformed_item_refusal(item_id: str, malformed: _MalformedItem) -> MalformedStateTreeError:
     return MalformedStateTreeError(
         f"item {item_id} {malformed.problem}; repair it with aco item edit {item_id} "
-        "and a body whose agent-claim block carries a valid [record]"
+        f"and a body whose {BLOCK_FENCE_INFO} block carries a valid [record]"
     )
 
 
@@ -292,9 +293,9 @@ def _with_record(body: str, record: items.ItemRecord) -> str:
     write composes a fresh `[record]` table, shared by `create_child` (a
     brand new one), `update_item_body` (an existing one with `updated_at`
     refreshed), and `close_item` (an existing one moved to `CLOSED`)."""
-    located = locate_agent_claim_block(body)
+    located = locate_block(body)
     new_data = {**located.data, RECORD_KEY: items.record_table(record)}
-    return replace_agent_claim_block(body, located, new_data)
+    return replace_block(body, located, new_data)
 
 
 def _item_kind(kind: str | None) -> ItemKind | None:

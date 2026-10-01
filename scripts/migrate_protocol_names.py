@@ -190,7 +190,7 @@ def classify(body: str) -> Rewrite | Refusal | None:
 
 def _is_aco_opening(line: str) -> bool:
     """aco reads a fenced block as its own when the info string, stripped of spaces and tabs,
-    is exactly its name (`body._agent_claim_fence_matches`)."""
+    is exactly its name (`body._fence_matches`)."""
     opening = _FENCE.match(line)
     return opening is not None and opening["info"].strip(" \t") == NEW_FENCE_INFO
 
