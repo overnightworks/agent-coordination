@@ -137,6 +137,7 @@ sentence>`, not restated.
 ## What `release --merged` requires
 
 - [ ] [LAND-29] `release <n> --merged <pr>` succeeds once the pull request is merged into default and its merge commit's own `Work-Item:` trailer names this item (issue #397); LAND-55 closes a still-open one first.
+- [ ] [LAND-69] A pull request's merge commit is the commit GitHub recorded for its merge: a merge commit, or the one squash commit `aco land` lands with LANDCMD-27; LAND-29, 62, and 64 read either alike.
 - [ ] [LAND-49] A successful `--merged` release prints `freed: <label>, <label>` (or `none`) and `next: <label> score <s>: <title>` (or `none`); `--json` carries `"freed": [n,...]` and `"next": n`/`null`.
 - [ ] [LAND-30] A pull request that is not merged refuses `pull request #<n> is not merged`, exit `2`, before anything is written.
 - [ ] [LAND-31] A pull request merged into a branch other than the default refuses `pull request #<n> merged into '<branch>', not the default branch '<default>'`, exit `2`.

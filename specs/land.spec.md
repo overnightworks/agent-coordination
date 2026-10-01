@@ -14,8 +14,8 @@ is the pull request number as given, `<sha>` its merge commit, `<state>`
 GitHub's own `mergeable_state`, `<name>`/`<conclusion>` one check's own name
 and conclusion, `<path>` the board configuration `.agent-claim/board.toml`,
 `<setting>` one of the two settings in it a head may not change, `storage`
-and `canonical_remote` (`priority_labels`, `idea_label`, and `body_contract`
-may change), and a "head" the pull request's own head commit read during
+and `canonical_remote` (`priority_labels`, `idea_label`, `body_contract`, and
+`merge_method` may change), `<title>` the pull request's own title, and a "head" the pull request's own head commit read during
 preflight. "Checks" is every check run GitHub reports for the head sha
 (every page of `check-runs`) plus every combined-status context
 (`commits/<sha>/status`; an external context such as SonarCloud counts);
@@ -52,7 +52,8 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | claim held by another agent or role | LANDCMD-10 |
 | checkout unclean or off the default branch | LANDCMD-11 |
 | checkout without a git identity | LANDCMD-25 |
-| every precondition holds | LANDCMD-12, LANDCMD-13 |
+| the repository allows neither a merge commit nor a squash merge | LANDCMD-28 |
+| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-29 |
 | the pull request changed since it was read | LANDCMD-14 |
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
 | this repository's own pull request | LANDCMD-17 |
@@ -85,8 +86,12 @@ preflight, refused or not, exactly as `reset`'s own read does.
 
 ## Merge, composed by `aco land`
 
-- [ ] [LANDCMD-12] `aco land` merges with a real merge commit pinned to the head sha read during preflight, never a squash and never an unpinned re-read.
-- [ ] [LANDCMD-13] The merge commit's own message is the pull request body with its classification line removed, a blank line, then that classification as the message's own last paragraph, nothing after it.
+- [ ] [LANDCMD-12] `aco land` merges pinned to the head sha read during preflight, never an unpinned re-read, with the method LANDCMD-27 picks: a merge commit or one squash commit, never a rebase.
+- [ ] [LANDCMD-27] `merge_method = "merge"` or `"squash"` in `<path>` picks the method; without it, a merge commit where GitHub allows one or withholds its settings, a squash where it allows only squash.
+- [ ] [LANDCMD-28] A repository allowing neither refuses `pull request #<n> cannot land: this repository allows neither a merge commit nor a squash merge`, exit `2`, before any write (E-LANDCMD-28).
+- [ ] [LANDCMD-30] Any other `merge_method` refuses `board configuration <path> merge_method must be 'merge' or 'squash'`, exit `2`; a head carrying one refuses as LANDCMD-24.
+- [ ] [LANDCMD-29] The landed commit's title is `Merge pull request #<n>` for a merge commit and `<title> (#<n>)` for a squash commit.
+- [ ] [LANDCMD-13] Its message is the pull request body with its classification line removed, a blank line, then that classification as the message's own last paragraph, nothing after it.
 - [ ] [LANDCMD-14] A pull request whose head sha changed since preflight refuses the pinned merge with `pull request #<n> changed while it was checked; re-run land`, exit `2`; nothing merges.
 
 ## After the merge
@@ -104,7 +109,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - `aco land` never runs `release`'s own close, store transition, `freed`/`next` report, or worktree cleanup a second time; it delegates to the one existing `release --merged` path (`specs/release.spec.md`).
 - A step after the merge never re-merges: recovery always resumes from the pull request's own already-merged state, read fresh on every rerun.
 - Once merged, the delegated release never reads the pull request's own mutable body for routing: a fixer editing it away afterward changes nothing this pull request already landed (LAND-64).
-- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25) refuses.
+- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25, LANDCMD-28) refuses.
 - `aco land` never takes its storage, canonical remote, forge, or claim store from a head's `<path>`: this checkout's own tracked copy governs, and the head's copy is only checked (LANDCMD-22..24).
 
 ## Examples
@@ -201,6 +206,16 @@ Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check g
 ```console
 $ aco land 57
 2> ERROR: land must run from a checkout with a git identity; set user.name and user.email there so its release can commit to the claim state
+exit 2
+```
+
+### E-LANDCMD-28 — a repository allowing neither a merge commit nor a squash refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, no `merge_method` in `<path>`, the repository allowing only rebase merges
+
+```console
+$ aco land 57
+2> ERROR: pull request #57 cannot land: this repository allows neither a merge commit nor a squash merge
 exit 2
 ```
 

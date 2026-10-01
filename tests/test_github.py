@@ -1063,10 +1063,14 @@ def test_github_adapter_fails_loud_on_an_empty_mergeable_state() -> None:
         client.landing_readiness(57)
 
 
-def test_github_adapter_merges_a_pull_request_with_a_pinned_sha() -> None:
+@pytest.mark.parametrize("method", list(board.MergeMethod))
+def test_github_adapter_merges_a_pull_request_with_a_pinned_sha(
+    method: board.MergeMethod,
+) -> None:
     """Issue #405: `merge_landing` merges through `gh api --method PUT
     pulls/<n>/merge`, never `gh pr merge`, which re-reads the pull
-    request's own current head instead of the sha this call pins."""
+    request's own current head instead of the sha this call pins; issue
+    #578: with the method `land` chose, a merge commit or a squash."""
     observed: list[tuple[list[str], bytes | None]] = []
 
     def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
@@ -1076,7 +1080,11 @@ def test_github_adapter_merges_a_pull_request_with_a_pinned_sha() -> None:
     client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
 
     sha = client.merge_landing(
-        57, head_sha=MERGE_COMMIT_SHA, title="Merge pull request #57", body="Work-Item: #42\n"
+        57,
+        head_sha=MERGE_COMMIT_SHA,
+        method=method,
+        title="Merge pull request #57",
+        body="Work-Item: #42\n",
     )
 
     assert sha == MERGE_COMMIT_SHA
@@ -1086,13 +1094,70 @@ def test_github_adapter_merges_a_pull_request_with_a_pinned_sha() -> None:
             json.dumps(
                 {
                     "sha": MERGE_COMMIT_SHA,
-                    "merge_method": "merge",
+                    "merge_method": method.value,
                     "commit_title": "Merge pull request #57",
                     "commit_message": "Work-Item: #42\n",
                 }
             ).encode("utf-8"),
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ("settings", "allowed"),
+    [
+        pytest.param(
+            {"merge": True, "squash": True},
+            frozenset({board.MergeMethod.MERGE, board.MergeMethod.SQUASH}),
+            id="both",
+        ),
+        pytest.param(
+            {"merge": False, "squash": True}, frozenset({board.MergeMethod.SQUASH}), id="squash"
+        ),
+        pytest.param({"merge": False, "squash": False}, frozenset(), id="neither"),
+        pytest.param({"merge": None, "squash": None}, None, id="withheld-without-push-rights"),
+    ],
+)
+def test_github_adapter_reads_the_repositorys_allowed_merge_methods(
+    settings: dict[str, object], allowed: frozenset[board.MergeMethod] | None
+) -> None:
+    """Issue #578: `allowed_merge_methods` reads the repository's own
+    `allow_merge_commit`/`allow_squash_merge`, and `None` where GitHub
+    withholds both from a token without push rights."""
+    observed: list[list[str]] = []
+
+    def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        observed.append(arguments)
+        return json.dumps(settings)
+
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
+
+    assert client.allowed_merge_methods() == allowed
+    assert observed == [
+        [
+            "api",
+            f"repos/{REPOSITORY}",
+            "--jq",
+            "{merge:.allow_merge_commit,squash:.allow_squash_merge}",
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param(json.dumps({"merge": "yes", "squash": True}), id="not-a-boolean"),
+        pytest.param(json.dumps({"merge": None, "squash": True}), id="half-withheld"),
+        pytest.param(json.dumps([True, True]), id="not-an-object"),
+    ],
+)
+def test_github_adapter_fails_loud_on_malformed_merge_settings(answer: str) -> None:
+    client = GitHubForge(
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: answer
+    )
+
+    with pytest.raises(ClaimError, match="malformed repository merge settings"):
+        client.allowed_merge_methods()
 
 
 @pytest.mark.parametrize("status", [405, 409])
@@ -1110,7 +1175,13 @@ def test_github_adapter_reports_a_merge_conflict_when_the_pull_request_changed(
     )
 
     with pytest.raises(forge.ForgeMergeConflictError):
-        client.merge_landing(57, head_sha=MERGE_COMMIT_SHA, title="t", body="Work-Item: #42\n")
+        client.merge_landing(
+            57,
+            head_sha=MERGE_COMMIT_SHA,
+            method=board.MergeMethod.MERGE,
+            title="t",
+            body="Work-Item: #42\n",
+        )
 
 
 def _file_contents_client(answer: str | forge.ForgeError) -> GitHubForge:
@@ -1233,7 +1304,11 @@ def test_github_adapter_delete_branch_reraises_an_unrelated_422() -> None:
         pytest.param(lambda client: client.delete_branch(LANDING_BRANCH), id="delete-branch"),
         pytest.param(
             lambda client: client.merge_landing(
-                57, head_sha=MERGE_COMMIT_SHA, title="t", body="Work-Item: #42\n"
+                57,
+                head_sha=MERGE_COMMIT_SHA,
+                method=board.MergeMethod.MERGE,
+                title="t",
+                body="Work-Item: #42\n",
             ),
             id="merge-landing",
         ),
@@ -1303,7 +1378,13 @@ def test_github_adapter_fails_loud_on_a_malformed_merge_result(result: dict[str,
     )
 
     with pytest.raises(ClaimError, match="malformed merge result"):
-        client.merge_landing(57, head_sha=MERGE_COMMIT_SHA, title="t", body="Work-Item: #42\n")
+        client.merge_landing(
+            57,
+            head_sha=MERGE_COMMIT_SHA,
+            method=board.MergeMethod.MERGE,
+            title="t",
+            body="Work-Item: #42\n",
+        )
 
 
 def test_github_adapter_fails_loud_on_a_merge_result_with_more_than_one_value() -> None:
@@ -1313,7 +1394,13 @@ def test_github_adapter_fails_loud_on_a_merge_result_with_more_than_one_value() 
     )
 
     with pytest.raises(ClaimError, match="malformed merge result"):
-        client.merge_landing(57, head_sha=MERGE_COMMIT_SHA, title="t", body="Work-Item: #42\n")
+        client.merge_landing(
+            57,
+            head_sha=MERGE_COMMIT_SHA,
+            method=board.MergeMethod.MERGE,
+            title="t",
+            body="Work-Item: #42\n",
+        )
 
 
 def test_recent_merged_pull_requests_refuses_a_window_that_ends_before_it_starts() -> None:
@@ -2586,6 +2673,7 @@ def api_pull_request(**overrides: object) -> dict[str, object]:
     owner, _, name = REPOSITORY.partition("/")
     payload: dict[str, object] = {
         "number": 12,
+        "title": "feat: land the lane",
         "body": "Work-Item: #72",
         "baseRefName": "main",
         "headRefName": LANDING_BRANCH,
@@ -2615,6 +2703,7 @@ def test_github_adapter_reads_a_pull_request_and_the_default_branch() -> None:
         "main",
         True,
         MERGE_COMMIT_SHA,
+        "feat: land the lane",
     )
     assert dataclasses.astuple(client.landing(12)) == dataclasses.astuple(expected)
     assert client.default_branch() == "main"
@@ -2658,6 +2747,7 @@ def test_github_adapter_fails_loud_when_github_answers_for_another_pull_request(
     [
         pytest.param({"number": 12, "body": "b"}, id="missing-refs"),
         pytest.param(api_pull_request(author={}), id="author-without-login"),
+        pytest.param(api_pull_request(title=None), id="missing-title"),
         pytest.param(api_pull_request(mergedAt="yesterday"), id="malformed-merge-time"),
         pytest.param(api_pull_request(headRepository={}), id="head-repository-without-name"),
         pytest.param(

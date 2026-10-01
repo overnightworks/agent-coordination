@@ -405,6 +405,16 @@ class LandingRow:
     evidence: LandingEvidence
 
 
+class MergeMethod(StrEnum):
+    """How `aco land` merges a pull request (issue #578), in GitHub's own
+    `merge_method` vocabulary: the two methods whose one landed commit can
+    carry the composed trailer. A rebase lands every lane commit instead,
+    so `land` never uses it."""
+
+    MERGE = "merge"
+    SQUASH = "squash"
+
+
 @dataclass(frozen=True)
 class BoardConfig:
     priority_labels: tuple[str, ...] = DEFAULT_PRIORITY_LABELS
@@ -418,6 +428,10 @@ class BoardConfig:
     # guessed from the remote's own host. `github` is the default -- every
     # repository pinned today lives there.
     storage: Storage = Storage.GITHUB
+    # The repository's own history convention for `aco land` (issue #578):
+    # a forge may allow several methods while the repository keeps one, so
+    # a pin here beats the forge's allowed methods; `None` asks the forge.
+    merge_method: MergeMethod | None = None
 
 
 # The body pin (issue #150) is still a key this file defines, but no longer
@@ -646,6 +660,18 @@ def _validated_storage(raw: dict[str, object], path: Path) -> Storage:
     )
 
 
+def _validated_merge_method(raw: dict[str, object], path: Path) -> MergeMethod | None:
+    method_raw = raw.get("merge_method")
+    if method_raw is None:
+        return None
+    if isinstance(method_raw, str) and method_raw in set(MergeMethod):
+        return MergeMethod(method_raw)
+    raise protocol.ClaimError(
+        f"board configuration {path} merge_method must be "
+        f"{MergeMethod.MERGE.value!r} or {MergeMethod.SQUASH.value!r}"
+    )
+
+
 def _refuse_unknown_config_keys(raw: dict[str, object], path: Path) -> None:
     """Name a key this file does not define, the way the block parser names
     an unknown top-level key.
@@ -691,6 +717,7 @@ def parse_config(text: str, path: Path) -> BoardConfig:
         idea_label=_validated_idea_label(raw),
         canonical_remote=_validated_canonical_remote(raw, path),
         storage=_validated_storage(raw, path),
+        merge_method=_validated_merge_method(raw, path),
     )
 
 

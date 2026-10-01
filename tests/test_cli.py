@@ -146,16 +146,27 @@ def _live_store_claim() -> protocol.ActiveClaim:
     return next(iter(state.claims.values()))
 
 
-def _merge_on_the_forge(remote: Path, default_branch: str, source_branch: str, message: str) -> str:
-    """The merge commit a forge's own merge of `source_branch` into
-    `default_branch` pushes to the bare `remote`, built in a clone of it
+def _merge_on_the_forge(
+    remote: Path,
+    default_branch: str,
+    source_branch: str,
+    message: str,
+    method: board.MergeMethod,
+) -> str:
+    """The commit a forge's own merge of `source_branch` into
+    `default_branch` with `method` pushes to the bare `remote` -- a merge
+    commit, or one squashed single-parent commit -- built in a clone of it
     beside `remote` so no landing checkout moves with it."""
     clone = remote.parent / "forge-merge"
     _real_git(remote.parent, "clone", "-q", "-b", default_branch, str(remote), str(clone))
     _real_git(clone, "config", "user.name", "Forge")
     _real_git(clone, "config", "user.email", "forge@example.com")
     _real_git(clone, "config", "commit.gpgsign", "false")
-    _real_git(clone, "merge", "-q", "--no-ff", "-m", message, f"origin/{source_branch}")
+    if method is board.MergeMethod.SQUASH:
+        _real_git(clone, "merge", "-q", "--squash", f"origin/{source_branch}")
+        _real_git(clone, "commit", "-q", "-m", message)
+    else:
+        _real_git(clone, "merge", "-q", "--no-ff", "-m", message, f"origin/{source_branch}")
     _real_git(clone, "push", "-q", "origin", f"HEAD:{default_branch}")
     return _real_git(clone, "rev-parse", "HEAD").stdout.strip()
 
@@ -189,10 +200,11 @@ class FakeForge:
     drop_created_issue_type: bool = False
     capability_overrides: dict[forge.ForgeOperation, forge.Capability] = field(default_factory=dict)
     readiness_by_number: dict[int, forge.LandingReadiness] = field(default_factory=dict)
-    merge_calls: list[tuple[int, str, str, str]] = field(default_factory=list)
+    merge_calls: list[tuple[int, str, board.MergeMethod, str, str]] = field(default_factory=list)
     merge_sha: str = MERGE_COMMIT_SHA
     merge_remote: Path | None = None
     closes_on_merge: bool = False
+    allowed_methods: frozenset[board.MergeMethod] | None = None
     fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
     head_board_config: str | None = ""
@@ -303,17 +315,31 @@ class FakeForge:
             raise ClaimError(f"GitHub has no readiness for pull request #{number}")
         return readiness
 
-    def merge_landing(self, number: int, *, head_sha: str, title: str, body: str) -> str:
+    def allowed_merge_methods(self) -> frozenset[board.MergeMethod] | None:
+        """This fake's mirror of `GitHubForge.allowed_merge_methods` (issue
+        #578): `allowed_methods`, `None` -- settings withheld -- by default."""
+        self._run()
+        return self.allowed_methods
+
+    def merge_landing(
+        self,
+        number: int,
+        *,
+        head_sha: str,
+        method: board.MergeMethod,
+        title: str,
+        body: str,
+    ) -> str:
         """This fake's mirror of `GitHubForge.merge_landing` (issue #405):
         records every call for an adapter-shaped assertion, and, when
         `merge_remote` names a real bare repository (`land`'s own end-to-end
-        tests), merges there into its default branch, as the forge does on
-        its own side, so the landing checkout stands behind until its own
-        real fast-forward. `closes_on_merge` closes every issue the pull
-        request body names with `Closes #<n>`, as GitHub itself does on the
-        merge, before the release ever reads it (issue #578)."""
+        tests), merges there into its default branch with `method`, as the
+        forge does on its own side, so the landing checkout stands behind
+        until its own real fast-forward. `closes_on_merge` closes every issue
+        the pull request body names with `Closes #<n>`, as GitHub itself does
+        on the merge, before the release ever reads it (issue #578)."""
         self._run()
-        self.merge_calls.append((number, head_sha, title, body))
+        self.merge_calls.append((number, head_sha, method, title, body))
         if self.fail_merge is not None:
             raise self.fail_merge
         sha = self.merge_sha
@@ -328,6 +354,7 @@ class FakeForge:
                 self.default_branch_name,
                 landing.source_branch,
                 f"{title}\n\n{body}",
+                method,
             )
         self.landings[number] = replace(landing, merged=True, merge_commit=sha)
         return sha
@@ -445,7 +472,9 @@ class ReaderOnlyForge(FakeForge):
     def close_landed_item(self, number: int, *, pull_request: int) -> None:
         pytest.fail("a read-only command must never close a landed item")
 
-    def merge_landing(self, number: int, *, head_sha: str, title: str, body: str) -> str:
+    def merge_landing(
+        self, number: int, *, head_sha: str, method: board.MergeMethod, title: str, body: str
+    ) -> str:
         pytest.fail("a read-only command must never merge a pull request")
 
     def delete_branch(self, branch: str) -> None:
@@ -14664,6 +14693,7 @@ def landing_pull_request(
     author: str = "ada",
     merged: bool = False,
     merge_commit: str | None = None,
+    title: str = "feat: land the lane",
 ) -> forge.Landing:
     """`merge_commit` defaults to a shared, well-formed sha once `merged` is
     true (a real merged pull request always carries one) and to `None`
@@ -14678,6 +14708,7 @@ def landing_pull_request(
         base_ref_name,
         merged,
         merge_commit if merge_commit is not None else (MERGE_COMMIT_SHA if merged else None),
+        title,
     )
 
 
@@ -16964,6 +16995,13 @@ def _toml_syntax_error(text: str) -> str:
             id="invalid",
         ),
         pytest.param(
+            'merge_method = "rebase"\n',
+            False,
+            "pull request #12 carries an invalid .agent-claim/board.toml: board configuration "
+            ".agent-claim/board.toml merge_method must be 'merge' or 'squash'",
+            id="invalid-merge-method",
+        ),
+        pytest.param(
             "not toml =",
             False,
             "pull request #12 carries an invalid .agent-claim/board.toml: cannot read board "
@@ -17161,7 +17199,7 @@ def test_land_merges_a_green_pull_request_and_runs_the_release_path(
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
 
-    [(number, head_sha, _title, body)] = client.merge_calls
+    [(number, head_sha, _method, _title, body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
     assert client.file_reads == [(board.CONFIG_PATH, head_sha)]
     paragraphs = body.strip().split("\n\n")
@@ -17190,12 +17228,82 @@ def test_land_merges_an_issueless_lane_pull_request(
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
 
-    [(number, head_sha, _title, body)] = client.merge_calls
+    [(number, head_sha, _method, _title, body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
     assert body.strip().split("\n\n")[-1] == "No-Item: docs"
     assert client.deleted_branches == [LANE_BRANCH]
     assert client.closed_issues == set()
     assert store.fetch_state(worktree=Path("."), remote="origin").claims == {}
+
+
+_MERGE = board.MergeMethod.MERGE
+_SQUASH = board.MergeMethod.SQUASH
+
+
+@pytest.mark.parametrize(
+    ("pinned", "allowed", "landed"),
+    [
+        pytest.param(None, None, (_MERGE, "Merge pull request #12", 2), id="settings-withheld"),
+        pytest.param(
+            None, frozenset({_MERGE, _SQUASH}), (_MERGE, "Merge pull request #12", 2), id="both"
+        ),
+        pytest.param(
+            None, frozenset({_SQUASH}), (_SQUASH, "feat: land the lane (#12)", 1), id="only-squash"
+        ),
+        pytest.param(
+            "squash",
+            frozenset({_MERGE, _SQUASH}),
+            (_SQUASH, "feat: land the lane (#12)", 1),
+            id="pinned-squash-beats-the-forge",
+        ),
+        pytest.param(
+            "merge",
+            frozenset({_SQUASH}),
+            (_MERGE, "Merge pull request #12", 2),
+            id="pinned-merge-beats-the-forge",
+        ),
+        pytest.param(None, frozenset(), None, id="neither-refuses-before-the-merge"),
+    ],
+)
+def test_land_merges_with_the_method_the_repository_allows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    pinned: str | None,
+    allowed: frozenset[board.MergeMethod] | None,
+    landed: tuple[board.MergeMethod, str, int] | None,
+) -> None:
+    """Issue #578 line 2: `land` merges with the board configuration's own
+    `merge_method` pin, else the method the forge allows -- a squash commit
+    titled `<pull request title> (#<n>)` where only squash is allowed -- and
+    the delegated `release --merged` accepts that single-parent commit's own
+    trailer exactly as it accepts a merge commit's."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = allowed
+    if pinned is not None:
+        (repo / ".agent-claim").mkdir()
+        (repo / board.CONFIG_PATH).write_text(f'merge_method = "{pinned}"\n')
+        _real_git(repo, "add", "-f", str(board.CONFIG_PATH))
+        _real_git(repo, "commit", "-q", "-m", "pin the merge method")
+        _real_git(repo, "push", "-q", "origin", "main")
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    error = capsys.readouterr().err
+    if landed is None:
+        assert (status, error, client.merge_calls) == (
+            2,
+            "ERROR: pull request #12 cannot land: this repository allows neither a merge "
+            "commit nor a squash merge\n",
+            [],
+        )
+        return
+    [(_number, _head_sha, method, title, body)] = client.merge_calls
+    trunk = _real_git(repo, "rev-parse", "main").stdout.strip()
+    parents = _real_git(repo, "rev-list", "--parents", "-n", "1", trunk).stdout.split()[1:]
+    assert (status, error, method, title, len(parents)) == (0, "", *landed)
+    assert body.strip().split("\n\n")[-1] == f"Work-Item: #{WORK_ITEM_ISSUE}"
+    assert client.closed_issues == {WORK_ITEM_ISSUE}
 
 
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(
@@ -17213,7 +17321,7 @@ def test_land_merges_a_foreign_claim_under_a_coordinator_override(
     )
 
     assert status == 0
-    [(number, head_sha, _title, _body)] = client.merge_calls
+    [(number, head_sha, _method, _title, _body)] = client.merge_calls
     assert (number, head_sha) == (12, MERGE_COMMIT_SHA)
     assert client.landings[12].merge_commit == _real_git(repo, "rev-parse", "main").stdout.strip()
 

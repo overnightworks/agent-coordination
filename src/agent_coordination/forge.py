@@ -180,7 +180,8 @@ class Landing:
     this landing closes (issue #397) is that commit's own trailer block,
     never this same read's mutable `body` -- a fixer can (and once did,
     Befund 41) edit the body after the merge without touching what actually
-    landed.
+    landed. `title` heads the squash commit `aco land` composes (issue
+    #578).
     """
 
     number: int
@@ -191,6 +192,7 @@ class Landing:
     target_branch: str
     merged: bool
     merge_commit: str | None
+    title: str
 
 
 # GitHub's own open vocabularies for a pull request's `mergeable_state` and a

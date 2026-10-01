@@ -6623,17 +6623,48 @@ def _land_merge_body(body: str, classification: board.Classification) -> str:
     return f"{without_classification}\n\n{trailer}\n"
 
 
+def _land_merge_method(
+    pinned: board.MergeMethod | None, client: github.GitHubForge, number: int
+) -> board.MergeMethod:
+    """The method `aco land` merges pull request `number` with (issue
+    #578): the board configuration's own pin beats the forge; otherwise a
+    merge commit wherever the forge allows one or withholds its settings,
+    and a squash where it allows only that."""
+    if pinned is not None:
+        return pinned
+    allowed = client.allowed_merge_methods()
+    if allowed is None or board.MergeMethod.MERGE in allowed:
+        return board.MergeMethod.MERGE
+    if board.MergeMethod.SQUASH in allowed:
+        return board.MergeMethod.SQUASH
+    raise protocol.ClaimUnavailableError(
+        f"pull request #{number} cannot land: this repository allows neither a merge commit "
+        "nor a squash merge"
+    )
+
+
+def _land_merge_title(method: board.MergeMethod, detail: forge.Landing) -> str:
+    """A merge commit's own title, or a squash commit's: the pull request
+    title plus `(#<n>)`, the convention a squash-only history reads."""
+    if method is board.MergeMethod.SQUASH:
+        return f"{detail.title} (#{detail.number})"
+    return f"Merge pull request #{detail.number}"
+
+
 def _land_merge(
     client: github.GitHubForge,
     detail: forge.Landing,
     readiness: forge.LandingReadiness,
     classification: board.Classification,
+    method: board.MergeMethod,
 ) -> str:
-    title = f"Merge pull request #{detail.number}"
-    body = _land_merge_body(detail.body, classification)
     try:
         return client.merge_landing(
-            detail.number, head_sha=readiness.head_sha, title=title, body=body
+            detail.number,
+            head_sha=readiness.head_sha,
+            method=method,
+            title=_land_merge_title(method, detail),
+            body=_land_merge_body(detail.body, classification),
         )
     except forge.ForgeMergeConflictError as error:
         raise protocol.ClaimUnavailableError(
@@ -6791,7 +6822,8 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
             client, claims_provider, check_context, number, parsed
         )
         checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
-        merge_sha = _land_merge(client, detail, readiness, classification)
+        method = _land_merge_method(config.merge_method, client, number)
+        merge_sha = _land_merge(client, detail, readiness, classification, method)
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)
     )
