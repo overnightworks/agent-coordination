@@ -16,7 +16,7 @@ and conclusion, `<path>` the board configuration `.agent-claim/board.toml`,
 `<setting>` one of the two settings in it a head may not change, `storage`
 and `canonical_remote` (`priority_labels`, `idea_label`, `body_contract`, and
 `merge_method` may change), `<title>` the pull request's own title, a "head" the pull request's own head commit read during
-preflight, `<actual>` that head's full sha, and `--head <sha>` the head its reviewers saw: its
+preflight, `<actual>` that head's full sha, and `<reviewed>` the head its reviewers saw, the `--head` value lowercased: its
 full sha or a prefix of at least 7 hex digits. "Checks" is every check run GitHub reports for the head sha
 (every page of `check-runs`) plus every combined-status context
 (`commits/<sha>/status`; an external context such as SonarCloud counts);
@@ -37,12 +37,12 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 
 | state \ trigger | `aco land <n>` |
 |---|---|
+| `--head` not 7 to 40 hex digits | LANDCMD-33 |
 | `<path>` absent from this checkout | PIN-32 (cited) |
 | `<path>` present but untracked or ignored | PIN-01 (cited) |
 | `storage = "state-ref"` | LANDCMD-01 |
 | `--coordinator-override` without `--role coordinator` | LANDCMD-19 |
-| `--head` not 7 to 40 hex digits | LANDCMD-33 |
-| the head no longer starts with `--head`'s sha | LANDCMD-31 |
+| the head no longer starts with `<reviewed>` | LANDCMD-31 |
 | no `--head` given | LANDCMD-32 |
 | pull request not open | LANDCMD-02 |
 | not mergeable | LANDCMD-03 |
@@ -70,10 +70,10 @@ claim check needs is `store.peek_state` (CAS-49), never `fetch_state` --
 this worktree's own fetch anchor and lineage stamp stay untouched by a
 preflight, refused or not, exactly as `reset`'s own read does.
 
+- [ ] [LANDCMD-33] A `--head` that is not 7 to 40 hex digits refuses `--head must be 7 to 40 hex digits`, exit `2`, at the argument parse: before any read, PIN-32, or LANDCMD-01, on a rerun too (E-LANDCMD-33).
 - [ ] [LANDCMD-01] Under `storage = "state-ref"`, `aco land <n>` refuses `aco land is a github command; storage = state-ref has no pull requests to land`, exit `2`, before any read.
 - [ ] [LANDCMD-19] `--coordinator-override` without `--role coordinator` refuses (CLAIM-39's sentence), exit `2`, at `aco land`'s own entry -- before any read, so also before a rerun skips the rest of preflight.
-- [ ] [LANDCMD-33] A `--head` that is not 7 to 40 hex digits refuses `--head must be 7 to 40 hex digits`, exit `2`, at `aco land`'s own entry, before any read (E-LANDCMD-33).
-- [ ] [LANDCMD-31] `--head <sha>` refuses `pull request #<n> head is <actual>, not the reviewed <sha>; review the new head before landing`, exit `2`, unless the head starts with `<sha>` (E-LANDCMD-31).
+- [ ] [LANDCMD-31] `--head <reviewed>` refuses `pull request #<n> head is <actual>, not the reviewed <reviewed>; review the new head before landing`, exit `2`, unless the head starts with `<reviewed>` (E-LANDCMD-31).
 - [ ] [LANDCMD-32] Without `--head`, `aco land` pins whatever head preflight reads (LANDCMD-12); a rerun (LANDCMD-18) never compares `--head`, since its merge already happened.
 - [ ] [LANDCMD-02] A pull request that is not open refuses `pull request #<n> is not open; it cannot be landed`, exit `2`.
 - [ ] [LANDCMD-03] A pull request whose own `mergeable_state` is not `clean` refuses `pull request #<n> is not mergeable (<state>)`, exit `2`.
@@ -108,7 +108,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-21] The fast-forward fetches the canonical remote `<remote>` once per run and moves `<branch>` to `<remote>/<branch>`; the delegated release walks that same ref.
 - [ ] [LANDCMD-16] Deleting the merged branch is idempotent: a forge already reporting it absent is success, not a refusal.
 - [ ] [LANDCMD-17] In this package's own repository, a successful landing's last line is `reinstall: uv tool install --force --from . agent-coordination`; any other repository prints nothing further.
-- [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11, LANDCMD-19, and LANDCMD-25, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.
+- [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11, LANDCMD-19, LANDCMD-25, and LANDCMD-33, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.
 
 ## Never
 
@@ -138,7 +138,7 @@ exit 2
 
 ### E-LANDCMD-31 — a head that moved past the reviewed one refuses before any write
 
-Setup: bare-remote, fake `gh`, pull request `#57` open, its head `1f23527c0ffee0ddba11ab1e5eed5ca1ab1edeed`, reviewed at `9a6383f`
+Setup: bare-remote, fake `gh`, pull request `#57` open, its head `1f23527c0ffee0ddba11ab1e5eed5ca1ab1edeed`, `<reviewed>` `9a6383f`
 
 ```console
 $ aco land 57 --head 9a6383f
