@@ -3096,6 +3096,146 @@ def test_start_under_state_ref_claims_the_worktree_it_builds(
     assert claim.scope == ("src/x.py",)
 
 
+def _relative_add(_worktree: Path) -> tuple[str, ...]:
+    return ("--add", "src/y.py")
+
+
+def _absolute_add(worktree: Path) -> tuple[str, ...]:
+    return ("--add", str(worktree / "src" / "y.py"))
+
+
+def _relative_drop_beside_an_absolute_add(worktree: Path) -> tuple[str, ...]:
+    return ("--add", str(worktree / "src" / "y.py"), "--drop", "src/x.py")
+
+
+@pytest.mark.parametrize(
+    ("flags", "scope"),
+    [
+        pytest.param(_relative_add, ("src/x.py", "src/y.py"), id="relative-add"),
+        pytest.param(_absolute_add, ("src/x.py", "src/y.py"), id="absolute-add"),
+        pytest.param(_relative_drop_beside_an_absolute_add, ("src/y.py",), id="relative-drop"),
+    ],
+)
+def test_rescope_under_state_ref_moves_the_claim_and_the_item_body_scope_together(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    flags: Callable[[Path], tuple[str, ...]],
+    scope: tuple[str, ...],
+) -> None:
+    """RESC-22 on a real state-ref board: one rescope, run from a
+    subdirectory of the claimed worktree, writes the live claim and item
+    #314's own body scope to the same list -- the body write and the claim
+    transition both land on the one `refs/aco/state`."""
+    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    (worktree / "src").mkdir()
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree / "src")
+    capsys.readouterr()
+
+    status = issue_claim.main(["rescope", "314", *flags(worktree)])
+
+    assert (status, capsys.readouterr().err) == (0, "")
+    live = store.fetch_state(worktree=worktree, remote="origin")
+    claim = live.claims[protocol.claim_key(protocol.IssueIdentity(314), _START_BRANCH)]
+    tip = live.tip
+    assert tip is not None
+    stored = store.read_item_files(worktree, tip)[f"{items.format_item_id(314)}.md"]
+    item_body = body.parse_body(stored.decode(), storage=body.Storage.STATE_REF)
+    assert (claim.scope, item_body.scope) == (scope, scope)
+
+
+def _into_another_repository(worktree: Path) -> Path:
+    other = worktree.parent / "other"
+    _real_git(worktree.parent, "init", "-q", str(other))
+    return other / "f.md"
+
+
+def _into_the_primary_checkout(worktree: Path) -> Path:
+    return worktree.parent.parent / worktree.parent.name.removesuffix("-worktrees") / "README.md"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        pytest.param(_into_another_repository, id="another-repository"),
+        pytest.param(_into_the_primary_checkout, id="primary-checkout"),
+    ],
+)
+def test_rescope_refuses_a_relative_entry_that_climbs_out_of_the_run_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    target: Callable[[Path], Path],
+) -> None:
+    """RESC-05: a relative entry whose `..` leaves the checkout the command
+    runs in refuses with the entry as typed, before the checkout it lands
+    in is ever read, and writes nothing."""
+    repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
+    assert issue_claim.main(["start", "314", "--scope", "src/x.py"]) == 0
+    worktree = repo.parent / f"{repo.name}-worktrees" / _START_WORKTREE_NAME
+    _redirect_toplevel(monkeypatch, worktree)
+    monkeypatch.chdir(worktree)
+    entry = os.path.relpath(target(worktree), worktree)
+    state_before = store.fetch_state(worktree=worktree, remote="origin").tip
+    capsys.readouterr()
+
+    status = issue_claim.main(["rescope", "314", "--add", entry])
+
+    assert (status, capsys.readouterr().err) == (
+        2,
+        f"ERROR: --add path {entry!r} is outside the resolved checkout {worktree}\n",
+    )
+    assert store.fetch_state(worktree=worktree, remote="origin").tip == state_before
+
+
+def _relative_outside_every_repository(cwd: Path) -> tuple[tuple[str, ...], str]:
+    return (
+        ("--add", "src/new.py"),
+        f"--add path 'src/new.py' is relative and {cwd} is not in a repository; "
+        "pass it as an absolute path",
+    )
+
+
+def _absolute_outside_every_repository(cwd: Path) -> tuple[tuple[str, ...], str]:
+    return (
+        ("--drop", str(cwd / "new.py")),
+        f"--drop path '{cwd / 'new.py'}' is not in a repository",
+    )
+
+
+def _no_path_outside_every_repository(_cwd: Path) -> tuple[tuple[str, ...], str]:
+    return ((), "not in a repository")
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        pytest.param(_relative_outside_every_repository, id="relative-entry"),
+        pytest.param(_absolute_outside_every_repository, id="absolute-entry"),
+        pytest.param(_no_path_outside_every_repository, id="no-entry"),
+    ],
+)
+def test_rescope_outside_every_repository_names_the_entry_that_located_no_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    scenario: Callable[[Path], tuple[tuple[str, ...], str]],
+) -> None:
+    """RESC-01, RESC-18: outside every repository a relative entry has no
+    checkout to be read against and an absolute one locates none; each
+    refusal names the entry, and the cwd fallback keeps PROT-10's sentence."""
+    monkeypatch.chdir(tmp_path)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    flags, reason = scenario(tmp_path)
+
+    status = issue_claim.main(["rescope", "72", *flags])
+
+    assert (status, capsys.readouterr().err) == (2, f"ERROR: {reason}\n")
+
+
 _SEAM_FAILURE = "fatal: not a git repository"
 _PUSH_TIMED_OUT = "git timed out while reading the claim state store"
 
@@ -4031,6 +4171,14 @@ def test_readme_and_help_texts_carry_no_stale_state_ref_read_only_sentence() -> 
             "rescope",
             ("--whole", "three paths"),
             id="rescope-names-the-whole-reason",
+        ),
+        pytest.param(
+            "rescope",
+            (
+                "--add ADD an absolute or repository-relative path to add",
+                "--drop DROP an absolute or repository-relative path to drop",
+            ),
+            id="rescope-names-a-repository-relative-path",
         ),
         pytest.param(
             "next",
@@ -12097,11 +12245,176 @@ def test_cli_claim_accepts_a_scope_path_without_a_comma_that_does_not_exist_yet(
     assert _live_store_claim().scope == ("src/not-created-yet.py",)
 
 
+def _rescope_forge(whole: str | None = None) -> FakeForge:
+    """A forge serving issue #72 with a valid `agent-claim` block, naming
+    `whole` when given -- the body a rescope keeps in step with its claim
+    (issue #554)."""
+    client = FakeForge()
+    _serve_rescoped_item(client, whole=whole)
+    return client
+
+
+def _serve_rescoped_item(client: FakeForge, *, whole: str | None = None) -> None:
+    block_entries = {} if whole is None else {"whole": whole}
+    client.issue_references[72] = forge.ItemReference(
+        forge.ItemState.OPEN, "Rescoped item", complete_contract("Build it.", **block_entries)
+    )
+
+
+def _written_scope_and_whole(written_body: str) -> tuple[tuple[str, ...] | None, str | None]:
+    parsed = body.parse_body(written_body)
+    return parsed.scope, parsed.whole
+
+
+def _arrange_github_rescope(monkeypatch: pytest.MonkeyPatch, client: FakeForge) -> None:
+    """Issue #72 claimed by Codex Sol on `src/widget.py` in the faked
+    checkout at `/repo`, while the run stands in this suite's own cwd -- so
+    a relative entry lands in `/repo` only when it is read against the
+    checkout's toplevel, never against the cwd itself."""
+    claimed = request(issue=72, branch="codex/issue-72", scope=("src/widget.py",))
+    _patch_store_write(monkeypatch, _store_claim_from_request(claimed))
+    monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
+    git_values = _git_checkout()
+    monkeypatch.setattr(
+        checkout, "_git_output", lambda arguments, **_kwargs: git_values[tuple(arguments)]
+    )
+    monkeypatch.setattr(checkout, "_scope_directories", lambda paths, **_kwargs: ())
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+
+
+@dataclass(frozen=True)
+class _BodyRescope:
+    """One rescope that must move the claim and the item body together: the
+    flags after `rescope 72`, the scope and `whole` both must then hold, and
+    the `whole` the body named before."""
+
+    id: str
+    argv_tail: tuple[str, ...]
+    scope: tuple[str, ...]
+    whole: str | None = None
+    body_whole: str | None = None
+
+
+_FOUR_FILE_REASON = "the four files share one lock"
+_BODY_RESCOPES = (
+    _BodyRescope("absolute-add", ("--add", "/repo/src/new.py"), ("src/new.py", "src/widget.py")),
+    _BodyRescope("relative-add", ("--add", "src/new.py"), ("src/new.py", "src/widget.py")),
+    _BodyRescope(
+        "relative-drop-beside-an-absolute-add",
+        ("--add", "/repo/src/new.py", "--drop", "src/widget.py"),
+        ("src/new.py",),
+    ),
+    _BodyRescope(
+        "whole-flag-written-into-the-body",
+        ("--add", "a.py", "--add", "b.py", "--add", "c.py", "--whole", _FOUR_FILE_REASON),
+        ("a.py", "b.py", "c.py", "src/widget.py"),
+        whole=_FOUR_FILE_REASON,
+    ),
+    _BodyRescope(
+        "body-whole-admits-a-wide-scope-as-for-start",
+        ("--add", "a.py", "--add", "b.py", "--add", "c.py"),
+        ("a.py", "b.py", "c.py", "src/widget.py"),
+        whole=_FOUR_FILE_REASON,
+        body_whole=_FOUR_FILE_REASON,
+    ),
+)
+
+
+@pytest.mark.parametrize("case", _BODY_RESCOPES, ids=[case.id for case in _BODY_RESCOPES])
+def test_cli_rescope_moves_the_claim_and_the_item_body_scope_together(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], case: _BodyRescope
+) -> None:
+    """RESC-22..25 under the github fake: one call, both owners of the scope."""
+    client = _rescope_forge(whole=case.body_whole)
+    _arrange_github_rescope(monkeypatch, client)
+    argv = ["--repo", REPOSITORY, "rescope", "72", *case.argv_tail]
+
+    status = issue_claim.main(argv)
+
+    assert (status, capsys.readouterr().err) == (0, "")
+    standing = _live_store_claim()
+    assert (standing.scope, standing.whole_reason) == (case.scope, case.whole)
+    assert _written_scope_and_whole(client.item_bodies[72]) == (case.scope, case.whole)
+
+
+def _reject_the_claim_push(monkeypatch: pytest.MonkeyPatch, client: FakeForge) -> None:
+    def rejected(**_kwargs: object) -> protocol.ClaimState:
+        raise ClaimError("push rejected (simulated)")
+
+    monkeypatch.setattr(store, "commit_transition", rejected)
+
+
+def _reject_the_body_write(monkeypatch: pytest.MonkeyPatch, client: FakeForge) -> None:
+    client.fail_update_item_body = True
+
+
+@pytest.mark.parametrize(
+    ("fail_step", "body_scope", "refusal"),
+    [
+        pytest.param(
+            _reject_the_body_write,
+            None,
+            "ERROR: update item body failed (simulated)\n",
+            id="body-write-fails-first-and-the-claim-stays",
+        ),
+        pytest.param(
+            _reject_the_claim_push,
+            ("src/new.py", "src/widget.py"),
+            "ERROR: #72 body scope now reads ['src/new.py', 'src/widget.py'], but the claim "
+            "was not rescoped: push rejected (simulated); run the same rescope again\n",
+            id="claim-write-fails-second-and-names-the-written-body",
+        ),
+    ],
+)
+def test_cli_rescope_names_what_went_through_when_a_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fail_step: Callable[[pytest.MonkeyPatch, FakeForge], None],
+    body_scope: tuple[str, ...] | None,
+    refusal: str,
+) -> None:
+    """RESC-23: the body is written first, so a failed body write leaves the
+    claim as it stood, and a failed claim write after it says the body
+    already moved and how to bring the claim in step."""
+    client = _rescope_forge()
+    _arrange_github_rescope(monkeypatch, client)
+    fail_step(monkeypatch, client)
+    argv = ["--repo", REPOSITORY, "rescope", "72", "--add", "src/new.py"]
+
+    status = issue_claim.main(argv)
+
+    assert (status, capsys.readouterr().err) == (2, refusal)
+    assert _live_store_claim().scope == ("src/widget.py",)
+    written = client.item_bodies.get(72)
+    assert (None if written is None else _written_scope_and_whole(written)[0]) == body_scope
+
+
+def test_cli_rescope_refuses_an_item_body_without_a_block_before_any_write(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """RESC-24: a body that cannot carry the scope refuses with both owners
+    as they stood."""
+    client = FakeForge()
+    _arrange_github_rescope(monkeypatch, client)
+    argv = ["--repo", REPOSITORY, "rescope", "72", "--add", "src/new.py", "--json"]
+
+    status = issue_claim.main(argv)
+
+    refusal = json.loads(capsys.readouterr().out)
+    assert status == 2
+    assert (refusal["reason"], refusal["message"]) == (
+        "precondition_failed",
+        "#72 body malformed: agent-claim: no agent-claim block; "
+        "rescope needs a valid agent-claim block",
+    )
+    assert (_live_store_claim().scope, client.item_bodies) == (("src/widget.py",), {})
+
+
 def test_cli_rescope_adds_a_path_without_matching_head_or_a_clean_tree(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    client = FakeForge()
+    client = _rescope_forge()
     claimed_request = request(issue=72, branch="codex/issue-72", scope=("src/widget.py",))
     acquired = _store_claim_from_request(claimed_request)
     _patch_store_write(monkeypatch, acquired)
@@ -12138,7 +12451,7 @@ def test_cli_rescope_add_keeps_a_comma_inside_one_path(
 ) -> None:
     """`--add` shares `--scope`'s rule: one occurrence is one path, comma and
     all, never split into two."""
-    client = FakeForge()
+    client = _rescope_forge()
     claimed_request = request(issue=72, branch="codex/issue-72", scope=("src/widget.py",))
     acquired = _store_claim_from_request(claimed_request)
     _patch_store_write(monkeypatch, acquired)
@@ -12175,7 +12488,7 @@ def test_cli_rescope_drop_matches_a_comma_path_as_one_whole_path(
     one path and leaves an unrelated `reports/a` scope entry untouched --
     the old comma-splitting would instead have tried, and failed, to drop
     `reports/a` and `b.md` as two separate paths."""
-    client = FakeForge()
+    client = _rescope_forge()
     claimed_request = request(
         issue=72, branch="codex/issue-72", scope=("reports/a", "reports/a,b.md")
     )
@@ -12213,7 +12526,7 @@ def test_cli_rescope_add_refuses_a_comma_scope_that_matches_nothing_in_the_check
     """`--add` must not be a way around the same refusal `claim` applies
     (issue #207): a comma-habit value that names no real path is refused
     before the rescope is written, leaving the live claim untouched."""
-    client = FakeForge()
+    client = _rescope_forge()
     claimed_request = request(issue=72, branch="codex/issue-72", scope=("src/widget.py",))
     acquired = _store_claim_from_request(claimed_request)
     _patch_store_write(monkeypatch, acquired)
@@ -12254,7 +12567,7 @@ def test_cli_rescope_drop_of_a_value_not_in_scope_refuses_with_the_claims_own_re
     all, because that existing refusal already covers every value not
     currently held, with a truer reason naming the claim rather than the
     checkout."""
-    client = FakeForge()
+    client = _rescope_forge()
     claimed_request = request(issue=72, branch="codex/issue-72", scope=("src/widget.py",))
     acquired = _store_claim_from_request(claimed_request)
     _patch_store_write(monkeypatch, acquired)
@@ -12294,7 +12607,7 @@ def test_cli_rescope_drop_removes_a_comma_entry_the_claim_holds_though_no_file_m
     live claim already holds is a fact about the claim, not a typo about the
     checkout, so the ungrounded-comma refusal must never block dropping it --
     even though no versioned file matches `a.py,b.py` itself."""
-    client = FakeForge()
+    client = _rescope_forge()
     claimed_request = request(issue=72, branch="codex/issue-72", scope=("a.py,b.py",))
     acquired = _store_claim_from_request(claimed_request)
     _patch_store_write(monkeypatch, acquired)
@@ -12331,7 +12644,7 @@ def test_cli_rescope_json_prints_updated_scope_and_same_claim_id(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    client = FakeForge()
+    client = _rescope_forge()
     standing = request(
         "cli-claim", "Ada", issue=72, branch="codex/issue-72", scope=("src/widget.py",)
     )
@@ -12385,7 +12698,7 @@ def test_cli_rescope_refuses_a_different_agent_than_the_claimant(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    client = FakeForge()
+    client = _rescope_forge()
     claimed_request = request(agent="Ada", issue=72, branch="codex/issue-72", scope=("src",))
     _patch_store_write(monkeypatch, _store_claim_from_request(claimed_request))
     monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
@@ -12835,7 +13148,7 @@ def _run_scope_width_command(
     """Run one `claim`/`rescope` scope-width case end to end and return its
     exit status, stdout, and stderr, for the refusal and acceptance tables
     that share every arrangement and differ only in trigger and outcome."""
-    client = FakeForge(board_issues=board_issues)
+    client = _rescope_forge() if command == "rescope" else FakeForge(board_issues=board_issues)
     if command == "rescope":
         assert standing_scope is not None
         _patch_store_write(
@@ -21556,7 +21869,7 @@ def _rescope_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Counte
     checkout sits in a `tmp_path` child that is never created, so the
     resolution reads from its nearest existing ancestor, `tmp_path` itself
     (RESC-18)."""
-    _arranged_claim_client(monkeypatch)
+    _serve_rescoped_item(_arranged_claim_client(monkeypatch))
     repo = tmp_path / "repo"
     git_values = _git_checkout(
         toplevel=str(repo),

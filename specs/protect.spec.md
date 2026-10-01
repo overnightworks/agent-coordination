@@ -10,12 +10,13 @@ claim's own identity, scope grammar and overlap; `specs/ref-store-cas.spec.md`
 owns `refs/aco/state`'s own transport failures; `specs/storage-pin.spec.md`
 owns the board-configuration precondition (PIN-01/PIN-32) every store command
 shares -- this file cites those IDs rather than restating them. `aco rescope`
-shares `protect`'s own checkout resolver and relative-path grammar (the
-`relative payload path`, `not in a repository`, and `no commit on this
-branch` sentences, and the sentences for a path no claim can ever cover,
-PROT-14, PROT-42 and PROT-43) but is otherwise a different lane's own spec;
-those sentences are documented here, where `not in a repository` is
-`rescope`'s refusal alone -- `protect` allows such a path (PROT-32).
+shares `protect`'s own checkout resolver (the `not in a repository` reason
+and the `no commit on this branch` sentence, and the sentences for a path no
+claim can ever cover, PROT-14, PROT-42 and PROT-43) but is otherwise a
+different lane's own spec; it reads a relative entry against its checkout
+instead of denying it (RESC-01). Those sentences are documented here, where
+`not in a repository` is `rescope`'s refusal alone -- `protect` allows such a
+path (PROT-32).
 `<path>` is the payload's own absolute file path, lexically normalized;
 `<remote>` is the canonical remote name; `<git-directory>` is a bare
 repository or a checkout's own `.git` directory, symlink-resolved.
@@ -111,7 +112,7 @@ session; a new gated tool joins both the table and that matcher.
 - [ ] [PROT-07] A mutating tool call with no resolvable path -- a missing key, an empty string, or an `apply_patch` command matching no patch-file grammar -- denies `path required`.
 - [ ] [PROT-08] Past its live state, no identity denies `agent identity is required: set ACO_AGENT, GROK_SESSION_ID, or CLAUDE_CODE_SESSION_ID (ACO_AGENT can sit in the hook line)`; a bad one, its own sentence.
 - [ ] [PROT-09] A payload path that is not absolute denies `relative payload path`, never guessed against the hook process's own cwd (see E-PROT-07).
-- [ ] [PROT-10] A path whose directory sits outside every git repository is `not in a repository`, the sentence `rescope` refuses with; `protect` allows it instead (PROT-32).
+- [ ] [PROT-10] A path whose directory sits outside every git repository is `not in a repository`, the reason `rescope` names its entry with (RESC-26); `protect` allows it instead (PROT-32).
 - [ ] [PROT-32] A write path outside every repository -- any tool's payload path or a recognized Bash pattern's -- allows before identity or the store is read, except a checkout's own root (PROT-14) (see E-PROT-11).
 - [ ] [PROT-11] A checkout with no commit yet (an unborn branch) denies `no commit on this branch`.
 - [ ] [PROT-12] The shared main checkout, or a linked worktree on the default branch its canonical remote's `HEAD` records, denies `not main` (see E-PROT-03); PROT-29 comes first for that worktree.

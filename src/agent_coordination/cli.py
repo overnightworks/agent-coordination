@@ -183,8 +183,9 @@ def _reject_wide_scope(
     when given, else `whole_from_body()`, read only once the gate actually
     trips and the caller named none, so a narrow scope or an explicit
     `--whole` never costs the body read `whole_from_body` performs.
-    `rescope` passes no `whole_from_body` at all, and keeps the plain
-    refusal: it never reads an item's own body for this. `directories` are
+    `rescope` judges an issue claim by the same rule (issue #554), from the
+    body it already read; a lane claim names no item, passes no
+    `whole_from_body`, and keeps the plain refusal. `directories` are
     the scope entries that name a directory in the tree `versioned` lists
     (`checkout._scope_directories`)."""
     n, total, share = _scope_cost(versioned, scope)
@@ -650,12 +651,16 @@ def _add_rescope_parser(commands: argparse._SubParsersAction) -> None:
     rescope.add_argument(
         "--add",
         action="append",
-        help="an absolute path to add; repeat --add for more than one path",
+        help=(
+            "an absolute or repository-relative path to add; repeat --add for more than one path"
+        ),
     )
     rescope.add_argument(
         "--drop",
         action="append",
-        help="an absolute path to drop; repeat --drop for more than one path",
+        help=(
+            "an absolute or repository-relative path to drop; repeat --drop for more than one path"
+        ),
     )
     rescope.add_argument("--claim-id", help=EXPECTED_CLAIM_ID_HELP)
     rescope.add_argument(
@@ -4116,77 +4121,123 @@ def _optional_issue_number(value: int | None) -> int | None:
     return None if value is None else int(value)
 
 
-def _rescope_location(add: list[str] | None, drop: list[str] | None) -> Path:
-    """The path `rescope`'s checkout is resolved from (issue #314
-    repeat gate, finding R1): every `--add`/`--drop` entry must itself be an
-    absolute path -- the one location signal a dispatcher running in a
-    foreign cwd (the head's own shared environment, editing a linked
-    worktree through a subagent) can give without knowing that cwd. A
-    relative entry carries no location of its own and is never joined to the
-    process's cwd to guess one -- finding R2's same principle, applied here:
-    any relative entry, anywhere in either list, denies outright with the
-    same sentence `protect`'s own relative-payload-path gate uses, never
-    falling back to cwd to interpret it. `rescope` falls back to its own
-    process cwd only when neither flag names a single path at all -- its
-    other legitimate location signal, unchanged from before this fix for
-    that ordinary, undispatched case, and a distinct usage error
-    (`_combined_scope`'s own "does not change the claim scope") handles it
-    from there."""
-    entries = (*(add or ()), *(drop or ()))
-    if any(not Path(raw_path).is_absolute() for raw_path in entries):
-        raise _RescopeInvalidUsageError(checkout.RELATIVE_PAYLOAD_PATH_DENIAL)
-    if entries:
-        return Path(entries[0])
-    return Path.cwd()
+@dataclass(frozen=True)
+class _RescopePaths:
+    """`rescope`'s own `--add`/`--drop` entries, each made absolute (issue
+    #554): an absolute entry as given, a relative one joined to the toplevel
+    of the checkout the command runs in -- the repository-relative form an
+    item body's own `scope` list prints, so an entry copied from it works as
+    typed from anywhere inside that checkout."""
+
+    add: tuple[str, ...]
+    drop: tuple[str, ...]
+
+    def named(self) -> tuple[tuple[str, str], ...]:
+        """Every entry beside the flag that named it, `--add` first."""
+        return (
+            *(("--add", path) for path in self.add),
+            *(("--drop", path) for path in self.drop),
+        )
+
+
+def _rescope_paths(add: list[str] | None, drop: list[str] | None) -> _RescopePaths:
+    return _RescopePaths(
+        add=_absolute_rescope_entries(add, flag="--add"),
+        drop=_absolute_rescope_entries(drop, flag="--drop"),
+    )
+
+
+def _absolute_rescope_entries(raw_paths: list[str] | None, *, flag: str) -> tuple[str, ...]:
+    return tuple(
+        raw_path if Path(raw_path).is_absolute() else _joined_to_run_checkout(raw_path, flag=flag)
+        for raw_path in raw_paths or ()
+    )
+
+
+def _joined_to_run_checkout(raw_path: str, *, flag: str) -> str:
+    """A relative entry joined to the run checkout's toplevel. One that
+    climbs out of that checkout refuses here (RESC-05), naming the entry as
+    typed: the joined path would otherwise locate whichever checkout it
+    lands in and be judged there instead."""
+    toplevel = _run_checkout_toplevel(raw_path, flag=flag)
+    joined = toplevel / raw_path
+    if checkout.checkout_relative(joined, toplevel=toplevel) is None:
+        raise _RescopeInvalidUsageError(_outside_checkout_reason(flag, raw_path, toplevel))
+    return str(joined)
+
+
+def _run_checkout_toplevel(raw_path: str, *, flag: str) -> Path:
+    """The toplevel a relative `raw_path` is read against: the checkout the
+    command runs in. Outside every repository there is none, and the
+    refusal names the entry and how to give it instead."""
+    cwd = Path.cwd()
+    run_checkout = checkout.resolve_named_path_checkout(cwd)
+    if run_checkout is None:
+        raise _RescopeInvalidUsageError(
+            f"{flag} path {raw_path!r} is relative and {cwd} is "
+            f"{checkout.NOT_IN_A_REPOSITORY_REASON}; pass it as an absolute path"
+        )
+    return run_checkout.toplevel
 
 
 def _rescope_scope_entries(
-    raw_paths: list[str] | None, *, toplevel: Path, flag: str
+    absolute_paths: tuple[str, ...], *, toplevel: Path, flag: str
 ) -> tuple[str, ...]:
-    """One `--add`/`--drop` list, canonicalized to repository-relative scope
-    entries against `toplevel`. Every entry here is already absolute:
-    `_rescope_location` (issue #314 repeat gate, finding R1) denies outright
-    before this ever runs if any entry in either list is relative, so there
-    is no repository-relative form left to accept as-is. A path no claim
-    could ever cover refuses with the sentence `protect` denies it with
-    (issue #483)."""
-    if not raw_paths:
+    """One `--add`/`--drop` list, already absolute (`_RescopePaths`),
+    canonicalized to repository-relative scope entries against `toplevel`.
+    A path no claim could ever cover refuses with the sentence `protect`
+    denies it with (issue #483)."""
+    if not absolute_paths:
         return ()
     canonical: list[str] = []
-    for raw_path in raw_paths:
+    for raw_path in absolute_paths:
         unscopable = checkout.unscopable_path_reason(raw_path, toplevel=toplevel)
         if unscopable is not None:
             raise _RescopeInvalidUsageError(unscopable)
         relative = checkout.relative_scope_entry(raw_path, toplevel=toplevel)
         if relative is None:
-            raise _RescopeInvalidUsageError(
-                f"{flag} path {raw_path!r} is outside the resolved checkout {toplevel}"
-            )
+            raise _RescopeInvalidUsageError(_outside_checkout_reason(flag, raw_path, toplevel))
         canonical.append(relative)
     return protocol.valid_scope(canonical)
 
 
-def _rescope_checkout(parsed: argparse.Namespace) -> checkout.PathCheckout:
-    """`rescope`'s checkout, resolved from a path it is given whenever one
-    names a location (issue #314 delta, finding R1), read through the same
-    path-based resolver `protect` uses rather than the ad hoc
-    `git branch --show-current` this replaces, so it fails the same way
-    regardless of where else in the tree a bare cwd fallback might have
-    looked. A checkout with no commit yet denies here too (gate G3), the
-    same precondition `protect` enforces on its own resolved checkout. The
-    path resolves exactly as `protect` resolves a payload path -- a
-    checkout root as its own checkout, a file in a directory not created
-    yet from its nearest existing ancestor (issues #474, #483)."""
-    path_checkout = checkout.resolve_named_path_checkout(_rescope_location(parsed.add, parsed.drop))
+def _outside_checkout_reason(flag: str, path: str, toplevel: Path) -> str:
+    return f"{flag} path {path!r} is outside the resolved checkout {toplevel}"
+
+
+def _rescope_checkout(paths: _RescopePaths) -> checkout.PathCheckout:
+    """`rescope`'s checkout, resolved from its first entry whenever one
+    names a location (issue #314), else from the process's own cwd, read
+    through the same path-based resolver `protect` uses. A checkout with no
+    commit yet denies here too (gate G3), the same precondition `protect`
+    enforces on its own resolved checkout. The path resolves exactly as
+    `protect` resolves a payload path -- a checkout root as its own
+    checkout, a file in a directory not created yet from its nearest
+    existing ancestor (issues #474, #483)."""
+    named = paths.named()
+    location = Path(named[0][1]) if named else Path.cwd()
+    path_checkout = checkout.resolve_named_path_checkout(location)
     if path_checkout is None:
-        raise protocol.ClaimUnavailableError(checkout.NOT_IN_A_REPOSITORY_REASON)
+        raise protocol.ClaimUnavailableError(_outside_every_repository_reason(named))
     if not path_checkout.has_commit:
         raise protocol.ClaimUnavailableError(checkout.NO_COMMIT_CHECKOUT_REASON)
     return path_checkout
 
 
+def _outside_every_repository_reason(named: tuple[tuple[str, str], ...]) -> str:
+    """PROT-10's own sentence, naming the entry that located no checkout
+    whenever an entry did the locating (issue #554)."""
+    if not named:
+        return checkout.NOT_IN_A_REPOSITORY_REASON
+    flag, path = named[0]
+    return f"{flag} path {path!r} is {checkout.NOT_IN_A_REPOSITORY_REASON}"
+
+
 def _rescope_command(
-    parsed: argparse.Namespace, path_checkout: checkout.PathCheckout, checkout_context: RunContext
+    parsed: argparse.Namespace,
+    paths: _RescopePaths,
+    path_checkout: checkout.PathCheckout,
+    checkout_context: RunContext,
 ) -> protocol.RescopeRequest:
     """The rescope `parsed` asks for in `path_checkout`, judged against the
     resolved checkout's own recorded default branch (issue #490)."""
@@ -4206,8 +4257,8 @@ def _rescope_command(
     return protocol.RescopeRequest(
         identity=identity,
         agent=parsed.agent,
-        add=_rescope_scope_entries(parsed.add, toplevel=path_checkout.toplevel, flag="--add"),
-        drop=_rescope_scope_entries(parsed.drop, toplevel=path_checkout.toplevel, flag="--drop"),
+        add=_rescope_scope_entries(paths.add, toplevel=path_checkout.toplevel, flag="--add"),
+        drop=_rescope_scope_entries(paths.drop, toplevel=path_checkout.toplevel, flag="--drop"),
         claim_id=parsed.claim_id,
         branch=branch,
         whole_reason=_optional_whole_reason(parsed),
@@ -4927,10 +4978,83 @@ class _RescopePreconditionError(protocol.ClaimError):
     `precondition_failed`."""
 
 
+RESCOPE_COMMAND = "rescope"
+
+
+@dataclass(frozen=True)
+class _RescopedItemBody:
+    """The item body a rescope keeps in step with its claim (issue #554):
+    the body as read, its located `agent-claim` block, and the `whole`
+    reason the block names."""
+
+    number: int
+    text: str
+    located: body.LocatedBlock
+    whole: str | None
+
+
+def _rescoped_item_body(
+    context: RunContext, identity: protocol.ClaimIdentity
+) -> _RescopedItemBody | None:
+    """The claimed item's own body, read before any write so an item whose
+    body cannot take the new scope refuses with nothing changed; `None` for
+    a lane claim, which names no item."""
+    if not isinstance(identity, protocol.IssueIdentity):
+        return None
+    client = context.forge_writer
+    storage = context.config.storage
+    number = identity.issue
+    try:
+        _require_update_item_body(client, command=RESCOPE_COMMAND)
+        text = _item_body_or_refuse(client, number, command=RESCOPE_COMMAND, storage=storage)
+        located = _located_block_or_refuse(number, text, command=RESCOPE_COMMAND, storage=storage)
+    except protocol.ClaimError as error:
+        raise _RescopePreconditionError(str(error)) from error
+    whole = body.parse_body(text, storage=storage).whole
+    return _RescopedItemBody(number=number, text=text, located=located, whole=whole)
+
+
+def _write_rescoped_body(
+    context: RunContext, item: _RescopedItemBody, scope: tuple[str, ...], whole: str | None
+) -> None:
+    """The body's own `scope` set to the claim's new one, and `--whole`
+    written beside it when the call names one."""
+    new_data: dict[str, object] = {**item.located.data, "scope": list(scope)}
+    if whole is not None:
+        new_data["whole"] = whole
+    context.forge_writer.update_item_body(
+        item.number, body.replace_agent_claim_block(item.text, item.located, new_data)
+    )
+
+
+def _rescope_item_and_claim(
+    context: RunContext,
+    subject: store.ClaimTransitionSubject,
+    intent: protocol.RescopeIntent,
+    item: _RescopedItemBody,
+    whole: str | None,
+) -> protocol.ClaimState:
+    """The body first, then the claim's own transition (issue #554): a
+    refused body write leaves the claim as it stood, and a claim write that
+    fails after it says the body already names the new scope and how to
+    bring the claim in step -- the body write is not undone, and the same
+    rescope again writes the same body and the claim."""
+    _write_rescoped_body(context, item, intent.scope, whole)
+    try:
+        return context.transition(subject, intent)
+    except protocol.ClaimError as error:
+        label = board.item_label(item.number, context.config.storage)
+        raise protocol.ClaimUnavailableError(
+            f"{label} body scope now reads {list(intent.scope)}, but the claim was not "
+            f"rescoped: {error}; run the same rescope again"
+        ) from error
+
+
 def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
-    path_checkout = _rescope_checkout(parsed)
+    paths = _rescope_paths(parsed.add, parsed.drop)
+    path_checkout = _rescope_checkout(paths)
     checkout_context = run_context.for_directory(path_checkout.toplevel, is_toplevel=True)
-    requested = _rescope_command(parsed, path_checkout, checkout_context)
+    requested = _rescope_command(parsed, paths, path_checkout, checkout_context)
     worktree = checkout_context.toplevel
     observed = checkout_context.observation
     _require_state_ref(observed)
@@ -4956,8 +5080,9 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
         combined = protocol._combined_scope(selected.scope, requested.add, requested.drop)
     except protocol.ClaimError as error:
         raise _RescopeInvalidUsageError(str(error)) from error
+    item = _rescoped_item_body(checkout_context, selected.identity)
     try:
-        _reject_wide_scope(
+        _n, _total, _share, whole_reason = _reject_wide_scope(
             combined,
             versioned,
             requested.whole_reason or selected.whole_reason,
@@ -4966,6 +5091,7 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
                 directory=checkout_context.directory,
                 toplevel=lambda: checkout_context.toplevel,
             ),
+            whole_from_body=None if item is None else lambda: item.whole,
         )
     except protocol.ClaimError as error:
         raise _RescopePreconditionError(str(error)) from error
@@ -4975,10 +5101,15 @@ def _rescope_write(parsed: argparse.Namespace, run_context: RunContext) -> int:
         role=selected.role,
         scope=combined,
         operation_id=uuid.uuid4().hex,
-        whole_reason=requested.whole_reason,
+        whole_reason=whole_reason,
     )
-    new_state = checkout_context.transition(
-        _transition_subject("rescope", selected.identity, selected.branch), intent
+    subject = _transition_subject(RESCOPE_COMMAND, selected.identity, selected.branch)
+    new_state = (
+        checkout_context.transition(subject, intent)
+        if item is None
+        else _rescope_item_and_claim(
+            checkout_context, subject, intent, item, requested.whole_reason
+        )
     )
     rescoped = new_state.claims[protocol.claim_key(selected.identity, selected.branch)]
     if parsed.json:
