@@ -38,6 +38,7 @@ other printable space are text.
 | no actionable item at all | NEXT-01 | NEXT-01 |
 | a work item is the top action | NEXT-02, NEXT-03 | NEXT-11 |
 | that action, run outside a linked non-default worktree | NEXT-41 | NEXT-11 |
+| that action's scope is wide and the body names no `whole` | NEXT-42 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
 | a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
 | a title, `Next`, slice title or `SKIPPED` reason holds a display control | NEXT-37 | NEXT-11..14 |
@@ -66,7 +67,8 @@ other printable space are text.
 ## A work item action
 
 - [ ] [NEXT-02] The top-ranked item prints `<label> score <s>: <title>`, then `Next: <item's own Next>`, then `Run: aco claim <n>` from a linked worktree on a non-default branch, exit `0` (see E-NEXT-01).
-- [ ] [NEXT-41] From any other checkout, where `claim` refuses, `Run:` is `aco start <n> --slug=<slug>`, the slug `start` derives from the title, else `--slug <slug>` at the end (E-NEXT-14).
+- [ ] [NEXT-41] From any other checkout, where `claim` refuses, `Run:` is `aco start <n> --slug=<slug>`, the slug `start` derives from the title, else the id's: `!!! ???` gives `--slug=aco-1234ab` (E-NEXT-14).
+- [ ] [NEXT-42] A scope of more than three paths and no `whole` in the body ends `Run:` with `--whole <reason>`, which `claim` and `start` then need; with `whole` set, it is left out (E-NEXT-14).
 - [ ] [NEXT-37] Text shows each display control in a title, `Next`, slice title or `SKIPPED` reason as its escape: `a\x1b[2J` prints as typed; TAB, NBSP and `Größe` as is; `--json` unchanged.
 - [ ] [NEXT-03] An item naming its own top-level `scope` drops `--scope` from `Run:`; a scopeless item's `Run:` ends `--scope <paths>` and gains a further `scope unknown` line (see E-NEXT-02).
 - [ ] [NEXT-30] A scopeless item whose only `[[slice]]` row names paths -- a retyped nested container (NEXT-29) -- instead prints `--scope=<path>` per path of that row, with no `scope unknown`.
@@ -387,4 +389,6 @@ close: none
 exit 0
 ```
 
-`aco start 10 --slug=work` then builds `issue-10-work` beside the checkout and claims `#10` there, as E-NEXT-01's `claim` would from that worktree. A title yielding no slug, such as `!!!`, prints `Run: aco start 10 --slug <slug>`.
+`aco start 10 --slug=work` then builds `issue-10-work` beside the checkout and claims `#10` there, as E-NEXT-01's `claim` would from that worktree. A title yielding no slug, such as `!!! ???`, prints `Run: aco start 10 --slug=10`; under `storage = "state-ref"` the id's own, `Run: aco start aco-1234ab --slug=aco-1234ab`.
+
+The same item with `scope` naming five paths and no `whole` prints `Run: aco start 10 --slug=work --whole <reason>`; with the reason filled in, `aco start 10 --slug=work --whole 'One sweep over five files.'` claims it.
