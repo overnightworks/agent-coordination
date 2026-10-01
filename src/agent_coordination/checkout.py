@@ -247,6 +247,21 @@ def path_is_tracked(
     return _git_yes_or_no(["ls-files", "--error-unmatch", "--", path], directory=directory)
 
 
+def file_at_revision(path: str, *, revision: str, directory: Path) -> str | None:
+    """The text of `path` (repo-relative, forward slashes) in `revision`'s
+    tree, read from `directory` via `-C` -- `None` only when that tree holds
+    no such file (issue #575: the trunk's committed board configuration,
+    which no lane can change from its own worktree). A `revision` that does
+    not resolve, or a file git cannot show, is a git failure, never an
+    absent file."""
+    if not path_is_tracked(path, directory=directory, revision=revision):
+        return None
+    result = _git_run(["show", f"{revision}:{path}"], directory=directory)
+    if result.exit_status != 0:
+        raise ClaimError(process.git_failure_detail(result))
+    return result.stdout.decode()
+
+
 def path_is_ignored(path: str, *, directory: Path) -> bool:
     """Whether git's own exclude rules (`.gitignore`, `.git/info/exclude`,
     the global excludes file) ignore `path` (repo-relative) in the checkout

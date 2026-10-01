@@ -296,6 +296,9 @@ is refused by name.
   exact rule is `specs/land.spec.md`'s own.
 - `body_contract` -- must be `"block"` (the only work-item body format aco
   reads) when present; absent means the same thing.
+- `lane_shared` -- exact repository file paths, such as a vulture whitelist,
+  that any live claim may write though its scope never names them. Only the
+  trunk's committed copy counts, so a change takes effect once it lands.
 
 ## Board
 

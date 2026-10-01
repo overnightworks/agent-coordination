@@ -46,13 +46,19 @@ from agent_coordination import (
 from agent_coordination import cli as issue_claim
 from agent_coordination.protocol import ClaimError
 
+# Captured at import, before this module's autouse stub replaces it.
+_REAL_PATH_IS_TRACKED = checkout.path_is_tracked
+
 
 @pytest.fixture(autouse=True)
 def _stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every `protect` test reads a tracked `board.toml` by default (issue
     #315): `_isolate_protect_home`'s `work` directory is never a real git
     checkout, so a real `git ls-files` check would otherwise always read
-    "not tracked" here. A test proving the refusal itself overrides this."""
+    "not tracked" here. A test proving the refusal itself overrides this.
+    The trunk's tree question (issue #575) stays real and reads
+    `_patch_protect_git`'s faked `ls-tree` answer or a real-worktree test's
+    own repository."""
     stub_board_config_tracked(monkeypatch)
 
 
@@ -115,6 +121,9 @@ def _protect_git_values(
     }
     if origin_head is not None:
         values[RECORDED_ORIGIN_HEAD_READ] = origin_head
+        # That trunk holds no committed board configuration, so no file is
+        # lane-shared (issue #575).
+        values[("ls-tree", "--name-only", origin_head, "--", board.CONFIG_PATH.as_posix())] = ""
     return values
 
 
@@ -886,6 +895,19 @@ def _bash_rm_target_payload(target: Path) -> dict[str, object]:
 _TARGET_PATH_PAYLOAD_BUILDERS = (_write_target_payload, _bash_rm_target_payload)
 
 
+def _bash_rm_rf_target_payload(target: Path) -> dict[str, object]:
+    return {"toolName": "Bash", "toolInput": {"command": f"rm -rf {target}"}}
+
+
+def _apply_patch_target_payload(target: Path) -> dict[str, object]:
+    command = _patch_command(f"*** Update File: {target}", "@@", "-old", "+new")
+    return {"toolName": "apply_patch", "toolInput": {"command": command}}
+
+
+def _bash_sed_in_place_target_payload(target: Path) -> dict[str, object]:
+    return {"toolName": "Bash", "toolInput": {"command": f"sed -i 's/a/b/' {target}"}}
+
+
 def _monitor_rm_target_payload(target: Path) -> dict[str, object]:
     return {"tool_name": "Monitor", "tool_input": {"command": f"rm {target}"}}
 
@@ -1481,9 +1503,6 @@ def test_protect_deny_is_forge_free_against_a_non_github_remote(
 # `directory` cannot exercise.
 
 
-_REAL_PATH_IS_TRACKED = checkout.path_is_tracked
-
-
 def _use_real_path_is_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     """Undo this module's autouse tracked-`board.toml` stub (issue #314
     gate B3): a real-worktree test builds an actual fixture repository, so
@@ -1494,12 +1513,13 @@ def _use_real_path_is_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _protect_real_repo_with_worktree(
-    tmp_path: Path, *, slug: str = "issue-72-widget"
+    tmp_path: Path, *, slug: str = "issue-72-widget", board_config: str = ""
 ) -> tuple[Path, Path]:
     """A real repository (`main`, reused across worktrees) with one linked,
     isolated worktree on a feature branch -- the same `git worktree add`
     recipe `checkout.ISOLATED_WORKTREE_RECIPE` documents. `main` carries a
-    real, tracked (`git add -f`) empty `.agent-claim/board.toml` (issue #314
+    real, tracked (`git add -f`) `.agent-claim/board.toml` holding
+    `board_config`, empty by default (issue #314
     gate B3): every worktree shares `main`'s history, so `path_is_tracked`
     reads a real "tracked" answer for it from any of them, via
     `_use_real_path_is_tracked`. `main` also carries a real, resolvable
@@ -1515,7 +1535,7 @@ def _protect_real_repo_with_worktree(
         _real_git(main, "config", "user.email", "test@example.com")
         (main / "README.md").write_text("hello\n")
         (main / ".agent-claim").mkdir()
-        (main / ".agent-claim" / "board.toml").write_text("")
+        (main / ".agent-claim" / "board.toml").write_text(board_config)
         _real_git(main, "add", "-f", "README.md", ".agent-claim/board.toml")
         _real_git(main, "commit", "-q", "-m", "initial")
         _real_git(main, "remote", "add", "origin", "https://example.invalid/example/repo.git")
@@ -1749,6 +1769,67 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
         == 2
     )
     _assert_protect_decision(capsys, decision="deny", reason="claim first")
+
+
+@pytest.mark.parametrize(
+    "payload_for",
+    [
+        _write_target_payload,
+        _apply_patch_target_payload,
+        _bash_sed_in_place_target_payload,
+        _bash_rm_rf_target_payload,
+    ],
+    ids=["write", "apply-patch", "bash-sed-in-place", "bash-rm-rf"],
+)
+@pytest.mark.parametrize(
+    ("claimed_branch", "written", "decision"),
+    [
+        pytest.param("codex/issue-72-widget", "scripts/registry.txt", "allow", id="claimed-shared"),
+        pytest.param("codex/issue-99-other", "scripts/registry.txt", "deny", id="unclaimed"),
+        pytest.param("codex/issue-72-widget", "src/y.py", "deny", id="not-shared"),
+        pytest.param("codex/issue-72-widget", "src/x.py", "deny", id="shared-only-by-the-lane"),
+        pytest.param("codex/issue-72-widget", "src", "deny", id="shared-directory-itself"),
+    ],
+)
+def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    claimed_branch: str,
+    written: str,
+    decision: str,
+    payload_for: Callable[[Path], dict[str, object]],
+) -> None:
+    """Issue #575 line 2 (PROT-46): a file the trunk's committed
+    `lane_shared` names is writable by any live claim this session holds in
+    the checkout, though its scope (`docs`) never names it, whichever tool
+    writes it; without a claim on the branch it still denies, and a file the
+    trunk does not share stays bound to the scope -- also one below a
+    directory the trunk names (`src`, PIN-41) or that directory itself, so
+    no `rm -rf` sweeps a tree through it, and one the lane's own
+    edit of its worktree's `board.toml` adds, so a lane never authorises
+    itself. Each tool's own denial wording is PROT-18's and PROT-33's."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
+    _use_real_path_is_tracked(monkeypatch)
+    _main, worktree = _protect_real_repo_with_worktree(
+        tmp_path, board_config='lane_shared = ["scripts/registry.txt", "src"]\n'
+    )
+    (worktree / board.CONFIG_PATH).write_text(
+        'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'
+    )
+    state = _protect_state_with_claim(
+        _protect_active_claim("Grok sess-1", scope=("docs",), branch=claimed_branch)
+    )
+    monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: state)
+
+    exit_code = _protect_main(monkeypatch, payload_for(worktree / written))
+
+    assert exit_code == (0 if decision == "allow" else 2)
+    printed = capsys.readouterr().out
+    assert (json.loads(printed)["decision"] if printed else "allow") == decision
 
 
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
@@ -2439,8 +2520,8 @@ def test_rescope_json_reports_a_dotdot_path_through_a_missing_directory_as_unava
 # `protect.judge`'s own direct proofs (issue #394): a real bare-remote
 # repository with a real linked worktree, driven through `judge` itself --
 # never `main(["protect"])` -- so none of these needs `sys.stdin` or the
-# process cwd stubbed at all; `judge` takes its payload and its one
-# dependency (`canonical_remote_for`) as plain arguments.
+# process cwd stubbed at all; `judge` takes its payload and its two
+# dependencies (`canonical_remote_for`, `lane_shared_for`) as plain arguments.
 
 
 def _judge_worktree(tmp_path: Path, *, branch: str) -> Path:
@@ -2488,7 +2569,11 @@ def test_judge_denies_an_apply_patch_path_outside_the_live_claims_scope(
         },
     }
 
-    verdict = protect.judge(payload, canonical_remote_for=lambda _toplevel: "origin")
+    verdict = protect.judge(
+        payload,
+        canonical_remote_for=lambda _toplevel: "origin",
+        lane_shared_for=lambda _toplevel: (),
+    )
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -2515,7 +2600,11 @@ def test_judge_denies_a_bash_recognized_pattern_path_outside_the_live_claims_sco
         "cwd": str(worktree),
     }
 
-    verdict = protect.judge(payload, canonical_remote_for=lambda _toplevel: "origin")
+    verdict = protect.judge(
+        payload,
+        canonical_remote_for=lambda _toplevel: "origin",
+        lane_shared_for=lambda _toplevel: (),
+    )
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -2537,7 +2626,11 @@ def test_judge_denies_a_path_resolving_to_the_checkout_root_before_reading_the_s
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
     payload = {"toolName": "Edit", "toolInput": {"path": str(worktree)}}
 
-    verdict = protect.judge(payload, canonical_remote_for=lambda _toplevel: "origin")
+    verdict = protect.judge(
+        payload,
+        canonical_remote_for=lambda _toplevel: "origin",
+        lane_shared_for=lambda _toplevel: (),
+    )
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -2628,10 +2721,6 @@ def test_protect_judges_a_file_in_a_not_yet_existing_directory_by_its_checkout(
 
     assert _protect_main(monkeypatch, payload_for(worktree / relative)) == status
     _assert_protect_decision(capsys, decision="deny" if reason else "allow", reason=reason)
-
-
-def _bash_rm_rf_target_payload(target: Path) -> dict[str, object]:
-    return {"toolName": "Bash", "toolInput": {"command": f"rm -rf {target}"}}
 
 
 def _unguarded_scratchpad(tmp_path: Path) -> Path:

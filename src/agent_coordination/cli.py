@@ -39,7 +39,12 @@ from . import (
     terminal,
     workspace,
 )
-from .session import RepoMeaninglessUnderStateRefError, RunContext, board_config
+from .session import (
+    RepoMeaninglessUnderStateRefError,
+    RunContext,
+    board_config,
+    trunk_lane_shared,
+)
 
 CLI_ERROR_PREFIX = "ERROR: "
 
@@ -1231,13 +1236,19 @@ def _status(
     issue: int | None,
     ages: Mapping[str, datetime],
     storage: body.Storage,
-    now: datetime | None = None,
+    lane_shared: tuple[str, ...] = (),
 ) -> int:
-    observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+    """Every related claim's block, then the lane-shared files once (issue
+    #575), named only beside a claim that may write them."""
+    observed_at = datetime.now(UTC)
     related, index = _status_claims(claims, issue)
     if related:
         context = _ClaimReportContext(index, storage)
-        return _print_related_claims(claims, related, context, ages, observed_at)
+        exit_code = _print_related_claims(claims, related, context, ages, observed_at)
+        shared = _lane_shared_line(lane_shared)
+        if shared is not None:
+            print(shared)
+        return exit_code
     subject = "repository" if issue is None else f"issue {board.item_label(issue, storage)}"
     print(f"UNCLAIMED {subject}")
     return 0
@@ -3224,6 +3235,13 @@ def _canonical_remote_name(toplevel: Path) -> str:
     return board_config(toplevel).canonical_remote
 
 
+def _checkout_trunk_lane_shared(toplevel: Path) -> tuple[str, ...]:
+    """The lane-shared files the trunk of the checkout at `toplevel` names,
+    for `protect` (handed into `protect.judge` as `lane_shared_for`, issue
+    #575), resolved over that checkout's own canonical remote."""
+    return trunk_lane_shared(_canonical_remote_name(toplevel), toplevel)
+
+
 @dataclass(frozen=True)
 class _StoreItemWriter:
     """`state_board.ItemWriter`, implemented over `store` (issue #283): the
@@ -4180,7 +4198,11 @@ def _protect() -> int:
     # Grok fail-opens on crash or non-JSON hook output; deny instead of raising.
     try:
         payload = _hook_payload()
-        verdict = protect.judge(payload, canonical_remote_for=_canonical_remote_name)
+        verdict = protect.judge(
+            payload,
+            canonical_remote_for=_canonical_remote_name,
+            lane_shared_for=_checkout_trunk_lane_shared,
+        )
     except Exception as error:
         verdict = protect.Verdict.deny(str(error))
     if verdict.stdout_text is not None:
@@ -4513,8 +4535,21 @@ def _lane_tip(branch: str) -> str | None:
     return None
 
 
+def _lane_shared_line(lane_shared: tuple[str, ...]) -> str | None:
+    """The one line `status` and `brief` name the repository's lane-shared
+    registry files with (issue #575), so a builder comparing its changes
+    with its claim scope counts them as allowed; `None` when none is
+    configured."""
+    if not lane_shared:
+        return None
+    return "lane-shared: " + ", ".join(lane_shared)
+
+
 def _print_brief_claim(
-    claim: protocol.ActiveClaim, opened_at: datetime, observed_at: datetime
+    claim: protocol.ActiveClaim,
+    opened_at: datetime,
+    observed_at: datetime,
+    lane_shared: tuple[str, ...],
 ) -> None:
     print(
         f"{claim.agent} ({claim.role}) branch={claim.branch} base={claim.base}"
@@ -4524,6 +4559,9 @@ def _print_brief_claim(
         print(f"  {path}")
     if claim.whole_reason is not None:
         print(f"  whole: {claim.whole_reason}")
+    shared = _lane_shared_line(lane_shared)
+    if shared is not None:
+        print(f"  {shared}")
 
 
 def _print_brief_step_rules(step_rules: board.BriefStepRules) -> None:
@@ -4555,6 +4593,7 @@ class _BriefComposition:
     tip: str | None
     touched: tuple[str, ...]
     step_rules: board.BriefStepRules | None
+    lane_shared: tuple[str, ...]
 
 
 def _print_brief(composition: _BriefComposition) -> None:
@@ -4565,7 +4604,10 @@ def _print_brief(composition: _BriefComposition) -> None:
         print("no active claim")
     else:
         _print_brief_claim(
-            composition.live.claim, composition.live.opened_at, composition.observed_at
+            composition.live.claim,
+            composition.live.opened_at,
+            composition.observed_at,
+            composition.lane_shared,
         )
     print()
     print("TIP")
@@ -4744,7 +4786,15 @@ def _brief_report(parsed: argparse.Namespace, context: RunContext) -> int:
             else ()
         )
     observed_at = datetime.now(UTC)
-    composition = _BriefComposition(item_body, live, observed_at, tip, touched, step_rules)
+    composition = _BriefComposition(
+        item_body,
+        live,
+        observed_at,
+        tip,
+        touched,
+        step_rules,
+        trunk_lane_shared(context.configured_canonical_remote, context.toplevel),
+    )
     if parsed.json:
         return _brief_json(composition)
     _print_brief(composition)
@@ -4780,10 +4830,10 @@ def _status_read(parsed: argparse.Namespace, context: RunContext) -> int:
         return 0
     ages = _claim_ages(worktree, state)
     issue = _optional_issue_number(parsed.issue)
-    now = datetime.now(UTC)
     if parsed.json:
-        return _status_json(claims, issue, ages, state.tip, now=now)
-    return _status(claims, issue, ages, context.config.storage, now=now)
+        return _status_json(claims, issue, ages, state.tip, now=datetime.now(UTC))
+    lane_shared = trunk_lane_shared(context.configured_canonical_remote, context.toplevel)
+    return _status(claims, issue, ages, context.config.storage, lane_shared)
 
 
 @dataclass(frozen=True)

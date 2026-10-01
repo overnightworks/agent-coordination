@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TextIO
 
 import pytest
-from cli_fixtures import count_context_reads, fresh_observation
+from cli_fixtures import count_context_reads, fresh_observation, stub_board_config_tracked
 from test_cli import (
     FakeForge,
     _arguments_bash_hands_aco,
@@ -1815,7 +1815,7 @@ class TestCliStateRefForge:
         (config_dir / "board.toml").write_text(
             f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
         )
-        monkeypatch.setattr(checkout, "path_is_tracked", lambda _path, **_kwargs: True)
+        stub_board_config_tracked(monkeypatch)
         _redirect_toplevel(monkeypatch, worktree)
         monkeypatch.chdir(worktree)
 
