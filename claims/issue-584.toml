@@ -1,0 +1,7 @@
+claim_id = "1c086a4d755848d5b519062ae51b349c"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "a73517b5e5f89abb1d91eb108470c1531e8769e5"
+branch = "claude/issue-584-lane-shared-on"
+scope = [".agent-claim/board.toml"]
+opened_commit = "cf29ae4c00e4303a9d89c4905bda299cb4c9c5d9"
