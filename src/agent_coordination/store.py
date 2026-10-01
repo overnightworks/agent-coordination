@@ -1443,13 +1443,12 @@ def _reuse_or_write_ids_subtree(
 ) -> ObjectId | None:
     """`ids/`'s new subtree oid (issue #241): every id's blob is the same
     empty content, so reuse is membership-only -- the empty blob is written
-    at most once per call, never once per newly consumed id. Carried and
-    `None` as `_reuse_or_write_mapping_subtree` carries them.
+    at most once per call, never once per newly consumed id. An unchanged
+    `ids/` is carried as it stands (CAS-61, issue #565), `None` while it is
+    absent; `protocol.apply` only ever adds ids, so a write never empties it.
     """
     if old_ids == new_ids:
         return existing.oid
-    if not new_ids:
-        return None
     empty_blob: ObjectId | None = None
     entries: list[_TreeEntry] = []
     for claim_id in new_ids:
