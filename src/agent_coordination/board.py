@@ -2434,9 +2434,8 @@ def item_json_reference(number: int, storage: Storage) -> int | str:
 
 # What an advice line names where it knows no paths to claim, no reason to
 # claim out of order, or no slug a title yields: an agent reads it as "fill
-# these in", which is why
-# it stays outside `advice_command`'s quoting rather than becoming one
-# quoted `'<paths>'` argument.
+# these in", which is why it stays outside `advice_command`'s quoting rather
+# than becoming one quoted `'<paths>'` argument.
 SCOPE_PLACEHOLDER = "--scope <paths>"
 SLUG_PLACEHOLDER = "--slug <slug>"
 OUT_OF_ORDER_PLACEHOLDER = "--out-of-order <reason>"

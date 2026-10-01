@@ -3033,8 +3033,8 @@ def _seed_state_ref_item(repo: Path, remote: Path, number: int, content: str) ->
 
 
 @pytest.mark.parametrize(
-    "command",
-    [["status"], ["board", "--json"], ["next", "--json"]],
+    ("command", "checkouts_agree"),
+    [(["status"], True), (["board", "--json"], True), (["next", "--json"], False)],
     ids=["status", "board", "next"],
 )
 def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
@@ -3042,13 +3042,15 @@ def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     command: list[str],
+    checkouts_agree: bool,
 ) -> None:
     """Issue #460: a read run from `src/` of a checkout, or of a linked
     worktree, answers exactly as from that checkout's root -- git lists and
     archives a tree object relative to its own working directory, so the
     state tree must be read from the checkout root, never the process cwd.
-    The two checkouts may answer apart: `next` advises `start` from the
-    one and `claim` from the other (issue #562)."""
+    The main checkout and a linked worktree answer alike, except `next`,
+    which advises `start` from the one and `claim` from the other
+    (issue #562)."""
     repo, _remote, _seeded_oid = _real_state_ref_start_scenario(monkeypatch, tmp_path)
     linked = tmp_path / "linked"
     _real_git(repo, "worktree", "add", "-q", "-b", "lane", str(linked))
@@ -3064,6 +3066,7 @@ def test_state_ref_reads_answer_from_a_subdirectory_as_from_the_checkout_root(
     main_root, main_subdirectory, linked_root, linked_subdirectory = answers
     assert (main_root[0], linked_root[0]) == (0, 0)
     assert (main_subdirectory, linked_subdirectory) == (main_root, linked_root)
+    assert (main_root == linked_root) is checkouts_agree
 
 
 def test_start_under_state_ref_claims_the_worktree_it_builds(
