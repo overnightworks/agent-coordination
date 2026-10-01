@@ -20117,6 +20117,14 @@ def _piping(text: str) -> Callable[[Path], contextlib.AbstractContextManager[Tex
 _piped_body_on_stdin = _piping(_ITEM_NEW_BODY)
 
 
+def main_with_piped_stdin(monkeypatch: pytest.MonkeyPatch, text: str, argv: list[str]) -> int:
+    """`printf ... | aco <argv>`: one run with `text` on a pipe as its
+    stdin, the pipe closed once the run returns."""
+    with _read_end_of_a_pipe_carrying(text) as stdin:
+        monkeypatch.setattr(sys, "stdin", stdin)
+        return issue_claim.main(argv)
+
+
 @contextlib.contextmanager
 def _terminal_on_stdin(_tmp_path: Path) -> Iterator[TextIO]:
     """A stdin a person types into, holding a line nobody piped."""
@@ -21144,7 +21152,7 @@ def _state_ref_item_edit(
     client = _state_ref_item_client(tmp_path)
     monkeypatch.setattr(client, "holds", lambda _number: True, raising=False)
     monkeypatch.setattr(client, "item_oid", lambda _number: "a" * 40, raising=False)
-    monkeypatch.setattr(sys, "stdin", io.StringIO(_state_ref_item_body("Edited Title")))
+    pipe(_state_ref_item_body("Edited Title"))
     return client, ["item", "edit", "42"]
 
 
@@ -21201,9 +21209,7 @@ def test_item_edit_json_reports_body_invalid_with_defects(
     `reason: "body_invalid"`, with `body --check`'s own `defects` list as a
     structured sibling, before any forge is ever resolved."""
     _write_state_ref_pin(tmp_path)
-    monkeypatch.setattr(sys, "stdin", io.StringIO("no block"))
-
-    status = issue_claim.main(["item", "edit", "42", "--json"])
+    status = main_with_piped_stdin(monkeypatch, "no block", ["item", "edit", "42", "--json"])
 
     assert status == 2
     captured = capsys.readouterr()
@@ -21767,13 +21773,15 @@ class _CountedRun:
     toplevel reads keyed by the directory git ran in (`None`: the process's
     own cwd), board configuration reads by the toplevel they read, and
     observations of `refs/aco/state`, a transition's own included, by the
-    worktree they fetched into (issues #477, #494)."""
+    worktree they fetched into (issues #477, #494); `piped`, the body a
+    command reading one gets on a pipe."""
 
     argv: list[str]
     toplevel_reads: dict[Path | None, int]
     config_reads: dict[Path | None, int]
     observations: dict[Path, int]
     exit_code: int = 0
+    piped: str | None = None
 
 
 def _read_once(
@@ -21823,8 +21831,8 @@ def _state_ref_next_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
 
 def _state_ref_item_edit_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
-    monkeypatch.setattr(sys, "stdin", io.StringIO(_state_ref_item_body("Edited Title")))
-    return _state_ref_command(["item", "edit", "314"], monkeypatch, tmp_path)
+    run = _state_ref_command(["item", "edit", "314"], monkeypatch, tmp_path)
+    return replace(run, piped=_state_ref_item_body("Edited Title"))
 
 
 def _state_ref_release_merged_command(
@@ -22029,6 +22037,7 @@ def _start_lost_answer_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
 def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    pipe_onto_stdin: Callable[[str], None],
     arrange: Callable[[pytest.MonkeyPatch, Path], _CountedRun],
 ) -> None:
     """Issue #457 proof 3: a run's static facts are read the first time a
@@ -22041,6 +22050,8 @@ def test_a_command_reads_its_static_facts_and_the_state_ref_once_per_directory(
     command refused before it needs the state ref never makes (issue #477,
     CAS-53)."""
     run = arrange(monkeypatch, tmp_path)
+    if run.piped is not None:
+        pipe_onto_stdin(run.piped)
     reads = count_context_reads(monkeypatch)
 
     exit_code = main_exit_code(run.argv)

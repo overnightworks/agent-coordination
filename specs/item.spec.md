@@ -48,6 +48,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22, ITEM-49, ITEM-51 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24, ITEM-49, ITEM-51 | — |
+| `--size`, `--whole` or `--kind` naming the value already set | — | — | ITEM-64 | — |
 | prose piped without a block, or nothing piped, either storage | ITEM-58, ITEM-60 | — | — | — |
 | a piped block a flag agrees with or contradicts, either storage | ITEM-59, ITEM-62 | — | — | — |
 | state-ref pin, a stored body leaving a section empty | ITEM-61 | — | — | — |
@@ -60,6 +61,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | an open or recently closed look-alike title, either storage | ITEM-33 | — | — | — |
 | `storage = "github"`, a re-run or an exact duplicate | ITEM-35 | — | — | — |
 | a delivered `[record]`, present or absent | — | — | ITEM-12..ITEM-14 | — |
+| no flag, and nothing piped or redirected | — | — | ITEM-63 | — |
 | a delivered `blocked_by` the item does not carry, naming no item, a malformed item or the item itself, or one blocker twice | — | — | ITEM-43, ITEM-44 | — |
 | a title or body whose stored bytes the read would refuse | ITEM-52 | — | ITEM-52, BODY-63 | — |
 | `item show`/`edit`/`close --json` | — | ITEM-09 | ITEM-15 | ITEM-16 |
@@ -131,6 +133,13 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 - [ ] [ITEM-43] A delivered `blocked_by` refuses before any write when it names one blocker twice, `item <item-id> lists blocker <blocker-id> more than once`, or a new one naming no item, PIN-17's (see E-ITEM-11).
 - [ ] [ITEM-44] So does a new blocker naming a malformed item, PIN-14/PIN-15's then ITEM-38's, or the item itself, `item <item-id> is listed as its own blocker`; a stored list delivered unchanged is never re-judged.
 - [ ] [ITEM-52] A state-ref write whose stored body PIN-14/PIN-15 would refuse prints `<defect>; stored, that body would not read back, so nothing was written`, exit `2`, before any write (see E-ITEM-14).
+- [ ] [ITEM-63] With no flag, a socket, terminal, `/dev/null` or closed stdin refuses `item edit <item-id> needs the new body on stdin: aco item edit <item-id> < body.md`, exit `2`, unread, before any write.
+
+  ```console
+  $ aco item edit aco-00013a
+  2> ERROR: item edit aco-00013a needs the new body on stdin: aco item edit aco-00013a < body.md
+  exit 2
+  ```
 - [ ] [ITEM-15] `aco item edit ITEM --json` prints the envelope, `reason: "edited"`, then `item`, `number`, `oid` (the freshly written blob's own oid) (see E-ITEM-03).
 - [ ] [ITEM-21] `item edit --size S|M|L` patches only the top-level `size`, reads no stdin, works under both storages; state-ref also bumps `record.updated_at`.
 
@@ -148,6 +157,15 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
   $ printf 'body\n' | aco item edit 484 --size S
   2> ERROR: item edit --size reads no stdin; drop the redirect
   exit 2
+  ```
+- [ ] [ITEM-64] `--size`, `--whole` or `--kind` naming the value already set prints `UNCHANGED #<n> <field>=<value>` (`--json`: `reason: "unchanged"`, ITEM-22/24/47's keys), exit `0`, and writes nothing.
+
+  ```console
+  $ aco item edit 484 --size S
+  EDITED #484 size=S
+  $ aco item edit 484 --size S
+  UNCHANGED #484 size=S
+  exit 0
   ```
 - [ ] [ITEM-50] `--size`, `--whole` and `--kind` exclude one another: a second one refuses at argparse, `argument <second>: not allowed with argument <first>`, exit `2`, before any write.
 - [ ] [ITEM-51] A socket, terminal, `/dev/null` or closed stdin on `--kind`, `--size` or `--whole` passes unread, as an agent harness hands a socket when nothing was piped.
