@@ -774,6 +774,49 @@ def test_path_is_tracked_reads_real_git_index_and_ignore_state(
     assert checkout.path_is_tracked(board.CONFIG_PATH.as_posix()) is expected
 
 
+@pytest.mark.parametrize(
+    ("path", "revision", "expected"),
+    [
+        pytest.param("README.md", "main", "hello\n", id="committed"),
+        pytest.param("docs/absent.md", "main", None, id="absent-at-revision"),
+    ],
+)
+def test_file_at_revision_reads_the_committed_text_not_the_worktree_copy(
+    tmp_path: Path, path: str, revision: str, expected: str | None
+) -> None:
+    """Issue #575: a file's text as `revision`'s tree holds it, whatever the
+    worktree's copy now says; a tree without the file has no text to show."""
+    repository = _scratch_git_repository(tmp_path)
+    (repository / "README.md").write_text("edited in the worktree\n")
+
+    assert checkout.file_at_revision(path, revision=revision, directory=repository) == expected
+
+
+def _lose_the_committed_readme_blob(repository: Path) -> None:
+    blob = _real_git(repository, "rev-parse", "main:README.md").stdout.strip()
+    (repository / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+
+
+@pytest.mark.parametrize(
+    ("revision", "break_repository"),
+    [
+        pytest.param("HEAD~1", lambda _repository: None, id="revision-does-not-resolve"),
+        pytest.param("main", _lose_the_committed_readme_blob, id="tree-lists-an-unreadable-blob"),
+    ],
+)
+def test_file_at_revision_refuses_a_file_git_cannot_read(
+    tmp_path: Path, revision: str, break_repository: Callable[[Path], None]
+) -> None:
+    """Issue #575: an unresolvable revision, or a file its tree lists but git
+    cannot show, is a git failure, never a file the revision lacks -- the
+    trunk's lane-shared list must not silently empty on a broken repository."""
+    repository = _scratch_git_repository(tmp_path)
+    break_repository(repository)
+
+    with pytest.raises(ClaimError):
+        checkout.file_at_revision("README.md", revision=revision, directory=repository)
+
+
 def _fake_trunk_log_record(*fields: str) -> str:
     """One fake `git log -z` trunk-landing record: `fields` joined by
     `checkout._TRUNK_LANDING_FIELD_SEPARATOR`, terminated by that same

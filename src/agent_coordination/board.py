@@ -418,6 +418,12 @@ class BoardConfig:
     # guessed from the remote's own host. `github` is the default -- every
     # repository pinned today lives there.
     storage: Storage = Storage.GITHUB
+    # Repository files any live claim in a checkout may write without naming
+    # them in its scope (issue #575): registries that follow every code
+    # change mechanically -- a dead-code whitelist, a test-budget ledger --
+    # so no lane can know in advance whether it will need one. Only the
+    # trunk's committed copy is obeyed (`session.trunk_lane_shared`).
+    lane_shared: tuple[str, ...] = ()
 
 
 # The body pin (issue #150) is still a key this file defines, but no longer
@@ -646,6 +652,37 @@ def _validated_storage(raw: dict[str, object], path: Path) -> Storage:
     )
 
 
+def _validated_lane_shared(raw: dict[str, object], path: Path) -> tuple[str, ...]:
+    """`lane_shared`'s entries (issue #575), each in the one canonical
+    repository-relative form a claim scope entry takes, so `protect` can
+    compare an entry with a payload path's own scope entry as text. An entry
+    that is absolute, climbs out with `..`, or is not canonical -- a trailing
+    `/` included -- is not a file inside the repository. Only the syntax is
+    judged, with no tree read, so `land` and every reader judge alike; an
+    entry naming a directory matches no file, since matching is exact. An
+    entry is foreign text, so a refusal names it as `terminal_text` shows it."""
+    entries = raw.get("lane_shared")
+    if entries is None:
+        return ()
+    if (
+        not isinstance(entries, list)
+        or not all(isinstance(entry, str) for entry in entries)
+        or len(set(entries)) != len(entries)
+    ):
+        raise protocol.ClaimError(
+            f"board configuration {path} lane_shared must be a list of unique repository file paths"
+        )
+    for entry in entries:
+        try:
+            protocol.valid_scope([entry])
+        except protocol.InvalidClaimMarkerError as error:
+            raise protocol.ClaimError(
+                f"board configuration {path} lane_shared entry '{terminal_text(entry)}' "
+                "is not a canonical path inside the repository"
+            ) from error
+    return tuple(entries)
+
+
 def _refuse_unknown_config_keys(raw: dict[str, object], path: Path) -> None:
     """Name a key this file does not define, the way the block parser names
     an unknown top-level key.
@@ -691,6 +728,7 @@ def parse_config(text: str, path: Path) -> BoardConfig:
         idea_label=_validated_idea_label(raw),
         canonical_remote=_validated_canonical_remote(raw, path),
         storage=_validated_storage(raw, path),
+        lane_shared=_validated_lane_shared(raw, path),
     )
 
 
