@@ -980,8 +980,8 @@ class GitHubForge:
         return forge.LandingReadiness(number, state == "open", head_sha, mergeable_state, checks)
 
     def allowed_merge_methods(self) -> frozenset[board.MergeMethod] | None:
-        """Which of `aco land`'s merge methods this repository allows
-        (issue #578), from its own `allow_merge_commit`/`allow_squash_merge`
+        """Which merge methods this repository allows (issue #578), from its
+        own `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge`
         settings, or `None` where GitHub withholds them -- it reports them
         only to a token that may push."""
         raw = self._run(
@@ -989,7 +989,7 @@ class GitHubForge:
                 "api",
                 f"repos/{self.repository}",
                 "--jq",
-                "{merge:.allow_merge_commit,squash:.allow_squash_merge}",
+                "{merge:.allow_merge_commit,squash:.allow_squash_merge,rebase:.allow_rebase_merge}",
             ]
         )
         values = self._json_lines(raw, "repository merge settings")

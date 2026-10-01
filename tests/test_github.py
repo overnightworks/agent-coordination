@@ -1063,7 +1063,7 @@ def test_github_adapter_fails_loud_on_an_empty_mergeable_state() -> None:
         client.landing_readiness(57)
 
 
-@pytest.mark.parametrize("method", list(board.MergeMethod))
+@pytest.mark.parametrize("method", sorted(board.LANDING_MERGE_METHODS))
 def test_github_adapter_merges_a_pull_request_with_a_pinned_sha(
     method: board.MergeMethod,
 ) -> None:
@@ -1107,23 +1107,33 @@ def test_github_adapter_merges_a_pull_request_with_a_pinned_sha(
     ("settings", "allowed"),
     [
         pytest.param(
-            {"merge": True, "squash": True},
-            frozenset({board.MergeMethod.MERGE, board.MergeMethod.SQUASH}),
-            id="both",
+            {"merge": True, "squash": True, "rebase": True},
+            frozenset(board.MergeMethod),
+            id="all-three",
         ),
         pytest.param(
-            {"merge": False, "squash": True}, frozenset({board.MergeMethod.SQUASH}), id="squash"
+            {"merge": False, "squash": True, "rebase": False},
+            frozenset({board.MergeMethod.SQUASH}),
+            id="squash",
         ),
-        pytest.param({"merge": False, "squash": False}, frozenset(), id="neither"),
-        pytest.param({"merge": None, "squash": None}, None, id="withheld-without-push-rights"),
+        pytest.param(
+            {"merge": False, "squash": False, "rebase": True},
+            frozenset({board.MergeMethod.REBASE}),
+            id="rebase",
+        ),
+        pytest.param(
+            {"merge": None, "squash": None, "rebase": None},
+            None,
+            id="withheld-without-push-rights",
+        ),
     ],
 )
 def test_github_adapter_reads_the_repositorys_allowed_merge_methods(
     settings: dict[str, object], allowed: frozenset[board.MergeMethod] | None
 ) -> None:
     """Issue #578: `allowed_merge_methods` reads the repository's own
-    `allow_merge_commit`/`allow_squash_merge`, and `None` where GitHub
-    withholds both from a token without push rights."""
+    `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge`, and
+    `None` where GitHub withholds them from a token without push rights."""
     observed: list[list[str]] = []
 
     def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
@@ -1138,7 +1148,7 @@ def test_github_adapter_reads_the_repositorys_allowed_merge_methods(
             "api",
             f"repos/{REPOSITORY}",
             "--jq",
-            "{merge:.allow_merge_commit,squash:.allow_squash_merge}",
+            "{merge:.allow_merge_commit,squash:.allow_squash_merge,rebase:.allow_rebase_merge}",
         ]
     ]
 
@@ -1146,8 +1156,12 @@ def test_github_adapter_reads_the_repositorys_allowed_merge_methods(
 @pytest.mark.parametrize(
     "answer",
     [
-        pytest.param(json.dumps({"merge": "yes", "squash": True}), id="not-a-boolean"),
-        pytest.param(json.dumps({"merge": None, "squash": True}), id="half-withheld"),
+        pytest.param(
+            json.dumps({"merge": True, "squash": True, "rebase": "yes"}), id="not-a-boolean"
+        ),
+        pytest.param(
+            json.dumps({"merge": False, "squash": True, "rebase": None}), id="half-withheld"
+        ),
         pytest.param(json.dumps([True, True]), id="not-an-object"),
     ],
 )

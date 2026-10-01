@@ -87,7 +87,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 ## Merge, composed by `aco land`
 
 - [ ] [LANDCMD-12] `aco land` merges pinned to the head sha read during preflight, never an unpinned re-read, with the method LANDCMD-27 picks: a merge commit or one squash commit, never a rebase.
-- [ ] [LANDCMD-27] `merge_method = "merge"` or `"squash"` in `<path>` picks the method; without it, a merge commit where GitHub allows one or withholds its settings, a squash where it allows only squash.
+- [ ] [LANDCMD-27] `merge_method = "merge"` or `"squash"` in `<path>` picks the method; without it, `aco land` reads GitHub's own `allow_merge_commit`, `allow_squash_merge`, and `allow_rebase_merge` and picks a merge commit where GitHub allows one or withholds those settings, a squash where it allows a squash but no merge commit.
 - [ ] [LANDCMD-28] A repository allowing neither refuses `pull request #<n> cannot land: this repository allows neither a merge commit nor a squash merge`, exit `2`, before any write (E-LANDCMD-28).
 - [ ] [LANDCMD-30] Any other `merge_method` refuses `board configuration <path> merge_method must be 'merge' or 'squash'`, exit `2`; a head carrying one refuses as LANDCMD-24.
 - [ ] [LANDCMD-29] The landed commit's title is `Merge pull request #<n>` for a merge commit and `<title> (#<n>)` for a squash commit.

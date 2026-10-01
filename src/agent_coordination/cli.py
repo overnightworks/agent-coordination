@@ -6644,7 +6644,8 @@ def _land_merge_method(
     """The method `aco land` merges pull request `number` with (issue
     #578): the board configuration's own pin beats the forge; otherwise a
     merge commit wherever the forge allows one or withholds its settings,
-    and a squash where it allows only that."""
+    and a squash where it allows a squash but no merge commit -- never a
+    rebase, even where the forge allows only that."""
     if pinned is not None:
         return pinned
     allowed = client.allowed_merge_methods()

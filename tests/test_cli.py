@@ -17261,6 +17261,7 @@ def test_land_merges_an_issueless_lane_pull_request(
 
 _MERGE = board.MergeMethod.MERGE
 _SQUASH = board.MergeMethod.SQUASH
+_REBASE = board.MergeMethod.REBASE
 
 
 @pytest.mark.parametrize(
@@ -17271,7 +17272,10 @@ _SQUASH = board.MergeMethod.SQUASH
             None, frozenset({_MERGE, _SQUASH}), (_MERGE, "Merge pull request #12", 2), id="both"
         ),
         pytest.param(
-            None, frozenset({_SQUASH}), (_SQUASH, "feat: land the lane (#12)", 1), id="only-squash"
+            None,
+            frozenset({_SQUASH, _REBASE}),
+            (_SQUASH, "feat: land the lane (#12)", 1),
+            id="squash-and-rebase-without-a-merge-commit",
         ),
         pytest.param(
             "squash",
@@ -17285,7 +17289,7 @@ _SQUASH = board.MergeMethod.SQUASH
             (_MERGE, "Merge pull request #12", 2),
             id="pinned-merge-beats-the-forge",
         ),
-        pytest.param(None, frozenset(), None, id="neither-refuses-before-the-merge"),
+        pytest.param(None, frozenset({_REBASE}), None, id="only-rebase-refuses-before-the-merge"),
     ],
 )
 def test_land_merges_with_the_method_the_repository_allows(

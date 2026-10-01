@@ -406,13 +406,18 @@ class LandingRow:
 
 
 class MergeMethod(StrEnum):
-    """How `aco land` merges a pull request (issue #578), in GitHub's own
-    `merge_method` vocabulary: the two methods whose one landed commit can
-    carry the composed trailer. A rebase lands every lane commit instead,
-    so `land` never uses it."""
+    """How GitHub merges a pull request (issue #578), in its own
+    `merge_method` vocabulary."""
 
     MERGE = "merge"
     SQUASH = "squash"
+    REBASE = "rebase"
+
+
+# The methods `aco land` merges with, and a `merge_method` pin may name:
+# their one landed commit carries the composed trailer. A rebase lands
+# every lane commit instead, so `land` never uses it.
+LANDING_MERGE_METHODS = frozenset({MergeMethod.MERGE, MergeMethod.SQUASH})
 
 
 @dataclass(frozen=True)
@@ -664,7 +669,7 @@ def _validated_merge_method(raw: dict[str, object], path: Path) -> MergeMethod |
     method_raw = raw.get("merge_method")
     if method_raw is None:
         return None
-    if isinstance(method_raw, str) and method_raw in set(MergeMethod):
+    if isinstance(method_raw, str) and method_raw in LANDING_MERGE_METHODS:
         return MergeMethod(method_raw)
     raise protocol.ClaimError(
         f"board configuration {path} merge_method must be "
