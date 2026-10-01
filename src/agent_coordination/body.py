@@ -1244,12 +1244,25 @@ _SKELETON_PROJECTION: Mapping[str, object] = {
 
 
 def prose_above_fresh_block(prose: str, fields: Mapping[str, object]) -> str:
-    """`prose` above a fresh `agent-claim` block holding `fields` (issue
-    #555), every projection key `fields` leaves out written empty; the bare
-    block when `prose` is empty."""
-    block = render_block({**_SKELETON_PROJECTION, **fields})
-    fence = f"```{AGENT_CLAIM_FENCE_INFO}\n{block}```\n"
-    return f"{prose}\n\n{fence}" if prose else fence
+    """`prose`, kept byte for byte, above a fresh `agent-claim` block holding
+    `fields` (issues #555, #567), every projection key `fields` leaves out
+    written empty; the bare block when `prose` is empty. The block follows
+    one blank line below the prose, in the prose's own line ending."""
+    newline = _first_line_ending(prose)
+    block = render_block({**_SKELETON_PROJECTION, **fields}, newline)
+    fence = f"```{AGENT_CLAIM_FENCE_INFO}{newline}{block}```{newline}"
+    if not prose:
+        return fence
+    last_line_end = "" if _line_ending(prose) else newline
+    return f"{prose}{last_line_end}{newline}{fence}"
+
+
+def _first_line_ending(text: str) -> str:
+    """The line ending `text`'s first ended line carries, `\\n` when none."""
+    return next(
+        (ending for line in text.splitlines(keepends=True) if (ending := _line_ending(line))),
+        "\n",
+    )
 
 
 # `cut`'s fresh child, in the one grammar the tool reads: every projection

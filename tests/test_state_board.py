@@ -2944,6 +2944,30 @@ class TestCliStateRefForge:
                 id="prose_above_a_block_built_from_the_flags",
             ),
             pytest.param(
+                _piping("Ship the importer.  \r\nKeep it exact.\t\r\n"),
+                ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."),
+                "",
+                "Ship the importer.  \r\nKeep it exact.\t\r\n\r\n```agent-claim\r\n",
+                {"now": "Ready.", "next": "Build it.", "done_when": "Merged."},
+                id="crlf_prose_kept_byte_for_byte_above_a_crlf_block",
+            ),
+            pytest.param(
+                _piping("Ship the importer. \n\n"),
+                ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."),
+                "",
+                "Ship the importer. \n\n\n```agent-claim\n",
+                {"now": "Ready.", "next": "Build it.", "done_when": "Merged."},
+                id="trailing_whitespace_and_blank_lines_kept",
+            ),
+            pytest.param(
+                _piping("Ship the importer.\t"),
+                ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."),
+                "",
+                "Ship the importer.\t\n\n```agent-claim\n",
+                {"now": "Ready.", "next": "Build it.", "done_when": "Merged."},
+                id="unended_last_line_kept_and_ended",
+            ),
+            pytest.param(
                 _piping(
                     "Ship the importer.\n\n```agent-claim\nversion = 1\n"
                     'now = "Ready."\nnext = ""\ndone_when = ""\n```\n'
