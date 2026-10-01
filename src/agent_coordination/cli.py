@@ -1982,26 +1982,29 @@ def _next_action_command(
     an item carrying its own top-level `scope` (issue #348, #337's own
     derivation); an item whose one `[[slice]]` row names paths claims
     exactly those; only an item naming neither still prints the
-    placeholder, alongside `SCOPE_UNKNOWN_NOTE`. All render through
-    `board.advice_command`, so the line runs as printed (issue #510).
+    placeholder, alongside `SCOPE_UNKNOWN_NOTE`. A scope wider than `claim`'s
+    path limit with no `whole` in the body adds `--whole <reason>` (issue
+    #566). All render through `board.advice_command`, so the line runs as
+    printed (issue #510).
     """
     if isinstance(action, board.CutSliceAction):
         return board.cut_command(action.container.number, storage, action.cut_title)
     item = action.item
+    pull = board.PullScope(item.scope, action.scope, item.whole)
     if claims_in_place:
-        return board.work_item_claim_command(item.number, storage, item.scope, action.scope)
-    return board.work_item_start_command(
-        item.number, storage, _advised_slug(item.title), item.scope, action.scope
-    )
+        return board.work_item_claim_command(item.number, storage, pull)
+    slug = _advised_slug(item.number, item.title, storage)
+    return board.work_item_start_command(item.number, storage, slug, pull)
 
 
-def _advised_slug(title: str) -> str | None:
-    """The slug `start` derives from `title`, or `None` when it would refuse
-    for want of one, which the advice then leaves for the agent to fill."""
+def _advised_slug(number: int, title: str, storage: body.Storage) -> str:
+    """The slug `start` derives from `title`, else, for a title with no
+    usable slug (issue #566), the one item `number`'s own id yields -- a
+    value `start --slug` accepts, so the advice runs as printed."""
     try:
         return checkout.slug_from_title(title)
     except protocol.ClaimError:
-        return None
+        return checkout.slug_from_title(board.item_argument(number, storage))
 
 
 def _claims_in_place(context: RunContext) -> bool:

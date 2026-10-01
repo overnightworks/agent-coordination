@@ -456,6 +456,10 @@ class BoardItem:
     # scope of its own, the case `next`'s `Run:` line and `parallel_set`'s
     # disjointness walk both have to name rather than guess through.
     scope: tuple[str, ...] | None
+    # The block's own top-level `whole` reason (issue #566), exactly
+    # `ParsedBody.whole`: the reason `claim`/`start` read for a wide scope,
+    # so `next`'s `Run:` line asks for `--whole` only where the body has none.
+    whole: str | None
     contract: Contract
     next_step: str | None
     contract_complete: bool
@@ -1502,6 +1506,7 @@ def _board_item(
         container=container_progress,
         container_parent=container_parent,
         scope=parsed.scope,
+        whole=parsed.whole,
         contract=contract,
         next_step=next_step,
         contract_complete=parsed.contract_complete,
@@ -1926,39 +1931,49 @@ def _work_item_scope(
     return rows[0].scope if len(rows) == 1 else None
 
 
-def work_item_claim_command(
-    number: int,
-    storage: Storage,
-    own_scope: tuple[str, ...] | None,
-    occupied_scope: tuple[str, ...] | None,
-) -> str:
-    """The one `claim` advice for work item `number` (NEXT-03, issue #510):
-    no `--scope` when it names its own top-level `scope`, which `claim`
-    derives itself, else the `occupied_scope` `_work_item_scope` named --
-    so a nested container's pre-retype advice and `next`'s `Run:` line
-    after the retype name the same claim."""
-    return claim_command(number, storage, _advised_scope(own_scope, occupied_scope))
+@dataclass(frozen=True)
+class PullScope:
+    """What pulling a work item claims (issues #510, #566): its own
+    top-level `scope`, which `claim` and `start` derive themselves; the
+    `occupied` paths `_work_item_scope` names; and its own `whole` reason,
+    which both read from the body when the scope is wide."""
+
+    own: tuple[str, ...] | None
+    occupied: tuple[str, ...] | None
+    whole: str | None
+
+    def advised_paths(self) -> tuple[str, ...] | None:
+        """No paths when the item names its own `scope`, else `occupied`."""
+        return () if self.own is not None else self.occupied
+
+    def placeholders(self) -> tuple[str, ...]:
+        """`WHOLE_PLACEHOLDER` when the width gate `claim` and `start` apply
+        would refuse the occupied paths for want of a reason (issue #566),
+        else none. `next` reads no tree, so only the path-count condition
+        of `protocol.wide_scope_trip` can trip here."""
+        if self.whole is not None or self.occupied is None:
+            return ()
+        trip = protocol.wide_scope_trip(
+            self.occupied, directories=(), covered_file_count=0, versioned_file_count=0
+        )
+        return () if trip is None else (WHOLE_PLACEHOLDER,)
 
 
-def work_item_start_command(
-    number: int,
-    storage: Storage,
-    slug: str | None,
-    own_scope: tuple[str, ...] | None,
-    occupied_scope: tuple[str, ...] | None,
-) -> str:
+def work_item_claim_command(number: int, storage: Storage, pull: PullScope) -> str:
+    """The one `claim` advice for work item `number` (NEXT-03, issue #510),
+    scoped by `pull` -- so a nested container's pre-retype advice and
+    `next`'s `Run:` line after the retype name the same claim."""
+    arguments = ("claim", item_argument(number, storage))
+    return _pull_command(arguments, pull.advised_paths(), pull.placeholders())
+
+
+def work_item_start_command(number: int, storage: Storage, slug: str, pull: PullScope) -> str:
     """The `start` advice for work item `number` (issue #562), scoped as its
     `work_item_claim_command` is, for a caller standing where `claim`
-    refuses."""
-    return start_command(number, storage, slug, _advised_scope(own_scope, occupied_scope))
-
-
-def _advised_scope(
-    own_scope: tuple[str, ...] | None, occupied_scope: tuple[str, ...] | None
-) -> tuple[str, ...] | None:
-    """No paths when the item names its own top-level `scope`, which
-    `claim` and `start` derive themselves, else `occupied_scope`."""
-    return () if own_scope is not None else occupied_scope
+    refuses, naming `slug` so the worktree and branch it builds are the
+    ones the advice shows."""
+    arguments = ("start", item_argument(number, storage), AdviceOption("--slug", slug))
+    return _pull_command(arguments, pull.advised_paths(), pull.placeholders())
 
 
 def _qualifying_actions(board: Board) -> Iterator[NextAction]:
@@ -2433,11 +2448,11 @@ def item_json_reference(number: int, storage: Storage) -> int | str:
 
 
 # What an advice line names where it knows no paths to claim, no reason to
-# claim out of order, or no slug a title yields: an agent reads it as "fill
-# these in", which is why it stays outside `advice_command`'s quoting rather
-# than becoming one quoted `'<paths>'` argument.
+# claim out of order, or no reason to claim a wide scope: an agent reads it
+# as "fill these in", which is why it stays outside `advice_command`'s
+# quoting rather than becoming one quoted `'<paths>'` argument.
 SCOPE_PLACEHOLDER = "--scope <paths>"
-SLUG_PLACEHOLDER = "--slug <slug>"
+WHOLE_PLACEHOLDER = "--whole <reason>"
 OUT_OF_ORDER_PLACEHOLDER = "--out-of-order <reason>"
 
 
@@ -2515,24 +2530,6 @@ def _pull_command(
     scope_options = (AdviceOption("--scope", path) for path in scope or ())
     unknown = placeholders if scope is not None else (SCOPE_PLACEHOLDER, *placeholders)
     return " ".join((advice_command(*arguments, *scope_options), *unknown))
-
-
-def claim_command(number: int, storage: Storage, scope: tuple[str, ...] | None) -> str:
-    """The `claim` advice for item `number`, scoped as `_pull_command` says."""
-    return _pull_command(("claim", item_argument(number, storage)), scope, ())
-
-
-def start_command(
-    number: int, storage: Storage, slug: str | None, scope: tuple[str, ...] | None
-) -> str:
-    """The `start` advice for item `number` (issue #562), scoped as
-    `_pull_command` says, naming `slug` -- or `SLUG_PLACEHOLDER` when the
-    title yields none (`None`) -- so the worktree and branch it builds are
-    the ones the advice shows."""
-    if slug is None:
-        return _pull_command(("start", item_argument(number, storage)), scope, (SLUG_PLACEHOLDER,))
-    arguments = ("start", item_argument(number, storage), AdviceOption("--slug", slug))
-    return _pull_command(arguments, scope, ())
 
 
 def cut_command(number: int, storage: Storage, title: str) -> str:
@@ -2688,9 +2685,7 @@ def _childless_container_reason(
         case CheckVerdict():
             return CHECK_DONE_WHEN
         case NestedRepairVerdict(nesting_parent=nesting_parent):
-            return _nested_container_repair(
-                number, nesting_parent, parsed.scope, parsed.slices, storage
-            )
+            return _nested_container_repair(number, nesting_parent, parsed, storage)
         case _:
             return None
 
@@ -2705,8 +2700,7 @@ def _cut_slice_reason(number: int, storage: Storage, title: str) -> str:
 def _nested_container_repair(
     number: int,
     nesting_parent: IssueReference,
-    own_scope: tuple[str, ...] | None,
-    slices: tuple[SliceRow, ...],
+    parsed: ParsedBody,
     storage: Storage,
 ) -> str:
     """The repair container `number` needs when it is itself a child of
@@ -2717,10 +2711,11 @@ def _nested_container_repair(
     (issue #510), out of order since a `SKIPPED` item is never `next`'s first
     action (issue #513); for more rows, their move up to that
     parent, named the way `cut`'s own refusal names it."""
-    if len(slices) == 1:
+    if len(parsed.slices) == 1:
         retype = advice_command("item", "edit", item_argument(number, storage), "--kind", "task")
+        occupied = _work_item_scope(parsed.scope, parsed.slices)
         claim = work_item_claim_command(
-            number, storage, own_scope, _work_item_scope(own_scope, slices)
+            number, storage, PullScope(parsed.scope, occupied, parsed.whole)
         )
         return (
             f"nested container, which cut refuses; run {retype} "
