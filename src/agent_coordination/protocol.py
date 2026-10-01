@@ -25,6 +25,12 @@ MISSING_STATE_REF = (
 # non-projected claim instead of a loud refusal.
 ISSUELESS_LANE_BRANCH_PREFIXES = ("docs/", "fix/")
 CLAIM_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+# `aco-` plus six lowercase hex characters (issue #248, parent #230 ruling
+# 15.09.2026): a short random id, never a counter, never reused. An item
+# lives at exactly this id plus `.md` under `items/` (`item_filename`), so a
+# rename of the file is the only way its id ever changes.
+ITEM_ID_PATTERN = re.compile(r"aco-[0-9a-f]{6}")
+ITEM_FILENAME_SUFFIX = ".md"
 RESOURCE_NAME_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9._-]{0,63}")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 BRANCH_NAME_MAX_LENGTH = 255
@@ -867,6 +873,27 @@ def parse_claim_key(key: str) -> ClaimIdentity:
         _percent_decode_branch(key[len(_LANE_KEY_PREFIX) :])
         return LaneIdentity()
     raise MalformedStateTreeError(f"claim key has neither the issue nor lane prefix: {key!r}")
+
+
+# --- Item file-name codec (head ruling 30.09.2026, issue #558) --------------
+#
+# The one owner of which `items/` entry is an item: `store` places and
+# reads back item blobs by it, `items` and `board` read ids by it. Every
+# other `items/` entry is foreign -- neither an item nor this codec's to
+# rename.
+
+
+def item_filename(item_id: str) -> str:
+    """The `items/` entry name item `item_id` lives at."""
+    return f"{item_id}{ITEM_FILENAME_SUFFIX}"
+
+
+def item_id_of_filename(filename: str) -> str | None:
+    """The item id `filename` names, or `None` for a foreign `items/` entry."""
+    if not filename.endswith(ITEM_FILENAME_SUFFIX):
+        return None
+    candidate = filename.removesuffix(ITEM_FILENAME_SUFFIX)
+    return candidate if ITEM_ID_PATTERN.fullmatch(candidate) is not None else None
 
 
 @dataclass(frozen=True)
