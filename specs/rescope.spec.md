@@ -1,9 +1,11 @@
 # `aco rescope`
 
-`aco rescope` adds or drops paths on a live claim without releasing it. This
+`aco rescope` adds or drops paths on a live claim without releasing it, and
+writes the same scope into the claimed item's own body (issue #554). This
 file owns the command's own location resolution (`--add`/`--drop` absolute
-paths only, issue #314), its checkout preconditions, the scope-combining
-refusals, its own `_selected_store_claim` lookup (RESC-14), the
+or repository-relative, issues #314, #554), its checkout preconditions, the
+scope-combining refusals, its own `_selected_store_claim` lookup (RESC-14),
+the item-body write beside the claim (RESC-22..25), the
 `RESCOPED ...`/`--json` report, and its own `--json` `reason` vocabulary.
 `specs/output.spec.md` owns the `--json` envelope itself (OUT-nn: key
 order, `ok`, `message`); this file names only `rescope`'s own `reason`
@@ -12,8 +14,9 @@ gate's literal and `--whole`'s own field (CLAIM-25..30), a foreign-claimant
 refusal (CLAIM-37), that a rescope replaces only the scope while
 `claim_id`, `base` and age keep counting (CLAIM-49), and one claim's own
 `--json` field order (CLAIM-69); `specs/protect.spec.md` owns the checkout
-resolver's `relative payload path`, `not in a repository`, `no commit on
-this branch` and `default branch unknown` sentences (PROT-09..11, PROT-13),
+resolver's `not in a repository` reason, which `rescope` names its entry
+with, and its `no commit on this branch` and `default branch unknown`
+sentences (PROT-10, PROT-11, PROT-13),
 the sentence naming a canonical remote with no URL configured (PROT-45),
 and the sentences for a path no claim can ever cover (PROT-14, PROT-42,
 PROT-43) that `rescope` shares verbatim, `protect`'s own docstring names the
@@ -27,9 +30,9 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 
 | state \ trigger | `--add PATH` | `--drop PATH` | neither given | `--whole REASON` |
 |---|---|---|---|---|
-| a relative entry, anywhere in either list | RESC-01 | RESC-01 | — | — |
+| a relative entry | RESC-01 | RESC-01 | — | — |
 | the path's directories do not exist yet | RESC-18 | RESC-18 | — | — |
-| resolved checkout is outside every repository | PROT-10 | PROT-10 | PROT-10 | — |
+| resolved checkout is outside every repository | RESC-26 | RESC-26 | RESC-26 | — |
 | the path is inside a git directory itself | PROT-43 | PROT-43 | — | — |
 | resolved checkout has no commit yet | PROT-11 | PROT-11 | PROT-11 | — |
 | current branch is empty | RESC-02 | RESC-02 | RESC-02 | — |
@@ -45,22 +48,25 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 | dropping a path not in the claim's scope | — | RESC-07 | — | — |
 | combined scope equals the current scope | RESC-08 | RESC-08 | RESC-08 | — |
 | drop leaves nothing and nothing is added | — | RESC-09 | — | — |
-| combined scope is wide | RESC-10 | RESC-10 | — | RESC-11 |
-| a clean combine | RESC-12, RESC-13 | RESC-12, RESC-13 | — | RESC-12, RESC-13 |
+| the item body holds no valid block | RESC-24 | RESC-24 | — | — |
+| combined scope is wide | RESC-10, RESC-25 | RESC-10, RESC-25 | — | RESC-11, RESC-25 |
+| a clean combine | RESC-12, RESC-13, RESC-22 | RESC-12, RESC-13, RESC-22 | — | RESC-12, RESC-13, RESC-22 |
+| the claim write fails after the body write | RESC-23 | RESC-23 | — | RESC-23 |
 | a malformed `--add`/`--drop` value | RESC-15 | RESC-15 | RESC-15 | — |
 | this claim's own state disallows the rescope | RESC-16 | RESC-16 | RESC-16 | — |
 | every other refusal | RESC-17 | RESC-17 | RESC-17 | — |
 
 ## `--add`/`--drop` and their own checkout
 
-- [ ] [RESC-01] A `--add`/`--drop` entry that is not itself absolute, anywhere in either list, refuses PROT-09's own `relative payload path`, exit `2`, before the checkout is even resolved.
+- [ ] [RESC-01] A relative entry joins the run checkout's toplevel; with none it refuses `<flag> path '<path>' is relative and <cwd> is not in a repository; pass it as an absolute path`, exit `2`.
 - [ ] [RESC-02] A resolved checkout with an empty current branch refuses `rescope requires a non-empty current branch; check out the claim branch, or pass an issue number`, exit `2`.
 - [ ] [RESC-03] Sharing main's git dir, rescope refuses `build claims require a linked isolated worktree checkout; run this command from this claim's own worktree on '<branch>', not the primary checkout`, exit `2`.
 - [ ] [RESC-20] RESC-03, RESC-04 and PROT-13 judge the default branch the resolved checkout's canonical remote records, after its board configuration (PIN-01/PIN-32) is read.
 - [ ] [RESC-21] A canonical `<remote>` with no URL configured refuses PROT-45's sentence, exit `2`, before RESC-03/RESC-04 (see E-RESC-06).
 - [ ] [RESC-04] On the repository's own trunk branch, rescope refuses `build claims require an isolated non-main worktree branch; run this command from this claim's own worktree, not the primary checkout`, exit `2`.
 - [ ] [RESC-05] A `--add`/`--drop` path resolving outside the resolved checkout refuses `<flag> path '<path>' is outside the resolved checkout <toplevel>`, exit `2`.
-- [ ] [RESC-18] A `--add`/`--drop` path whose directories do not exist yet resolves its checkout from the nearest existing ancestor, as `protect` judges it (PROT-39); outside every repository it refuses PROT-10.
+- [ ] [RESC-18] A `--add`/`--drop` path whose directories do not exist yet resolves its checkout from the nearest existing ancestor, as `protect` judges it (PROT-39).
+- [ ] [RESC-26] A `--add`/`--drop` path outside every repository refuses `<flag> path '<path>' is not in a repository`, exit `2`; with neither flag, PROT-10's own sentence (see E-RESC-07).
 - [ ] [RESC-19] A `--add`/`--drop` path below a file or a dangling symlink, or naming the checkout root, refuses PROT-42's or PROT-14's own sentence, exit `2`, as `protect` denies it (see E-RESC-05).
 
 ## Selecting the live claim
@@ -73,22 +79,30 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 - [ ] [RESC-07] A `--drop` value the live claim's own scope does not hold refuses `cannot drop '<path>'; it is not in this claim's scope`, exit `2`.
 - [ ] [RESC-08] An `--add`/`--drop` combination leaving the scope set unchanged refuses `rescope does not change the claim scope`, exit `2`; omitting both flags refuses the same way.
 - [ ] [RESC-09] Dropping every scoped path with no `--add` to replace them refuses `rescope must leave a non-empty scope`, exit `2`.
-- [ ] [RESC-10] A combined scope tripping the width gate refuses, in the wording `claim-record.spec.md` owns (CLAIM-25, CLAIM-26, CLAIM-29; see CLM-18), exit `2`.
+- [ ] [RESC-10] A combined scope tripping the width gate refuses, in the wording `claim-record.spec.md` owns (CLAIM-25, CLAIM-26, CLAIM-29), exit `2`; an issue claim adds `or set whole in the body` (RESC-25).
 - [ ] [RESC-11] `--whole "<reason>"` admits a wide combined scope and replaces the stored `whole_reason`; an omitted `--whole` keeps a prior reason instead of clearing it.
 - [ ] [RESC-12] A clean combine prints `RESCOPED <subject>: <claim-id>`, exit `0` (see E-RESC-01).
 - [ ] [RESC-13] With `--json`, a clean combine prints the envelope, `reason: "rescoped"`, then `issue`/`lane`, `claim_id`, `agent`, `role`, `base`, `branch`, `scope` (`42`/`null` issue, `null`/`true` lane).
 
+## The item body beside the claim
+
+- [ ] [RESC-22] For an issue claim, one rescope writes the combined scope into the item body's own `scope`, then the claim; a lane claim names no item, so only its claim moves (see E-RESC-01).
+- [ ] [RESC-23] A claim write failing after the body write refuses `<label> body scope now reads <scope>, but the claim was not rescoped: <error>; run the same rescope again`, exit `2` (see E-RESC-08).
+- [ ] [RESC-24] An item body without a valid `agent-claim` block refuses `<label> <defect>; rescope needs a valid agent-claim block`, exit `2`, before either write; a failed body write leaves the claim as it stood.
+- [ ] [RESC-25] An issue claim's wide scope is admitted by `--whole`, the stored reason, or the body's own `whole`, as `claim` judges it (CLM-22), and `--whole` is written into the body too.
+
 ## `--json`'s own `reason` vocabulary
 
 - [ ] [RESC-15] A malformed `--add`/`--drop` value (RESC-01, RESC-05..09, RESC-19) reports `reason: "invalid_usage"` under `--json`.
-- [ ] [RESC-16] No live claim to rescope (RESC-14), a foreign claimant (CLAIM-37), or a wide combined scope (RESC-10) reports `reason: "precondition_failed"` under `--json` (see E-RESC-04).
-- [ ] [RESC-17] Every other refusal the handler raises -- an unresolved checkout (RESC-02..04, PROT-10/11/13/43) or a corrupted record -- reports `reason: "unavailable"` (a missing identity: OUT-05).
+- [ ] [RESC-16] No live claim (RESC-14), a foreign claimant (CLAIM-37), a wide combined scope (RESC-10) or an item body that cannot take it (RESC-24) reports `reason: "precondition_failed"` (see E-RESC-04).
+- [ ] [RESC-17] Every other refusal -- an unresolved checkout (RESC-02..04, RESC-26, PROT-11/13/43), a failed write (RESC-23) or a corrupted record -- reports `reason: "unavailable"` (a missing identity: OUT-05).
 
 ## Never
 
 - `rescope` never reads or requires checkout `HEAD` to match the claim's own `base`, and never refuses on a dirty working tree: only `claim`'s own precondition (CLM-04, CLM-05) checks either.
 - `rescope` never runs the comma-ungrounded check over `--drop`: a value the live claim already holds is a fact about the claim, not a checkout typo, so dropping a comma-bearing scoped path always matches it as one whole path.
-- `rescope` never falls back to the process's own cwd to interpret a relative `--add`/`--drop` entry: RESC-01 denies outright instead of guessing a location.
+- `rescope` never joins a relative `--add`/`--drop` entry to the process's own cwd: it is read against the run checkout's toplevel, the form an item body's own `scope` list prints.
+- `rescope` never leaves the item body naming the old scope once the claim moved: the body is written first, and a failed claim write names the body it left (RESC-23).
 - `rescope` has no `--resource` flag (CLAIM-37 already names its missing `--role`): any held resource carries over untouched, and `--json` never prints a `resource` key.
 - `rescope`'s checkout falls back to the process's own cwd only when neither `--add` nor `--drop` names a single path at all; a fresh scope is not otherwise inferred.
 
@@ -96,10 +110,10 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 
 `Setup: bare-remote` is a fresh work repository whose `origin` is a local
 bare repository with `main` at one commit, a git identity, `origin/HEAD`, a
-tracked `.agent-claim/board.toml`, and `ACO_AGENT` set to `Ada`; `<worktree>`
-is the runner's own linked-worktree directory -- every `--add`/`--drop`
-example below names a path under it, since only an absolute path is
-accepted.
+tracked `.agent-claim/board.toml`, issue #42 whose body carries a valid
+`agent-claim` block, and `ACO_AGENT` set to `Ada`; `<worktree>` is the
+runner's own linked-worktree directory, and every example runs inside it
+unless its setup names another directory.
 
 ### E-RESC-01 — adding a path, seen in text and JSON
 
@@ -114,13 +128,49 @@ $ aco rescope 42 --drop <worktree>/AGENTS.md --json
 exit 0
 ```
 
-### E-RESC-02 — a relative entry denies before the checkout resolves
+After each call, issue #42's body names the same `scope` as the claim.
 
-Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
+### E-RESC-02 — a relative entry is read against the checkout's toplevel
+
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`, run from `<worktree>/docs`
 
 ```console
 $ aco rescope 42 --add AGENTS.md
-2> ERROR: relative payload path
+RESCOPED issue #42: <claim-id>
+exit 0
+```
+
+### E-RESC-07 — outside every repository, the refusal names the entry
+
+Setup: bare-remote, bootstrapped, run from `<outside>`, a directory in no repository
+
+```console
+$ aco rescope 42 --add AGENTS.md
+2> ERROR: --add path 'AGENTS.md' is relative and <outside> is not in a repository; pass it as an absolute path
+exit 2
+$ aco rescope 42 --drop <outside>/x.py
+2> ERROR: --drop path '<outside>/x.py' is not in a repository
+exit 2
+```
+
+### E-RESC-08 — a claim write failing after the body write names the body
+
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`, `origin` rejecting the claim's push
+
+```console
+$ aco rescope 42 --add AGENTS.md
+2> ERROR: #42 body scope now reads ['AGENTS.md', 'README.md'], but the claim was not rescoped: <error>; run the same rescope again
+exit 2
+```
+
+### E-RESC-09 — an item body without a block refuses before either write
+
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`, issue #42's body carrying no `agent-claim` block
+
+```console
+$ aco rescope 42 --add AGENTS.md --json
+2> ERROR: #42 body malformed: agent-claim: no agent-claim block; rescope needs a valid agent-claim block
+{"ok": false, "reason": "precondition_failed", "message": "#42 body malformed: agent-claim: no agent-claim block; rescope needs a valid agent-claim block"}
 exit 2
 ```
 
