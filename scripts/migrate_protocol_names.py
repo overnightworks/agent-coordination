@@ -114,7 +114,13 @@ class GhRun(Protocol):
 
 
 class Clock(Protocol):
-    def now(self) -> float: ...
+    def now(self) -> float:
+        """Epoch seconds, the scale of GitHub's rate-limit reset times."""
+        ...
+
+    def monotonic(self) -> float:
+        """Seconds that only move forward, the scale for measuring waits."""
+        ...
 
     def sleep(self, seconds: float) -> None: ...
 
@@ -122,6 +128,9 @@ class Clock(Protocol):
 class SystemClock:
     def now(self) -> float:
         return time.time()
+
+    def monotonic(self) -> float:
+        return time.monotonic()
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
@@ -387,7 +396,7 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_second
             _migrated_body(reference, body),
             resend_wanted=partial(_still_pending, api, row),
         )
-        last_patch_at = clock.now()
+        last_patch_at = clock.monotonic()
         if not patched:
             print(f"already migrated {reference}")
             continue
@@ -405,7 +414,7 @@ def _still_pending(api: GitHubApi, row: ManifestRow) -> bool:
 
 
 def _wait_out_pace(clock: Clock, next_patch_at: float) -> None:
-    remaining = next_patch_at - clock.now()
+    remaining = next_patch_at - clock.monotonic()
     if remaining > 0:
         clock.sleep(remaining)
 

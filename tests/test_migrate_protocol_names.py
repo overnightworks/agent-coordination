@@ -78,18 +78,24 @@ class FakeGitHub:
 @dataclass
 class FakeClock:
     """Records each wait instead of sleeping; `during_wait` stands for whatever else
-    happens on GitHub while the script waits."""
+    happens on GitHub while the script waits. `time` is the wall clock, which a test may
+    correct; `elapsed` moves only with the waits."""
 
     waits: list[float] = field(default_factory=list)
     time: float = 1_000_000.0
+    elapsed: float = 0.0
     during_wait: Callable[[], None] = lambda: None
 
     def now(self) -> float:
         return self.time
 
+    def monotonic(self) -> float:
+        return self.elapsed
+
     def sleep(self, seconds: float) -> None:
         self.waits.append(seconds)
         self.time += seconds
+        self.elapsed += seconds
         self.during_wait()
 
 
@@ -431,6 +437,27 @@ def test_apply_paces_its_patches_and_waits_out_a_rate_limit(
     assert exit_code == 0
     assert migration.clock.waits == [wait, pace, pace]
     assert [github.body(number) for number in (1, 2, 3)] == [MIGRATED_BODY] * 3
+
+
+def test_apply_keeps_its_pace_when_the_wall_clock_is_corrected_forward(
+    migration: Migration,
+) -> None:
+    github = migration.github
+    for number in (1, 2):
+        github.add(number, PROTOCOL_BODY)
+    migration.dry_run(REPOSITORY)
+
+    def run_while_the_wall_clock_leaps(arguments: list[str], **options: bytes | None) -> str:
+        migration.clock.time += 3600.0
+        return github(arguments, **options)
+
+    command_line = ["--apply", "--manifest", str(migration.manifest)]
+    exit_code = migrate.main(
+        command_line, run=run_while_the_wall_clock_leaps, clock=migration.clock
+    )
+
+    assert exit_code == 0
+    assert migration.clock.waits == [migrate.PACE_SECONDS]
 
 
 def test_apply_resumes_from_its_manifest_after_a_stopped_run(
