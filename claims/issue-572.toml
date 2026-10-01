@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "d5b45c5b66d07017dad9914eb36b309a55a348f1"
 branch = "claude/issue-572-item-edit-no-hang"
-scope = ["specs/item.spec.md", "src/agent_coordination/cli.py", "tests/test_cli.py", "tests/test_state_board.py"]
+scope = ["specs/item.spec.md", "src/agent_coordination/cli.py", "tests/test_board_serve.py", "tests/test_cli.py", "tests/test_state_board.py"]
 opened_commit = "ff6ef7c617c6900d2a71ab230b64f368ee2caa44"
 whole_reason = "item edit's body form and narrow flags: stdin, help text, no-op writes"
