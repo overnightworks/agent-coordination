@@ -6836,21 +6836,32 @@ def _without_classification_lines(paragraph: str) -> str:
     )
 
 
+def _narrower_separator(dropped: str | None, following: str) -> str:
+    """The fewer-line of the two separators around a dropped paragraph,
+    `following` on a tie; `following` alone when nothing was dropped."""
+    if dropped is None:
+        return following
+    return min(following, dropped, key=lambda separator: separator.count("\n"))
+
+
 def _body_without_classification(body: str) -> str:
     """`body` with its classification line removed; a paragraph the removal
-    leaves blank goes with its own separator, so no blank-line run stays
-    where it stood (issue #594 line 5)."""
+    leaves blank goes, and its neighbours keep the narrower of the two
+    separators around it, so no blank-line run stays where it stood
+    (issue #594 line 5)."""
     pieces = _BLANK_LINE_RUN.split(body.replace("\r\n", "\n"))
-    separators = ["", *pieces[1::2]]
-    kept = [
-        (separator, remaining)
-        for separator, paragraph in zip(separators, pieces[0::2], strict=True)
-        if (remaining := _without_classification_lines(paragraph)).strip()
-    ]
-    return "".join(
-        (separator if position else "") + paragraph
-        for position, (separator, paragraph) in enumerate(kept)
-    ).strip()
+    composed = ""
+    dropped_separator: str | None = None
+    for separator, paragraph in zip(["", *pieces[1::2]], pieces[0::2], strict=True):
+        remaining = _without_classification_lines(paragraph)
+        if not remaining.strip():
+            dropped_separator = _narrower_separator(dropped_separator, separator)
+            continue
+        if composed:
+            composed += _narrower_separator(dropped_separator, separator)
+        composed += remaining
+        dropped_separator = None
+    return composed.strip()
 
 
 def _ends_in_trailer_block(title: str, body: str) -> bool:
