@@ -1432,10 +1432,12 @@ class SectionKept:
 class BranchRemoval:
     """Whether the same cleanup also removed the lane's own local branch,
     tracked apart from `WorktreeRemoval` (issue #322 review/gate finding 4):
-    `git worktree remove` and the branch deletion (`_delete_branch`) are
-    separate git writes, so the first can succeed while the second fails,
-    and that must never read as a bare `kept` that hides the worktree's own
-    removal. `section_kept` names a squashed branch's leftover section."""
+    `git worktree remove` and the branch deletion -- `git branch -d`, or for
+    a squashed lane `git update-ref -d` plus the `branch.<name>` section
+    removal (issue #578) -- are separate git writes, so the first can
+    succeed while a later one fails, and that must never read as a bare
+    `kept` that hides the worktree's own removal. `section_kept` names a
+    deleted squashed branch's section git refused to remove."""
 
     removed: bool
     reason: str | None
