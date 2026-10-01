@@ -17605,8 +17605,9 @@ def _lock_the_repository_configuration(_monkeypatch: pytest.MonkeyPatch, lane: P
         ),
         pytest.param(
             _refuse_the_branch_configuration_listing,
-            "worktree: removed; branch kept -- git failure: fatal: the listing failed\n",
-            True,
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
+            "git failure: fatal: the listing failed\n",
+            False,
             id="configuration-listing-refused",
         ),
         pytest.param(
@@ -17628,8 +17629,8 @@ def test_land_reports_the_squashed_lane_branch_cleanup_git_refuses(
     """Issue #578 line 4: the squashed lane's branch goes with one
     compare-and-delete against the landed head, so a commit made in the
     lane after cleanup judged its tip keeps the branch on that commit with
-    its `branch.<name>` section, and so does a section listing git refuses;
-    a section removal git refuses after the delete leaves the section. Each
+    its `branch.<name>` section; a section listing or removal git refuses
+    after the delete leaves the section beside the removed branch. Each
     refusal is reported as git's own, never swallowed."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = frozenset({_SQUASH})

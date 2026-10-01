@@ -1554,13 +1554,10 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> BranchRemoval:
     by git and kept and no commit is ever lost, then drop its own
     `branch.<name>` section. Once the compare-and-delete succeeded the branch
     reads removed, and a section git refuses to drop is named on its own."""
-    listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
-    if listed.exit_status not in (0, 1):
-        return _branch_kept(listed)
     deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
     if deleted.exit_status != 0:
         return _branch_kept(deleted)
-    section_refusal = _remove_deleted_branch_section(branch, listed.stdout.decode())
+    section_refusal = _remove_deleted_branch_section(branch)
     if section_refusal is None:
         return _BRANCH_REMOVED
     return BranchRemoval(
@@ -1572,20 +1569,24 @@ def _delete_squashed_branch(branch: str, landed_head: str) -> BranchRemoval:
     )
 
 
-def _remove_deleted_branch_section(branch: str, listing: str) -> str | None:
+def _remove_deleted_branch_section(branch: str) -> str | None:
     """Drop the deleted `branch`'s own `branch.<name>` section, as `git
-    branch -d` would, but only while no branch of that name exists, and
-    return git's own refusal of a step, or `None`. A branch another process
+    branch -d` would, but only once no branch of that name exists, read
+    after the delete so a section added meanwhile goes too, and return
+    git's own refusal of a step, or `None`. A branch another process
     creates under that name between the delete and this removal can lose
     its upstream setting: no commit is lost, and `git branch -u` restores
     it."""
-    if not _has_own_branch_section(listing, branch):
-        return None
     try:
         if branch_exists(branch):
             return None
     except ClaimError as error:
         return str(error)
+    listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
+    if listed.exit_status not in (0, 1):
+        return process.git_failure_detail(listed)
+    if not _has_own_branch_section(listed.stdout.decode(), branch):
+        return None
     removed = _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
     return process.git_failure_detail(removed) if removed.exit_status != 0 else None
 
