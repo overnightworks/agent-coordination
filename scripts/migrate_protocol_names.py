@@ -62,7 +62,10 @@ _RATE_LIMIT_STATUSES = frozenset({HTTPStatus.FORBIDDEN, HTTPStatus.TOO_MANY_REQU
 
 
 class Refusal(StrEnum):
-    CARRIAGE_RETURN = "the body has carriage-return line endings (CR or CRLF)"
+    FOREIGN_LINE_BREAK = (
+        "the body has line breaks other than \\n"
+        " (CR, CRLF, VT, FF, FS, GS, RS, NEL, U+2028 or U+2029)"
+    )
     BYTE_ORDER_MARK = "the agent-claim opening line starts with a byte-order mark (U+FEFF)"
     TILDE_FENCE = "the agent-claim fence uses tildes"
     INEXACT_OPENING_LINE = "the agent-claim opening line does not read exactly ```agent-claim"
@@ -157,11 +160,15 @@ def report_progress(line: str) -> None:
 def classify(body: str) -> Rewrite | Refusal | None:
     """The rewrite of a body, the reason it is refused, or None when it names no fence."""
     lines = body.split("\n")
-    mentions = [index for index, line in enumerate(lines) if _PROTOCOL_MENTION.match(line)]
-    if not mentions:
+    # aco reads lines with `str.splitlines`, which also breaks at CR, VT, FF, FS-RS, NEL and
+    # U+2028/9. A mention on either view counts, so one behind such a break is refused, not
+    # skipped; any such break is refused, because there the two readers see different blocks.
+    reader_lines = body.splitlines()
+    if not any(_PROTOCOL_MENTION.match(line) for line in (*lines, *reader_lines)):
         return None
-    if "\r" in body:
-        return Refusal.CARRIAGE_RETURN
+    if reader_lines != body.removesuffix("\n").split("\n"):
+        return Refusal.FOREIGN_LINE_BREAK
+    mentions = [index for index, line in enumerate(lines) if _PROTOCOL_MENTION.match(line)]
     blocks = {block.opening_index: block for block in fenced_blocks(lines)}
     for index in mentions:
         refusal = _mention_refusal(lines[index], blocks.get(index))

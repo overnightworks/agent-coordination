@@ -137,13 +137,25 @@ def migration(tmp_path: Path) -> Migration:
         ),
         pytest.param("Why\n```agent-claim\nversion = 1\n", "never closed", id="open-fence"),
         pytest.param(
-            "Why\n```agent-claim\nversion = 1\n```\v\n",
+            "Why\n```agent-claim\nversion = 1\n``` x\n",
             "never closed",
             id="closing-marker-followed-by-more-than-spaces-or-tabs",
         ),
         pytest.param("Why\n~~~agent-claim\nversion = 1\n~~~\n", "tildes", id="tilde"),
-        pytest.param(PROTOCOL_BODY.replace("\n", "\r\n"), "CRLF", id="crlf"),
-        pytest.param(PROTOCOL_BODY + "a\rlone carriage return\n", "carriage-return", id="lone-cr"),
+        pytest.param(PROTOCOL_BODY.replace("\n", "\r\n"), "line breaks other than", id="crlf"),
+        pytest.param(
+            PROTOCOL_BODY + "a\rlone carriage return\n", "line breaks other than", id="lone-cr"
+        ),
+        pytest.param(
+            PROTOCOL_BODY + "\u2028```aco\nx\n```\n",
+            "line breaks other than",
+            id="aco-fence-behind-a-line-separator",
+        ),
+        pytest.param(
+            "intro\x85```agent-claim\nversion = 1\n```\n",
+            "line breaks other than",
+            id="agent-claim-fence-behind-a-next-line",
+        ),
         pytest.param(
             "\ufeff```agent-claim\nversion = 1\n```\n", "byte-order mark", id="byte-order-mark"
         ),
