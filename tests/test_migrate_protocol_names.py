@@ -354,6 +354,25 @@ def _slow_down(status: int, headers: dict[str, str] | None = None) -> str:
     return _included(status, {"message": "slow down"}, headers)
 
 
+def test_apply_counts_a_body_migrated_during_a_rate_limit_wait_as_already_migrated(
+    migration: Migration, capsys: pytest.CaptureFixture[str]
+) -> None:
+    github = migration.github
+    for number in (1, 2):
+        github.add(number, PROTOCOL_BODY)
+    migration.dry_run(REPOSITORY)
+    github.patch_answers.append(_slow_down(429, {"Retry-After": "1"}))
+    migration.clock.during_wait = lambda: github.add(1, MIGRATED_BODY)
+
+    exit_code = migration.apply()
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert f"already migrated {REPOSITORY}#1" in output
+    assert "1 migrated, 1 already migrated" in output
+    assert [github.body(number) for number in (1, 2)] == [MIGRATED_BODY] * 2
+
+
 @pytest.mark.parametrize(
     ("rate_limited", "wait", "pace_arguments", "pace"),
     [

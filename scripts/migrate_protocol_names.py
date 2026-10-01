@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from functools import partial
 from http import HTTPStatus
 from pathlib import Path
 from typing import Protocol
@@ -102,6 +103,10 @@ class ApiResponse:
 
 class MigrationStoppedError(Exception):
     """The run cannot go on without risking a wrong write; the message names where and why."""
+
+
+class _ResendDeclinedError(Exception):
+    """The caller declined to resend a request after a rate-limit wait."""
 
 
 class GhRun(Protocol):
@@ -275,21 +280,22 @@ class GitHubApi:
         item = json.loads(self._request("GET", f"repos/{repository}/issues/{number}").body)
         return item["body"] or ""
 
-    def update_body(self, repository: str, number: int, old_hash: str, body: str) -> None:
-        """PATCH the body of an issue whose body was just read with `old_hash`.
+    def update_body(
+        self, repository: str, number: int, body: str, *, resend_wanted: Callable[[], bool]
+    ) -> bool:
+        """PATCH the body of an issue; False when a rate-limit wait ended with `resend_wanted`
+        declining the resend, so the PATCH was not sent again.
 
-        GitHub's issue update takes no precondition, so the check cannot travel with the
-        write; the caller reads right before this call, and after every rate-limit wait the
-        body is read again so a stale PATCH is never resent over a newer edit."""
-
-        def stop_unless_unchanged() -> None:
-            if body_hash(self.issue_body(repository, number)) != old_hash:
-                raise drift_stop(item_reference(repository, number))
-
+        GitHub's issue update takes no precondition, so the caller's check cannot travel with
+        the write; `resend_wanted` lets the caller look again after every rate-limit wait."""
         # Only the body travels, so labels, type, assignees, state and comments stay as they are.
         payload = json.dumps({"body": body}).encode()
         path = f"repos/{repository}/issues/{number}"
-        self._request("PATCH", path, payload, before_retry=stop_unless_unchanged)
+        try:
+            self._request("PATCH", path, payload, resend_wanted=resend_wanted)
+        except _ResendDeclinedError:
+            return False
+        return True
 
     def _request(
         self,
@@ -297,7 +303,7 @@ class GitHubApi:
         path: str,
         payload: bytes | None = None,
         *,
-        before_retry: Callable[[], None] | None = None,
+        resend_wanted: Callable[[], bool] = lambda: True,
     ) -> ApiResponse:
         arguments = ["api", "--include", "--method", method, path]
         if payload is not None:
@@ -309,8 +315,8 @@ class GitHubApi:
                 return _successful(response, method, path)
             if waits_done < MAX_RATE_LIMIT_WAITS:
                 self._clock.sleep(wait)
-                if before_retry is not None:
-                    before_retry()
+                if not resend_wanted():
+                    raise _ResendDeclinedError
         raise MigrationStoppedError(
             f"{method} {path} still rate-limited after {MAX_RATE_LIMIT_WAITS} waits"
         )
@@ -345,8 +351,22 @@ def read_manifest(manifest: Path) -> list[ManifestRow]:
     return [ManifestRow(**row) for row in json.loads(manifest.read_text())]
 
 
-def drift_stop(reference: str) -> MigrationStoppedError:
-    return MigrationStoppedError(f"{reference}: the body changed since the dry run")
+class RowState(StrEnum):
+    PENDING = "pending"
+    MIGRATED = "migrated"
+
+
+def row_state(row: ManifestRow, body: str) -> RowState:
+    """Where a manifest row stands, given its freshly read body; a body with neither of the
+    row's hashes changed since the dry run, and the run stops there."""
+    current_hash = body_hash(body)
+    if current_hash == row.new_hash:
+        return RowState.MIGRATED
+    if current_hash != row.old_hash:
+        raise MigrationStoppedError(
+            f"{item_reference(row.repository, row.number)}: the body changed since the dry run"
+        )
+    return RowState.PENDING
 
 
 def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_seconds: float) -> None:
@@ -358,14 +378,19 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_second
         if last_patch_at is not None:
             _wait_out_pace(clock, last_patch_at + pace_seconds)
         body = api.issue_body(row.repository, row.number)
-        current_hash = body_hash(body)
-        if current_hash == row.new_hash:
+        if row_state(row, body) is RowState.MIGRATED:
             print(f"already migrated {reference}")
             continue
-        if current_hash != row.old_hash:
-            raise drift_stop(reference)
-        api.update_body(row.repository, row.number, row.old_hash, _migrated_body(reference, body))
+        patched = api.update_body(
+            row.repository,
+            row.number,
+            _migrated_body(reference, body),
+            resend_wanted=partial(_still_pending, api, row),
+        )
         last_patch_at = clock.now()
+        if not patched:
+            print(f"already migrated {reference}")
+            continue
         migrated += 1
         if body_hash(api.issue_body(row.repository, row.number)) != row.new_hash:
             raise MigrationStoppedError(
@@ -373,6 +398,10 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_second
             )
         print(f"migrated {reference}")
     print(f"{migrated} migrated, {len(rows) - migrated} already migrated")
+
+
+def _still_pending(api: GitHubApi, row: ManifestRow) -> bool:
+    return row_state(row, api.issue_body(row.repository, row.number)) is RowState.PENDING
 
 
 def _wait_out_pace(clock: Clock, next_patch_at: float) -> None:
