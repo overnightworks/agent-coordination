@@ -1220,18 +1220,18 @@ def test_github_adapter_reads_a_file_at_a_commit_from_its_base64_contents() -> N
 
     client = GitHubForge(github.repository_id(REPOSITORY), run=run)
 
-    text = client.file_at_commit(Path(".agent-claim/board.toml"), MERGE_COMMIT_SHA)
+    text = client.file_at_commit(board.CONFIG_PATH, MERGE_COMMIT_SHA)
 
     assert text == 'storage = "github"\n'
     assert calls[0][1] == (
-        f"repos/{REPOSITORY}/contents/.agent-claim/board.toml?ref={MERGE_COMMIT_SHA}"
+        f"repos/{REPOSITORY}/contents/{board.CONFIG_PATH.as_posix()}?ref={MERGE_COMMIT_SHA}"
     )
 
 
 def test_github_adapter_reads_a_file_absent_at_a_commit_as_none() -> None:
     client = _file_contents_client(forge.ForgeNotFoundError("gh: Not Found (HTTP 404)"))
 
-    assert client.file_at_commit(Path(".agent-claim/board.toml"), MERGE_COMMIT_SHA) is None
+    assert client.file_at_commit(board.CONFIG_PATH, MERGE_COMMIT_SHA) is None
 
 
 @pytest.mark.parametrize(
@@ -1253,7 +1253,7 @@ def test_github_adapter_reads_a_file_absent_at_a_commit_as_none() -> None:
 )
 def test_github_adapter_fails_loud_on_malformed_file_contents(answer: str) -> None:
     client = _file_contents_client(answer)
-    path = Path(".agent-claim/board.toml")
+    path = board.CONFIG_PATH
 
     with pytest.raises(forge.ForgeMalformedResponseError, match="malformed file contents"):
         client.file_at_commit(path, MERGE_COMMIT_SHA)

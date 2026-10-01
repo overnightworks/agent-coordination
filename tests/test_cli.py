@@ -33,7 +33,7 @@ from board_fixtures import (
     RULED_ON,
     _active_claim,
     _store_claim_from_request,
-    agent_claim_body,
+    block_body,
     block_dependency,
     blocked_issue,
     board_issue,
@@ -44,6 +44,7 @@ from board_fixtures import (
     request,
     ruled_expectation,
     slice_entries,
+    write_repository_config,
 )
 from cli_fixtures import (
     RECORDED_ORIGIN_HEAD_READ,
@@ -1170,11 +1171,10 @@ def test_board_skips_the_dependency_list_for_a_zero_blocker_item_in_block_mode(
     """Issue #168: the pattern #150 started with `total_blocked_by` -- an
     item whose own count already says 0 must never pay for its dependency
     list, only the one that actually carries a blocker."""
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / ".agent-claim" / "board.toml").write_text('body_contract = "block"\n')
-    unblocked = board_issue(10, "Unblocked", agent_claim_body(MINIMAL_BLOCK_TOML))
+    write_repository_config(tmp_path, 'body_contract = "block"\n')
+    unblocked = board_issue(10, "Unblocked", block_body(MINIMAL_BLOCK_TOML))
     blocked = replace(
-        board_issue(11, "Blocked", agent_claim_body(MINIMAL_BLOCK_TOML)), blocked_by_count=1
+        board_issue(11, "Blocked", block_body(MINIMAL_BLOCK_TOML)), blocked_by_count=1
     )
     client = FakeForge()
     client.board_issues = (unblocked, blocked)
@@ -1319,7 +1319,7 @@ def test_rulings_reads_expectation_progress_from_the_block_not_stale_prose(
         "- Ruled two *(geregelt: ja)*\n"
     )
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Proposed"\ndefault = "later"\n'
-    body = agent_claim_body(toml_text) + stale_disagreeing_prose
+    body = block_body(toml_text) + stale_disagreeing_prose
     issue = board_issue(400, "Block-only expectations", body)
     _configured_board_client(monkeypatch, tmp_path, open_issues=(issue,))
     _write_block_pin(tmp_path)
@@ -2272,7 +2272,7 @@ def _serve_a_malformed_body(monkeypatch: pytest.MonkeyPatch) -> None:
     """Issue #310 finding 43: the block defect is named, never the less
     specific "item names no scope"."""
     _serve_start_board(
-        monkeypatch, _start_item(agent_claim_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n'))
+        monkeypatch, _start_item(block_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n'))
     )
 
 
@@ -2955,7 +2955,7 @@ def test_start_refuses_a_malformed_body_before_no_scope(
     scope"."""
     repo = _start_scenario(monkeypatch, tmp_path)
     monkeypatch.chdir(repo)
-    body = agent_claim_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n')
+    body = block_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n')
     issue = board_issue(314, "Fresh Slug Title", body)
     client = FakeForge(board_issues=(issue,))
     client.issue_references[314] = forge.ItemReference(
@@ -3004,7 +3004,7 @@ def _state_ref_item_body(
         },
         **block_fields,
     }
-    return f"Prose.\n\n```agent-claim\n{body.render_block(data)}```\n"
+    return block_body(body.render_block(data).removesuffix("\n"), before="Prose.\n\n", after="")
 
 
 def _real_state_ref_start_scenario(
@@ -3038,12 +3038,10 @@ def _real_state_ref_repository(
     the run standing in it; returns each seeded item's blob oid."""
     _use_real_store(monkeypatch)
     repo, remote = _real_repository_with_bare_remote(tmp_path, remote_name=canonical_remote)
-    config_dir = repo / ".agent-claim"
-    config_dir.mkdir()
-    (config_dir / "board.toml").write_text(
-        f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
+    write_repository_config(
+        repo, f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
     )
-    _real_git(repo, "add", ".agent-claim/board.toml")
+    _real_git(repo, "add", board.CONFIG_PATH.as_posix())
     _real_git(repo, "commit", "-q", "-m", "pin state-ref storage")
     _push_repository_trunk(repo, canonical_remote)
     if canonical_remote != "origin":
@@ -4042,7 +4040,7 @@ def test_claim_refuses_a_malformed_block_before_mutation(
 ) -> None:
     """A body whose block carries a key the schema does not define is refused
     by name -- the typed successor to prose's duplicate-section defect."""
-    issue = board_issue(10, "Work", agent_claim_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n'))
+    issue = board_issue(10, "Work", block_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n'))
     _configured_board_client(monkeypatch, tmp_path, open_issues=(issue,))
     monkeypatch.setattr(
         issue_claim,
@@ -4793,7 +4791,7 @@ def _cut_container_issue(toml_text: str) -> board.Issue:
         CUT_CONTAINER,
         "Epic",
         (),
-        agent_claim_body(toml_text),
+        block_body(toml_text),
         "2026-08-20T00:00:00Z",
         "2026-08-20T00:00:00Z",
         kind=body.ItemKind.CONTAINER,
@@ -5011,8 +5009,7 @@ def test_cut_json_reports_partial_write_with_written_and_failed(
 
 
 def _write_block_pin(tmp_path: Path) -> None:
-    (tmp_path / ".agent-claim").mkdir(exist_ok=True)
-    (tmp_path / ".agent-claim" / "board.toml").write_text('body_contract = "block"\n')
+    write_repository_config(tmp_path, 'body_contract = "block"\n')
 
 
 @pytest.mark.parametrize(
@@ -5485,9 +5482,7 @@ def test_cut_never_adopts_an_orphan_that_is_not_this_containers_recovery_shape(
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(_one_slice_container(),))
     _write_block_pin(tmp_path)
     if idea_label is not None:
-        (tmp_path / ".agent-claim" / "board.toml").write_text(
-            f'body_contract = "block"\nidea_label = "{idea_label}"\n'
-        )
+        write_repository_config(tmp_path, f'body_contract = "block"\nidea_label = "{idea_label}"\n')
     monkeypatch.setattr(client, "list_open_board_issues", lambda: (_one_slice_container(), orphan))
 
     exit_code = issue_claim.main(
@@ -5753,7 +5748,7 @@ def test_rule_writes_a_ruling_and_reports_remaining_open_lines(
         '[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
         '[[expectation]]\ntext = "Ship it too?"\ndefault = "later"\n'
     )
-    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "rule", str(RULE_ITEM), "--line", "1", flag]
@@ -5770,7 +5765,7 @@ def test_rule_json_reports_item_index_ruling_date_and_open(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
-    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "rule", str(RULE_ITEM), "--line", "1", "--yes", "--json"]
@@ -5795,7 +5790,7 @@ def test_rule_appends_a_note_to_the_ruled_line_via_cli(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
-    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
 
     exit_code = issue_claim.main(
         [
@@ -5823,7 +5818,7 @@ def test_rule_refuses_an_already_ruled_line_before_any_write(
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\n'
         'ruling = "yes"\nruled_on = 2026-08-01\n'
     )
-    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "rule", str(RULE_ITEM), "--line", "1", "--no", "--json"]
@@ -5840,7 +5835,7 @@ def test_rule_refuses_an_out_of_range_line_before_any_write(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
-    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "rule", str(RULE_ITEM), "--line", "2", "--yes", "--json"]
@@ -5857,7 +5852,7 @@ def test_rule_refuses_when_the_forge_cannot_update_item_body(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
-    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
     client.capability_overrides[forge.ForgeOperation.UPDATE_ITEM_BODY] = forge.Capability.READ_ONLY
 
     exit_code = issue_claim.main(
@@ -5980,7 +5975,7 @@ def test_rule_refuses_a_pull_request_target_before_any_write(
 ) -> None:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
     client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text), is_landing=True
+        monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text), is_landing=True
     )
 
     exit_code = issue_claim.main(
@@ -6001,7 +5996,7 @@ def test_ask_appends_a_proposed_line_and_rulings_shows_it_as_open(
         f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\n'
         'ruling = "yes"\nruled_on = 2026-08-01\n'
     )
-    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "ask", str(RULE_ITEM), "--text", "New question?"]
@@ -6042,7 +6037,7 @@ def test_a_failing_body_write_names_the_command_own_unavailable(
     fail like any other forge call, and used to escape the handler with the
     bare sentence alone, leaving a `--json` caller nothing on stdout."""
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
-    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
     client.fail_update_item_body = True
     refusal = "update item body failed (simulated)"
 
@@ -6061,7 +6056,7 @@ def test_a_failing_body_write_names_the_command_own_unavailable(
 def test_ask_json_reports_item_index_text_and_default(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML))
+    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
 
     exit_code = issue_claim.main(
         [
@@ -6121,9 +6116,7 @@ def test_ask_refuses_a_blockless_item_before_any_write(
 def test_ask_refuses_when_the_forge_cannot_update_item_body(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
     client.capability_overrides[forge.ForgeOperation.UPDATE_ITEM_BODY] = forge.Capability.READ_ONLY
 
     exit_code = issue_claim.main(
@@ -6192,9 +6185,7 @@ def test_ask_reports_invalid_usage_when_repo_is_given_under_state_ref(
 def test_ask_refuses_blank_text_before_any_write(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "ask", str(RULE_ITEM), "--text", "   ", "--json"]
@@ -6216,9 +6207,7 @@ def test_ask_writes_question_example_and_picture(
     """Issue #295: `--question`/`--example`/`--picture FILE.svg` land on the
     appended line -- the same `body.expectation_lines` projection `rulings`
     reads. The human `ASKED` line stays exactly what it was before."""
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
     picture_file = tmp_path / "sketch.svg"
     picture_file.write_text(ASK_PICTURE_SVG, encoding="utf-8")
 
@@ -6258,7 +6247,7 @@ def test_ask_writes_question_example_and_picture(
 def test_ask_json_reports_question_example_and_picture_when_given(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML))
+    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
     picture_file = tmp_path / "sketch.svg"
     picture_file.write_text(ASK_PICTURE_SVG, encoding="utf-8")
 
@@ -6297,9 +6286,7 @@ def test_ask_json_reports_question_example_and_picture_when_given(
 def test_ask_refuses_an_invalid_picture_file_before_any_write(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
     picture_file = tmp_path / "sketch.svg"
     picture_file.write_text("<div>not an svg</div>", encoding="utf-8")
 
@@ -6331,9 +6318,7 @@ def test_ask_refuses_a_blank_question_with_invalid_expectation_not_invalid_pictu
     alike (issue #396 review finding): only a refused `picture` names
     `invalid_picture`, per `specs/ask.spec.md`'s ASK-10 -- a refused
     `--question`/`--example` names `invalid_expectation` instead."""
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
 
     exit_code = issue_claim.main(
         [
@@ -6359,9 +6344,7 @@ def test_ask_refuses_a_blank_question_with_invalid_expectation_not_invalid_pictu
 def test_ask_refuses_a_missing_picture_file_before_any_write(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
     missing_file = tmp_path / "missing.svg"
 
     exit_code = issue_claim.main(
@@ -6719,9 +6702,7 @@ def test_board_reads_priority_configuration_from_the_checkout_root(
     tmp_path: Path,
 ) -> None:
     toplevel = tmp_path / "checkout"
-    configuration_directory = toplevel / ".agent-claim"
-    configuration_directory.mkdir(parents=True)
-    (configuration_directory / "board.toml").write_text('priority_labels = ["ux", "security"]\n')
+    write_repository_config(toplevel, 'priority_labels = ["ux", "security"]\n')
     nested_directory = toplevel / "src" / "agent_coordination"
     nested_directory.mkdir(parents=True)
     monkeypatch.chdir(nested_directory)
@@ -7637,10 +7618,7 @@ def _next_under_board_config_keyed(
 ) -> list[str]:
     """`next` against a board configuration carrying the unknown key `key`."""
     _configured_board_client(monkeypatch, tmp_path)
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / ".agent-claim" / "board.toml").write_text(
-        f"{json.dumps(key, ensure_ascii=False)} = 1\n", encoding="utf-8"
-    )
+    write_repository_config(tmp_path, f"{json.dumps(key, ensure_ascii=False)} = 1\n")
     return ["--repo", REPOSITORY, "next"]
 
 
@@ -7730,7 +7708,7 @@ def _brief_step_under_brief_config(
     holding `content`."""
     item, _stored = _foreign_body_item(monkeypatch, tmp_path)
     repo = Path.cwd()
-    (repo / board.BRIEF_CONFIG_PATH).write_text(content, encoding="utf-8")
+    write_repository_config(repo, content, path=board.BRIEF_CONFIG_PATH)
     _real_git(repo, "add", board.BRIEF_CONFIG_PATH.as_posix())
     monkeypatch.setattr(checkout, "path_is_tracked", _REAL_PATH_IS_TRACKED)
     return ["brief", item, "--step", "build"]
@@ -8473,7 +8451,7 @@ def test_body_contract_checks_names_a_blockless_container_by_its_no_block_defect
 
 
 def test_body_contract_checks_names_a_malformed_body_by_its_first_defect() -> None:
-    malformed_body = agent_claim_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n')
+    malformed_body = block_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n')
     malformed = board_issue(202, "Malformed", malformed_body)
     projected = projected_board(
         (malformed,),
@@ -8507,7 +8485,7 @@ def test_board_shows_freed_from_a_sole_closed_local_dependency_and_claim_reaches
         ),
     )
     projected = projected_board(
-        (board_issue(301, "Freed", agent_claim_body(MINIMAL_BLOCK_TOML)),),
+        (board_issue(301, "Freed", block_body(MINIMAL_BLOCK_TOML)),),
         (),
         (),
         (),
@@ -8521,7 +8499,7 @@ def test_board_shows_freed_from_a_sole_closed_local_dependency_and_claim_reaches
     assert item.actionable is True
 
     live_issue = replace(
-        board_issue(301, "Freed by a closed dependency", agent_claim_body(MINIMAL_BLOCK_TOML)),
+        board_issue(301, "Freed by a closed dependency", block_body(MINIMAL_BLOCK_TOML)),
         blocked_by_count=1,
     )
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(live_issue,))
@@ -8552,7 +8530,7 @@ def test_board_shows_freed_from_a_sole_closed_local_dependency_and_claim_reaches
 
 
 def test_blocked_check_reports_a_foreign_dependency_and_the_out_of_order_warning() -> None:
-    issue = board_issue(304, "Foreign blocked", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(304, "Foreign blocked", block_body(MINIMAL_BLOCK_TOML))
     dependencies = {304: (block_dependency(9, repository="overnightworks/other-repo"),)}
     projected = projected_board(
         (issue,),
@@ -8583,7 +8561,7 @@ def test_blocked_check_labels_a_local_dependency_under_the_state_ref_pin() -> No
     `board.item_label`'s own `aco-...` id under `storage = STATE_REF`, the
     same as everywhere else that pin already changes narrative output --
     never the bare `#n` GitHub uses."""
-    issue = board_issue(304, "Local blocked", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(304, "Local blocked", block_body(MINIMAL_BLOCK_TOML))
     dependencies = {304: (block_dependency(9, repository=REPOSITORY),)}
     projected = projected_board(
         (issue,),
@@ -8639,8 +8617,7 @@ class _MinimalBoardSource:
 
 
 def test_load_board_config_refuses_a_block_pin_the_forge_cannot_support(tmp_path: Path) -> None:
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / ".agent-claim" / "board.toml").write_text('body_contract = "block"\n')
+    write_repository_config(tmp_path, 'body_contract = "block"\n')
 
     client = _MinimalBoardSource(capability_result=forge.Capability.UNSUPPORTED)
     context = issue_claim._run_context(None)
@@ -8679,7 +8656,7 @@ def test_fetch_dependencies_bounds_concurrency_at_the_shared_constant() -> None:
 
 
 def test_validated_dependencies_refuses_a_length_mismatch() -> None:
-    issue = board_issue(305, "Length mismatch", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(305, "Length mismatch", block_body(MINIMAL_BLOCK_TOML))
     issue = replace(issue, blocked_by_count=2)
     fetched = {305: (block_dependency(1),)}
 
@@ -8692,7 +8669,7 @@ def test_validated_dependencies_refuses_a_length_mismatch() -> None:
 
 
 def test_validated_dependencies_refuses_a_duplicate_dependency() -> None:
-    issue = board_issue(306, "Duplicate", agent_claim_body(MINIMAL_BLOCK_TOML))
+    issue = board_issue(306, "Duplicate", block_body(MINIMAL_BLOCK_TOML))
     issue = replace(issue, blocked_by_count=2)
     fetched = {306: (block_dependency(1), block_dependency(1))}
 
@@ -8703,8 +8680,7 @@ def test_validated_dependencies_refuses_a_duplicate_dependency() -> None:
 def test_next_pulls_a_configured_projectionless_idea_with_refinement_step(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / ".agent-claim" / "board.toml").write_text('idea_label = "idea"\n')
+    write_repository_config(tmp_path, 'idea_label = "idea"\n')
     idea = board_issue(10, "Operator idea", idea_body("Make the board clearer."), labels=("idea",))
     _configured_board_client(monkeypatch, tmp_path, open_issues=(idea,))
 
@@ -8736,8 +8712,7 @@ def test_next_pulls_a_configured_projectionless_idea_with_refinement_step(
 def test_next_keeps_an_unlabelled_projectionless_item_skipped_with_an_active_idea_label(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / ".agent-claim" / "board.toml").write_text('idea_label = "idea"\n')
+    write_repository_config(tmp_path, 'idea_label = "idea"\n')
     incomplete = board_issue(10, "Incomplete work", idea_body("Investigate."))
     _configured_board_client(monkeypatch, tmp_path, open_issues=(incomplete,))
 
@@ -8777,8 +8752,7 @@ def test_next_keeps_a_vision_labelled_projectionless_item_incomplete_without_con
 def test_next_keeps_a_configured_idea_with_a_complete_projection_own_next(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / ".agent-claim" / "board.toml").write_text('idea_label = "idea"\n')
+    write_repository_config(tmp_path, 'idea_label = "idea"\n')
     idea = board_issue(
         10,
         "Refined idea",
@@ -8797,8 +8771,7 @@ def test_next_keeps_a_configured_idea_with_a_complete_projection_own_next(
 def test_claim_treats_a_higher_ranked_configured_idea_as_out_of_order(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / ".agent-claim" / "board.toml").write_text('idea_label = "vision"\n')
+    write_repository_config(tmp_path, 'idea_label = "vision"\n')
     lower = board_issue(10, "Lower work", complete_contract("Claim #10."))
     idea = board_issue(
         11,
@@ -8899,9 +8872,7 @@ def _write_state_ref_pin(toplevel: Path) -> None:
     `toplevel`: the isolated toplevel `_isolate_git_toplevel` (conftest.py)
     already redirects this process's `rev-parse --show-toplevel` to (issue
     #248), or a repository `_redirect_toplevel` points it at."""
-    config_dir = toplevel / ".agent-claim"
-    config_dir.mkdir()
-    (config_dir / "board.toml").write_text('storage = "state-ref"\n')
+    write_repository_config(toplevel, 'storage = "state-ref"\n')
 
 
 def test_lazy_forge_builds_a_state_ref_board_under_the_state_ref_pin(
@@ -9041,7 +9012,7 @@ def _landing_item_body(title: str, blocked_by: tuple[str, ...] = ()) -> str:
             "updated_at": "2026-09-10T00:00:00Z",
         },
     }
-    return f"Prose.\n\n```agent-claim\n{body.render_block(data)}```\n"
+    return block_body(body.render_block(data).removesuffix("\n"), before="Prose.\n\n", after="")
 
 
 def _landing_item_oid(number: int) -> protocol.ObjectId:
@@ -11093,8 +11064,7 @@ def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
     _real_git(tmp_path, "init", "-q", "-b", initial_branch)
     _real_git(tmp_path, "config", "user.name", "Test")
     _real_git(tmp_path, "config", "user.email", "test@example.com")
-    (tmp_path / ".agent-claim").mkdir()
-    (tmp_path / board.CONFIG_PATH).write_text('lane_shared = ["scripts/a.py", "scripts/b.txt"]\n')
+    write_repository_config(tmp_path, 'lane_shared = ["scripts/a.py", "scripts/b.txt"]\n')
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "a.py").write_text("")
     (tmp_path / "scripts" / "b.txt").write_text("")
@@ -11845,7 +11815,7 @@ def test_cli_claim_without_scope_names_a_malformed_body_before_no_scope(
     to name the less specific "item names no scope"."""
     client = _arranged_claim_client(monkeypatch)
     client.board_issues = (
-        board_issue(72, "Work", agent_claim_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n')),
+        board_issue(72, "Work", block_body(f'{MINIMAL_BLOCK_TOML}owner = "someone"\n')),
     )
 
     status = issue_claim.main(_claim_argv("--json"))
@@ -16489,9 +16459,7 @@ def _ask_git_which_remotes_are_configured(monkeypatch: pytest.MonkeyPatch) -> No
 
 def _name_hub_as_the_canonical_remote(repo: Path) -> None:
     """The board names `hub`, but this clone only ever added `origin`."""
-    configuration = repo / ".agent-claim"
-    configuration.mkdir(exist_ok=True)
-    (configuration / "board.toml").write_text('canonical_remote = "hub"\n')
+    write_repository_config(repo, 'canonical_remote = "hub"\n')
 
 
 def _leave_hub_unconfigured(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
@@ -17597,8 +17565,7 @@ def test_land_merges_with_the_method_the_repository_allows(
     lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
     client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=lane_tip)
     if pinned is not None:
-        (repo / ".agent-claim").mkdir()
-        (repo / board.CONFIG_PATH).write_text(f'merge_method = "{pinned}"\n')
+        write_repository_config(repo, f'merge_method = "{pinned}"\n')
         _real_git(repo, "add", "-f", str(board.CONFIG_PATH))
         _real_git(repo, "commit", "-q", "-m", "pin the merge method")
         _real_git(repo, "push", "-q", "origin", "main")
@@ -18224,9 +18191,8 @@ def _land_on_the_forges_trunk(
         _real_git(tmp_path, "init", "-q", "--bare", str(client.merge_remote))
         _real_git(repo, "remote", "add", canonical, str(client.merge_remote))
         client.head_board_config = f'canonical_remote = "{canonical}"\n'
-        (repo / ".agent-claim").mkdir()
-        (repo / ".agent-claim" / "board.toml").write_text(client.head_board_config)
-        _real_git(repo, "add", "-f", ".agent-claim/board.toml")
+        write_repository_config(repo, client.head_board_config)
+        _real_git(repo, "add", "-f", board.CONFIG_PATH.as_posix())
         _real_git(repo, "commit", "-q", "-m", "canonical remote")
         _real_git(repo, "push", "-q", canonical, LANDING_BRANCH)
     _real_git(repo, "push", "-q", canonical, "trunk", "trunk:main")
@@ -19177,7 +19143,7 @@ def test_check_reads_the_parents_next_from_the_block_not_stale_prose(
     monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
     _write_block_pin(tmp_path)
     parent_body = (
-        agent_claim_body('version = 1\nnow = "N"\nnext = "Cut the next slice."\ndone_when = "D"\n')
+        block_body('version = 1\nnow = "N"\nnext = "Cut the next slice."\ndone_when = "D"\n')
         + "\n\n## Next\nnichts\n"
     )
     parented_check_client(
@@ -19217,9 +19183,7 @@ def test_check_refuses_a_malformed_parent_before_the_next_check(
 ) -> None:
     monkeypatch.setattr(checkout, "_git_output", lambda _arguments, **_kwargs: str(tmp_path))
     _write_block_pin(tmp_path)
-    malformed_parent_body = agent_claim_body(
-        'version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n'
-    )
+    malformed_parent_body = block_body('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n')
     parented_check_client(
         monkeypatch,
         body="Work-Item: #72\n\nCloses #72",
@@ -19414,8 +19378,7 @@ def issue_check_client(
     No store patching: the issue mode of `check` never reads the state ref,
     so a test that needed one would be proving the wrong command.
     """
-    (tmp_path / ".agent-claim").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".agent-claim" / "board.toml").write_text('body_contract = "block"\n')
+    write_repository_config(tmp_path, 'body_contract = "block"\n')
     client = FakeForge()
     client.issue_references[CHECKED_ISSUE] = forge.ItemReference(state, "Work", body)
     client.board_dependencies[CHECKED_ISSUE] = dependencies
@@ -19434,7 +19397,7 @@ def test_check_accepts_a_complete_unblocked_issue_in_two_requests(
 ) -> None:
     """The reference read cannot carry the empty dependency list, so reading
     an issue always costs the second request."""
-    client = issue_check_client(monkeypatch, tmp_path, body=agent_claim_body(MINIMAL_BLOCK_TOML))
+    client = issue_check_client(monkeypatch, tmp_path, body=block_body(MINIMAL_BLOCK_TOML))
 
     assert run_check(CHECKED_ISSUE) == 0
     assert capsys.readouterr().out == f"ISSUE #{CHECKED_ISSUE} body ok\n"
@@ -19623,17 +19586,17 @@ def test_check_names_a_body_with_no_recognized_block_as_malformed(
     ("body", "reason"),
     [
         pytest.param(
-            "```agent-claim\nversion = 1\n",
+            f"```{body.BLOCK_FENCE_INFO}\nversion = 1\n",
             "agent-claim: unclosed agent-claim block",
             id="broken-fence",
         ),
         pytest.param(
-            agent_claim_body('version = 1\nnow = 1\nnext = "X"\ndone_when = "D"\n'),
+            block_body('version = 1\nnow = 1\nnext = "X"\ndone_when = "D"\n'),
             "now: now must be a string",
             id="broken-value",
         ),
         pytest.param(
-            agent_claim_body(f'{MINIMAL_BLOCK_TOML}blocked_by = "#7"\n'),
+            block_body(f'{MINIMAL_BLOCK_TOML}blocked_by = "#7"\n'),
             "blocked_by: unknown top-level key blocked_by",
             id="unknown-key",
         ),
@@ -19674,7 +19637,7 @@ def test_check_names_the_sections_an_incomplete_body_leaves_empty(
     toml_text: str,
     missing: str,
 ) -> None:
-    issue_check_client(monkeypatch, tmp_path, body=agent_claim_body(toml_text))
+    issue_check_client(monkeypatch, tmp_path, body=block_body(toml_text))
 
     assert run_check(CHECKED_ISSUE) == 2
     assert capsys.readouterr().err == f"ISSUE #{CHECKED_ISSUE} body incomplete: {missing}\n"
@@ -19686,7 +19649,7 @@ def test_check_reads_blockers_from_the_forge_and_qualifies_foreign_ones(
     client = issue_check_client(
         monkeypatch,
         tmp_path,
-        body=agent_claim_body(MINIMAL_BLOCK_TOML),
+        body=block_body(MINIMAL_BLOCK_TOML),
         dependencies=(open_dependency(7), open_dependency(9, "other/repo")),
     )
 
@@ -19708,7 +19671,7 @@ def test_issue_check_labels_a_local_blocker_under_the_state_ref_pin() -> None:
     outcome = issue_claim._issue_check(
         client,
         REPOSITORY,
-        agent_claim_body(MINIMAL_BLOCK_TOML),
+        block_body(MINIMAL_BLOCK_TOML),
         CHECKED_ISSUE,
         storage=body.Storage.STATE_REF,
     )
@@ -19849,7 +19812,7 @@ def test_check_json_discriminates_an_issue(
     issue_check_client(
         monkeypatch,
         tmp_path,
-        body=agent_claim_body(MINIMAL_BLOCK_TOML),
+        body=block_body(MINIMAL_BLOCK_TOML),
         dependencies=dependencies,
     )
 
@@ -19866,7 +19829,7 @@ def body_check_main(*, extra: tuple[str, ...] = ()) -> int:
 def test_body_check_accepts_a_complete_block_with_no_defects(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    body_file = io.StringIO(agent_claim_body(MINIMAL_BLOCK_TOML))
+    body_file = io.StringIO(block_body(MINIMAL_BLOCK_TOML))
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(sys, "stdin", body_file)
         assert body_check_main() == 0
@@ -19875,7 +19838,7 @@ def test_body_check_accepts_a_complete_block_with_no_defects(
 
 def test_body_check_accepts_a_valid_size(capsys: pytest.CaptureFixture[str]) -> None:
     """BODY-58 (issue #357): a valid `size` is `body ok`, exit `0`."""
-    body_file = io.StringIO(agent_claim_body(f'{MINIMAL_BLOCK_TOML}size = "M"\n'))
+    body_file = io.StringIO(block_body(f'{MINIMAL_BLOCK_TOML}size = "M"\n'))
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(sys, "stdin", body_file)
         assert body_check_main() == 0
@@ -19885,7 +19848,7 @@ def test_body_check_accepts_a_valid_size(capsys: pytest.CaptureFixture[str]) -> 
 def test_body_check_refuses_an_invalid_size(capsys: pytest.CaptureFixture[str]) -> None:
     """BODY-59 (issue #357): an out-of-grammar `size` is `body malformed`,
     exit `2`, the same sentence for an invalid string or a non-scalar value."""
-    body_file = io.StringIO(agent_claim_body(f'{MINIMAL_BLOCK_TOML}size = "XL"\n'))
+    body_file = io.StringIO(block_body(f'{MINIMAL_BLOCK_TOML}size = "XL"\n'))
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(sys, "stdin", body_file)
         assert body_check_main() == 2
@@ -19904,7 +19867,7 @@ def test_body_check_reads_the_storage_pin_for_the_record_key(
     """Issue #287 proof 6: `body --check` reads the repository's own
     storage pin -- `[record]` is a known key under `storage = "state-ref"`
     and an unknown one under the default `storage = "github"`."""
-    body = agent_claim_body(MINIMAL_BLOCK_TOML + _RECORD_TOML)
+    body = block_body(MINIMAL_BLOCK_TOML + _RECORD_TOML)
 
     monkeypatch.setattr(sys, "stdin", io.StringIO(body))
     assert body_check_main() == 2
@@ -19960,7 +19923,7 @@ def test_body_check_names_defects_with_checks_own_sentences(
     toml_text: str,
     reason: str,
 ) -> None:
-    monkeypatch.setattr(sys, "stdin", io.StringIO(agent_claim_body(toml_text)))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(block_body(toml_text)))
     assert body_check_main() == 2
     assert capsys.readouterr().err == f"body malformed: {reason}\n"
 
@@ -19975,13 +19938,13 @@ def test_body_check_prints_every_simultaneous_defect_not_just_the_first(
     issue #262)."""
     toml_text = 'version = 1\nnext = "X"\n'  # missing both now and done_when
 
-    monkeypatch.setattr(sys, "stdin", io.StringIO(agent_claim_body(toml_text)))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(block_body(toml_text)))
     assert body_check_main() == 2
     assert capsys.readouterr().err == (
         "body malformed: now: now is required\nbody malformed: done_when: done_when is required\n"
     )
 
-    monkeypatch.setattr(sys, "stdin", io.StringIO(agent_claim_body(toml_text)))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(block_body(toml_text)))
     assert body_check_main(extra=("--json",)) == 2
     assert json.loads(capsys.readouterr().out) == {
         "ok": False,
@@ -20007,7 +19970,7 @@ def test_body_check_json_carries_the_defect_list(
 def test_body_check_json_reports_ok_with_an_empty_defect_list(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(sys, "stdin", io.StringIO(agent_claim_body(MINIMAL_BLOCK_TOML)))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(block_body(MINIMAL_BLOCK_TOML)))
     assert body_check_main(extra=("--json",)) == 0
     assert capsys.readouterr().out == '{"ok": true, "reason": "valid", "defects": []}\n'
 
@@ -20049,7 +20012,7 @@ def test_body_check_never_touches_a_forge_the_store_or_gh(
     monkeypatch.setattr(github, "GitHubForge", unused)
     monkeypatch.setattr(github, "discover_repository", unused)
     monkeypatch.setattr(store, "fetch_state", unused)
-    monkeypatch.setattr(sys, "stdin", io.StringIO(agent_claim_body(MINIMAL_BLOCK_TOML)))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(block_body(MINIMAL_BLOCK_TOML)))
 
     assert body_check_main() == 0
     assert capsys.readouterr().out == "body ok\n"
@@ -20398,8 +20361,7 @@ _MISSING_BOARD_CONFIG_ERROR = (
 
 
 def _write_untracked_board_config(toplevel: Path) -> None:
-    (toplevel / ".agent-claim").mkdir()
-    (toplevel / ".agent-claim" / "board.toml").write_text("")
+    write_repository_config(toplevel)
 
 
 @pytest.mark.parametrize(
@@ -20558,7 +20520,7 @@ def test_a_checkout_without_the_pin_is_told_its_pin_32_repair(
     _real_git(repository, "branch", "lane")
     if lane_history.adopted:
         _write_untracked_board_config(repository)
-        _real_git(repository, "add", ".agent-claim/board.toml")
+        _real_git(repository, "add", board.CONFIG_PATH.as_posix())
         _real_git(repository, "commit", "-q", "-m", "adopt aco")
     if lane_history.trunk_resolves:
         _push_repository_trunk(repository, "origin")
@@ -20572,7 +20534,7 @@ def test_a_checkout_without_the_pin_is_told_its_pin_32_repair(
     _real_git(repository, "worktree", "add", "-q", str(lane), "lane")
     if lane_history.merged_then_removed:
         _real_git(lane, "merge", "-q", "origin/main")
-        _real_git(lane, "rm", "-q", ".agent-claim/board.toml")
+        _real_git(lane, "rm", "-q", board.CONFIG_PATH.as_posix())
         _real_git(lane, "commit", "-q", "-m", "drop the pin")
     if lane_history.trunk_moved_on:
         _advance_origin_main(repository, lane)
@@ -20588,8 +20550,8 @@ def test_a_checkout_without_the_pin_is_told_its_pin_32_repair(
     assert _real_git(remote, "for-each-ref", "refs/aco").stdout == ""
     if refusal == _RESTORE_BOARD_CONFIG_ERROR:
         _run_printed_restore_from_a_subdirectory(refusal, lane)
-        tracked = _real_git(lane, "ls-files", ".agent-claim/board.toml").stdout
-        assert tracked == ".agent-claim/board.toml\n"
+        tracked = _real_git(lane, "ls-files", board.CONFIG_PATH.as_posix()).stdout
+        assert tracked == f"{board.CONFIG_PATH.as_posix()}\n"
 
 
 @pytest.mark.parametrize("item", ["5", "16777216"], ids=["in-the-id-space", "past-the-id-space"])
@@ -20634,8 +20596,7 @@ def _scratch_lane_repository(
     (repository / "README.md").write_text("hello\n")
     _real_git(repository, "add", "README.md")
     if board_config is not None:
-        (repository / ".agent-claim").mkdir()
-        (repository / board.CONFIG_PATH).write_text(board_config)
+        write_repository_config(repository, board_config)
         _real_git(repository, "add", "-f", board.CONFIG_PATH.as_posix())
     _real_git(repository, "commit", "-q", "-m", "initial")
     base = _real_git(repository, "rev-parse", "HEAD").stdout.strip()
@@ -20957,10 +20918,10 @@ _DEFAULT_BRIEF_TOML = '[build]\nrules = ["Stay in scope."]\nchecks = ["ruff chec
 _REAL_PATH_IS_TRACKED = checkout.path_is_tracked
 
 
-def _write_repository_agent_claim_configs(
+def _write_repository_configs(
     toplevel: Path, *, brief_content: str = _DEFAULT_BRIEF_TOML, brief_tracked: bool = True
 ) -> None:
-    """`.agent-claim/board.toml` and `.agent-claim/brief.toml`, both inside
+    """The board and the brief configuration file, both inside
     the scratch lane repository at `toplevel` (`_scratch_lane_repository`),
     the resolved checkout toplevel. `board.toml` is always tracked for real,
     the same proof `test_checkout.py`'s `_tracked_board_config` gives its own
@@ -20971,11 +20932,9 @@ def _write_repository_agent_claim_configs(
     since trunk stays exactly its one commit. `brief_tracked=False` leaves
     `brief.toml` on disk outside git's index, for the genuine untracked-file
     refusal."""
-    agent_claim = toplevel / ".agent-claim"
-    agent_claim.mkdir(exist_ok=True)
-    (agent_claim / "board.toml").write_text("")
+    write_repository_config(toplevel)
     _real_git(toplevel, "add", board.CONFIG_PATH.as_posix())
-    (agent_claim / "brief.toml").write_text(brief_content)
+    write_repository_config(toplevel, brief_content, path=board.BRIEF_CONFIG_PATH)
     if brief_tracked:
         _real_git(toplevel, "add", board.BRIEF_CONFIG_PATH.as_posix())
 
@@ -20993,7 +20952,7 @@ def _brief_step_scenario(
     `(base, tip)`; the repository itself is only `monkeypatch.chdir`-ed into,
     never asserted on."""
     repository, base, tip = _scratch_lane_repository(monkeypatch, tmp_path)
-    _write_repository_agent_claim_configs(repository, brief_content=content)
+    _write_repository_configs(repository, brief_content=content)
     monkeypatch.setattr(checkout, "path_is_tracked", _REAL_PATH_IS_TRACKED)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
@@ -21147,7 +21106,7 @@ def test_cli_brief_step_refuses_with_no_usable_brief_config(
     repository, _base, _tip = _scratch_lane_repository(monkeypatch, tmp_path)
     monkeypatch.setattr(checkout, "path_is_tracked", _REAL_PATH_IS_TRACKED)
     if brief_toml_present:
-        _write_repository_agent_claim_configs(repository, brief_tracked=False)
+        _write_repository_configs(repository, brief_tracked=False)
 
     def unused(_self: FakeForge, _number: int) -> forge.ItemReference:
         pytest.fail("brief --step must refuse before reading the item's body")
@@ -21425,7 +21384,7 @@ _PIPED_BLOCK_AS_TYPED = (
         ),
         pytest.param(
             _piping(
-                "Ship the importer.\n\n```agent-claim\nversion = 1\n# typed by hand\n"
+                f"Ship the importer.\n\n```{body.BLOCK_FENCE_INFO}\nversion = 1\n# typed by hand\n"
                 'now   = "Ready."\nnext = "Build it."\ndone_when = "Merged."\n```\n'
             ),
             ("--size", "S"),
@@ -21945,9 +21904,7 @@ def test_item_edit_size_writes_the_top_level_field_under_github_storage(
     `ForgeWriter.update_item_body` both storages already implement, so it
     reaches a `github`-stored item too -- unlike the whole-body `item edit`
     above, which refuses under `storage = "github"` by name."""
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "item", "edit", str(RULE_ITEM), "--size", "M"]
@@ -21961,7 +21918,7 @@ def test_item_edit_size_writes_the_top_level_field_under_github_storage(
 def test_item_edit_size_json_reports_the_item_and_size(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML))
+    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
 
     exit_code = issue_claim.main(
         [
@@ -22001,9 +21958,7 @@ def test_item_edit_size_refuses_through_the_shared_precondition_failed_envelope(
     """Issue #425: `item edit --size`'s own runtime refusal -- here the
     forge refusing `update_item_body` -- reports through the shared
     envelope as `precondition_failed`."""
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
     client.capability_overrides[forge.ForgeOperation.UPDATE_ITEM_BODY] = forge.Capability.READ_ONLY
 
     exit_code = issue_claim.main(
@@ -22023,9 +21978,7 @@ def test_item_edit_whole_writes_the_top_level_field_under_github_storage(
     generic `ForgeWriter.update_item_body` `--size` already uses, mirroring
     `test_item_edit_size_writes_the_top_level_field_under_github_storage`."""
     reason = "the four adapters share one lock"
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
 
     exit_code = issue_claim.main(
         ["--repo", REPOSITORY, "item", "edit", str(RULE_ITEM), "--whole", reason]
@@ -22040,7 +21993,7 @@ def test_item_edit_whole_json_reports_the_item_and_reason(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     reason = "the four adapters share one lock"
-    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML))
+    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
 
     exit_code = issue_claim.main(
         [
@@ -22070,9 +22023,7 @@ def test_item_edit_whole_refuses_through_the_shared_precondition_failed_envelope
     """Issue #425: `item edit --whole`'s own runtime refusal -- here the
     forge refusing `update_item_body` -- reports through the shared
     envelope as `precondition_failed`."""
-    client = _client_with_item(
-        monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(MINIMAL_BLOCK_TOML)
-    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(MINIMAL_BLOCK_TOML))
     client.capability_overrides[forge.ForgeOperation.UPDATE_ITEM_BODY] = forge.Capability.READ_ONLY
 
     exit_code = issue_claim.main(
@@ -23134,7 +23085,7 @@ def _retired_body_template_command(
 
 def _rule_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     toml_text = f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
-    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, agent_claim_body(toml_text))
+    _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
     argv = ["--repo", REPOSITORY, "rule", str(RULE_ITEM), "--line", "1", "--yes"]
     return _read_once(argv, toplevel=tmp_path, observes=False)
 

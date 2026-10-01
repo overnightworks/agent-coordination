@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TextIO
 
 import pytest
+from board_fixtures import MINIMAL_BLOCK_TOML, block_body, write_repository_config
 from cli_fixtures import count_context_reads, fresh_observation, stub_board_config_tracked
 from test_cli import (
     FakeForge,
@@ -50,6 +51,7 @@ from agent_coordination import board, checkout, forge, items, process, protocol,
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import (
     BLOCK_CHILD_SKELETON,
+    BLOCK_FENCE_INFO,
     CONTAINER_SKELETON_PROSE,
     ExpectationLine,
     ItemKind,
@@ -153,13 +155,19 @@ class _Projection:
         return data
 
 
+def _prose_body(interior: str) -> str:
+    """A body of one prose line above the block holding `interior`, a
+    rendered block interior ending in its newline."""
+    return block_body(interior.removesuffix("\n"), before="Prose.\n\n", after="")
+
+
 def _github_body(projection: _Projection) -> str:
-    return f"Prose.\n\n```agent-claim\n{render_block(projection.block_data())}```\n"
+    return _prose_body(render_block(projection.block_data()))
 
 
 def _state_ref_body(projection: _Projection, record: dict[str, object]) -> str:
     data = {**projection.block_data(), "record": record}
-    return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
+    return _prose_body(render_block(data))
 
 
 def _record(
@@ -297,7 +305,7 @@ def _container_body_with_slices(
             title="Epic", state="open", kind="container", blocked_by=blocked_by, parent=parent
         ),
     }
-    return f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
+    return _prose_body(render_block(data))
 
 
 def _item_files_with_container_slices(
@@ -326,7 +334,7 @@ def _item_files_with_one_scoped_slice(
         "slice": [entry],
         "record": _record(title="Epic", state="open", kind="container"),
     }
-    container_body = f"Prose.\n\n```agent-claim\n{render_block(data)}```\n"
+    container_body = _prose_body(render_block(data))
     return {**_item_files(), f"{CONTAINER_ID}.md": container_body.encode()}
 
 
@@ -483,7 +491,7 @@ def _edit_target_body(
         .replace('"RECORD-TITLE"', json.dumps(record_title))
         .replace('"SLICE-TITLE"', json.dumps(slice_title))
     )
-    return f"Prose.\n\n```agent-claim\n{block}```\n"
+    return _prose_body(block)
 
 
 def _edit_target_item_files() -> dict[str, bytes]:
@@ -710,8 +718,9 @@ _MALFORMED_CONTENTS = (
     ("content", "problem"),
     [
         pytest.param(
-            b'```agent-claim\nversion = 1\nnow = "N"\nnext = "X"\ndone_when = "D"\n\n'
-            b'[record]\ntitle = "Bare"\n```\n',
+            block_body(
+                f'{MINIMAL_BLOCK_TOML}\n[record]\ntitle = "Bare"', before="", after=""
+            ).encode(),
             "has a malformed agent-claim block",
             id="record-missing-required-fields",
         ),
@@ -1444,7 +1453,7 @@ class TestStateRefBoardWrites:
             'created_at = "2026-09-10T00:00:00Z"\n'
             'updated_at = "2026-09-15T00:00:00Z"\n'
         )
-        return f"Prose.\n\n```agent-claim\n{projection_block}{record_lines}```\n"
+        return _prose_body(f"{projection_block}{record_lines}")
 
     def _no_delivered_record_body(self) -> str:
         return _github_body(_CHILD_B_PROJECTION)
@@ -1587,7 +1596,8 @@ class TestStateRefBoardWrites:
         )
         stored_body = adapter.item_reference(CHILD_A_NUMBER).body
         assert stored_body is not None
-        oversized = stored_body.replace("```agent-claim\n", '```agent-claim\nsize = "XL"\n', 1)
+        opening = f"```{BLOCK_FENCE_INFO}\n"
+        oversized = stored_body.replace(opening, f'{opening}size = "XL"\n', 1)
         before = store.fetch_state(worktree=worktree, remote=str(bare_remote))
 
         with pytest.raises(ClaimUnavailableError) as refused:
@@ -1810,10 +1820,8 @@ class TestCliStateRefForge:
         `path_is_tracked` to report the pin tracked (#315): its `board.toml`
         is never actually `git add`ed, so a real `git ls-files` check would
         otherwise never see it."""
-        config_dir = worktree / ".agent-claim"
-        config_dir.mkdir()
-        (config_dir / "board.toml").write_text(
-            f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
+        write_repository_config(
+            worktree, f'storage = "state-ref"\ncanonical_remote = "{canonical_remote}"\n'
         )
         stub_board_config_tracked(monkeypatch)
         _redirect_toplevel(monkeypatch, worktree)
@@ -2562,9 +2570,7 @@ class TestCliStateRefForge:
                     "slice": [{"index": 1, "title": "Slice C"}],
                     "record": _record(title="Epic", state="open", kind="container"),
                 }
-                competing_body = (
-                    f"Prose.\n\n```agent-claim\n{render_block(competing_data)}```\n"
-                ).encode()
+                competing_body = _prose_body(render_block(competing_data)).encode()
                 competing_intent = protocol.ItemWriteIntent(
                     item_id=CONTAINER_ID,
                     expected=container_oid_before,
@@ -2975,7 +2981,7 @@ class TestCliStateRefForge:
             ),
             pytest.param(
                 _piping(
-                    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+                    f"Ship the importer.\n\n```{BLOCK_FENCE_INFO}\nversion = 1\n"
                     'now = "Ready."\nnext = ""\ndone_when = ""\n```\n'
                 ),
                 ("--now", "Ready.", "--size", "S"),
@@ -3907,7 +3913,8 @@ class TestCliStateRefForge:
         fresh = issue_claim.main(["item", "show", str(CHILD_A_NUMBER), "--json"])
         assert fresh == 0
         after_body = json.loads(capsys.readouterr().out)["body"]
-        assert after_body.split("```agent-claim", 1)[0] == edited_body.split("```agent-claim", 1)[0]
+        opening = f"```{BLOCK_FENCE_INFO}"
+        assert after_body.split(opening, 1)[0] == edited_body.split(opening, 1)[0]
         after_record = _decoded_record(after_body, CHILD_A_ID)
         assert after_record.created_at == before_record.created_at
         assert after_record.parent == before_record.parent

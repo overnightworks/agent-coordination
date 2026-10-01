@@ -56,7 +56,7 @@ def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
 def _stub_board_config_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every store-command test reads a tracked `board.toml` by default
     (issue #315): the `bootstrap` proofs below drive a real `worktree` that
-    never `git add`s `.agent-claim/board.toml` -- it has no reason to carry
+    never `git add`s `board.CONFIG_PATH` -- it has no reason to carry
     one, since `board.load_config` already defaults `canonical_remote` to
     `"origin"`, the remote these tests add -- so a real `git ls-files` check
     would otherwise always read "not tracked" here and refuse before

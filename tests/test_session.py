@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from board_fixtures import write_repository_config
 from cli_fixtures import (
     _push_repository_trunk,
     _real_git,
@@ -41,19 +42,13 @@ def _context() -> RunContext:
     return RunContext(None, build_forge=_forge_never_built)
 
 
-def _write_board_config(toplevel: Path, text: str) -> None:
-    config_dir = toplevel / ".agent-claim"
-    config_dir.mkdir(parents=True)
-    (config_dir / "board.toml").write_text(text)
-
-
 def _checkout_configuring(tmp_path: Path, remote: str, board_config: str) -> Path:
     """A real checkout `worktree` that configures `remote`, with
     `board_config` as its board configuration."""
     worktree = tmp_path / "worktree"
     _real_git(tmp_path, "init", "-q", str(worktree))
     _real_git(worktree, "remote", "add", remote, "git@github.com:owner/repo.git")
-    _write_board_config(worktree, board_config)
+    write_repository_config(worktree, board_config)
     return worktree
 
 
@@ -191,7 +186,7 @@ def _hub_canonical_repository(tmp_path: Path, *, origin_url: str | None) -> Path
     GitHub, with an `origin` at `origin_url` beside it when given."""
     repository = tmp_path / "repo"
     _real_git(tmp_path, "init", "-q", str(repository))
-    _write_board_config(repository, 'canonical_remote = "hub"\n')
+    write_repository_config(repository, 'canonical_remote = "hub"\n')
     _real_git(repository, "remote", "add", "hub", "git@github.com:owner/repo.git")
     if origin_url is not None:
         _real_git(repository, "remote", "add", "origin", origin_url)
@@ -290,7 +285,7 @@ def _pushed_repository(tmp_path: Path, board_config: str = "") -> Path:
     repository, _remote = _real_repository_with_bare_remote(tmp_path)
     _commit(repository, "initial")
     _real_git(repository, "push", "-q", "origin", "main")
-    _write_board_config(repository, board_config)
+    write_repository_config(repository, board_config)
     return repository
 
 
@@ -411,7 +406,7 @@ def test_a_fresh_context_whose_configuration_names_another_remote_fetches_that_r
     _real_git(repository, "update-ref", "refs/remotes/hub/main", stale)
     context = _context().for_directory(repository)
     context.fetched_trunk_ref()
-    (repository / ".agent-claim" / "board.toml").write_text('canonical_remote = "hub"\n')
+    write_repository_config(repository, 'canonical_remote = "hub"\n')
     hub_reads = trunk_git_calls(monkeypatch, "hub")
 
     fetched = context.fresh().fetched_trunk_ref()

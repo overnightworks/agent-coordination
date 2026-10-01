@@ -16,7 +16,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from board_fixtures import BASE, REPOSITORY, _active_claim, complete_contract
+from board_fixtures import (
+    BASE,
+    REPOSITORY,
+    _active_claim,
+    complete_contract,
+    write_repository_config,
+)
 from cli_fixtures import (
     RECORDED_ORIGIN_HEAD_READ,
     _forbid_forge_resolution,
@@ -1538,12 +1544,11 @@ def _protect_real_repo_with_worktree(
         _real_git(main, "config", "user.name", "Test")
         _real_git(main, "config", "user.email", "test@example.com")
         (main / "README.md").write_text("hello\n")
-        (main / ".agent-claim").mkdir()
-        (main / ".agent-claim" / "board.toml").write_text(board_config)
+        write_repository_config(main, board_config)
         for trunk_file in trunk_files:
             (main / trunk_file).parent.mkdir(parents=True, exist_ok=True)
             (main / trunk_file).write_text("tracked\n")
-        _real_git(main, "add", "-f", "README.md", ".agent-claim/board.toml", *trunk_files)
+        _real_git(main, "add", "-f", "README.md", board.CONFIG_PATH.as_posix(), *trunk_files)
         _real_git(main, "commit", "-q", "-m", "initial")
         _real_git(main, "remote", "add", "origin", "https://example.invalid/example/repo.git")
         _real_git(main, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -1644,9 +1649,8 @@ def _protect_real_repo_with_nested_worktree(
     _real_git(outer, "config", "user.name", "Test")
     _real_git(outer, "config", "user.email", "test@example.com")
     (outer / "README.md").write_text("hello\n")
-    (outer / ".agent-claim").mkdir()
-    (outer / ".agent-claim" / "board.toml").write_text("")
-    _real_git(outer, "add", "-f", "README.md", ".agent-claim/board.toml")
+    write_repository_config(outer)
+    _real_git(outer, "add", "-f", "README.md", board.CONFIG_PATH.as_posix())
     _real_git(outer, "commit", "-q", "-m", "initial")
     _real_git(outer, "remote", "add", "origin", "https://example.invalid/example/repo.git")
     _real_git(outer, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -2793,7 +2797,7 @@ def _unguarded_scratchpad(tmp_path: Path) -> Path:
     (throwaway / "into-outside.md").symlink_to(outside)
     (scratch / "guarded-worktree" / "into-throwaway.md").symlink_to(throwaway / "README.md")
     (throwaway / "into-guarded-directory").symlink_to(
-        guarded / ".agent-claim", target_is_directory=True
+        guarded / board.CONFIG_PATH.parent, target_is_directory=True
     )
     (scratch / "dangling").symlink_to(guarded / "newdir", target_is_directory=True)
     return scratch
@@ -3187,7 +3191,7 @@ def test_protect_lets_the_targets_verdict_win_when_one_checkouts_board_is_untrac
     _use_real_path_is_tracked(monkeypatch)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Ada"})
     claimed_worktree = tmp_path / _CLAIMED_WORKTREE
-    _real_git(claimed_worktree, "rm", "-q", "--cached", ".agent-claim/board.toml")
+    _real_git(claimed_worktree, "rm", "-q", "--cached", board.CONFIG_PATH.as_posix())
     claim = _protect_active_claim("Ada", scope=("src",), branch="codex/issue-72-widget")
     fetches: list[Path] = []
 
@@ -3325,9 +3329,8 @@ def _hub_canonical_worktree_file(
     _real_git(main, "init", "-q", "-b", "main")
     _real_git(main, "config", "user.name", "Test")
     _real_git(main, "config", "user.email", "test@example.com")
-    (main / ".agent-claim").mkdir()
-    (main / ".agent-claim" / "board.toml").write_text(f'canonical_remote = "{canonical}"\n')
-    _real_git(main, "add", "-f", ".agent-claim/board.toml")
+    write_repository_config(main, f'canonical_remote = "{canonical}"\n')
+    _real_git(main, "add", "-f", board.CONFIG_PATH.as_posix())
     _real_git(main, "commit", "-q", "-m", "initial")
     _real_git(main, "branch", "trunk")
     for remote in ("origin", "hub"):
