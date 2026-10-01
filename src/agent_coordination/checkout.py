@@ -1530,20 +1530,30 @@ def _delete_branch(branch: str, landed_head: str | None) -> process.CapturedResu
     guards a merged lane, or -- for a squash git's merged check cannot see
     (issue #578) -- only while its tip is still `landed_head`.
     `update-ref -d` compares and deletes under the ref's own lock, so a
-    commit made after the caller's tip check keeps its branch; its
-    `branch.<name>` configuration then goes as `git branch -d` takes it."""
+    commit made after the caller's tip check keeps its branch. Its result
+    alone says whether the branch went; the `branch.<name>` configuration
+    follows apart (`_remove_deleted_branch_configuration`)."""
     if landed_head is None:
         return _git_run(["branch", "-d", branch])
     deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
-    if deleted.exit_status != 0:
-        return deleted
-    listed = _git_run(["config", "--local", "--name-only", "--list"])
-    if listed.exit_status != 0:
-        return listed
-    section = f"branch.{branch}"
-    if not any(name.startswith(f"{section}.") for name in listed.stdout.decode().splitlines()):
-        return listed
-    return _git_run(["config", "--local", "--remove-section", section])
+    if deleted.exit_status == 0:
+        _remove_deleted_branch_configuration(branch)
+    return deleted
+
+
+def _remove_deleted_branch_configuration(branch: str) -> None:
+    """Drop the `branch.<name>` section a squashed lane's `update-ref -d`
+    left behind, as `git branch -d` drops it, but only while no branch of
+    that name exists again: a same-name branch created after the deletion
+    keeps its own configuration. Git has no lock spanning a ref and the
+    configuration file, so this check sits as close as git allows."""
+    name_still_free = _git_run(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"])
+    if name_still_free.exit_status == 1:
+        # The ref is already gone, so this never decides whether the branch
+        # was removed: like `git branch -d`, which only warns when its section
+        # removal fails, a missing section (a lane without an upstream) or a
+        # failed write leaves at most a stale section, never a false report.
+        _git_run(["config", "--local", "--remove-section", f"branch.{branch}"])
 
 
 def branch_merged_into_default(branch: str, *, trunk: str, directory: Path) -> bool:

@@ -17463,6 +17463,76 @@ def test_land_keeps_a_squashed_lane_branch_a_commit_raced_past_the_landed_head(
     assert raced_tip == f"{pinned_head} raced past the landed head"
 
 
+def _recreate_branch_after_its_deletion(repo: Path, branch: str) -> tuple[str, str]:
+    """Install a `reference-transaction` hook that, the moment `branch`'s
+    deletion commits, creates a branch of the same name again with its own
+    `branch.<name>.remote` -- another process reusing the name -- and
+    return that configuration key with the value it must keep."""
+    owned_key = f"branch.{branch}.remote"
+    hooks = repo / _real_git(repo, "rev-parse", "--git-path", "hooks").stdout.strip()
+    hooks.mkdir(parents=True, exist_ok=True)
+    hook = hooks / "reference-transaction"
+    hook.write_text(
+        "#!/bin/sh\n"
+        '[ "$1" = committed ] || exit 0\n'
+        "while read -r old new ref; do\n"
+        '  case "$new" in *[!0]*) continue ;; esac\n'
+        f'  [ "$ref" = "refs/heads/{branch}" ] || continue\n'
+        '  git update-ref "$ref" "$old"\n'
+        f"  git config {owned_key} recreated\n"
+        "done\n"
+    )
+    hook.chmod(0o755)
+    return owned_key, "recreated"
+
+
+def _configure_a_sibling_branch(repo: Path, branch: str) -> tuple[str, str]:
+    """Give `branch` no `branch.<name>` section of its own but a sibling
+    branch whose name extends it with a dot, configured under
+    `branch.<name>.x`, and return that sibling's configuration key with the
+    value it must keep."""
+    sibling = f"{branch}.x"
+    _real_git(repo, "branch", "-q", sibling, branch)
+    owned_key = f"branch.{sibling}.remote"
+    _real_git(repo, "config", owned_key, "origin")
+    return owned_key, "origin"
+
+
+@pytest.mark.parametrize(
+    "configure_a_foreign_section",
+    [
+        pytest.param(_configure_a_sibling_branch, id="sibling-branch-without-an-own-section"),
+        pytest.param(_recreate_branch_after_its_deletion, id="same-name-branch-recreated"),
+    ],
+)
+def test_land_reports_a_deleted_squashed_lane_branch_removed_and_spares_foreign_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    configure_a_foreign_section: Callable[[Path, str], tuple[str, str]],
+) -> None:
+    """Issue #578 review findings 2 and 4: once the squashed lane's ref is
+    deleted, the cleanup reports its branch removed whatever the
+    `branch.<name>` configuration step finds -- no section of its own
+    beside a dotted sibling's, or a same-name branch created right after
+    the deletion -- and leaves configuration another branch owns intact."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = frozenset({_SQUASH})
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
+    foreign_key, foreign_value = configure_a_foreign_section(repo, LANDING_BRANCH)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    assert (status, output.err) == (0, "")
+    assert "worktree: removed\n" in output.out
+    assert not lane.exists()
+    assert _real_git(repo, "config", foreign_key, check=False).stdout.strip() == foreign_value
+
+
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
