@@ -1541,26 +1541,34 @@ def _delete_branch(branch: str, landed_head: str | None) -> BranchRemoval:
     merged check cannot see (issue #578) -- with `_delete_squashed_branch`."""
     if landed_head is None:
         deleted = _git_run(["branch", "-d", branch])
-        return _BRANCH_REMOVED if deleted.exit_status == 0 else _branch_kept(deleted)
+        if deleted.exit_status != 0:
+            return _branch_kept(process.git_failure_detail(deleted))
+        return _BRANCH_REMOVED
     return _delete_squashed_branch(branch, landed_head)
 
 
-def _branch_kept(refused: process.CapturedResult) -> BranchRemoval:
-    return BranchRemoval(
-        removed=False, reason=f"git failure: {process.git_failure_detail(refused)}"
-    )
+def _branch_kept(failure: str) -> BranchRemoval:
+    return BranchRemoval(removed=False, reason=f"git failure: {failure}")
 
 
 def _delete_squashed_branch(branch: str, landed_head: str) -> BranchRemoval:
     """Delete a squashed lane's `branch` with one compare-and-delete against
     `landed_head` (issue #578 line 4), so a branch that moved on is refused
     by git and kept and no commit is ever lost, then drop its own
-    `branch.<name>` section. Once the compare-and-delete succeeded the branch
-    reads removed, and a section git refuses to drop is named on its own."""
-    deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
+    `branch.<name>` section. A git run that fails to launch or times out
+    never escapes, since the worktree is already gone: the compare-and-delete
+    reads the branch kept, and once it succeeded the branch reads removed,
+    and a section step git refuses or never completes is named on its own."""
+    try:
+        deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
+    except ClaimError as error:
+        return _branch_kept(str(error))
     if deleted.exit_status != 0:
-        return _branch_kept(deleted)
-    section_refusal = _remove_deleted_branch_section(branch)
+        return _branch_kept(process.git_failure_detail(deleted))
+    try:
+        section_refusal = _remove_deleted_branch_section(branch)
+    except ClaimError as error:
+        section_refusal = str(error)
     if section_refusal is None:
         return _BRANCH_REMOVED
     return BranchRemoval(
@@ -1576,15 +1584,13 @@ def _remove_deleted_branch_section(branch: str) -> str | None:
     """Drop the deleted `branch`'s own `branch.<name>` section, as `git
     branch -d` would, but only once no branch of that name exists, read
     after the delete so a section added meanwhile goes too, and return
-    git's own refusal of a step, or `None`. A branch another process
-    creates under that name between the delete and this removal can lose
-    its upstream setting: no commit is lost, and `git branch -u` restores
-    it."""
-    try:
-        if branch_exists(branch):
-            return None
-    except ClaimError as error:
-        return str(error)
+    git's own refusal of a step, or `None`; a git run that fails to launch
+    or times out, and a branch check git refuses, raise `ClaimError`. A
+    branch another process creates under that name between the delete and
+    this removal can lose its upstream setting: no commit is lost, and `git
+    branch -u` restores it."""
+    if branch_exists(branch):
+        return None
     listed = _git_run(["config", "--local", "--null", "--get-regexp", r"^branch\."])
     if listed.exit_status not in (0, 1):
         return process.git_failure_detail(listed)

@@ -17596,6 +17596,30 @@ def _refuse_the_branch_configuration_listing(
     monkeypatch.setattr(checkout, "_git_run", refuse_the_listing)
 
 
+def _fail_the_git_launch(
+    leading_arguments: list[str], failure: Exception
+) -> Callable[[pytest.MonkeyPatch, Path, Path], str | None]:
+    """An arranger whose git call starting with `leading_arguments` raises
+    `failure` instead of running; it returns the lane's tip when that call
+    is the compare-and-delete, which then never ran, or `None`."""
+
+    def fail_that_launch(monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path) -> str | None:
+        tip = _real_git(lane, "rev-parse", "HEAD").stdout.strip()
+        run_git = process.run_git
+
+        def raise_for_that_call(
+            arguments: list[str], *, directory: Path | None = None
+        ) -> process.CapturedResult:
+            if arguments[: len(leading_arguments)] == leading_arguments:
+                raise failure
+            return run_git(arguments, directory=directory)
+
+        monkeypatch.setattr(process, "run_git", raise_for_that_call)
+        return tip if leading_arguments[0] == "update-ref" else None
+
+    return fail_that_launch
+
+
 def _lock_the_repository_configuration(
     _monkeypatch: pytest.MonkeyPatch, _repo: Path, lane: Path
 ) -> None:
@@ -17663,6 +17687,31 @@ def _branch_configuration(repo: Path) -> list[str]:
             id="configuration-locked",
         ),
         pytest.param(
+            _fail_the_git_launch(["update-ref", "-d"], PermissionError("permission denied")),
+            "worktree: removed; branch kept -- git failure: git failed to launch: "
+            "permission denied\n",
+            True,
+            id="deletion-failed-to-start",
+        ),
+        pytest.param(
+            _fail_the_git_launch(
+                ["config", "--local", "--null", "--get-regexp"], process.ProcessTimedOutError()
+            ),
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
+            "git failure: git timed out while validating the build checkout\n",
+            True,
+            id="configuration-listing-timed-out",
+        ),
+        pytest.param(
+            _fail_the_git_launch(
+                ["config", "--local", "--remove-section"], process.ProcessTimedOutError()
+            ),
+            f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
+            "git failure: git timed out while validating the build checkout\n",
+            True,
+            id="section-removal-timed-out",
+        ),
+        pytest.param(
             _recreate_the_branch_after_its_deletion,
             "worktree: removed\n",
             True,
@@ -17688,8 +17737,10 @@ def test_land_cleans_up_a_squashed_lane_branch_by_compare_and_delete(
     compare-and-delete against the landed head and its `branch.<name>`
     section goes only once no branch of that name exists. A commit made in
     the lane after cleanup judged its tip keeps the branch on that commit;
-    a section listing or removal git refuses after the delete keeps the
-    section beside the removed branch, named on its own; a same-name branch
+    a compare-and-delete git never ran keeps the branch beside the removed
+    worktree; a section listing or removal git refuses, or never runs to
+    completion, after the delete keeps the section beside the removed
+    branch, named on its own; a same-name branch
     recreated after the delete keeps the section, and a dotted sibling's
     configuration is never the lane's. `interfere` runs just before the
     removal and returns the tip the branch must keep, or `None`."""
