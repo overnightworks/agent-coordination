@@ -1446,18 +1446,28 @@ WORKTREE_KEPT_ELSEWHERE_REASON = "branch checked out elsewhere"
 
 
 def cleanup_landed_worktree(
-    matching: Path, branch: str, *, trunk: str, directory: Path
+    matching: Path, branch: str, *, trunk: str, landed_head: str | None, directory: Path
 ) -> WorktreeCleanupOutcome:
     """`release --merged`'s own cleanup policy once a lane's linked worktree
     is already found (issue #322 review/gate finding 4): merged check, then
     checked-out-elsewhere check, then a dirty check, then the worktree
     removal itself, then the branch deletion -- in that order, since
     removing a dirty or still-needed worktree is unsafe and the two git
-    writes below it are each worth reporting apart. `release`'s own
-    cwd-equality guard and its "no worktree matches this branch" decision
-    run before this and stay the caller's own job (they need the process's
-    own cwd and worktree listing, neither of which this function reads)."""
-    if not branch_merged_into_default(branch, trunk=trunk, directory=directory):
+    writes below it are each worth reporting apart. A branch counts as
+    landed when the trunk contains its tip, or when its tip is
+    `landed_head`, the pull request head a squash landed (issue #578): a
+    squash commit is no descendant of that tip, so ancestry alone would keep
+    every squashed lane. `release`'s own cwd-equality guard and its "no
+    worktree matches this branch" decision run before this and stay the
+    caller's own job (they need the process's own cwd and worktree listing,
+    neither of which this function reads)."""
+    merged = branch_merged_into_default(branch, trunk=trunk, directory=directory)
+    squash_landed = (
+        not merged
+        and landed_head is not None
+        and resolved_commit(f"refs/heads/{branch}", directory=directory) == landed_head
+    )
+    if not merged and not squash_landed:
         return worktree_cleanup_kept(WORKTREE_KEPT_NOT_MERGED_REASON)
     matching_checkout = resolve_path_checkout(matching)
     if matching_checkout is not None and matching_checkout.kind is CheckoutKind.MAIN:
@@ -1465,15 +1475,20 @@ def cleanup_landed_worktree(
     dirty = _git_output(["status", "--porcelain"], directory=matching)
     if dirty:
         return worktree_cleanup_kept(WORKTREE_KEPT_DIRTY_REASON)
-    return remove_linked_worktree(matching, branch=branch)
+    return remove_linked_worktree(matching, branch=branch, squash_landed=squash_landed)
 
 
-def remove_linked_worktree(path: Path, *, branch: str) -> WorktreeCleanupOutcome:
+def remove_linked_worktree(
+    path: Path, *, branch: str, squash_landed: bool = False
+) -> WorktreeCleanupOutcome:
     """Remove a landed lane's linked worktree and its own local branch
     (issue #322), or the pair a refused `start` had just created (issue
     #479): `git worktree remove` first -- git refuses to delete a
     branch still checked out anywhere -- then `git branch -d`, both through
-    this module's own `_git_run` chokepoint. Never called on the calling
+    this module's own `_git_run` chokepoint. A `squash_landed` branch is
+    deleted with `-D` instead: git's own merged check cannot see a squash,
+    and the caller has just proved the branch's tip is the head that landed
+    (issue #578). Never called on the calling
     process's own checkout: `release`'s own cwd-equality guard runs first,
     since a worktree cannot remove its own cwd, and `start` removes only a
     worktree it created, never the one it runs in. A worktree-removal failure
@@ -1484,7 +1499,7 @@ def remove_linked_worktree(path: Path, *, branch: str) -> WorktreeCleanupOutcome
     result = _git_run(["worktree", "remove", str(path)])
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
-    result = _git_run(["branch", "-d", branch])
+    result = _git_run(["branch", "-D" if squash_landed else "-d", branch])
     if result.exit_status != 0:
         return WorktreeCleanupOutcome(
             worktree=_WORKTREE_REMOVED,

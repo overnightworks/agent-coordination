@@ -119,12 +119,12 @@ when both are gone, `kept -- <reason>` when neither moves, or `removed; branch k
 when the worktree is gone but the branch delete itself failed (REL-34) -- one owner for all three
 shapes so they can never drift apart.
 
-- [ ] [REL-25] A clean linked worktree whose branch is already merged into the canonical remote's own trunk is removed together with that local branch: `worktree: removed` (see E-REL-08).
+- [ ] [REL-25] A clean linked worktree whose branch is merged into the canonical remote's trunk, or whose tip is the head a squash landed, is removed with that local branch: `worktree: removed` (see E-REL-08).
 - [ ] [REL-26] `--keep-worktree` skips that removal outright: `worktree: kept -- --keep-worktree was given`, worktree and branch both left exactly as found (see E-REL-09).
 - [ ] [REL-27] A release run from inside the lane's own worktree cannot remove its own cwd: `worktree: kept -- release ran from inside it`, and keeps both (see E-REL-10).
 - [ ] [REL-28] A dirty worktree keeps it: `worktree: kept -- dirty`, exit code unaffected (see E-REL-11).
 - [ ] [REL-29] A branch not yet provably merged into the default branch keeps it: `worktree: kept -- not merged into the default branch` (see E-REL-12).
-- [ ] [REL-30] No linked worktree found on that branch keeps nothing to report: `worktree: kept -- no linked worktree found` (see E-REL-13).
+- [ ] [REL-30] No linked worktree on that branch in this checkout reads `worktree: kept -- no linked worktree on <branch> in this checkout; if one exists, it lives in another checkout` (see E-REL-13).
 - [ ] [REL-31] The branch checked out on this repository's own shared main checkout, not a linked worktree, keeps it: `worktree: kept -- branch checked out elsewhere` (see E-REL-14).
 - [ ] [REL-32] A git failure resolving which worktree matches the lane's branch keeps both and reports it: `worktree: kept -- git failure: <detail>`, the release itself stays committed regardless (see E-REL-15).
 - [ ] [REL-33] `--abandoned` never attempts this cleanup at all, the same as it never resolves a forge target (LAND-39).
@@ -330,7 +330,7 @@ $ aco release 42 --merged 57
 RELEASED issue #42: <claim-id>
 freed: none
 next: none
-worktree: kept -- no linked worktree found
+worktree: kept -- no linked worktree on ada/issue-42 in this checkout; if one exists, it lives in another checkout
 exit 0
 ```
 

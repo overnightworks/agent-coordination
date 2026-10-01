@@ -750,6 +750,7 @@ class GitHubForge:
             body = ""
         base_ref_name = value.get("baseRefName")
         head_ref_name = value.get("headRefName")
+        head_commit = value.get("headRefOid")
         source_repository = _head_repository(value)
         author = value.get("author")
         login = author.get("login") if isinstance(author, dict) else None
@@ -773,6 +774,8 @@ class GitHubForge:
             or not isinstance(body, str)
             or not isinstance(base_ref_name, str)
             or not isinstance(head_ref_name, str)
+            or not isinstance(head_commit, str)
+            or protocol.COMMIT_PATTERN.fullmatch(head_commit) is None
             or source_repository is None
             or not isinstance(login, str)
             or not login
@@ -795,6 +798,7 @@ class GitHubForge:
             merged,
             merge_commit,
             title,
+            head_commit,
         )
 
     def landing(self, number: int) -> forge.Landing:
@@ -806,7 +810,7 @@ class GitHubForge:
                 "--repo",
                 self.repository.path,
                 "--json",
-                "number,title,body,baseRefName,headRefName,headRepository,"
+                "number,title,body,baseRefName,headRefName,headRefOid,headRepository,"
                 "headRepositoryOwner,author,mergedAt,mergeCommit",
                 "--jq",
                 ".",

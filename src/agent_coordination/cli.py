@@ -3125,6 +3125,17 @@ class _MergedLandingClose:
     pull_request: int
 
 
+@dataclass(frozen=True)
+class _VerifiedMergedRelease:
+    """What `_verify_merged_release` read off the verified landing: the
+    item still to close, if any, and the pull request head that landed,
+    which the worktree cleanup recognises a squashed lane by (issue
+    #578)."""
+
+    pending_close: _MergedLandingClose | None
+    landed_head: str
+
+
 def _trunk_no_item_landing_defect(
     landings: tuple[checkout.TrunkLanding, ...], sha: str, pull_request: int
 ) -> str | None:
@@ -3164,7 +3175,7 @@ def _verify_merged_release(
     client: github.GitHubForge,
     identity: protocol.ClaimIdentity,
     merged: protocol.MergedRelease,
-) -> _MergedLandingClose | None:
+) -> _VerifiedMergedRelease:
     """Refuse a `--merged` release the landing itself does not support, and
     report -- without yet closing anything -- whether the named work item is
     still open and needs to be (issue #359 Card 1/R1): `_cmd_release` calls
@@ -3202,18 +3213,20 @@ def _verify_merged_release(
             raise protocol.ClaimUnavailableError(
                 f"merge commit {detail.merge_commit} of pull request #{detail.number} {defect}"
             )
-        return None
+        return _VerifiedMergedRelease(None, detail.head_commit)
     _verify_merge_commit_authority(
         landings, detail.number, identity.issue, detail.merge_commit, context.config.storage
     )
     reference = _fetch_issue_reference(client, identity.issue)
     if reference.state is forge.ItemState.OPEN:
-        return _MergedLandingClose(identity.issue, detail.number)
+        return _VerifiedMergedRelease(
+            _MergedLandingClose(identity.issue, detail.number), detail.head_commit
+        )
     if reference.state is not forge.ItemState.CLOSED:
         raise protocol.ClaimUnavailableError(
             f"work item #{identity.issue} is {reference.state.value}, not closed"
         )
-    return None
+    return _VerifiedMergedRelease(None, detail.head_commit)
 
 
 def _canonical_remote_name(toplevel: Path) -> str:
@@ -6201,6 +6214,7 @@ def _release_transition(
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     client: github.GitHubForge | None = None
+    verified: _VerifiedMergedRelease | None = None
     if isinstance(outcome, protocol.MergedRelease):
         # Authorization above gates every forge read and write here (issue
         # #359 R1): an unauthorized or mismatched-claim `--merged` release
@@ -6210,7 +6224,8 @@ def _release_transition(
         # cast is honest, not a suppression: `_build_forge` builds
         # exactly a `github.GitHubForge` for every other storage pin.
         client = cast(github.GitHubForge, context.forge)
-        pending_close = _verify_merged_release(context, client, identity, outcome)
+        verified = _verify_merged_release(context, client, identity, outcome)
+        pending_close = verified.pending_close
         if pending_close is not None:
             # Runs before the release transition below (issue #359 R1): a
             # close failure here -- a transient forge error, most often --
@@ -6241,11 +6256,15 @@ def _release_transition(
         )
     )
     worktree_cleanup = (
-        _cleanup_landed_worktree(
-            parsed, resolved.selected.branch, context, context.fetched_default_branch_ref
+        None
+        if verified is None
+        else _cleanup_landed_worktree(
+            parsed,
+            resolved.selected.branch,
+            context,
+            context.fetched_default_branch_ref,
+            verified.landed_head,
         )
-        if isinstance(outcome, protocol.MergedRelease)
-        else None
     )
     _print_release_result(
         ReleaseReport(
@@ -6264,7 +6283,11 @@ def _release_transition(
 
 WORKTREE_KEPT_FLAG_REASON = "--keep-worktree was given"
 WORKTREE_KEPT_RAN_FROM_INSIDE_REASON = "release ran from inside it"
-WORKTREE_KEPT_NO_WORKTREE_REASON = "no linked worktree found"
+# Names the branch (issue #578): a landing from a separate clone holds no
+# lane worktree, which stays where it lives for that checkout to remove.
+WORKTREE_KEPT_NO_WORKTREE_REASON = (
+    "no linked worktree on {branch} in this checkout; if one exists, it lives in another checkout"
+)
 
 
 def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> str:
@@ -6285,6 +6308,7 @@ def _cleanup_landed_worktree(
     branch: str,
     context: RunContext,
     fetched_trunk_ref: Callable[[], str],
+    landed_head: str | None,
 ) -> checkout.WorktreeCleanupOutcome:
     """After a successful `--merged` release, remove the lane's local
     worktree and local branch when both are safe to remove, and report
@@ -6300,8 +6324,10 @@ def _cleanup_landed_worktree(
     context already holds, never resolved a second time (issue #472).
     `fetched_trunk_ref` names the ref the lane must be merged into -- the
     one its release judged the landing on (issue #492) -- asked only here,
-    so a failure to resolve it reads as `kept` too. The remote branch stays
-    the forge merge's own business either way."""
+    so a failure to resolve it reads as `kept` too. `landed_head` is the
+    pull request head the forge reports landed, `None` where no pull request
+    stands behind the landing (`storage = "state-ref"`). The remote branch
+    stays the forge merge's own business either way."""
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
     try:
@@ -6311,9 +6337,15 @@ def _cleanup_landed_worktree(
             return checkout.worktree_cleanup_kept(WORKTREE_KEPT_RAN_FROM_INSIDE_REASON)
         matching = checkout.worktree_on_branch(others, branch)
         if matching is None:
-            return checkout.worktree_cleanup_kept(WORKTREE_KEPT_NO_WORKTREE_REASON)
+            return checkout.worktree_cleanup_kept(
+                WORKTREE_KEPT_NO_WORKTREE_REASON.format(branch=branch)
+            )
         return checkout.cleanup_landed_worktree(
-            matching, branch, trunk=fetched_trunk_ref(), directory=toplevel
+            matching,
+            branch,
+            trunk=fetched_trunk_ref(),
+            landed_head=landed_head,
+            directory=toplevel,
         )
     except protocol.ClaimError as error:
         return checkout.worktree_cleanup_kept(f"git failure: {error}")
@@ -6940,7 +6972,7 @@ def _cmd_release_landed(
     client.mark_landed(write, new_oid)
     landing = _landing_report(context, identity, new_state, storage, trunk_ref)
     worktree_cleanup = _cleanup_landed_worktree(
-        parsed, resolved.selected.branch, context, context.fetched_trunk_ref
+        parsed, resolved.selected.branch, context, context.fetched_trunk_ref, None
     )
     _print_release_result(
         ReleaseReport(

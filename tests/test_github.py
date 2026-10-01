@@ -2683,6 +2683,9 @@ def test_bounded_command_refuses_a_process_error_type_it_does_not_classify(
         client.default_branch()
 
 
+_PULL_REQUEST_HEAD_SHA = "d" * 40
+
+
 def api_pull_request(**overrides: object) -> dict[str, object]:
     owner, _, name = REPOSITORY.partition("/")
     payload: dict[str, object] = {
@@ -2691,6 +2694,7 @@ def api_pull_request(**overrides: object) -> dict[str, object]:
         "body": "Work-Item: #72",
         "baseRefName": "main",
         "headRefName": LANDING_BRANCH,
+        "headRefOid": _PULL_REQUEST_HEAD_SHA,
         "headRepository": {"name": name},
         "headRepositoryOwner": {"login": owner},
         "author": {"login": "ada"},
@@ -2718,6 +2722,7 @@ def test_github_adapter_reads_a_pull_request_and_the_default_branch() -> None:
         True,
         MERGE_COMMIT_SHA,
         "feat: land the lane",
+        _PULL_REQUEST_HEAD_SHA,
     )
     assert dataclasses.astuple(client.landing(12)) == dataclasses.astuple(expected)
     assert client.default_branch() == "main"
@@ -2773,6 +2778,8 @@ def test_github_adapter_fails_loud_when_github_answers_for_another_pull_request(
             ),
             id="head-repository-invalid-shape",
         ),
+        pytest.param(api_pull_request(headRefOid=None), id="head-commit-missing"),
+        pytest.param(api_pull_request(headRefOid="not-a-sha"), id="malformed-head-commit"),
         pytest.param(api_pull_request(mergeCommit=None), id="merged-with-no-merge-commit"),
         pytest.param(
             api_pull_request(mergeCommit={"oid": "not-a-sha"}), id="malformed-merge-commit-oid"

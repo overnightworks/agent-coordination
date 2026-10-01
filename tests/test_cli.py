@@ -14702,11 +14702,14 @@ def landing_pull_request(
     merged: bool = False,
     merge_commit: str | None = None,
     title: str = "feat: land the lane",
+    head_commit: str = MERGE_COMMIT_SHA,
 ) -> forge.Landing:
     """`merge_commit` defaults to a shared, well-formed sha once `merged` is
     true (a real merged pull request always carries one) and to `None`
     otherwise; a test proving the merge commit's own authority
-    (issue #397) passes its own sha instead."""
+    (issue #397) passes its own sha instead. `head_commit` defaults to the
+    head `_land_readiness` pins; a test whose lane branch is real git passes
+    that branch's own tip."""
     return forge.Landing(
         number,
         author,
@@ -14717,6 +14720,7 @@ def landing_pull_request(
         merged,
         merge_commit if merge_commit is not None else (MERGE_COMMIT_SHA if merged else None),
         title,
+        head_commit,
     )
 
 
@@ -16694,7 +16698,13 @@ _WORKTREE_CLEANUP_KEPT_SCENARIOS: tuple[
     ),
     ("dirty", _dirty_worktree_scenario, (), "dirty"),
     ("ran-from-inside", _ran_from_inside_scenario, (), "release ran from inside it"),
-    ("no-linked-worktree", _no_linked_worktree_scenario, (), "no linked worktree found"),
+    (
+        "no-linked-worktree",
+        _no_linked_worktree_scenario,
+        (),
+        f"no linked worktree on {_CLEANUP_BRANCH} in this checkout; "
+        "if one exists, it lives in another checkout",
+    ),
     (
         "not-merged-locally",
         _not_merged_locally_scenario,
@@ -17304,9 +17314,14 @@ def test_land_merges_with_the_method_the_repository_allows(
     `merge_method` pin, else the method the forge allows -- a squash commit
     titled `<pull request title> (#<n>)` where only squash is allowed -- and
     the delegated `release --merged` accepts that single-parent commit's own
-    trailer exactly as it accepts a merge commit's."""
+    trailer exactly as it accepts a merge commit's, and removes the clean
+    lane worktree whose tip is the head that landed, squashed or not."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = allowed
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.landings[12] = replace(client.landings[12], head_commit=lane_tip)
     if pinned is not None:
         (repo / ".agent-claim").mkdir()
         (repo / board.CONFIG_PATH).write_text(f'merge_method = "{pinned}"\n')
@@ -17316,7 +17331,8 @@ def test_land_merges_with_the_method_the_repository_allows(
 
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
 
-    error = capsys.readouterr().err
+    output = capsys.readouterr()
+    error = output.err
     if landed is None:
         assert (status, error, client.merge_calls) == (
             2,
@@ -17331,6 +17347,8 @@ def test_land_merges_with_the_method_the_repository_allows(
     assert (status, error, method, title, len(parents)) == (0, "", *landed)
     assert body.strip().split("\n\n")[-1] == f"Work-Item: #{WORK_ITEM_ISSUE}"
     assert client.closed_issues == {WORK_ITEM_ISSUE}
+    assert "worktree: removed\n" in output.out
+    assert (lane.exists(), checkout.branch_exists(LANDING_BRANCH)) == (False, False)
 
 
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(
@@ -17916,10 +17934,11 @@ def test_land_from_a_separate_clone_releases_or_refuses_before_the_merge(
         expected_error,
         expected_merges,
     )
-    assert (not claims, "worktree: kept -- no linked worktree found\n" in output.out) == (
-        released,
-        released,
+    kept_elsewhere = (
+        f"worktree: kept -- no linked worktree on {LANDING_BRANCH} in this checkout; "
+        "if one exists, it lives in another checkout\n"
     )
+    assert (not claims, kept_elsewhere in output.out) == (released, released)
     assert (tmp_path / "lane").exists()
 
 
