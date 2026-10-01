@@ -19,7 +19,6 @@ three.
 
 from __future__ import annotations
 
-import re
 import secrets
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -29,17 +28,13 @@ from typing import TypeAlias, cast
 
 from .body import ORIGIN_GRAMMAR_HINT, ORIGIN_PATTERN
 from .protocol import (
+    ITEM_ID_PATTERN,
     RFC3339_TIMESTAMP_FORMAT,
     ClaimUnavailableError,
     MalformedStateTreeError,
+    item_id_of_filename,
 )
 
-# `aco-` plus six lowercase hex characters (issue #248, parent #230 ruling
-# 15.09.2026): a short random id, never a counter, never reused. The
-# filename an item lives at is exactly this id plus `.md` -- never a block
-# key, so a rename of the file is the only way its id ever changes.
-ITEM_ID_PATTERN = re.compile(r"aco-[0-9a-f]{6}")
-ITEM_FILENAME_SUFFIX = ".md"
 # Refuse rather than silently widen (issue #283, ruling 16.09.2026): an id
 # never grows a seventh hex character just because the id space (16.7
 # million values per repository) is filling up. Three tries against real
@@ -123,11 +118,13 @@ def is_item_number(number: int) -> bool:
 def item_id_from_filename(filename: str) -> str:
     """The item id `filename` names, or a loud refusal: every file directly
     under `items/` must be `aco-<six hex>.md`, never anything else (issue
-    #248, ruling "a broken tree is corrupt state")."""
-    candidate = filename.removesuffix(ITEM_FILENAME_SUFFIX)
-    if not filename.endswith(ITEM_FILENAME_SUFFIX) or ITEM_ID_PATTERN.fullmatch(candidate) is None:
+    #248, ruling "a broken tree is corrupt state"). Which name is an item
+    is `protocol.item_id_of_filename`'s to answer; this is the refusal a
+    whole-board read raises beside a foreign entry (PIN-13)."""
+    item_id = item_id_of_filename(filename)
+    if item_id is None:
         raise MalformedStateTreeError(f"items/{filename} is not a valid item file name")
-    return candidate
+    return item_id
 
 
 def parse_origin(value: str) -> str:

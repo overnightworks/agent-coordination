@@ -14,6 +14,7 @@ import subprocess
 import threading
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
@@ -726,37 +727,39 @@ def test_fetch_state_rejects_a_claims_entry_that_is_not_a_directory(
         store.fetch_state(worktree=worktree, remote=str(bare_remote))
 
 
-def test_fetch_state_rejects_a_non_toml_entry_in_claims(bare_remote: Path, worktree: Path) -> None:
+@pytest.mark.parametrize(
+    ("directory", "name", "refusal"),
+    [
+        pytest.param(store.CLAIMS_DIRECTORY, "issue-42.txt", "is not a claim file", id="claims"),
+        pytest.param(store.IDS_DIRECTORY, "not valid!", "is not a claim id", id="ids"),
+        pytest.param(
+            store.RESOURCES_DIRECTORY, "display.txt", "is not a resource file", id="resources"
+        ),
+        # A name git would quote (non-ASCII) used to vanish from every read
+        # instead of refusing (issue #558).
+        pytest.param(store.CLAIMS_DIRECTORY, "ä", "is not a claim file", id="claims-quoted"),
+        pytest.param(store.IDS_DIRECTORY, "ä", "is not a claim id", id="ids-quoted"),
+        pytest.param(
+            store.RESOURCES_DIRECTORY, "ä", "is not a resource file", id="resources-quoted"
+        ),
+    ],
+)
+def test_fetch_state_refuses_an_entry_whose_name_its_directory_does_not_accept(
+    bare_remote: Path, worktree: Path, directory: str, name: str, refusal: str
+) -> None:
     schema_blob = _blob(worktree, b"version = 2\n")
     stray_blob = _blob(worktree, b"junk\n")
-    claims_tree = _raw_tree(worktree, [("100644", "blob", stray_blob, "issue-42.txt")])
+    subtree = _raw_tree(worktree, [("100644", "blob", stray_blob, name)])
     _push_raw_state_tree(
         bare_remote,
         worktree,
         [
             ("100644", "blob", schema_blob, "schema.toml"),
-            ("040000", "tree", claims_tree, store.CLAIMS_DIRECTORY),
+            ("040000", "tree", subtree, directory),
         ],
     )
 
-    with pytest.raises(protocol.MalformedStateTreeError, match="is not a claim file"):
-        store.fetch_state(worktree=worktree, remote=str(bare_remote))
-
-
-def test_fetch_state_rejects_an_invalid_id_entry(bare_remote: Path, worktree: Path) -> None:
-    schema_blob = _blob(worktree, b"version = 2\n")
-    empty_blob = _blob(worktree, b"")
-    ids_tree = _raw_tree(worktree, [("100644", "blob", empty_blob, "not valid!")])
-    _push_raw_state_tree(
-        bare_remote,
-        worktree,
-        [
-            ("100644", "blob", schema_blob, "schema.toml"),
-            ("040000", "tree", ids_tree, store.IDS_DIRECTORY),
-        ],
-    )
-
-    with pytest.raises(protocol.MalformedStateTreeError, match="is not a claim id"):
+    with pytest.raises(protocol.MalformedStateTreeError, match=refusal):
         store.fetch_state(worktree=worktree, remote=str(bare_remote))
 
 
@@ -870,25 +873,6 @@ def test_fetch_state_rejects_a_stored_scope_entry_valid_scope_refuses(
     with pytest.raises(
         protocol.MalformedStateTreeError, match=r"claim file issue-42\.toml .* has an invalid scope"
     ):
-        store.fetch_state(worktree=worktree, remote=str(bare_remote))
-
-
-def test_fetch_state_rejects_a_non_toml_entry_in_resources(
-    bare_remote: Path, worktree: Path
-) -> None:
-    schema_blob = _blob(worktree, b"version = 2\n")
-    stray_blob = _blob(worktree, b"junk\n")
-    resources_tree = _raw_tree(worktree, [("100644", "blob", stray_blob, "display.txt")])
-    _push_raw_state_tree(
-        bare_remote,
-        worktree,
-        [
-            ("100644", "blob", schema_blob, "schema.toml"),
-            ("040000", "tree", resources_tree, store.RESOURCES_DIRECTORY),
-        ],
-    )
-
-    with pytest.raises(protocol.MalformedStateTreeError, match="is not a resource file"):
         store.fetch_state(worktree=worktree, remote=str(bare_remote))
 
 
@@ -1432,7 +1416,7 @@ def test_list_tree_fails_loud_when_the_tree_is_unresolvable(worktree: Path) -> N
         store._list_tree(worktree, _UNRESOLVABLE_OBJECT_ID, tip=_PLACEHOLDER_TIP, context="state")
 
 
-def _top_level(entries: dict[str, tuple[str, str]]) -> dict[str, tuple[str, str]]:
+def _top_level(entries: dict[str, store._ListedEntry]) -> dict[str, store._ListedEntry]:
     return {name: value for name, value in entries.items() if "/" not in name}
 
 
@@ -2346,7 +2330,7 @@ def test_commit_transition_preserves_items_across_claim_rescope_and_release(
         tip = store.fetch_state(worktree=worktree, remote=str(bare_remote)).tip
         assert tip is not None
         entries = store._list_tree(worktree, tip, tip=tip, context="state")
-        assert entries[store.ITEMS_DIRECTORY] == ("tree", items_tree)
+        assert entries[store.ITEMS_DIRECTORY].oid == items_tree
         assert store.read_item_files(worktree, tip) == {"aco-000001.md": b"item body\n"}
 
     assert_items_unchanged()
@@ -2383,6 +2367,128 @@ def test_commit_transition_preserves_items_across_claim_rescope_and_release(
         ),
     )
     assert_items_unchanged()
+
+
+# --- foreign items/ entries (issue #558) --------------------------------------
+
+
+@pytest.fixture
+def foreign_item_entries() -> tuple[tuple[str, str], ...]:
+    """`(mode, name)` of `items/` entries the item file-name rule names no
+    item: a bare id, a non-id, names git would quote, an executable blob."""
+    return (
+        ("100644", "aco-000001"),
+        ("100644", "NOTANID"),
+        ("100644", "ä.md"),
+        ("100644", "tab\tname.md"),
+        ("100755", "hook.sh"),
+    )
+
+
+def _push_items_store(
+    bare_remote: Path, worktree: Path, entries: tuple[tuple[str, str], ...]
+) -> dict[str, str]:
+    """Push a state ref whose `items/` holds `entries`, each blob its own
+    name's bytes so no two entries share an oid; returns name -> blob oid."""
+    oids = {name: _blob(worktree, name.encode()) for _mode, name in entries}
+    items_tree = _raw_tree(worktree, [(mode, "blob", oids[name], name) for mode, name in entries])
+    schema_blob = _blob(worktree, protocol.serialize_empty_schema_toml().encode())
+    _push_raw_state_tree(
+        bare_remote,
+        worktree,
+        [
+            ("100644", "blob", schema_blob, store.SCHEMA_TOML_FILENAME),
+            ("040000", "tree", items_tree, store.ITEMS_DIRECTORY),
+        ],
+    )
+    return oids
+
+
+def _listing_outside_the_claim_ledger(remote: Path) -> dict[bytes, bytes]:
+    """`git ls-tree -r -z` of the state ref in `remote`, raw path -> raw
+    `mode kind oid`, without the `claims/`/`ids/`/`resources/` a claim and
+    its release are meant to write."""
+    ledger = tuple(
+        f"{directory}/".encode()
+        for directory in (store.CLAIMS_DIRECTORY, store.IDS_DIRECTORY, store.RESOURCES_DIRECTORY)
+    )
+    listing = subprocess.run(
+        ["git", "--git-dir", str(remote), "ls-tree", "-r", "-z", store.STATE_REF],
+        check=True,
+        capture_output=True,
+    ).stdout
+    records = (record.split(b"\t", 1) for record in listing.split(b"\0") if record)
+    return {path: header for header, path in records if not path.startswith(ledger)}
+
+
+@pytest.mark.parametrize(
+    "item_entries",
+    [
+        pytest.param((("100644", "aco-000001.md"),), id="an-item-beside-foreign-entries"),
+        pytest.param((), id="foreign-entries-only"),
+    ],
+)
+def test_commit_transition_carries_every_items_entry_it_does_not_write_byte_for_byte(
+    bare_remote: Path,
+    worktree: Path,
+    foreign_item_entries: tuple[tuple[str, str], ...],
+    item_entries: tuple[tuple[str, str], ...],
+) -> None:
+    """CAS-61: a claim, its release, and a write to another item leave every
+    other `items/` entry -- name, mode, blob -- exactly as it was, and keep
+    `items/` even when only foreign entries hold it (issue #558)."""
+    _push_items_store(bare_remote, worktree, foreign_item_entries + item_entries)
+    before = _listing_outside_the_claim_ledger(bare_remote)
+    item_write = _hashed_item_intent(
+        worktree, item_id="aco-000002", content=b"second\n", operation_id="op-item"
+    )
+    transitions = (
+        (store.ClaimTransitionSubject("claim issue 42", item="42"), _issue_claim_intent(42)),
+        (
+            store.ClaimTransitionSubject("release issue 42", item="42"),
+            protocol.ReleaseIntent(
+                claim_id=protocol.ClaimId("a1"),
+                agent="Ada",
+                role="builder",
+                outcome=protocol.AbandonedRelease("done"),
+                operation_id="op-release",
+            ),
+        ),
+        (store.TransitionSubject("write item aco-000002"), item_write),
+    )
+
+    for subject, intent in transitions:
+        store.commit_transition(
+            observed=fresh_observation(worktree, bare_remote), subject=subject, intent=intent
+        )
+
+    written = {b"items/aco-000002.md": f"100644 blob {item_write.new_oid}".encode()}
+    assert _listing_outside_the_claim_ledger(bare_remote) == before | written
+
+
+def test_fetch_state_keys_only_the_entries_the_item_file_name_rule_names(
+    bare_remote: Path, worktree: Path, foreign_item_entries: tuple[tuple[str, str], ...]
+) -> None:
+    oids = _push_items_store(
+        bare_remote, worktree, (*foreign_item_entries, ("100644", "aco-000001.md"))
+    )
+
+    state = store.fetch_state(worktree=worktree, remote=str(bare_remote))
+
+    assert state.items == {"aco-000001": oids["aco-000001.md"]}
+
+
+def test_a_tree_write_that_would_drop_an_item_refuses(
+    bare_remote: Path, worktree: Path, foreign_item_entries: tuple[tuple[str, str], ...]
+) -> None:
+    """The tree writer only ever places items: a state that lost one is a
+    defect it refuses to commit rather than a removal it silently ignores."""
+    _push_items_store(bare_remote, worktree, (*foreign_item_entries, ("100644", "aco-000001.md")))
+    observed = store.fetch_state(worktree=worktree, remote=str(bare_remote))
+    without_items = replace(observed, items={})
+
+    with pytest.raises(protocol.ClaimError, match="never removes an item"):
+        store._write_incremental_state_tree(worktree, observed=observed, new_state=without_items)
 
 
 def test_commit_transition_a_local_two_racer_claim_on_different_keys_both_land(
@@ -2837,9 +2943,10 @@ def test_commit_transition_two_writers_different_item_ids_both_land(
     bare_remote: Path, worktree: Path
 ) -> None:
     """Same shape as the two-racer claim test on different keys (issue
-    #176): two item creates on distinct ids both land, because a retry
-    rebuilds `items/` from the full id -> oid map, never a copy of the
-    parent tree's `items/` oid (issue #279)."""
+    #176): two item creates on distinct ids both land, because every
+    attempt patches its own tip's `items/` children with only the ids it
+    writes, never a copy of the parent tree's `items/` oid (issues #279,
+    #558)."""
     store.bootstrap(worktree=worktree, remote=str(bare_remote))
     store.commit_transition(
         observed=fresh_observation(worktree, bare_remote),
