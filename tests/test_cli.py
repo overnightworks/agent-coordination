@@ -17634,12 +17634,12 @@ def _time_out_the_deletion_and_hold_the_ref_for_the_write_back(
     transactions: list[list[str]] = []
 
     def hold_the_ref_before_the_second(
-        instructions: list[str], **options: Callable[[], bool]
+        instructions: list[str], *, while_prepared: Callable[[], bool]
     ) -> process.CapturedResult:
         transactions.append(instructions)
         if len(transactions) == 2:
             ref_lock.touch()
-        return run_transaction(instructions, **options)
+        return run_transaction(instructions, while_prepared=while_prepared)
 
     monkeypatch.setattr(process, "run_git_ref_transaction", hold_the_ref_before_the_second)
 
@@ -17871,13 +17871,13 @@ def _recreate_branch_on_its_tip_after_an_unconfirmed_deletion(
         return answer
 
     def recreate_before_the_second(
-        instructions: list[str], **options: Callable[[], bool]
+        instructions: list[str], *, while_prepared: Callable[[], bool]
     ) -> process.CapturedResult:
         transactions.append(instructions)
         if len(transactions) == 2:
             _real_git(repo, "branch", "-q", branch, tip)
             _real_git(repo, "config", owned_key, "recreated")
-        return run_transaction(instructions, **options)
+        return run_transaction(instructions, while_prepared=while_prepared)
 
     monkeypatch.setattr(subprocess.Popen, "communicate", commit_then_time_out_the_first_decision)
     monkeypatch.setattr(process, "run_git_ref_transaction", recreate_before_the_second)
