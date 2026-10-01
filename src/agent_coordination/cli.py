@@ -62,6 +62,13 @@ ITEM_WHOLE_HELP = (
     "one sentence justifying this item's own wide scope, stored in its body; "
     "claim/start read it as --whole's own fallback when the call itself names none"
 )
+# `item new`'s own projection flags (issue #555), keyed by the block key
+# each one writes.
+ITEM_NEW_PROJECTION_FLAGS = (
+    ("now", "the block's now: where the item stands"),
+    ("next", "the block's next: the one concrete next step"),
+    ("done_when", "the block's done_when: the checkable finish"),
+)
 NOT_A_TWIN_HELP = "create even though an open or recently closed issue carries a similar title"
 START_DESCRIPTION = (
     "Creates the item's linked worktree and branch from the canonical remote's own trunk "
@@ -803,10 +810,12 @@ def _add_item_parser(commands: argparse._SubParsersAction) -> None:
     new = item_commands.add_parser(
         "new",
         help=(
-            "create a fresh item and print its id; under storage = github, a GitHub issue "
-            "whose body is read from stdin"
+            "create a fresh item and print its id; its body is read from stdin, a piped "
+            "body without an agent-claim block getting one built from the flags"
         ),
     )
+    for key, meaning in ITEM_NEW_PROJECTION_FLAGS:
+        new.add_argument(f"--{key.replace('_', '-')}", dest=key, help=meaning)
     new.add_argument("--title", required=True, type=_nonblank_title, help="the fresh item's title")
     new.add_argument(
         "--kind",
@@ -2918,18 +2927,34 @@ def _read_body_check_input() -> str:
         ) from error
 
 
-def _stdin_is_a_regular_file() -> bool:
-    """Whether a file a shell redirected (`< body.md`) stands on stdin --
-    told from the descriptor's type, never by reading, since an idle pipe or
-    socket a harness holds open would block a read forever. Only a regular
-    file counts: an agent harness hands a command a pipe or a socket even
-    when it redirected nothing, so a pipe, socket, terminal, `/dev/null` or a
-    closed stdin passes, and a body piped in (`cat body.md |`) goes unread."""
+def _stdin_file_mode() -> int | None:
+    """The type bits of the descriptor on stdin, told without reading, since
+    an idle pipe or socket a harness holds open would block a read forever;
+    `None` for a closed stdin."""
     try:
-        mode = os.fstat(sys.stdin.fileno()).st_mode
+        return os.fstat(sys.stdin.fileno()).st_mode
     except (AttributeError, OSError, ValueError):
-        return False
-    return stat.S_ISREG(mode)
+        return None
+
+
+def _stdin_is_a_regular_file() -> bool:
+    """Whether a file a shell redirected (`< body.md`) stands on stdin. Only
+    a regular file counts: an agent harness hands a command a pipe or a
+    socket even when it redirected nothing, so a pipe, socket, terminal,
+    `/dev/null` or a closed stdin passes, and a body piped in
+    (`cat body.md |`) goes unread."""
+    mode = _stdin_file_mode()
+    return mode is not None and stat.S_ISREG(mode)
+
+
+def _stdin_carries_a_body() -> bool:
+    """Whether stdin carries a body a command reads (head ruling of
+    01.10.2026 on issue #555): a redirected file (`< body.md`) or a pipe
+    (`printf ... |`). A socket -- what Claude Code's Bash tool hands a
+    command -- a terminal, `/dev/null` or a closed stdin carry none, so the
+    command never waits on an idle harness stdin."""
+    mode = _stdin_file_mode()
+    return mode is not None and (stat.S_ISREG(mode) or stat.S_ISFIFO(mode))
 
 
 class BodyCheckReason(StrEnum):
@@ -3267,23 +3292,67 @@ def _cmd_item_new(parsed: argparse.Namespace, context: RunContext) -> int:
         if context.config.storage is body.Storage.GITHUB:
             return _item_new_on_github(parsed, context)
         return _item_new_on_state_ref(parsed, context)
+    except _ItemBodyInvalidError as error:
+        return _refuse_item_body_invalid(error.defects, as_json=as_json)
     except _PartialWriteError as error:
         return _refuse_partial_write(error, ItemReason.PARTIAL_WRITE, as_json=as_json)
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
-def _item_new_body(parsed: argparse.Namespace, raw_body: str) -> str:
-    """`raw_body` with `item new`'s own `--scope`, `--size`, and `--whole`
-    written into its `agent-claim` block, each only when given."""
-    new_body = _block_body_with_scope(raw_body, _requested_body_scope(parsed.scope))
-    new_body = _block_body_with_size(new_body, parsed.size)
-    return _block_body_with_whole(new_body, _requested_whole_reason(parsed.whole))
+class _ItemBodyInvalidError(protocol.ClaimError):
+    """`item new`'s piped body refused before anything is created, carrying
+    every defect sentence for `body_invalid`'s own `defects` list."""
+
+    def __init__(self, defects: tuple[str, ...]) -> None:
+        self.defects = defects
+        super().__init__(defects[0])
+
+
+def _read_item_new_input() -> str:
+    """`item new`'s piped body under either storage, or `""` when stdin
+    carries none (`_stdin_carries_a_body`)."""
+    return _read_body_check_input() if _stdin_carries_a_body() else ""
+
+
+def _item_new_block_fields(parsed: argparse.Namespace) -> dict[str, object]:
+    """Every block field `item new`'s own flags name, keyed as the block
+    writes it -- only the flags given."""
+    scope = _requested_body_scope(parsed.scope)
+    requested: dict[str, object | None] = {
+        **{key: getattr(parsed, key) for key, _meaning in ITEM_NEW_PROJECTION_FLAGS},
+        "scope": None if scope is None else list(scope),
+        "size": parsed.size,
+        "whole": _requested_whole_reason(parsed.whole),
+    }
+    return {key: value for key, value in requested.items() if value is not None}
+
+
+def _item_new_body(parsed: argparse.Namespace, storage: body.Storage) -> str:
+    """The body `item new` stores under either storage (issue #555): the
+    piped one, its block given each flag it lacks and refused when a flag
+    contradicts it; or, piped without a block, the prose above a block the
+    flags build -- a container's own skeleton prose when nothing was piped."""
+    piped = _read_item_new_input()
+    fields = _item_new_block_fields(parsed)
+    if not body.carries_agent_claim_block(piped):
+        default_prose = (
+            body.CONTAINER_SKELETON_PROSE if parsed.kind == body.ItemKind.CONTAINER else ""
+        )
+        return body.prose_above_fresh_block(piped.rstrip() or default_prose, fields)
+    shape = body.body_shape_check(piped, storage=storage)
+    if shape.verdict is body.BodyShapeVerdict.MALFORMED:
+        raise _ItemBodyInvalidError(shape.defects)
+    conflicts = body.block_field_conflicts(piped, fields)
+    if conflicts:
+        raise _ItemBodyInvalidError(conflicts)
+    return body.body_with_block_fields(piped, fields)
 
 
 def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
-    """`item new` under `storage = "github"` (issue #444): the body piped on
-    stdin passes the same shape check `aco check <n>` applies before
+    """`item new` under `storage = "github"` (issue #444): the body it
+    stores (`_item_new_body`) passes the same shape check `aco check <n>`
+    applies before
     anything else is read or written, so an invalid body creates nothing;
     `--parent` must name an open container or Task (a Task is retyped once
     the twin search passes, `_retype_task_parent`); then the twin search, the only
@@ -3296,11 +3365,10 @@ def _item_new_on_github(parsed: argparse.Namespace, context: RunContext) -> int:
     GitHub issue binds to no foreign one."""
     if parsed.origin is not None:
         raise protocol.ClaimUnavailableError(ITEM_NEW_ORIGIN_ON_GITHUB_REFUSAL)
-    raw_body = _read_body_check_input()
-    defects = _body_shape_defects(raw_body)
+    new_body = _item_new_body(parsed, body.Storage.GITHUB)
+    defects = _body_shape_defects(new_body)
     if defects:
-        return _refuse_item_body_invalid(defects, as_json=parsed.json)
-    new_body = _item_new_body(parsed, raw_body)
+        raise _ItemBodyInvalidError(defects)
     client = context.forge_writer
     open_issues = client.list_open_board_issues()
     storage = context.config.storage
@@ -3369,26 +3437,23 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
     written, so an item the read would refuse retypes nothing. Narrows the
     context's forge to the state-ref board (`_state_ref_board`), since
     `create_item` is not part of the generic `ForgeWriter` port every other
-    write command narrows to."""
+    write command narrows to. The body is `_item_new_body`'s, the piped one
+    stored as under github; one left incomplete is still written, each
+    missing section named on stderr (issue #555)."""
     client = _state_ref_board(context)
     parent = parsed.parent
     storage = context.config.storage
+    new_body = _item_new_body(parsed, storage)
     if parent is not None and client.item_reference(parent).state is forge.ItemState.MISSING:
         raise protocol.ClaimUnavailableError(f"{board.item_label(parent, storage)} does not exist")
     if not parsed.not_a_twin:
         _refuse_possible_twin(
             client, parsed.title, client.open_item_titles(), parent=parsed.parent, storage=storage
         )
-    kind = body.ItemKind(parsed.kind)
-    skeleton = (
-        body.BLOCK_CONTAINER_SKELETON
-        if kind is body.ItemKind.CONTAINER
-        else body.BLOCK_CHILD_SKELETON
-    )
     new_item = client.compose_item(
         title=parsed.title,
-        body=_item_new_body(parsed, skeleton),
-        kind=kind,
+        body=new_body,
+        kind=body.ItemKind(parsed.kind),
         parent=parsed.parent,
         origin=parsed.origin,
     )
@@ -3396,6 +3461,8 @@ def _item_new_on_state_ref(parsed: argparse.Namespace, context: RunContext) -> i
         _retype_task_parent(client, client.open_issue(parent), storage)
     item_id = client.create_item(new_item)
     _print_item_new_result(item_id, items.item_number(item_id), as_json=parsed.json)
+    for section in body.missing_or_empty_sections(body.parse_body(new_body).contract):
+        print(f"{item_id} misses {section}; aco item edit {item_id} fills it", file=sys.stderr)
     return 0
 
 
@@ -6796,32 +6863,6 @@ def _requested_body_scope(raw: list[str] | None) -> tuple[str, ...] | None:
     return None if raw is None else protocol.valid_scope(raw)
 
 
-def _block_body_with_scope(raw_body: str, scope: tuple[str, ...] | None) -> str:
-    """`raw_body`'s `agent-claim` block, with a top-level `scope = [...]`
-    written in (issue #337) -- the same write path `body.render_block`'s
-    other callers use (`locate_agent_claim_block` then
-    `replace_agent_claim_block`), so `item new --scope` and `cut --scope`
-    never grow a second body-scope writer. `raw_body` unchanged when `scope`
-    is `None`."""
-    if scope is None:
-        return raw_body
-    located = body.locate_agent_claim_block(raw_body)
-    new_data = {**located.data, "scope": list(scope)}
-    return body.replace_agent_claim_block(raw_body, located, new_data)
-
-
-def _block_body_with_size(raw_body: str, size: str | None) -> str:
-    """`raw_body`'s `agent-claim` block, with a top-level
-    `size = "S"|"M"|"L"` written in (issue #357) -- the same write path
-    `_block_body_with_scope` uses, so `item new --size` never grows a
-    second body writer. `raw_body` unchanged when `size` is `None`."""
-    if size is None:
-        return raw_body
-    located = body.locate_agent_claim_block(raw_body)
-    new_data = {**located.data, "size": size}
-    return body.replace_agent_claim_block(raw_body, located, new_data)
-
-
 def _requested_whole_reason(raw: str | None) -> str | None:
     """A `--whole` flag's own bounded text (issue #399), or `None` when it
     was never given -- `item new`'s own entry point into the same
@@ -6829,18 +6870,6 @@ def _requested_whole_reason(raw: str | None) -> str | None:
     (`_optional_whole_reason`), so the two never drift on what a legal
     reason looks like."""
     return None if raw is None else protocol._outbound_text(raw, _WHOLE_REASON_LABEL, maximum=512)
-
-
-def _block_body_with_whole(raw_body: str, whole: str | None) -> str:
-    """`raw_body`'s `agent-claim` block, with a top-level
-    `whole = "<reason>"` written in (issue #399) -- the same write path
-    `_block_body_with_size` uses, so `item new --whole` never grows a
-    second body writer. `raw_body` unchanged when `whole` is `None`."""
-    if whole is None:
-        return raw_body
-    located = body.locate_agent_claim_block(raw_body)
-    new_data = {**located.data, "whole": whole}
-    return body.replace_agent_claim_block(raw_body, located, new_data)
 
 
 def _cut_child_body(
@@ -6854,7 +6883,9 @@ def _cut_child_body(
     to tell `container`'s own orphan apart from an unrelated open issue that
     merely shares the row's title (#260)."""
     skeleton = f"{_parent_line(container, storage)}\n\n{body.BLOCK_CHILD_SKELETON}"
-    return _block_body_with_scope(skeleton, scope)
+    if scope is None:
+        return skeleton
+    return body.body_with_block_fields(skeleton, {"scope": list(scope)})
 
 
 def _orphan_names_container(raw_body: str, container: int, storage: body.Storage) -> bool:

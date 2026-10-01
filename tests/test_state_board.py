@@ -22,20 +22,29 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TextIO
 
 import pytest
 from cli_fixtures import count_context_reads, fresh_observation
-from test_cli import FakeForge, _arguments_bash_hands_aco, _redirect_toplevel, projected_board
+from test_cli import (
+    FakeForge,
+    _arguments_bash_hands_aco,
+    _empty_harness_socket_on_stdin,
+    _piping,
+    _redirect_toplevel,
+    projected_board,
+)
 from test_store import _blob, _push_raw_state_tree, _raw_tree
 
 from agent_coordination import board, checkout, forge, items, process, protocol, store
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import (
     BLOCK_CHILD_SKELETON,
-    BLOCK_CONTAINER_SKELETON,
+    CONTAINER_SKELETON_PROSE,
     ExpectationLine,
     ItemKind,
     Storage,
@@ -64,6 +73,13 @@ PAST_THE_ID_SPACE_REFUSAL = (
 )
 
 EXPECTATION_TEXT = "Does the offline board render without gh?"
+
+
+@pytest.fixture(autouse=True)
+def _nothing_piped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every command reads an empty stdin, a shell that redirected nothing,
+    unless its scenario pipes a body of its own."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
 
 
 @pytest.fixture(autouse=True)
@@ -1713,7 +1729,7 @@ def _first_ruling_date(capsys: pytest.CaptureFixture[str]) -> str:
 
 
 def _filled_body(template: str, *, now: str, next_step: str, done_when: str) -> str:
-    """A fresh `BLOCK_CHILD_SKELETON`/`BLOCK_CONTAINER_SKELETON` body
+    """A fresh child or container skeleton body
     with its three blank projection keys filled -- the one substitution the
     README's "fill Now/Next/Done when" step performs before
     `body --check`/`item edit`."""
@@ -2882,6 +2898,112 @@ class TestCliStateRefForge:
         stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
         assert locate_agent_claim_block(stored).data["whole"] == reason
 
+    @pytest.mark.parametrize(
+        ("stdin_source", "flags", "err", "prefix", "block"),
+        [
+            pytest.param(
+                _piping("Ship the importer.\n"),
+                ("--now", "Ready.", "--next", "Build it.", "--done-when", "Merged.", "--size", "S"),
+                "",
+                "Ship the importer.\n\n```agent-claim\n",
+                {"now": "Ready.", "next": "Build it.", "done_when": "Merged.", "size": "S"},
+                id="prose_above_a_block_built_from_the_flags",
+            ),
+            pytest.param(
+                _piping(
+                    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+                    'now = "Ready."\nnext = ""\ndone_when = ""\n```\n'
+                ),
+                ("--now", "Ready.", "--size", "S"),
+                "{item} misses Next; aco item edit {item} fills it\n"
+                "{item} misses Done when; aco item edit {item} fills it\n",
+                "Ship the importer.\n\n```agent-claim\n",
+                {"now": "Ready.", "next": "", "done_when": "", "size": "S"},
+                id="a_piped_block_matching_the_flags_kept_and_its_gaps_named",
+            ),
+            pytest.param(
+                _piping(""),
+                (),
+                "{item} misses Now; aco item edit {item} fills it\n"
+                "{item} misses Next; aco item edit {item} fills it\n"
+                "{item} misses Done when; aco item edit {item} fills it\n",
+                "```agent-claim\n",
+                {"now": "", "next": "", "done_when": ""},
+                id="nothing_piped_writes_the_skeleton_and_names_each_gap",
+            ),
+            pytest.param(
+                _empty_harness_socket_on_stdin,
+                (),
+                "{item} misses Now; aco item edit {item} fills it\n"
+                "{item} misses Next; aco item edit {item} fills it\n"
+                "{item} misses Done when; aco item edit {item} fills it\n",
+                "```agent-claim\n",
+                {"now": "", "next": "", "done_when": ""},
+                id="a_harness_socket_is_never_read_and_the_skeleton_is_written",
+            ),
+        ],
+    )
+    def test_item_new_stores_the_piped_prose_and_the_block_its_flags_build(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        stdin_source: Callable[[Path], AbstractContextManager[TextIO]],
+        flags: tuple[str, ...],
+        err: str,
+        prefix: str,
+        block: dict[str, object],
+    ) -> None:
+        """Issue #555 lines 1-3: under state-ref, `item new` stores the
+        piped body as github does -- prose above a block its flags build,
+        or a piped block the flags agree with -- never dropping it; every
+        section left empty is named on stderr, one line each. Stdin carries
+        a body only as a file or a pipe (head ruling 01.10.2026): the socket
+        an agent harness hands over is never read, so the command returns."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+
+        with stdin_source(tmp_path) as stdin:
+            monkeypatch.setattr(sys, "stdin", stdin)
+            status = issue_claim.main(["item", "new", "--title", "Ship the importer", *flags])
+
+        captured = capsys.readouterr()
+        printed = captured.out.strip()
+        assert (status, captured.err) == (0, err.format(item=printed))
+        state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
+        assert state.tip is not None
+        stored = store.read_item_files(worktree, state.tip)[f"{printed}.md"].decode()
+        stored_block = locate_agent_claim_block(stored).data
+        assert stored.startswith(prefix)
+        assert {key: stored_block[key] for key in block} == block
+
+    def test_item_new_refuses_a_piped_block_its_flags_contradict(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """Issue #555 line 1: a flag naming another value than the piped
+        block refuses, naming both, and writes nothing."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        command = ["item", "new", "--title", "Ship the importer", "--now", "Elsewhere."]
+
+        with _piping(_github_body(_CHILD_A_PROJECTION))(tmp_path) as stdin:
+            monkeypatch.setattr(sys, "stdin", stdin)
+            status = issue_claim.main(command)
+
+        assert (status, capsys.readouterr().err) == (
+            2,
+            'ERROR: --now "Elsewhere." contradicts the piped block\'s '
+            f'now = "{_CHILD_A_PROJECTION.now}"\n',
+        )
+        state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
+        assert state.tip is not None
+        assert set(store.read_item_files(worktree, state.tip)) == set(_item_files())
+
     def test_item_new_size_refuses_an_invalid_value_before_any_write(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -3718,7 +3840,10 @@ class TestCliStateRefForge:
         item_files = {**_item_files(), f"{CHILD_A_ID}.md": parent_body.encode()}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
 
-        status = issue_claim.main(["item", "new", "--title", "Fresh Child", "--parent", CHILD_A_ID])
+        command = ["item", "new", "--title", "Fresh Child", "--parent", CHILD_A_ID]
+        projection = ["--now", "Ready.", "--next", "Build it.", "--done-when", "Merged."]
+
+        status = issue_claim.main([*command, *projection])
 
         captured = capsys.readouterr()
         printed = captured.out.strip()
@@ -4748,7 +4873,7 @@ class TestCliStateRefForge:
         assert items.ITEM_ID_PATTERN.fullmatch(container_id)
 
         container_body = _filled_body(
-            BLOCK_CONTAINER_SKELETON,
+            f"{CONTAINER_SKELETON_PROSE}\n\n{BLOCK_CHILD_SKELETON}",
             now="Land every slice.",
             next_step="Cut the first slice.",
             done_when="Both slices are closed.",

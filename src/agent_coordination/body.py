@@ -33,20 +33,13 @@ from . import metrics, protocol
 FENCE_OPENING_PATTERN = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})")
 FENCE_CLOSING_PATTERN = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})[ \t]*$")
 
-# `cut`'s fresh child, in the one grammar the tool reads: every projection
-# key present and empty, so `parse_body` reads it as `VALID` but
-# `contract_complete=False` -- invisible to `next`, refused by `claim` --
-# until the head fills it in. Empty strings, not omitted keys, which the
-# block schema would refuse. No `source_slice` -- title, sub-issue relation,
-# and GitHub history own provenance instead.
-BLOCK_CHILD_SKELETON = '```agent-claim\nversion = 1\nnow = ""\nnext = ""\ndone_when = ""\n```\n'
 # A fresh container carries no automatic parent-provenance the way `cut`
-# gives a fresh child one, so its own skeleton states the prose the global
-# contract requires when nothing blocks it (README "`Blocked by:` prose
-# beside the block is documentation only") ahead of the same block schema
-# `BLOCK_CHILD_SKELETON` already owns -- one owner for the projection keys,
-# never a second schema for a container's own skeleton.
-BLOCK_CONTAINER_SKELETON = f"Blocked by: nichts\n\n{BLOCK_CHILD_SKELETON}"
+# gives a fresh child one, so `item new` with nothing piped states the prose
+# the global contract requires when nothing blocks it (README "`Blocked by:`
+# prose beside the block is documentation only") above the same block
+# `prose_above_fresh_block` builds for every kind -- one owner for the
+# projection keys, never a second schema for a container's own skeleton.
+CONTAINER_SKELETON_PROSE = "Blocked by: nichts"
 
 # The one fenced-block info string a repository pinned to `body_contract =
 # "block"` (issue #150) reads as its typed work-item body -- any other
@@ -1234,6 +1227,69 @@ def replace_agent_claim_block(body: str, located: LocatedBlock, data: Mapping[st
         + render_block(data, located.newline)
         + body[located.content_end :]
     )
+
+
+def carries_agent_claim_block(body: str) -> bool:
+    """Whether `body` opens any `agent-claim` fence at all, closed or not --
+    a body without one is prose a fresh block goes below (issue #555)."""
+    return bool(_agent_claim_fence_matches(body))
+
+
+_SKELETON_PROJECTION: Mapping[str, object] = {
+    "version": BLOCK_VERSION,
+    "now": "",
+    "next": "",
+    "done_when": "",
+}
+
+
+def prose_above_fresh_block(prose: str, fields: Mapping[str, object]) -> str:
+    """`prose` above a fresh `agent-claim` block holding `fields` (issue
+    #555), every projection key `fields` leaves out written empty; the bare
+    block when `prose` is empty."""
+    block = render_block({**_SKELETON_PROJECTION, **fields})
+    fence = f"```{AGENT_CLAIM_FENCE_INFO}\n{block}```\n"
+    return f"{prose}\n\n{fence}" if prose else fence
+
+
+# `cut`'s fresh child, in the one grammar the tool reads: every projection
+# key present and empty, so `parse_body` reads it as `VALID` but
+# `contract_complete=False` -- invisible to `next`, refused by `claim` --
+# until the head fills it in. Empty strings, not omitted keys, which the
+# block schema would refuse. No `source_slice` -- title, sub-issue relation,
+# and GitHub history own provenance instead.
+BLOCK_CHILD_SKELETON = prose_above_fresh_block("", {})
+
+
+def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
+    """`body` with each field of `fields` its one schema-valid `agent-claim`
+    block lacks written in, the block re-rendered canonically and every byte
+    outside it kept -- `body` itself when it lacks none (ITEM-62). The one
+    writer behind `item new`'s and `cut`'s block flags."""
+    located = locate_agent_claim_block(body)
+    lacking = {key: value for key, value in fields.items() if key not in located.data}
+    if not lacking:
+        return body
+    return replace_agent_claim_block(body, located, {**located.data, **lacking})
+
+
+def _block_field_text(key: str, value: object) -> str:
+    """One block field's value as `render_block` writes it, scope canonical."""
+    return _render_scope_array(value) if key == "scope" else protocol.toml_string(value)
+
+
+def block_field_conflicts(body: str, fields: Mapping[str, object]) -> tuple[str, ...]:
+    """One sentence per field of `fields` that `body`'s schema-valid block
+    already holds with another value (issue #555), naming both values: a
+    flag never silently overrides, nor yields to, a piped block."""
+    data = locate_agent_claim_block(body).data
+    conflicts: list[str] = []
+    for key, value in fields.items():
+        flagged, piped = _block_field_text(key, value), _block_field_text(key, data.get(key, value))
+        if flagged != piped:
+            flag = f"--{key.replace('_', '-')}"
+            conflicts.append(f"{flag} {flagged} contradicts the piped block's {key} = {piped}")
+    return tuple(conflicts)
 
 
 EXPECTATION_LINE_TEXT_MAXIMUM = 100

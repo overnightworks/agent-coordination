@@ -4,7 +4,8 @@
 item lifecycle (issues #285, #287, #289, #316, #337, #357), plus `item new`
 under `storage = "github"`, which opens the GitHub issue itself (issue #444).
 This file owns each command's own flags (`--title`, `--kind`, `--parent`,
-`--origin`, `--scope`, `--size`, `--whole`, `--not-a-twin`), its printed and
+`--origin`, `--scope`, `--size`, `--whole`, `--now`, `--next`, `--done-when`,
+`--not-a-twin`), the body `item new` builds from them (issue #555), its printed and
 `--json` shapes, and `item edit`'s record-merge rule; `specs/cut.spec.md`
 owns the twin search `item new` shares with `cut` (CUT-29..CUT-31). `specs/body-block.spec.md` also owns the stored
 `size` field's own schema (BODY-57..BODY-59), cited by ITEM-20 rather than
@@ -47,6 +48,9 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24 | — |
+| prose piped without a block, or nothing piped, either storage | ITEM-58, ITEM-60 | — | — | — |
+| a piped block a flag agrees with or contradicts, either storage | ITEM-59, ITEM-62 | — | — | — |
+| state-ref pin, a stored body leaving a section empty | ITEM-61 | — | — | — |
 | `--parent` an open Task, or `--kind` given, either storage | ITEM-45, ITEM-46 | — | ITEM-47..ITEM-51 | — |
 | an item, open or closed | — | ITEM-07, ITEM-08, ITEM-56 | — | — |
 | an unknown id | PIN-18 | ITEM-10 | PIN-23 | PIN-28 |
@@ -67,8 +71,8 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 
 ## `item new`
 
-- [ ] [ITEM-01] `aco item new --title TITLE` with no `--kind` mints the id, then writes the skeleton body once with `kind = "task"` in its `[record]`; PIN-06/PIN-07 own the id and `--json` shape (see E-ITEM-01).
-- [ ] [ITEM-02] `--kind container` writes `Blocked by: nichts` ahead of the block and `kind = "container"` in the stored `[record]` (see E-ITEM-01).
+- [ ] [ITEM-01] `aco item new --title TITLE` with no `--kind` and nothing piped mints the id, then writes the skeleton body once, `kind = "task"` in its `[record]`; PIN-06/PIN-07 own id and `--json` (see E-ITEM-01).
+- [ ] [ITEM-02] `--kind container` with nothing piped writes `Blocked by: nichts` ahead of the block, and `kind = "container"` in the stored `[record]` (see E-ITEM-01).
 - [ ] [ITEM-03] `--parent PARENT` sets `record.parent` to `PARENT`'s id, an open Task retyped first (ITEM-45); unlike `cut`'s child body, it never writes a `Parent: #<n>` line.
 - [ ] [ITEM-04] Repeated `--scope` values write a sorted, deduplicated top-level `scope = [...]` ahead of the `[record]` table, CLAIM-19..CLAIM-23's own canonical form (see E-ITEM-01).
 - [ ] [ITEM-05] A `--scope` value that is absolute, `..`, or `~`-prefixed refuses with CLAIM-19's own sentence; a duplicate refuses with CLAIM-21's `claim scope contains duplicate paths`, before any write.
@@ -83,10 +87,18 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
   ```
 - [ ] [ITEM-23] `--whole REASON` writes the item's own top-level `whole` (BODY-60..BODY-62), the same bound `claim`'s own `--whole` enforces; `claim`/`start` read it back when their own call names none (CLM-21).
 
+## The body `item new` stores (issue #555)
+
+- [ ] [ITEM-58] Under either storage, prose piped without a block is stored above a block built from the flags; `--now`/`--next`/`--done-when` fill their keys, a key no flag names stays `""` (see E-ITEM-16).
+- [ ] [ITEM-59] A piped body keeps its prose and fence lines byte for byte; a flag naming another value refuses `--<flag> <value> contradicts the piped block's <key> = <value>`, exit `2` (see E-ITEM-16).
+- [ ] [ITEM-60] Under either storage `item new` reads a body from a file or pipe on stdin, never dropping it; a socket, terminal, `/dev/null` or closed stdin is never read.
+- [ ] [ITEM-61] Under `storage = "state-ref"`, each section the stored body leaves empty prints `<item-id> misses <Section>; aco item edit <item-id> fills it` on stderr, one line each (see E-ITEM-01).
+- [ ] [ITEM-62] A piped block is stored verbatim when the flags add nothing to it under `storage = "github"`, otherwise in its canonical rendering, a comment typed inside it not kept.
+
 ## `item new` under `storage = "github"` (issue #444)
 
-- [ ] [ITEM-26] Under `storage = "github"`, `aco item new --title T < BODY` opens one GitHub issue titled `T` whose body is the piped one, with `--scope`/`--size`/`--whole` written into its block.
-- [ ] [ITEM-27] The piped body passes `aco check <n>`'s own body check first; a failing body refuses exactly like ITEM-25, and nothing is created (see E-ITEM-08).
+- [ ] [ITEM-26] Under `storage = "github"`, `aco item new --title T < BODY` opens one GitHub issue titled `T` whose body is the piped one, its block built or completed from the flags (ITEM-58, ITEM-59).
+- [ ] [ITEM-27] The body to store passes `aco check <n>`'s own body check first; a failing body refuses exactly like ITEM-25, and nothing is created (see E-ITEM-08).
 - [ ] [ITEM-28] `--kind task|feature|container` sets the organization's own issue type `Task`, `Feature`, or `Container`, by name.
 - [ ] [ITEM-29] `--parent N` records the issue as `#N`'s sub-issue; `#N` not open refuses `#N is not an open container`, neither Container nor Task `#N is not a container`, exit `2` (see E-ITEM-08).
 - [ ] [ITEM-45] Under either storage, `--parent N` on an open Task retypes it Container after the twin search, before the create; stderr: `retyped #N to Container for its first child` (see E-ITEM-12).
@@ -178,8 +190,11 @@ Setup: bare-remote, `storage = "state-ref"` tracked, bootstrapped
 ```console
 $ aco item new --title "Ship it"
 <item-id>
+2> <item-id> misses Now; aco item edit <item-id> fills it
+2> <item-id> misses Next; aco item edit <item-id> fills it
+2> <item-id> misses Done when; aco item edit <item-id> fills it
 exit 0
-$ aco item new --title "Docs pass" --kind container --scope docs/README.md --scope docs/PRODUCT.md --json
+$ aco item new --title "Docs pass" --kind container --scope docs/README.md --scope docs/PRODUCT.md --now "Cut." --next "Cut slice 1." --done-when "All slices landed." --json
 {"ok": true, "reason": "created", "item": "<item-id-2>", "number": <n2>}
 exit 0
 ```
@@ -317,8 +332,8 @@ exit 2
 $ aco item new --title "Another slice" --json <<'BODY'
 no block
 BODY
-{"ok": false, "reason": "body_invalid", "defects": ["body malformed: agent-claim: no agent-claim block"], "message": "body malformed: agent-claim: no agent-claim block"}
-2> ERROR: body malformed: agent-claim: no agent-claim block
+{"ok": false, "reason": "body_invalid", "defects": ["body incomplete: Now, Next, Done when"], "message": "body incomplete: Now, Next, Done when"}
+2> ERROR: body incomplete: Now, Next, Done when
 exit 2
 ```
 
@@ -346,6 +361,9 @@ $ aco item show aco-3e26d9
 exit 2
 $ aco item new --title "Fresh item"
 <item-id>
+2> <item-id> misses Now; aco item edit <item-id> fills it
+2> <item-id> misses Next; aco item edit <item-id> fills it
+2> <item-id> misses Done when; aco item edit <item-id> fills it
 exit 0
 $ aco item edit aco-3e26d9 < repaired.md
 EDITED aco-3e26d9
@@ -430,3 +448,21 @@ exit 2
 ```
 
 `refs/aco/state` holds the first close; the second refuses before any write.
+
+### E-ITEM-16 — prose above a block the flags build, then a contradicting block
+
+Setup: bare-remote, `.agent-claim/board.toml` tracked with no `storage` key,
+fake `gh`, `#95` the next free number; `body.md` a complete `agent-claim`
+block with `size = "S"`
+
+```console
+$ printf 'Ship the importer.\n' | aco item new --title "Import the feed" --now "Ready." --next "Build it." --done-when "Merged." --size S
+#95
+exit 0
+$ aco item new --title "Import the archive" --size M < body.md
+2> ERROR: --size "M" contradicts the piped block's size = "S"
+exit 2
+```
+
+`#95`'s body is `Ship the importer.`, a blank line, then the block holding
+`now`, `next`, `done_when` and `size = "S"`; the refused run creates nothing.
