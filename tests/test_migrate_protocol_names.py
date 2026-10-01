@@ -263,7 +263,7 @@ def test_apply_refuses_a_damaged_manifest_row_before_patching_any_row(
     assert migration.github.body(1) == PROTOCOL_BODY
 
 
-def _write_manifest(content: str) -> Callable[[Path], None]:
+def _write_manifest(content: str) -> Callable[[Path], object]:
     return lambda manifest: manifest.write_text(content)
 
 
@@ -281,7 +281,7 @@ def _write_manifest(content: str) -> Callable[[Path], None]:
 def test_a_manifest_the_script_cannot_read_or_write_stops_the_run_by_name(
     migration: Migration,
     capsys: pytest.CaptureFixture[str],
-    arrange: Callable[[Path], None],
+    arrange: Callable[[Path], object],
     mode: str,
     stop: str,
 ) -> None:
