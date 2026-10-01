@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from board_fixtures import BASE, REPOSITORY, _active_claim
+from board_fixtures import BASE, REPOSITORY, _active_claim, complete_contract
 from cli_fixtures import (
     RECORDED_ORIGIN_HEAD_READ,
     _forbid_forge_resolution,
@@ -29,8 +29,20 @@ from cli_fixtures import (
     _set_agent_identity_env,
     stub_board_config_tracked,
 )
+from test_cli import FakeForge
 
-from agent_coordination import board, checkout, hook_input, process, protect, protocol, store
+from agent_coordination import (
+    board,
+    body,
+    checkout,
+    forge,
+    github,
+    hook_input,
+    process,
+    protect,
+    protocol,
+    store,
+)
 from agent_coordination import cli as issue_claim
 from agent_coordination.protocol import ClaimError
 
@@ -1856,6 +1868,21 @@ def test_protect_apply_patch_judges_two_worktrees_separately_and_one_deny_wins(
     _assert_protect_decision(capsys, decision="deny", reason="claim first")
 
 
+def _serve_item_72_body(monkeypatch: pytest.MonkeyPatch) -> FakeForge:
+    """Issue #72's own body, with the `agent-claim` block a rescope keeps in
+    step with its claim (issue #554), on a GitHub fake the checkout's
+    canonical remote names -- so no rescope here ever reaches a real forge."""
+    client = FakeForge()
+    client.issue_references[72] = forge.ItemReference(
+        forge.ItemState.OPEN, "Widget", complete_contract("Build it.")
+    )
+    monkeypatch.setattr(github, "GitHubForge", lambda repository: client)
+    monkeypatch.setattr(
+        checkout, "remote_url", lambda remote, **_kwargs: f"https://github.com/{REPOSITORY}.git"
+    )
+    return client
+
+
 @pytest.mark.parametrize(
     "cwd_kind", ["claimed_worktree", "foreign_tmp_dir", "foreign_main_checkout"]
 )
@@ -1865,15 +1892,13 @@ def test_rescope_succeeds_from_every_cwd_when_the_add_path_is_absolute(
     capsys: pytest.CaptureFixture[str],
     cwd_kind: str,
 ) -> None:
-    """Issue #314's own fourth proof, as sharpened by the repeat gate
-    (finding R1): every `--add`/`--drop` entry must itself be absolute, from
-    any cwd -- `rescope` never falls back to interpreting one against the
-    calling process's own cwd, not even from the claimed worktree itself.
-    The same absolute `--add` path locates the claimed worktree's own
-    checkout from the worktree itself, an unrelated tmp directory outside
-    every repository, and the shared main checkout alike: the one location
-    signal a dispatcher in the head's own shared environment (editing a
-    linked worktree through a subagent) can give without knowing its cwd."""
+    """Issue #314's own fourth proof: the same absolute `--add` path
+    locates the claimed worktree's own checkout from the worktree itself,
+    an unrelated tmp directory outside every repository, and the shared
+    main checkout alike -- the one location signal a dispatcher in the
+    head's own shared environment (editing a linked worktree through a
+    subagent) can give without knowing its cwd. The item body's scope moves
+    with the claim (issue #554)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -1889,6 +1914,7 @@ def test_rescope_succeeds_from_every_cwd_when_the_add_path_is_absolute(
         cwd = tmp_path / "elsewhere"
         cwd.mkdir()
     monkeypatch.chdir(cwd)
+    client = _serve_item_72_body(monkeypatch)
     claimed = _protect_active_claim(
         "Codex Sol", scope=("src/widget.py",), branch="codex/issue-72-widget"
     )
@@ -1904,6 +1930,7 @@ def test_rescope_succeeds_from_every_cwd_when_the_add_path_is_absolute(
 
     assert status == 0
     assert capsys.readouterr().out == f"RESCOPED issue #72: {claimed.claim_id}\n"
+    assert body.parse_body(client.item_bodies[72]).scope == ("docs/widget.md", "src/widget.py")
 
 
 def test_rescope_admits_a_file_in_a_new_directory_that_protect_then_allows_writing(
@@ -1922,6 +1949,7 @@ def test_rescope_admits_a_file_in_a_new_directory_that_protect_then_allows_writi
     _use_real_path_is_tracked(monkeypatch)
     _main, worktree = _protect_real_repo_with_worktree(tmp_path)
     new_file = worktree / "neu" / "tief" / "x.py"
+    _serve_item_72_body(monkeypatch)
     claimed = _protect_active_claim(
         "Codex Sol", scope=("src/widget.py",), branch="codex/issue-72-widget"
     )
@@ -1981,6 +2009,7 @@ def test_rescope_rejects_a_wide_scope_from_a_foreign_cwd_via_the_resolved_checko
     foreign_cwd = tmp_path / "elsewhere"
     foreign_cwd.mkdir()
     monkeypatch.chdir(foreign_cwd)
+    _serve_item_72_body(monkeypatch)
     claimed = _protect_active_claim(
         "Codex Sol", scope=("src/widget.py",), branch="codex/issue-72-widget"
     )
@@ -2344,8 +2373,8 @@ def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
             "not in a repository",
         ),
         (_rescope_args_add_path_in_an_unborn_checkout, checkout.NO_COMMIT_CHECKOUT_REASON),
-        (_rescope_args_all_relative, checkout.RELATIVE_PAYLOAD_PATH_DENIAL),
-        (_rescope_args_mixed_absolute_and_relative, checkout.RELATIVE_PAYLOAD_PATH_DENIAL),
+        (_rescope_args_all_relative, "--add path 'docs/widget.md' is relative and "),
+        (_rescope_args_mixed_absolute_and_relative, "--drop path 'src/widget.py' is relative and "),
     ],
     ids=[
         "second-add-path-outside-checkout",
@@ -2369,13 +2398,13 @@ def test_rescope_denies_before_touching_the_store(
     first path's own checkout (`_rescope_scope_entries`) refuses rather than
     silently mis-scoping; a location outside every repository, and gate
     G3's no-commit checkout (`_rescope_checkout`); and a relative
-    `--add`/`--drop` entry, alone or mixed with an absolute one, denies with
-    the same sentence `protect`'s own relative-payload-path gate uses,
-    never falling back to interpreting it against the hook process's own
-    cwd -- all four refuse before the store is ever touched."""
+    `--add`/`--drop` entry, alone or mixed with an absolute one, run from a
+    cwd outside every repository, which has no checkout to read it against
+    (RESC-01) -- all refuse before the store is ever touched."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(tmp_path)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
     args = build_args(tmp_path)
 
