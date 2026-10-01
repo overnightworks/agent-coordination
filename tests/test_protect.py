@@ -115,6 +115,9 @@ def _protect_git_values(
     }
     if origin_head is not None:
         values[RECORDED_ORIGIN_HEAD_READ] = origin_head
+        # That trunk holds no committed board configuration, so no file is
+        # lane-shared (issue #575).
+        values[("ls-tree", "--name-only", origin_head, "--", board.CONFIG_PATH.as_posix())] = ""
     return values
 
 

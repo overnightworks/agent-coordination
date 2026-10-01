@@ -67,8 +67,9 @@ def trunk_lane_shared(remote: str, toplevel: Path) -> tuple[str, ...]:
     `toplevel` as the last fetch left it, the ref `RunContext.trunk_ref`
     resolves -- never the checkout's own copy, so a lane cannot authorise
     itself by editing its worktree's `board.toml`: a change to the list
-    takes effect once it lands. A trunk that does not resolve, or whose
-    configuration git cannot show, names none."""
+    takes effect once it lands. A trunk that does not resolve, or that
+    holds no configuration, names none; a configuration git fails to read
+    is a git failure."""
     try:
         trunk = checkout.trunk_ref(remote, directory=toplevel)
     except checkout.TrunkUnknownError:

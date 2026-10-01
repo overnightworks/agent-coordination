@@ -108,6 +108,7 @@ _LIVE_TRUNK_REF_AFTER = checkout.trunk_ref_after
 _LIVE_FETCH_REMOTE = checkout.fetch_remote
 _LIVE_UNCONFIGURED_REMOTE_REFUSAL = checkout.unconfigured_remote_refusal
 _LIVE_PATH_IS_TRACKED = checkout.path_is_tracked
+_LIVE_FILE_AT_REVISION = checkout.file_at_revision
 
 LANDED = protocol.MergedRelease(12)
 
@@ -10538,10 +10539,13 @@ def _default_open_issue_reference(monkeypatch: pytest.MonkeyPatch) -> None:
 # A test's toplevel is a scratch directory with no trunk (`conftest.py`'s
 # `_isolate_git_toplevel`), so the live trunk reads would fail loud; tests of
 # the trunk itself (tests/test_checkout.py, tests/test_session.py) and the
-# real-repository scenarios here (`_redirect_toplevel`) read it live.
+# real-repository scenarios here (`_redirect_toplevel`) read it live. That
+# trunk holds no committed board configuration, so no file is lane-shared
+# (issue #575); a test of the lane-shared lines restores the live read.
 @pytest.fixture(autouse=True)
 def _stub_trunk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(checkout, "trunk_landings", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(checkout, "file_at_revision", lambda _path, **_kwargs: None)
     monkeypatch.setattr(
         checkout,
         "trunk_ref_after",
@@ -10883,6 +10887,7 @@ def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
         "Codex Sol", claim_id="cli-claim", issue=72, branch="codex/issue-72", scope=("src",)
     )
     _patch_status_store(monkeypatch, claimed)
+    monkeypatch.setattr(checkout, "file_at_revision", _LIVE_FILE_AT_REVISION)
     _real_git(tmp_path, "init", "-q", "-b", "main")
     _real_git(tmp_path, "config", "user.name", "Test")
     _real_git(tmp_path, "config", "user.email", "test@example.com")
@@ -19556,6 +19561,7 @@ def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
     (repository / board.CONFIG_PATH).write_text(
         'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'
     )
+    monkeypatch.setattr(checkout, "file_at_revision", _LIVE_FILE_AT_REVISION)
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
         forge.ItemState.OPEN, "Brief", "The item's own body."

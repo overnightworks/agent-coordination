@@ -249,13 +249,16 @@ def path_is_tracked(
 
 def file_at_revision(path: str, *, revision: str, directory: Path) -> str | None:
     """The text of `path` (repo-relative, forward slashes) in `revision`'s
-    tree, read from `directory` via `-C` -- `None` when git cannot show it:
-    the tree holds no such file, or `revision` does not resolve (issue
-    #575: the trunk's committed board configuration, which no lane can
-    change from its own worktree)."""
+    tree, read from `directory` via `-C` -- `None` only when that tree holds
+    no such file (issue #575: the trunk's committed board configuration,
+    which no lane can change from its own worktree). A `revision` that does
+    not resolve, or a file git cannot show, is a git failure, never an
+    absent file."""
+    if not _git_output(["ls-tree", "--name-only", revision, "--", path], directory=directory):
+        return None
     result = _git_run(["show", f"{revision}:{path}"], directory=directory)
     if result.exit_status != 0:
-        return None
+        raise ClaimError(process.git_failure_detail(result))
     return result.stdout.decode()
 
 

@@ -78,7 +78,7 @@ owns what a write to one is allowed.
 - [ ] [PIN-37] A tracked `.agent-claim/board.toml` may name `lane_shared = ["<file>", ...]`, each a repository-relative file path; absent, no file is lane-shared.
 - [ ] [PIN-38] A `lane_shared` value that is no list of unique strings refuses `board configuration <path> lane_shared must be a list of unique repository file paths` (see E-PIN-40).
 - [ ] [PIN-39] An absolute, `..`-climbing, or non-canonical entry refuses `board configuration <path> lane_shared entry '<entry>' is not a canonical path inside the repository` (see E-PIN-41).
-- [ ] [PIN-40] Only the trunk's committed copy counts, as the last fetch left it, never a worktree's own; no trunk copy means no file is lane-shared.
+- [ ] [PIN-40] Only the trunk's committed copy counts, as the last fetch left it, never a worktree's own; no trunk copy means no file is lane-shared, while a trunk copy git fails to read is a git failure.
 - [ ] [PIN-41] An entry matches exactly one file path, never as a prefix: an entry naming a directory covers no file below it, nor the directory itself.
 
 ## `storage = "state-ref"` is forge-free
