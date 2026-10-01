@@ -361,6 +361,9 @@ $ aco item show aco-3e26d9
 exit 2
 $ aco item new --title "Fresh item"
 <item-id>
+2> <item-id> misses Now; aco item edit <item-id> fills it
+2> <item-id> misses Next; aco item edit <item-id> fills it
+2> <item-id> misses Done when; aco item edit <item-id> fills it
 exit 0
 $ aco item edit aco-3e26d9 < repaired.md
 EDITED aco-3e26d9
