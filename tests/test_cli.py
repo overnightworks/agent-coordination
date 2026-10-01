@@ -8690,9 +8690,9 @@ def test_status_scope_index_never_rescans_scope_pairs(
 
     monkeypatch.setattr(protocol, "claims_conflict", scope_pair_scan)
 
-    assert _status(claims, None, ages, board.BoardConfig()) == 0
+    assert _status(claims, None, ages, body.Storage.GITHUB) == 0
     assert capsys.readouterr().out.count("CLAIMED") == 50
-    assert _status(claims, 100, ages, board.BoardConfig()) == 0
+    assert _status(claims, 100, ages, body.Storage.GITHUB) == 0
     assert capsys.readouterr().out.count("CLAIMED") == 1
 
 
@@ -8704,7 +8704,7 @@ def test_status_reports_repository_scope_overlaps_as_notes(
     opened_at = datetime(2026, 8, 21, tzinfo=UTC)
     ages: dict[str, datetime] = {first.claim_id: opened_at, second.claim_id: opened_at}
 
-    exit_code = _status((first, second), None, ages, board.BoardConfig())
+    exit_code = _status((first, second), None, ages, body.Storage.GITHUB)
 
     assert exit_code == 0
     rendered = capsys.readouterr().out
@@ -8712,7 +8712,7 @@ def test_status_reports_repository_scope_overlaps_as_notes(
     assert "CONFLICT" not in rendered
     assert "overlaps issue #73 (claim-b)" in rendered
     assert "overlaps issue #72 (cli-claim)" in rendered
-    assert _status((first, second), 72, ages, board.BoardConfig()) == 0
+    assert _status((first, second), 72, ages, body.Storage.GITHUB) == 0
     issue_rendered = capsys.readouterr().out
     assert issue_rendered.count("CLAIMED") == 2
     assert "overlaps issue #73 (claim-b)" in issue_rendered
@@ -8726,7 +8726,7 @@ def test_status_notes_a_scope_that_is_claimed_after_its_descendant(
     opened_at = datetime(2026, 8, 21, tzinfo=UTC)
     ages: dict[str, datetime] = {descendant.claim_id: opened_at, parent.claim_id: opened_at}
 
-    assert _status((descendant, parent), None, ages, board.BoardConfig()) == 0
+    assert _status((descendant, parent), None, ages, body.Storage.GITHUB) == 0
     rendered = capsys.readouterr().out
     assert rendered.count("CLAIMED") == 2
     assert "CONFLICT" not in rendered
@@ -10875,14 +10875,21 @@ def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """Issue #575 line 3: the repository's lane-shared files follow the
-    claim blocks once, so a builder counts them as allowed beside its scope."""
+    """Issue #575 line 3: the lane-shared files the trunk's committed
+    configuration names follow the claim blocks once, so a builder counts
+    them as allowed beside its scope."""
     claimed = _active_claim(
         "Codex Sol", claim_id="cli-claim", issue=72, branch="codex/issue-72", scope=("src",)
     )
     _patch_status_store(monkeypatch, claimed)
+    _real_git(tmp_path, "init", "-q", "-b", "main")
+    _real_git(tmp_path, "config", "user.name", "Test")
+    _real_git(tmp_path, "config", "user.email", "test@example.com")
     (tmp_path / ".agent-claim").mkdir()
     (tmp_path / board.CONFIG_PATH).write_text('lane_shared = ["scripts/a.py", "scripts/b.txt"]\n')
+    _real_git(tmp_path, "add", "-f", board.CONFIG_PATH.as_posix())
+    _real_git(tmp_path, "commit", "-q", "-m", "trunk configuration")
+    _real_git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
 
     status = issue_claim.main(["--repo", REPOSITORY, "status", "72"])
     assert status == 0
@@ -11099,7 +11106,7 @@ def test_cli_rescope_requires_a_non_empty_current_branch(
 def test_status_direct_empty_claims_prints_unclaimed_repository_without_ledger(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert _status((), None, {}, board.BoardConfig()) == 0
+    assert _status((), None, {}, body.Storage.GITHUB) == 0
     assert capsys.readouterr().out == "UNCLAIMED repository\n"
 
 
@@ -14608,7 +14615,7 @@ def test_identity_conflict_still_marks_status_conflict(
     opened_at = datetime(2026, 8, 21, tzinfo=UTC)
     ages: dict[str, datetime] = {first.claim_id: opened_at, second.claim_id: opened_at}
 
-    assert _status((first, second), None, ages, board.BoardConfig()) == 2
+    assert _status((first, second), None, ages, body.Storage.GITHUB) == 2
     rendered = capsys.readouterr().out
     assert rendered.count("CONFLICT") == 2
 
@@ -19487,7 +19494,7 @@ def test_untracked_board_config_refuses_item_show_in_its_own_json_envelope(
 
 
 def _scratch_lane_repository(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, board_config: str | None = None
 ) -> tuple[Path, str, str]:
     """A repository with a base commit on `main` and a lane branch one commit
     ahead of it -- `brief`'s own real reads (`rev-parse --verify`, `diff
@@ -19495,7 +19502,8 @@ def _scratch_lane_repository(
     `_git_output` fake. It is the isolated toplevel itself (`conftest.py`'s
     `_isolate_git_toplevel`), so the run's context resolves its trunk -- the
     local `main`, since its configured `origin` was never fetched -- in the
-    lane's own repository (issues #488, #508)."""
+    lane's own repository (issues #488, #508). Given `board_config`, the
+    base commit carries it as the trunk's `.agent-claim/board.toml`."""
     monkeypatch.setattr(checkout, "trunk_ref_after", _LIVE_TRUNK_REF_AFTER)
     repository = tmp_path
     _real_git(repository, "init", "-q", "-b", "main")
@@ -19504,6 +19512,10 @@ def _scratch_lane_repository(
     _real_git(repository, "config", "user.email", "test@example.com")
     (repository / "README.md").write_text("hello\n")
     _real_git(repository, "add", "README.md")
+    if board_config is not None:
+        (repository / ".agent-claim").mkdir()
+        (repository / board.CONFIG_PATH).write_text(board_config)
+        _real_git(repository, "add", "-f", board.CONFIG_PATH.as_posix())
     _real_git(repository, "commit", "-q", "-m", "initial")
     base = _real_git(repository, "rev-parse", "HEAD").stdout.strip()
     _real_git(repository, "checkout", "-q", "-b", "codex/issue-258-brief")
@@ -19534,7 +19546,9 @@ def _brief_claim(
 def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    repository, base, tip = _scratch_lane_repository(monkeypatch, tmp_path)
+    repository, base, tip = _scratch_lane_repository(
+        monkeypatch, tmp_path, board_config='lane_shared = ["scripts/registry.txt"]\n'
+    )
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
         forge.ItemState.OPEN, "Brief", "The item's own body."
@@ -19542,8 +19556,6 @@ def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
     monkeypatch.setattr(github, "GitHubForge", lambda _repository: client)
     claim = _brief_claim(base, whole_reason="lane touches too much to split")
     _patch_store_write(monkeypatch, claim, ages={claim.claim_id: datetime(2026, 8, 20, tzinfo=UTC)})
-    (repository / ".agent-claim").mkdir()
-    (repository / board.CONFIG_PATH).write_text('lane_shared = ["scripts/registry.txt"]\n')
     monkeypatch.chdir(repository)
 
     status = issue_claim.main(["--repo", REPOSITORY, "brief", "258"])

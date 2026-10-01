@@ -50,9 +50,7 @@ def board_config(toplevel: Path) -> board.BoardConfig:
     `protect` and `rescope` pass their payload's own resolved checkout, so a
     foreign cwd can never wrongly deny a valid config or bless an untracked
     one. A file absent altogether is no repair `git add -f` could make
-    (issue #505): `_absent_board_config_refusal` names the repair instead.
-    A `lane_shared` entry naming a directory in this checkout refuses here
-    too (issue #575), the one place a configuration meets its checkout."""
+    (issue #505): `_absent_board_config_refusal` names the repair instead."""
     if not checkout.path_is_tracked(board.CONFIG_PATH.as_posix(), directory=toplevel):
         if not (toplevel / board.CONFIG_PATH).exists():
             raise protocol.ClaimUnavailableError(_absent_board_config_refusal(toplevel))
@@ -60,9 +58,27 @@ def board_config(toplevel: Path) -> board.BoardConfig:
             f"{board.CONFIG_PATH} is not tracked in this checkout, so its "
             f"storage pin cannot be trusted: git add -f {board.CONFIG_PATH}"
         )
-    config = board.load_config(toplevel / board.CONFIG_PATH)
-    board.refuse_lane_shared_directories(config, toplevel)
-    return config
+    return board.load_config(toplevel / board.CONFIG_PATH)
+
+
+def trunk_lane_shared(remote: str, toplevel: Path) -> tuple[str, ...]:
+    """The lane-shared registry files (issue #575) the trunk's committed
+    board configuration names -- `remote`'s trunk in the checkout at
+    `toplevel` as the last fetch left it, the ref `RunContext.trunk_ref`
+    resolves -- never the checkout's own copy, so a lane cannot authorise
+    itself by editing its worktree's `board.toml`: a change to the list
+    takes effect once it lands. A trunk that does not resolve, or whose
+    configuration git cannot show, names none."""
+    try:
+        trunk = checkout.trunk_ref(remote, directory=toplevel)
+    except checkout.TrunkUnknownError:
+        return ()
+    text = checkout.file_at_revision(
+        board.CONFIG_PATH.as_posix(), revision=trunk, directory=toplevel
+    )
+    if text is None:
+        return ()
+    return board.parse_config(text, Path(f"{trunk}:{board.CONFIG_PATH}")).lane_shared
 
 
 def _absent_board_config_refusal(toplevel: Path) -> str:

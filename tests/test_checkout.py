@@ -774,6 +774,26 @@ def test_path_is_tracked_reads_real_git_index_and_ignore_state(
     assert checkout.path_is_tracked(board.CONFIG_PATH.as_posix()) is expected
 
 
+@pytest.mark.parametrize(
+    ("path", "revision", "expected"),
+    [
+        pytest.param("README.md", "main", "hello\n", id="committed"),
+        pytest.param("README.md", "HEAD~1", None, id="revision-unresolved"),
+        pytest.param("docs/absent.md", "main", None, id="absent-at-revision"),
+    ],
+)
+def test_file_at_revision_reads_the_committed_text_not_the_worktree_copy(
+    tmp_path: Path, path: str, revision: str, expected: str | None
+) -> None:
+    """Issue #575: a file's text as `revision`'s tree holds it, whatever the
+    worktree's copy now says; a tree without the file, or a revision that
+    does not resolve, has no text to show."""
+    repository = _scratch_git_repository(tmp_path)
+    (repository / "README.md").write_text("edited in the worktree\n")
+
+    assert checkout.file_at_revision(path, revision=revision, directory=repository) == expected
+
+
 def _fake_trunk_log_record(*fields: str) -> str:
     """One fake `git log -z` trunk-landing record: `fields` joined by
     `checkout._TRUNK_LANDING_FIELD_SEPARATOR`, terminated by that same

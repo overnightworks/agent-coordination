@@ -1503,12 +1503,13 @@ def _use_real_path_is_tracked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _protect_real_repo_with_worktree(
-    tmp_path: Path, *, slug: str = "issue-72-widget"
+    tmp_path: Path, *, slug: str = "issue-72-widget", board_config: str = ""
 ) -> tuple[Path, Path]:
     """A real repository (`main`, reused across worktrees) with one linked,
     isolated worktree on a feature branch -- the same `git worktree add`
     recipe `checkout.ISOLATED_WORKTREE_RECIPE` documents. `main` carries a
-    real, tracked (`git add -f`) empty `.agent-claim/board.toml` (issue #314
+    real, tracked (`git add -f`) `.agent-claim/board.toml` holding
+    `board_config`, empty by default (issue #314
     gate B3): every worktree shares `main`'s history, so `path_is_tracked`
     reads a real "tracked" answer for it from any of them, via
     `_use_real_path_is_tracked`. `main` also carries a real, resolvable
@@ -1524,7 +1525,7 @@ def _protect_real_repo_with_worktree(
         _real_git(main, "config", "user.email", "test@example.com")
         (main / "README.md").write_text("hello\n")
         (main / ".agent-claim").mkdir()
-        (main / ".agent-claim" / "board.toml").write_text("")
+        (main / ".agent-claim" / "board.toml").write_text(board_config)
         _real_git(main, "add", "-f", "README.md", ".agent-claim/board.toml")
         _real_git(main, "commit", "-q", "-m", "initial")
         _real_git(main, "remote", "add", "origin", "https://example.invalid/example/repo.git")
@@ -1770,7 +1771,8 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
     [
         pytest.param("codex/issue-72-widget", "scripts/registry.txt", "allow", id="claimed-shared"),
         pytest.param("codex/issue-99-other", "scripts/registry.txt", "deny", id="unclaimed"),
-        pytest.param("codex/issue-72-widget", "docs/widget.md", "deny", id="not-shared"),
+        pytest.param("codex/issue-72-widget", "src/y.py", "deny", id="not-shared"),
+        pytest.param("codex/issue-72-widget", "src/x.py", "deny", id="shared-only-by-the-lane"),
     ],
 )
 def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
@@ -1782,19 +1784,27 @@ def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
     decision: str,
     payload_for: Callable[[Path], dict[str, object]],
 ) -> None:
-    """Issue #575 line 2 (PROT-46): a `lane_shared` file is writable by any
-    live claim this session holds in the checkout, though its scope (`src`)
-    never names it, whichever tool writes it; without a claim on the branch
-    it still denies, and a file the configuration does not share stays bound
-    to the scope. Each tool's own denial wording is PROT-18's and PROT-33's."""
+    """Issue #575 line 2 (PROT-46): a file the trunk's committed
+    `lane_shared` names is writable by any live claim this session holds in
+    the checkout, though its scope (`docs`) never names it, whichever tool
+    writes it; without a claim on the branch it still denies, and a file the
+    trunk does not share stays bound to the scope -- also one the lane's own
+    edit of its worktree's `board.toml` adds, so a lane never authorises
+    itself. Each tool's own denial wording is PROT-18's and PROT-33's."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
     _use_real_path_is_tracked(monkeypatch)
-    _main, worktree = _protect_real_repo_with_worktree(tmp_path)
-    (worktree / board.CONFIG_PATH).write_text('lane_shared = ["scripts/registry.txt"]\n')
-    state = _protect_state_with_claim(_protect_active_claim("Grok sess-1", branch=claimed_branch))
+    _main, worktree = _protect_real_repo_with_worktree(
+        tmp_path, board_config='lane_shared = ["scripts/registry.txt"]\n'
+    )
+    (worktree / board.CONFIG_PATH).write_text(
+        'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'
+    )
+    state = _protect_state_with_claim(
+        _protect_active_claim("Grok sess-1", scope=("docs",), branch=claimed_branch)
+    )
     monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: state)
 
     exit_code = _protect_main(monkeypatch, payload_for(worktree / written))
@@ -2492,8 +2502,8 @@ def test_rescope_json_reports_a_dotdot_path_through_a_missing_directory_as_unava
 # `protect.judge`'s own direct proofs (issue #394): a real bare-remote
 # repository with a real linked worktree, driven through `judge` itself --
 # never `main(["protect"])` -- so none of these needs `sys.stdin` or the
-# process cwd stubbed at all; `judge` takes its payload and its one
-# dependency (`board_config_for`) as plain arguments.
+# process cwd stubbed at all; `judge` takes its payload and its two
+# dependencies (`canonical_remote_for`, `lane_shared_for`) as plain arguments.
 
 
 def _judge_worktree(tmp_path: Path, *, branch: str) -> Path:
@@ -2541,7 +2551,11 @@ def test_judge_denies_an_apply_patch_path_outside_the_live_claims_scope(
         },
     }
 
-    verdict = protect.judge(payload, board_config_for=lambda _toplevel: board.BoardConfig())
+    verdict = protect.judge(
+        payload,
+        canonical_remote_for=lambda _toplevel: "origin",
+        lane_shared_for=lambda _toplevel: (),
+    )
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -2568,7 +2582,11 @@ def test_judge_denies_a_bash_recognized_pattern_path_outside_the_live_claims_sco
         "cwd": str(worktree),
     }
 
-    verdict = protect.judge(payload, board_config_for=lambda _toplevel: board.BoardConfig())
+    verdict = protect.judge(
+        payload,
+        canonical_remote_for=lambda _toplevel: "origin",
+        lane_shared_for=lambda _toplevel: (),
+    )
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -2590,7 +2608,11 @@ def test_judge_denies_a_path_resolving_to_the_checkout_root_before_reading_the_s
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
     payload = {"toolName": "Edit", "toolInput": {"path": str(worktree)}}
 
-    verdict = protect.judge(payload, board_config_for=lambda _toplevel: board.BoardConfig())
+    verdict = protect.judge(
+        payload,
+        canonical_remote_for=lambda _toplevel: "origin",
+        lane_shared_for=lambda _toplevel: (),
+    )
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,

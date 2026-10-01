@@ -38,7 +38,12 @@ from . import (
     terminal,
     workspace,
 )
-from .session import RepoMeaninglessUnderStateRefError, RunContext, board_config
+from .session import (
+    RepoMeaninglessUnderStateRefError,
+    RunContext,
+    board_config,
+    trunk_lane_shared,
+)
 
 CLI_ERROR_PREFIX = "ERROR: "
 
@@ -1228,21 +1233,21 @@ def _status(
     claims: tuple[protocol.ActiveClaim, ...],
     issue: int | None,
     ages: Mapping[str, datetime],
-    config: board.BoardConfig,
-    now: datetime | None = None,
+    storage: body.Storage,
+    lane_shared: tuple[str, ...] = (),
 ) -> int:
     """Every related claim's block, then the lane-shared files once (issue
     #575), named only beside a claim that may write them."""
-    observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+    observed_at = datetime.now(UTC)
     related, index = _status_claims(claims, issue)
     if related:
-        context = _ClaimReportContext(index, config.storage)
+        context = _ClaimReportContext(index, storage)
         exit_code = _print_related_claims(claims, related, context, ages, observed_at)
-        shared = _lane_shared_line(config.lane_shared)
+        shared = _lane_shared_line(lane_shared)
         if shared is not None:
             print(shared)
         return exit_code
-    subject = "repository" if issue is None else f"issue {board.item_label(issue, config.storage)}"
+    subject = "repository" if issue is None else f"issue {board.item_label(issue, storage)}"
     print(f"UNCLAIMED {subject}")
     return 0
 
@@ -3220,6 +3225,21 @@ def _verify_merged_release(
     return None
 
 
+def _canonical_remote_name(toplevel: Path) -> str:
+    """The configured `canonical_remote` of the checkout at `toplevel`, for
+    `protect` (handed into `protect.judge` as `canonical_remote_for`), which
+    judges from its own payload's resolved checkout and never builds a
+    `RunContext` (issue #457)."""
+    return board_config(toplevel).canonical_remote
+
+
+def _checkout_trunk_lane_shared(toplevel: Path) -> tuple[str, ...]:
+    """The lane-shared files the trunk of the checkout at `toplevel` names,
+    for `protect` (handed into `protect.judge` as `lane_shared_for`, issue
+    #575), resolved over that checkout's own canonical remote."""
+    return trunk_lane_shared(_canonical_remote_name(toplevel), toplevel)
+
+
 @dataclass(frozen=True)
 class _StoreItemWriter:
     """`state_board.ItemWriter`, implemented over `store` (issue #283): the
@@ -4176,10 +4196,11 @@ def _protect() -> int:
     # Grok fail-opens on crash or non-JSON hook output; deny instead of raising.
     try:
         payload = _hook_payload()
-        # `protect` judges from its payload's own resolved checkout and never
-        # builds a `RunContext` (issue #457), so it reads each checkout's
-        # board configuration itself.
-        verdict = protect.judge(payload, board_config_for=board_config)
+        verdict = protect.judge(
+            payload,
+            canonical_remote_for=_canonical_remote_name,
+            lane_shared_for=_checkout_trunk_lane_shared,
+        )
     except Exception as error:
         verdict = protect.Verdict.deny(str(error))
     if verdict.stdout_text is not None:
@@ -4764,7 +4785,13 @@ def _brief_report(parsed: argparse.Namespace, context: RunContext) -> int:
         )
     observed_at = datetime.now(UTC)
     composition = _BriefComposition(
-        item_body, live, observed_at, tip, touched, step_rules, context.config.lane_shared
+        item_body,
+        live,
+        observed_at,
+        tip,
+        touched,
+        step_rules,
+        trunk_lane_shared(context.configured_canonical_remote, context.toplevel),
     )
     if parsed.json:
         return _brief_json(composition)
@@ -4801,10 +4828,10 @@ def _status_read(parsed: argparse.Namespace, context: RunContext) -> int:
         return 0
     ages = _claim_ages(worktree, state)
     issue = _optional_issue_number(parsed.issue)
-    now = datetime.now(UTC)
     if parsed.json:
-        return _status_json(claims, issue, ages, state.tip, now=now)
-    return _status(claims, issue, ages, context.config, now=now)
+        return _status_json(claims, issue, ages, state.tip, now=datetime.now(UTC))
+    lane_shared = trunk_lane_shared(context.configured_canonical_remote, context.toplevel)
+    return _status(claims, issue, ages, context.config.storage, lane_shared)
 
 
 @dataclass(frozen=True)
@@ -8206,7 +8233,7 @@ def _reset_state(parsed: argparse.Namespace, context: RunContext) -> int:
     worktree, remote, state = _reset_observation(context)
     if isinstance(state, protocol.ClaimState) and state.claims:
         ages = _claim_ages(worktree, state)
-        _status(tuple(state.claims.values()), None, ages, context.config)
+        _status(tuple(state.claims.values()), None, ages, context.config.storage)
         return 2
     export = _resolved_reset_export_config(parsed, context.toplevel)
     plan = _build_reset_plan(

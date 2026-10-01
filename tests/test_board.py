@@ -34,9 +34,8 @@ from board_fixtures import (
     ruled_expectation,
     slice_entries,
 )
-from cli_fixtures import stub_board_config_tracked
 
-from agent_coordination import board, checkout, metrics, protocol, session
+from agent_coordination import board, checkout, metrics, protocol
 from agent_coordination.body import (
     BLOCK_CHILD_SKELETON,
     EXPECTATION_LINE_TEXT_MAXIMUM,
@@ -2273,11 +2272,6 @@ def test_board_configuration_accepts_every_key_it_defines(tmp_path: Path) -> Non
             id="trailing-slash",
         ),
         pytest.param(
-            '["scripts"]',
-            "lane_shared entry 'scripts' names a directory; list files only",
-            id="existing-directory",
-        ),
-        pytest.param(
             '"scripts/registry.txt"',
             "lane_shared must be a list of unique repository file paths",
             id="not-a-list",
@@ -2289,22 +2283,17 @@ def test_board_configuration_accepts_every_key_it_defines(tmp_path: Path) -> Non
         ),
     ],
 )
-def test_board_configuration_refuses_a_lane_shared_entry_that_is_no_repository_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lane_shared: str, refusal: str
+def test_board_configuration_refuses_a_lane_shared_entry_that_is_no_repository_path(
+    lane_shared: str, refusal: str
 ) -> None:
-    """Issue #575 line 4: a registry every lane may write is one file inside
-    the repository; anything else is a defective configuration, refused the
-    way every store command reads it."""
-    stub_board_config_tracked(monkeypatch)
-    (tmp_path / "scripts").mkdir()
-    config_path = tmp_path / board.CONFIG_PATH
-    config_path.parent.mkdir()
-    config_path.write_text(f"lane_shared = {lane_shared}\n")
-
+    """Issue #575 line 4: a registry every lane may write is named by its
+    canonical path inside the repository; anything else is a defective
+    configuration. Only the syntax is judged, so `land` and every reader
+    judge alike."""
     with pytest.raises(ClaimError) as refused:
-        session.board_config(tmp_path)
+        board.parse_config(f"lane_shared = {lane_shared}\n", board.CONFIG_PATH)
 
-    assert str(refused.value) == f"board configuration {config_path} {refusal}"
+    assert str(refused.value) == f"board configuration {board.CONFIG_PATH} {refusal}"
 
 
 def test_load_brief_config_returns_none_when_the_file_does_not_exist(tmp_path: Path) -> None:

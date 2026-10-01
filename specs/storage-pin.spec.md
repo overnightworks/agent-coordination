@@ -21,7 +21,7 @@ reaches `ERROR: <sentence>` on stderr, exit `2`, unless noted otherwise.
 | `storage` unset (default `github`) | PIN-02 | ITEM-26..ITEM-35 | PIN-10, PIN-11 | — | PIN-08 |
 | `storage` names an unrecognized value | PIN-03 | PIN-03 | PIN-03 | PIN-03 | — |
 | a key the configuration does not define | PIN-33 | PIN-33 | PIN-33 | PIN-33 | — |
-| `lane_shared` is no list of unique files inside the repository | PIN-38..PIN-40 | PIN-38..PIN-40 | PIN-38..PIN-40 | PIN-38..PIN-40 | — |
+| `lane_shared` is no list of unique files inside the repository | PIN-38, PIN-39 | PIN-38, PIN-39 | PIN-38, PIN-39 | PIN-38, PIN-39 | — |
 | `storage = "state-ref"` | PIN-04\*, PIN-05\*, PIN-30 | PIN-18..21 | PIN-22..28 | —\*\* | PIN-08, PIN-31 |
 | a state-ref item file itself is malformed | PIN-14..17, PIN-34, PIN-29 | ITEM-37 | ITEM-39, PIN-29 | BOARD-54 | — |
 | an `items/` entry whose file name names no item | PIN-36 (a whole-store command), PIN-35 (a one-item command) | PIN-36 | PIN-35 | PIN-36 | — |
@@ -78,7 +78,8 @@ owns what a write to one is allowed.
 - [ ] [PIN-37] A tracked `.agent-claim/board.toml` may name `lane_shared = ["<file>", ...]`, each a repository-relative file path; absent, no file is lane-shared.
 - [ ] [PIN-38] A `lane_shared` value that is no list of unique strings refuses `board configuration <path> lane_shared must be a list of unique repository file paths` (see E-PIN-40).
 - [ ] [PIN-39] An absolute, `..`-climbing, or non-canonical entry refuses `board configuration <path> lane_shared entry '<entry>' is not a canonical path inside the repository` (see E-PIN-41).
-- [ ] [PIN-40] An entry naming a directory in the checkout refuses `board configuration <path> lane_shared entry '<entry>' names a directory; list files only` (see E-PIN-42).
+- [ ] [PIN-40] Only the trunk's committed copy counts, as the last fetch left it, never a worktree's own; no trunk copy means no file is lane-shared.
+- [ ] [PIN-41] An entry matches exactly one path, never as a prefix: an entry naming a directory covers no file.
 
 ## `storage = "state-ref"` is forge-free
 
@@ -263,16 +264,6 @@ Setup: bare-remote checkout at `/repo`, `.agent-claim/board.toml` tracked with `
 ```console
 $ aco status
 2> ERROR: board configuration /repo/.agent-claim/board.toml lane_shared entry '../other/registry.txt' is not a canonical path inside the repository
-exit 2
-```
-
-### E-PIN-42 — a lane_shared entry naming a directory
-
-Setup: bare-remote checkout at `/repo` with a directory `scripts`, `.agent-claim/board.toml` tracked with `lane_shared = ["scripts"]`
-
-```console
-$ aco status
-2> ERROR: board configuration /repo/.agent-claim/board.toml lane_shared entry 'scripts' names a directory; list files only
 exit 2
 ```
 
