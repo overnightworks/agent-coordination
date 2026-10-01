@@ -734,8 +734,8 @@ class StateLineageError(ClaimError):
 
     Distinct from `MalformedStateTreeError`: the tree itself may parse fine --
     it is this client's history of the ref that no longer lines up, which
-    `git push --force` recovery (documented, never automatic) is the only
-    sanctioned way to cause.
+    `aco reset` (exporting the state first by default, never automatic) is
+    the only sanctioned way to cause.
     """
 
 
