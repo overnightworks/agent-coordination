@@ -10877,7 +10877,8 @@ def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
 ) -> None:
     """Issue #575 line 3: the lane-shared files the trunk's committed
     configuration names follow the claim blocks once, so a builder counts
-    them as allowed beside its scope."""
+    them as allowed beside its scope -- never one the working copy's own
+    `board.toml` adds."""
     claimed = _active_claim(
         "Codex Sol", claim_id="cli-claim", issue=72, branch="codex/issue-72", scope=("src",)
     )
@@ -10890,6 +10891,9 @@ def test_cli_status_shows_a_live_store_claim_then_the_lane_shared_files(
     _real_git(tmp_path, "add", "-f", board.CONFIG_PATH.as_posix())
     _real_git(tmp_path, "commit", "-q", "-m", "trunk configuration")
     _real_git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (tmp_path / board.CONFIG_PATH).write_text(
+        'lane_shared = ["scripts/a.py", "scripts/b.txt", "src/x.py"]\n'
+    )
 
     status = issue_claim.main(["--repo", REPOSITORY, "status", "72"])
     assert status == 0
@@ -19548,6 +19552,9 @@ def test_cli_brief_prints_body_claim_lane_tip_and_touched_files(
 ) -> None:
     repository, base, tip = _scratch_lane_repository(
         monkeypatch, tmp_path, board_config='lane_shared = ["scripts/registry.txt"]\n'
+    )
+    (repository / board.CONFIG_PATH).write_text(
+        'lane_shared = ["scripts/registry.txt", "src/x.py"]\n'
     )
     client = FakeForge()
     client.issue_references[258] = forge.ItemReference(
