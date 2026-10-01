@@ -41,13 +41,12 @@ FENCE_CLOSING_PATTERN = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})[ \t]*$")
 # and GitHub history own provenance instead.
 BLOCK_CHILD_SKELETON = '```agent-claim\nversion = 1\nnow = ""\nnext = ""\ndone_when = ""\n```\n'
 # A fresh container carries no automatic parent-provenance the way `cut`
-# gives a fresh child one, so its own skeleton states the prose the global
-# contract requires when nothing blocks it (README "`Blocked by:` prose
-# beside the block is documentation only") ahead of the same block schema
-# `BLOCK_CHILD_SKELETON` already owns -- one owner for the projection keys,
-# never a second schema for a container's own skeleton.
+# gives a fresh child one, so `item new` with nothing piped states the prose
+# the global contract requires when nothing blocks it (README "`Blocked by:`
+# prose beside the block is documentation only") above the same block
+# `prose_above_fresh_block` builds for every kind -- one owner for the
+# projection keys, never a second schema for a container's own skeleton.
 CONTAINER_SKELETON_PROSE = "Blocked by: nichts"
-BLOCK_CONTAINER_SKELETON = f"{CONTAINER_SKELETON_PROSE}\n\n{BLOCK_CHILD_SKELETON}"
 
 # The one fenced-block info string a repository pinned to `body_contract =
 # "block"` (issue #150) reads as its typed work-item body -- any other
@@ -1261,11 +1260,14 @@ def prose_above_fresh_block(prose: str, fields: Mapping[str, object]) -> str:
 
 
 def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
-    """`body` with `fields` written into its one schema-valid `agent-claim`
-    block, every other byte kept -- the one writer behind `item new`'s and
-    `cut`'s own block flags."""
+    """`body` with each field of `fields` its one schema-valid `agent-claim`
+    block lacks written in, every other byte kept -- `body` itself when it
+    lacks none. The one writer behind `item new`'s and `cut`'s block flags."""
     located = locate_agent_claim_block(body)
-    return replace_agent_claim_block(body, located, {**located.data, **fields})
+    lacking = {key: value for key, value in fields.items() if key not in located.data}
+    if not lacking:
+        return body
+    return replace_agent_claim_block(body, located, {**located.data, **lacking})
 
 
 def _block_field_text(key: str, value: object) -> str:

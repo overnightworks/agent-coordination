@@ -19564,6 +19564,11 @@ _PROSE_ABOVE_BUILT_BLOCK = (
     "Ship the importer.\n\n```agent-claim\nversion = 1\n"
     'now = "Ready."\nnext = "Build it."\ndone_when = "Merged."\n\nsize = "S"\n```\n'
 )
+# The same block as a person types it, not as aco renders it.
+_PIPED_BLOCK_AS_TYPED = (
+    "Ship the importer.\n\n```agent-claim\nversion = 1\n"
+    'now = "Ready."\nnext = "Build it."\ndone_when = "Merged."\nsize = "S"\n```\n'
+)
 
 
 @pytest.mark.parametrize(
@@ -19576,10 +19581,10 @@ _PROSE_ABOVE_BUILT_BLOCK = (
             id="prose_above_a_block_built_from_the_flags",
         ),
         pytest.param(
-            io.StringIO(_PROSE_ABOVE_BUILT_BLOCK),
+            io.StringIO(_PIPED_BLOCK_AS_TYPED),
             ("--now", "Ready.", "--size", "S"),
-            ("Write the docs", _PROSE_ABOVE_BUILT_BLOCK, body.ItemKind.TASK),
-            id="a_piped_block_matching_the_flags_kept_as_piped",
+            ("Write the docs", _PIPED_BLOCK_AS_TYPED, body.ItemKind.TASK),
+            id="a_piped_block_matching_the_flags_kept_byte_for_byte",
         ),
         pytest.param(
             _Terminal("never read\n"),

@@ -35,7 +35,7 @@ from agent_coordination import board, checkout, forge, items, process, protocol,
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import (
     BLOCK_CHILD_SKELETON,
-    BLOCK_CONTAINER_SKELETON,
+    CONTAINER_SKELETON_PROSE,
     ExpectationLine,
     ItemKind,
     Storage,
@@ -1720,7 +1720,7 @@ def _first_ruling_date(capsys: pytest.CaptureFixture[str]) -> str:
 
 
 def _filled_body(template: str, *, now: str, next_step: str, done_when: str) -> str:
-    """A fresh `BLOCK_CHILD_SKELETON`/`BLOCK_CONTAINER_SKELETON` body
+    """A fresh child or container skeleton body
     with its three blank projection keys filled -- the one substitution the
     README's "fill Now/Next/Done when" step performs before
     `body --check`/`item edit`."""
@@ -4848,7 +4848,7 @@ class TestCliStateRefForge:
         assert items.ITEM_ID_PATTERN.fullmatch(container_id)
 
         container_body = _filled_body(
-            BLOCK_CONTAINER_SKELETON,
+            f"{CONTAINER_SKELETON_PROSE}\n\n{BLOCK_CHILD_SKELETON}",
             now="Land every slice.",
             next_step="Cut the first slice.",
             done_when="Both slices are closed.",
