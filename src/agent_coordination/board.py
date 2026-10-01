@@ -42,6 +42,11 @@ DEFAULT_PRIORITY_LABELS = ("security", "data", "ci", "product", "ux", "cleanup")
 DEFAULT_CANONICAL_REMOTE = "origin"
 CONFIG_PATH = Path(".agent-claim/board.toml")
 IDEA_REFINEMENT_STEP = "Problem neu prüfen und Item verfeinern"
+# The one typed marker that an item waits on the operator's ruling (issue
+# #553): no agent can pull it, so `next` names it apart and `claim`'s
+# precedence check never stops on it. A label, so both storages carry it.
+NEEDS_OPERATOR_LABEL = "needs-operator"
+WAITING_ON_OPERATOR = "waiting on operator"
 RULING_OLD_AFTER_LANDINGS = 10
 STALE_IDLE_DAYS = 7
 REFERENCE_PATTERN = re.compile(r"(?<!\w)#([1-9]\d*)", re.ASCII)
@@ -1473,6 +1478,7 @@ def _board_item(
             contract=contract,
             contract_complete=parsed.contract_complete,
             projectionless_idea=projectionless_idea,
+            waits_on_operator=has_label(issue.labels, NEEDS_OPERATOR_LABEL),
             read_state=parsed.read_state,
             malformed_defect=(
                 contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
@@ -2082,6 +2088,15 @@ def parallel_set(
     return ParallelSet(tuple(candidates), tuple(scope_unknown), False)
 
 
+def waiting_on_operator(board: Board) -> tuple[int, ...]:
+    """Every item `NEEDS_OPERATOR_LABEL` holds (issue #553), in board order:
+    `next` names these apart from `SKIPPED`, since the operator's ruling,
+    not an agent's repair, is what frees them."""
+    return tuple(
+        item.number for item in board.items if item.actionable_reason == WAITING_ON_OPERATOR
+    )
+
+
 def zero_cost_closes(board: Board) -> tuple[int, ...]:
     """Every item `next` can close for free right now, regardless of which
     row ranks first (issue #348; #310 finding 29: "warum wurde #122 nicht
@@ -2500,6 +2515,7 @@ class _ActionabilityFacts:
     contract: Contract
     contract_complete: bool
     projectionless_idea: bool
+    waits_on_operator: bool = False
     read_state: BodyReadState = BodyReadState.VALID
     malformed_defect: ContractDefect | None = None
     childless_container_reason: str | None = None
@@ -2681,6 +2697,8 @@ def _claim_or_completeness_reason(facts: _ActionabilityFacts) -> str | None:
         return f"frozen: {facts.frozen_trigger}"
     if facts.active_claim is not None:
         return "claimed"
+    if facts.waits_on_operator:
+        return WAITING_ON_OPERATOR
     if facts.open_blockers:
         return "blocked by " + ", ".join(
             open_blocker_label(reference, facts.repository, facts.storage)
