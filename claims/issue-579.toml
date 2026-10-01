@@ -1,0 +1,7 @@
+claim_id = "2477a087908e433ca25a96a2870efe5e"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "03bd809e1fee24c2a10da1a5abd0a5ab45750d5f"
+branch = "claude/issue-579-no-delete-advice"
+scope = ["specs/ref-store-cas.spec.md", "src/agent_coordination/store.py", "tests/test_store.py"]
+opened_commit = "f5f8d1272d63b7838ae21d5cb97702b3fa9d5f6c"
