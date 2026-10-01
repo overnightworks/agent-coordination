@@ -1455,7 +1455,7 @@ def cleanup_landed_worktree(
     removing a dirty or still-needed worktree is unsafe and the two git
     writes below it are each worth reporting apart. A branch counts as
     landed when the trunk contains its tip, or when its tip is
-    `landed_head`, the pull request head a squash landed (issue #578): a
+    `landed_head`, the head `aco land` pinned for its own squash (issue #578): a
     squash commit is no descendant of that tip, so ancestry alone would keep
     every squashed lane. `release`'s own cwd-equality guard and its "no
     worktree matches this branch" decision run before this and stay the

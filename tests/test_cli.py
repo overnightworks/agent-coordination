@@ -14702,14 +14702,11 @@ def landing_pull_request(
     merged: bool = False,
     merge_commit: str | None = None,
     title: str = "feat: land the lane",
-    head_commit: str = MERGE_COMMIT_SHA,
 ) -> forge.Landing:
     """`merge_commit` defaults to a shared, well-formed sha once `merged` is
     true (a real merged pull request always carries one) and to `None`
     otherwise; a test proving the merge commit's own authority
-    (issue #397) passes its own sha instead. `head_commit` defaults to the
-    head `_land_readiness` pins; a test whose lane branch is real git passes
-    that branch's own tip."""
+    (issue #397) passes its own sha instead."""
     return forge.Landing(
         number,
         author,
@@ -14720,7 +14717,6 @@ def landing_pull_request(
         merged,
         merge_commit if merge_commit is not None else (MERGE_COMMIT_SHA if merged else None),
         title,
-        head_commit,
     )
 
 
@@ -17315,13 +17311,13 @@ def test_land_merges_with_the_method_the_repository_allows(
     titled `<pull request title> (#<n>)` where only squash is allowed -- and
     the delegated `release --merged` accepts that single-parent commit's own
     trailer exactly as it accepts a merge commit's, and removes the clean
-    lane worktree whose tip is the head that landed, squashed or not."""
+    lane worktree whose tip is the head the merge pinned, squashed or not."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = allowed
     lane = tmp_path / "lane"
     _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
     lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
-    client.landings[12] = replace(client.landings[12], head_commit=lane_tip)
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=lane_tip)
     if pinned is not None:
         (repo / ".agent-claim").mkdir()
         (repo / board.CONFIG_PATH).write_text(f'merge_method = "{pinned}"\n')
@@ -17349,6 +17345,50 @@ def test_land_merges_with_the_method_the_repository_allows(
     assert client.closed_issues == {WORK_ITEM_ISSUE}
     assert "worktree: removed\n" in output.out
     assert (lane.exists(), checkout.branch_exists(LANDING_BRANCH)) == (False, False)
+
+
+@pytest.mark.parametrize(
+    "squashed_before_this_run",
+    [
+        pytest.param(False, id="lane-tip-moved-past-the-pinned-head"),
+        pytest.param(True, id="rerun-that-pinned-no-head"),
+    ],
+)
+def test_land_keeps_a_squashed_lane_whose_tip_its_own_merge_did_not_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    squashed_before_this_run: bool,
+) -> None:
+    """Issue #578 review finding 2: only the head this run's own squash was
+    pinned to lets a squashed lane go -- a lane commit made after that pin,
+    or a rerun that merged nothing itself, keeps the worktree and its
+    branch, since nothing proves that tip landed."""
+    repo, client = _land_scenario(monkeypatch, tmp_path)
+    client.allowed_methods = frozenset({_SQUASH})
+    lane = tmp_path / "lane"
+    _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
+    pinned_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=pinned_head)
+    if squashed_before_this_run:
+        client.merge_landing(
+            12,
+            head_sha=pinned_head,
+            method=_SQUASH,
+            title="feat: land the lane (#12)",
+            body=f"Work-Item: #{WORK_ITEM_ISSUE}",
+        )
+    else:
+        _real_git(lane, "commit", "-q", "--allow-empty", "-m", "after the pin")
+    lane_tip = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+
+    status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    output = capsys.readouterr()
+    assert (status, output.err) == (0, "")
+    assert "worktree: kept -- not merged into the default branch\n" in output.out
+    assert lane.exists()
+    assert _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip() == lane_tip
 
 
 def test_land_merges_a_foreign_claim_under_a_coordinator_override(

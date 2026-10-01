@@ -3125,17 +3125,6 @@ class _MergedLandingClose:
     pull_request: int
 
 
-@dataclass(frozen=True)
-class _VerifiedMergedRelease:
-    """What `_verify_merged_release` read off the verified landing: the
-    item still to close, if any, and the pull request head that landed,
-    which the worktree cleanup recognises a squashed lane by (issue
-    #578)."""
-
-    pending_close: _MergedLandingClose | None
-    landed_head: str
-
-
 def _trunk_no_item_landing_defect(
     landings: tuple[checkout.TrunkLanding, ...], sha: str, pull_request: int
 ) -> str | None:
@@ -3175,7 +3164,7 @@ def _verify_merged_release(
     client: github.GitHubForge,
     identity: protocol.ClaimIdentity,
     merged: protocol.MergedRelease,
-) -> _VerifiedMergedRelease:
+) -> _MergedLandingClose | None:
     """Refuse a `--merged` release the landing itself does not support, and
     report -- without yet closing anything -- whether the named work item is
     still open and needs to be (issue #359 Card 1/R1): `_cmd_release` calls
@@ -3213,20 +3202,18 @@ def _verify_merged_release(
             raise protocol.ClaimUnavailableError(
                 f"merge commit {detail.merge_commit} of pull request #{detail.number} {defect}"
             )
-        return _VerifiedMergedRelease(None, detail.head_commit)
+        return None
     _verify_merge_commit_authority(
         landings, detail.number, identity.issue, detail.merge_commit, context.config.storage
     )
     reference = _fetch_issue_reference(client, identity.issue)
     if reference.state is forge.ItemState.OPEN:
-        return _VerifiedMergedRelease(
-            _MergedLandingClose(identity.issue, detail.number), detail.head_commit
-        )
+        return _MergedLandingClose(identity.issue, detail.number)
     if reference.state is not forge.ItemState.CLOSED:
         raise protocol.ClaimUnavailableError(
             f"work item #{identity.issue} is {reference.state.value}, not closed"
         )
-    return _VerifiedMergedRelease(None, detail.head_commit)
+    return None
 
 
 def _canonical_remote_name(toplevel: Path) -> str:
@@ -6195,14 +6182,23 @@ def _cmd_release(
     `precondition_failed`, rather than escaping the envelope entirely."""
     as_json = parsed.json
     try:
-        return _release_transition(parsed, context, release_branch)
+        return _release_transition(parsed, context, release_branch, landed_head=None)
     except protocol.ClaimError as error:
         return _refuse(ReleaseReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
 def _release_transition(
-    parsed: argparse.Namespace, context: RunContext, release_branch: str | None
+    parsed: argparse.Namespace,
+    context: RunContext,
+    release_branch: str | None,
+    *,
+    landed_head: str | None,
 ) -> int:
+    """`landed_head` is the head sha `aco land` pinned for the merge it
+    just made, the only evidence a squashed lane's own tip may be cleaned
+    up by (issue #578); a standalone release has none, since a pull
+    request's head read after its merge is no proof of what landed, so it
+    removes only a branch the trunk itself contains."""
     issue = _optional_issue_number(parsed.issue)
     identity = _resolved_identity(issue, release_branch or "")
     storage = context.config.storage
@@ -6214,7 +6210,6 @@ def _release_transition(
     _require_state_ref(observed)
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     client: github.GitHubForge | None = None
-    verified: _VerifiedMergedRelease | None = None
     if isinstance(outcome, protocol.MergedRelease):
         # Authorization above gates every forge read and write here (issue
         # #359 R1): an unauthorized or mismatched-claim `--merged` release
@@ -6224,8 +6219,7 @@ def _release_transition(
         # cast is honest, not a suppression: `_build_forge` builds
         # exactly a `github.GitHubForge` for every other storage pin.
         client = cast(github.GitHubForge, context.forge)
-        verified = _verify_merged_release(context, client, identity, outcome)
-        pending_close = verified.pending_close
+        pending_close = _verify_merged_release(context, client, identity, outcome)
         if pending_close is not None:
             # Runs before the release transition below (issue #359 R1): a
             # close failure here -- a transient forge error, most often --
@@ -6256,15 +6250,15 @@ def _release_transition(
         )
     )
     worktree_cleanup = (
-        None
-        if verified is None
-        else _cleanup_landed_worktree(
+        _cleanup_landed_worktree(
             parsed,
             resolved.selected.branch,
             context,
             context.fetched_default_branch_ref,
-            verified.landed_head,
+            landed_head,
         )
+        if isinstance(outcome, protocol.MergedRelease)
+        else None
     )
     _print_release_result(
         ReleaseReport(
@@ -6325,8 +6319,8 @@ def _cleanup_landed_worktree(
     `fetched_trunk_ref` names the ref the lane must be merged into -- the
     one its release judged the landing on (issue #492) -- asked only here,
     so a failure to resolve it reads as `kept` too. `landed_head` is the
-    pull request head the forge reports landed, `None` where no pull request
-    stands behind the landing (`storage = "state-ref"`). The remote branch
+    head `aco land` pinned for its own merge, `None` for every release that
+    made no merge itself. The remote branch
     stays the forge merge's own business either way."""
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
@@ -6773,7 +6767,11 @@ def _land_release_routing(
 
 
 def _land_release(
-    parsed: argparse.Namespace, context: RunContext, issue: int | None, branch: str
+    parsed: argparse.Namespace,
+    context: RunContext,
+    issue: int | None,
+    branch: str,
+    landed_head: str | None,
 ) -> None:
     """`aco land`'s own delegated call into the existing `release --merged`
     path (issue #405): never a second copy of its close/release/report/
@@ -6788,7 +6786,9 @@ def _land_release(
     would otherwise print its sentence a second time. The release reads
     through a fresh `context` (issue #457 proof 6): the fast-forward just
     wrote the landed trunk into this very checkout, so the configuration
-    and forge read before it no longer answer for it."""
+    and forge read before it no longer answer for it. `landed_head` is the
+    head sha this run's own merge was pinned to, `None` on a rerun that
+    found the pull request already merged."""
     release_parsed = argparse.Namespace(
         issue=issue,
         agent=parsed.agent,
@@ -6805,7 +6805,7 @@ def _land_release(
         json=False,
         repo=parsed.repo,
     )
-    _release_transition(release_parsed, context.fresh(), branch)
+    _release_transition(release_parsed, context.fresh(), branch, landed_head=landed_head)
 
 
 def _land_is_own_repository(toplevel: Path) -> bool:
@@ -6847,9 +6847,11 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
     repository = client.repository.path
     detail = client.landing(number)
     classification: board.Classification | None
+    landed_head: str | None
     if detail.merged:
         assert detail.merge_commit is not None  # `merged` is true; github.py guarantees this.
         merge_sha = detail.merge_commit
+        landed_head = None
         checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
         # A rerun: this run's own preflight never ran, so it never verified a
         # classification -- `_land_release_routing` reads the merge commit's
@@ -6874,6 +6876,7 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
         checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
         method = _land_merge_method(config.merge_method, client, number)
         merge_sha = _land_merge(client, detail, readiness, classification, method)
+        landed_head = readiness.head_sha
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)
     )
@@ -6894,6 +6897,7 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
             context,
             _land_release_routing(classification, merge_sha, context),
             detail.source_branch,
+            landed_head,
         ),
     )
     if _land_is_own_repository(toplevel):

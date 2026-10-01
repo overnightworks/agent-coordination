@@ -119,7 +119,7 @@ when both are gone, `kept -- <reason>` when neither moves, or `removed; branch k
 when the worktree is gone but the branch delete itself failed (REL-34) -- one owner for all three
 shapes so they can never drift apart.
 
-- [ ] [REL-25] A clean linked worktree whose branch is merged into the canonical remote's trunk, or whose tip is the head a squash landed, is removed with that local branch: `worktree: removed` (see E-REL-08).
+- [ ] [REL-25] A clean linked worktree whose branch is in the canonical remote's trunk, or whose tip is the head `aco land` pinned for its squash, goes with that local branch: `worktree: removed` (see E-REL-08).
 - [ ] [REL-26] `--keep-worktree` skips that removal outright: `worktree: kept -- --keep-worktree was given`, worktree and branch both left exactly as found (see E-REL-09).
 - [ ] [REL-27] A release run from inside the lane's own worktree cannot remove its own cwd: `worktree: kept -- release ran from inside it`, and keeps both (see E-REL-10).
 - [ ] [REL-28] A dirty worktree keeps it: `worktree: kept -- dirty`, exit code unaffected (see E-REL-11).
