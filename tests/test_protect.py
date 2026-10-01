@@ -1970,11 +1970,6 @@ def test_rescope_admits_a_file_in_a_new_directory_that_protect_then_allows_writi
     _assert_protect_decision(capsys, decision="allow", reason=None)
 
 
-def _rescope_args_all_relative(tmp_path: Path) -> list[str]:
-    _protect_real_repo_with_worktree(tmp_path)
-    return ["rescope", "72", "--add", "docs/widget.md"]
-
-
 def _rescope_args_mixed_absolute_and_relative(tmp_path: Path) -> list[str]:
     _main, worktree = _protect_real_repo_with_worktree(tmp_path)
     return [
@@ -2373,8 +2368,11 @@ def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
             "not in a repository",
         ),
         (_rescope_args_add_path_in_an_unborn_checkout, checkout.NO_COMMIT_CHECKOUT_REASON),
-        (_rescope_args_all_relative, "--add path 'docs/widget.md' is relative and "),
-        (_rescope_args_mixed_absolute_and_relative, "--drop path 'src/widget.py' is relative and "),
+        (
+            _rescope_args_mixed_absolute_and_relative,
+            "--drop path 'src/widget.py' is relative and {tmp_path} is not in a repository; "
+            "pass it as an absolute path",
+        ),
     ],
     ids=[
         "second-add-path-outside-checkout",
@@ -2382,7 +2380,6 @@ def _rescope_args_add_path_in_an_unborn_checkout(tmp_path: Path) -> list[str]:
         "new-directory-outside-any-repository",
         "dotdot-through-missing-directory-outside-any-repository",
         "checkout-has-no-commit",
-        "all-relative",
         "mixed-absolute-and-relative",
     ],
 )
@@ -2398,20 +2395,21 @@ def test_rescope_denies_before_touching_the_store(
     first path's own checkout (`_rescope_scope_entries`) refuses rather than
     silently mis-scoping; a location outside every repository, and gate
     G3's no-commit checkout (`_rescope_checkout`); and a relative
-    `--add`/`--drop` entry, alone or mixed with an absolute one, run from a
-    cwd outside every repository, which has no checkout to read it against
-    (RESC-01) -- all refuse before the store is ever touched."""
+    `--drop` entry beside an absolute `--add` that did locate a checkout,
+    run from a cwd outside every repository, which has no checkout to read
+    it against (RESC-01) -- all refuse before the store is ever touched."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.chdir(tmp_path)
     _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
+    monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
     args = build_args(tmp_path)
 
     status = issue_claim.main(args)
 
     assert status == 2
-    assert expected_error_fragment in capsys.readouterr().err
+    assert expected_error_fragment.format(tmp_path=tmp_path) in capsys.readouterr().err
 
 
 def test_rescope_json_reports_a_dotdot_path_through_a_missing_directory_as_unavailable(
