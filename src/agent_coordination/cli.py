@@ -6874,8 +6874,11 @@ def _land_merge_body(title: str, body: str, classification: board.Classification
     `Co-Authored-By:` line) takes the classification into that block
     rather than behind a blank line that would orphan it -- but only where
     git then reads that block's trailers and the classification both, a
-    question asked of the composed message itself, since git skips a
-    trailing comment line the body's own reading would not (issue #594)."""
+    question asked of the composed message itself: git reading the body
+    alone skips a trailing comment line and still finds the trailer block
+    above it, but once joined that comment line no longer ends the message,
+    and git reads it with the classification as the last paragraph instead
+    (issue #594)."""
     without_classification = _body_without_classification(body)
     trailer = _land_trunk_trailer(classification)
     if not without_classification:
