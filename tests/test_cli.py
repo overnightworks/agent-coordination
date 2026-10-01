@@ -17477,6 +17477,13 @@ def _time_out_the_deletion_once_prepared(monkeypatch: pytest.MonkeyPatch, _lane:
     monkeypatch.setattr(subprocess.Popen, "communicate", time_out_the_first_decision)
 
 
+def _fail_to_start_the_deletion(monkeypatch: pytest.MonkeyPatch, _lane: Path) -> None:
+    def fail_to_start(*_arguments: object, **_options: object) -> process.CapturedResult:
+        raise process.ProcessStartFailedError("denied")
+
+    monkeypatch.setattr(process, "run_git_ref_transaction", fail_to_start)
+
+
 def _time_out_the_deletion_and_refuse_the_write_back(
     monkeypatch: pytest.MonkeyPatch, lane: Path
 ) -> None:
@@ -17494,6 +17501,12 @@ def _time_out_the_deletion_and_refuse_the_write_back(
             "fatal: the listing failed\n",
             "origin",
             id="configuration-listing-refused",
+        ),
+        pytest.param(
+            _fail_to_start_the_deletion,
+            "git failed to run: denied\n",
+            "origin",
+            id="deletion-failed-to-start",
         ),
         pytest.param(_time_out_the_deletion_once_prepared, "", "origin", id="deletion-timed-out"),
         pytest.param(
@@ -17517,8 +17530,9 @@ def test_land_keeps_a_squashed_lane_branch_git_refuses_to_delete_whole(
     deletion, keeps the branch on that commit -- the deletion compares and
     deletes in one step, so only the landed head itself is ever deleted.
     Second review finding 2: a `branch.<name>` section git cannot list or
-    remove keeps the branch too, the failure reported rather than swallowed.
-    Fourth review finding 3: a deletion git never confirms after that
+    remove keeps the branch too, the failure reported rather than swallowed,
+    and so does a deletion git cannot even run. Fourth review finding 3: a
+    deletion git never confirms after that
     section is gone writes the section back onto the kept branch. Every way
     the kept branch keeps its tip and its own configuration -- unless git
     refuses that write-back, which the report then names."""

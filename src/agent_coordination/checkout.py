@@ -82,7 +82,9 @@ def _git_run_failures_fail_closed() -> Iterator[None]:
         raise ClaimError(_GIT_MISSING_EXECUTABLE_ERROR) from error
     except process.ProcessTimedOutError as error:
         raise ClaimError(_GIT_TIMED_OUT_ERROR) from error
-    except (OSError, process.ProcessError) as error:
+    except OSError as error:
+        raise ClaimError(f"git failed to launch: {error}") from error
+    except process.ProcessError as error:
         raise ClaimError(f"git failed to run: {error}") from error
 
 
