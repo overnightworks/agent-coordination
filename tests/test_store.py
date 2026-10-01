@@ -2667,23 +2667,37 @@ _STATE_DELETION_ADVICE = re.compile(
 )
 
 
-def _source_message_literals() -> list[str]:
-    """Every string literal under `src/` that can reach a reader at run
-    time; a bare string statement (a docstring) explains code, never
-    advises an operator."""
-    literals: list[str] = []
-    for path in sorted((_REPOSITORY_ROOT / "src").rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        nodes = list(ast.walk(tree))
-        docstrings = {node.value for node in nodes if isinstance(node, ast.Expr)}
-        literals.extend(
-            node.value
-            for node in nodes
-            if isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and node not in docstrings
+def _message_texts(source: str) -> list[str]:
+    """Every string a module can show a reader: each plain literal, and each
+    f-string read as one text with `{}` for its interpolations, so advice
+    split across `{remote}` or `{STATE_REF}` is still one sentence. A bare
+    string statement (a docstring) explains code, never advises an
+    operator."""
+    nodes = list(ast.walk(ast.parse(source)))
+    docstrings = {node.value for node in nodes if isinstance(node, ast.Expr)}
+    texts = [
+        node.value
+        for node in nodes
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node not in docstrings
+    ]
+    texts.extend(
+        "".join(
+            part.value if isinstance(part, ast.Constant) else "{}" for part in node.values
         )
-    return literals
+        for node in nodes
+        if isinstance(node, ast.JoinedStr)
+    )
+    return texts
+
+
+def _source_message_texts() -> list[str]:
+    return [
+        text
+        for path in sorted((_REPOSITORY_ROOT / "src").rglob("*.py"))
+        for text in _message_texts(path.read_text(encoding="utf-8"))
+    ]
 
 
 def _spec_texts() -> list[str]:
@@ -2694,7 +2708,7 @@ def _spec_texts() -> list[str]:
 
 
 @pytest.mark.parametrize(
-    "user_facing_texts", [_source_message_literals, _spec_texts], ids=["src", "specs"]
+    "user_facing_texts", [_source_message_texts, _spec_texts], ids=["src", "specs"]
 )
 def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
     user_facing_texts: Callable[[], list[str]],
@@ -2727,6 +2741,26 @@ def test_the_deletion_advice_guard_flags_every_manual_delete_form(
     manual_deletion_advice: str,
 ) -> None:
     assert _STATE_DELETION_ADVICE.search(manual_deletion_advice)
+
+
+@pytest.mark.parametrize(
+    "advising_source",
+    [
+        'message = f"if stuck, `git update-ref -d {STATE_REF}` on {remote} clears it"',
+        'message = f"if stuck, `git push {remote} :{STATE_REF}` clears it"',
+        'message = f"if stuck, `git push {remote} --delete {STATE_REF}` clears it"',
+        'message = f"if stuck, `git push {remote} --force {STATE_REF}` clears it"',
+        'message = f"if stuck, `git push {remote} +{local}:{STATE_REF}` clears it"',
+        'message = "if stuck, `git push origin :refs/aco/state` clears it"',
+    ],
+)
+def test_the_deletion_advice_guard_reads_every_message_a_module_writes(
+    advising_source: str,
+) -> None:
+    advice = [
+        text for text in _message_texts(advising_source) if _STATE_DELETION_ADVICE.search(text)
+    ]
+    assert advice != []
 
 
 def test_the_deletion_advice_guard_lets_the_bundle_restore_fetch_through() -> None:
