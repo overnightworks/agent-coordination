@@ -46,7 +46,11 @@ DEFAULT_CLAIM_ROLE = "builder"
 NEXT_PULL_DESCRIPTION = (
     "Pulling is not dispatching: an item whose expectations are still unruled is "
     "named here with refining as its first step, while dispatching a builder onto "
-    "it waits for the operator's ruling."
+    "it waits for the operator's ruling. An item labelled "
+    f"{board.NEEDS_OPERATOR_LABEL} waits on the operator and is never pulled; set or "
+    f"remove the label with gh issue edit <n> --add-label/--remove-label "
+    f"{board.NEEDS_OPERATOR_LABEL}, or under storage = state-ref by piping a body whose "
+    "[record] labels add or drop it to aco item edit <item-id>."
 )
 CLAIM_DESCRIPTION = (
     "Refuses before the first edit unless the checkout is a linked, isolated "

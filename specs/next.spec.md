@@ -49,7 +49,7 @@ other printable space are text.
 | that same container still names further work | NEXT-06 | NEXT-13 |
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
 | an unworkable item exists beside the top action | NEXT-08 | NEXT-14 |
-| an item carries the label `needs-operator` | NEXT-39 | NEXT-14 |
+| an item carries the label `needs-operator` | NEXT-39, NEXT-40 | NEXT-14 |
 | further free items exist, disjoint from the first action | NEXT-09, NEXT-21, NEXT-22 | NEXT-15 |
 | more than three such candidates | NEXT-10 | NEXT-15 |
 | the first action itself names no scope | NEXT-16 | NEXT-15 |
@@ -92,6 +92,7 @@ other printable space are text.
 - [ ] [NEXT-34] A NEXT-05 container not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, `\` and `"` in `<title>` escaped in text and `--json`; never `container; claim a child`.
 - [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED` or `waiting on operator:`, in text or `--json` (see E-NEXT-06).
 - [ ] [NEXT-39] An open, unclaimed, unfrozen item labelled `needs-operator` is never pulled; a line `waiting on operator: <labels>` after `close:` names it instead of `SKIPPED` (E-NEXT-13).
+- [ ] [NEXT-40] `aco next --help` names that label and how to set or remove it: `gh issue edit <n> --add-label/--remove-label`, or `aco item edit <item-id>` under `storage = "state-ref"`.
 
 ## `parallel:`
 

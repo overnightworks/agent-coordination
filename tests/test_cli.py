@@ -4011,6 +4011,15 @@ def test_readme_and_help_texts_carry_no_stale_state_ref_read_only_sentence() -> 
             ("--whole", "three paths"),
             id="rescope-names-the-whole-reason",
         ),
+        pytest.param(
+            "next",
+            (
+                "labelled needs-operator waits on the operator",
+                "gh issue edit <n> --add-label/--remove-label needs-operator",
+                "aco item edit <item-id>",
+            ),
+            id="next-names-the-label-that-holds-an-item-for-the-operator",
+        ),
     ],
 )
 def test_help_text_names_the_refusal_or_source_it_documents(
@@ -4019,7 +4028,8 @@ def test_help_text_names_the_refusal_or_source_it_documents(
     """`claim --help` and `rescope --help` each name, in prose, the refusal
     or derivation source their own behaviour documents -- the out-of-order
     and wide-scope refusals, and (issue #337 proof 4, REVISE finding 2)
-    where an omitted `--scope` comes from."""
+    where an omitted `--scope` comes from; `next --help` names the label
+    that holds an item for the operator and how to set it (issue #562)."""
     with pytest.raises(SystemExit) as exited:
         issue_claim.main([command, "--help"])
 
