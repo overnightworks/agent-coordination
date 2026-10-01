@@ -1,0 +1,8 @@
+claim_id = "ac9828315e0c49ec9b086c6b4e0750b7"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "592e01cca30fc65e6d740c1fe4e285ef30cc6e02"
+branch = "claude/issue-553-next-skips-operator"
+scope = ["specs/claim.spec.md", "specs/item.spec.md", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
+opened_commit = "4bf47b7ff33c992ba604d1fea125673a3dc4efb4"
+whole_reason = "one typed waiting-on-operator marker, and next/claim skip what it marks"
