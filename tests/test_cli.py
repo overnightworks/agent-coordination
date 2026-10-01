@@ -18357,6 +18357,20 @@ _CLOSES = f"Closes #{WORK_ITEM_ISSUE}"
             (_WORK_ITEM_TRAILER,),
             id="classification-mid-body",
         ),
+        pytest.param(
+            board.MergeMethod.MERGE,
+            f"Fixes it.\n \n{_WORK_ITEM_TRAILER}\n\t\n{_CLOSES}",
+            f"Fixes it.\n\t\n{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n",
+            (_WORK_ITEM_TRAILER,),
+            id="classification-between-whitespace-only-lines",
+        ),
+        pytest.param(
+            board.MergeMethod.MERGE,
+            f"Fixes it.\n\n\n\n{_WORK_ITEM_TRAILER}\n\n{_CLOSES}",
+            f"Fixes it.\n\n{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n",
+            (_WORK_ITEM_TRAILER,),
+            id="classification-after-a-blank-line-run",
+        ),
     ],
 )
 def test_land_message_keeps_the_classification_inside_gits_trailer_block(

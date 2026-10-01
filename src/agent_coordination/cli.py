@@ -6823,12 +6823,34 @@ def _land_trunk_trailer(classification: board.Classification) -> str:
     return f"No-Item: {classification.kind.value}"
 
 
+# Git's own blank line (`is_blank_line`): whitespace only. One run of them
+# separates two paragraphs, captured so a kept paragraph keeps its own.
+_BLANK_LINE_RUN = re.compile(r"(\n(?:[ \t]*\n)+)")
+
+
 def _without_classification_lines(paragraph: str) -> str:
     return "\n".join(
         line
         for line in paragraph.split("\n")
         if not board.CLASSIFICATION_LINE_PATTERN.fullmatch(line)
     )
+
+
+def _body_without_classification(body: str) -> str:
+    """`body` with its classification line removed; a paragraph the removal
+    leaves blank goes with its own separator, so no blank-line run stays
+    where it stood (issue #594 line 5)."""
+    pieces = _BLANK_LINE_RUN.split(body.replace("\r\n", "\n"))
+    separators = ["", *pieces[1::2]]
+    kept = [
+        (separator, remaining)
+        for separator, paragraph in zip(separators, pieces[0::2], strict=True)
+        if (remaining := _without_classification_lines(paragraph)).strip()
+    ]
+    return "".join(
+        (separator if position else "") + paragraph
+        for position, (separator, paragraph) in enumerate(kept)
+    ).strip()
 
 
 def _ends_in_trailer_block(title: str, body: str) -> bool:
@@ -6855,16 +6877,8 @@ def _land_merge_body(title: str, body: str, classification: board.Classification
     request body happened to put it. Git reads trailers from the last
     paragraph only, so a body already ending in a trailer block (a
     `Co-Authored-By:` line) takes the classification into that block
-    rather than behind a blank line that would orphan it (issue #594). A
-    paragraph the removal empties goes with it, leaving no blank-line run
-    behind."""
-    paragraphs = body.replace("\r\n", "\n").split("\n\n")
-    remaining = [
-        kept
-        for paragraph in paragraphs
-        if (kept := _without_classification_lines(paragraph)) or not paragraph
-    ]
-    without_classification = "\n\n".join(remaining).strip()
+    rather than behind a blank line that would orphan it (issue #594)."""
+    without_classification = _body_without_classification(body)
     trailer = _land_trunk_trailer(classification)
     if not without_classification:
         return f"{trailer}\n"

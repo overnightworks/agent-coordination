@@ -100,7 +100,7 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-29] The landed commit's title is `Merge pull request #<n>` for a merge commit and `<title> (#<n>)` for a squash commit.
 - [ ] [LANDCMD-13] Its message is the pull request body with its classification line removed, then that classification as the message's last line, nothing after it, for a merge and a squash commit alike (E-LANDCMD-13).
 - [ ] [LANDCMD-34] When that body ends in a trailer paragraph, every line `Token: value` as git's trailer parsing reads it, the classification joins it as its last line, no blank line between; else a blank line, then the classification alone.
-- [ ] [LANDCMD-35] Removing the classification line leaves no run of blank lines where it stood: a paragraph it alone made goes with it.
+- [ ] [LANDCMD-35] Removing the classification line leaves no run of blank lines where it stood: a paragraph it alone made goes with it, and a whitespace-only line counts as blank.
 - [ ] [LANDCMD-14] A pull request whose head sha changed since preflight refuses the pinned merge with `pull request #<n> changed while it was checked; re-run land`, exit `2`; nothing merges.
 
 ## After the merge
