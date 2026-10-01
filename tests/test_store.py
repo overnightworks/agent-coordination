@@ -2722,7 +2722,9 @@ def test_no_message_advises_deleting_or_force_pushing_the_state_ref(
     """Issue #579: a hand-run ref deletion or force-push wipes every claim
     and state-ref item; a stuck ref is `aco reset`'s job, which exports
     first."""
-    advice = [text for text in user_facing_texts() if _STATE_DELETION_ADVICE.search(text)]
+    texts = user_facing_texts()
+    assert any("`aco reset`" in text for text in texts), "the guard must read the texts it protects"
+    advice = [text for text in texts if _STATE_DELETION_ADVICE.search(text)]
     assert advice == []
 
 
