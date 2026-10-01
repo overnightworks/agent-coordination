@@ -221,6 +221,9 @@ def test_main_refuses_a_command_line_it_cannot_honour_before_any_read(
     [
         pytest.param({"repository": "owner/.."}, id="repository-not-owner-repo"),
         pytest.param({"number": "1"}, id="number-not-an-integer"),
+        pytest.param({"number": 0}, id="number-zero"),
+        pytest.param({"number": -3}, id="number-negative"),
+        pytest.param({"number": True}, id="number-a-boolean"),
         pytest.param({"old_hash": "abc"}, id="hash-not-sha256"),
         pytest.param({"comment": "extra"}, id="unknown-field"),
     ],

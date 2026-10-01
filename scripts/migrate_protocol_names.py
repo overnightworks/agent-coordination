@@ -372,6 +372,7 @@ def _manifest_row(position: int, entry: object) -> ManifestRow:
         and _is_repository(entry["repository"])
         and isinstance(entry["number"], int)
         and not isinstance(entry["number"], bool)
+        and entry["number"] > 0
         and all(
             isinstance(entry[key], str) and _SHA256_HEX.fullmatch(entry[key])
             for key in ("old_hash", "new_hash")
