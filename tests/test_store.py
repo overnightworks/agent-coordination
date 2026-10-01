@@ -2688,7 +2688,10 @@ def _message_texts(source: str) -> list[str]:
         and node not in code_docstrings
     ]
     texts.extend(
-        "".join(part.value if isinstance(part, ast.Constant) else "{}" for part in node.values)
+        "".join(
+            part.value if isinstance(part, ast.Constant) and isinstance(part.value, str) else "{}"
+            for part in node.values
+        )
         for node in nodes
         if isinstance(node, ast.JoinedStr)
     )
