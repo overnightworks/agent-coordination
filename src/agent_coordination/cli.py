@@ -6822,18 +6822,76 @@ def _land_trunk_trailer(classification: board.Classification) -> str:
     return f"No-Item: {classification.kind.value}"
 
 
-def _land_merge_body(body: str, classification: board.Classification) -> str:
+# Git's own blank line (`is_blank_line`): whitespace only. One run of them
+# separates two paragraphs, captured so a kept paragraph keeps its own.
+_BLANK_LINE_RUN = re.compile(r"(\n(?:[ \t]*\n)+)")
+
+
+def _without_classification_lines(paragraph: str) -> str:
+    return "\n".join(
+        line
+        for line in paragraph.split("\n")
+        if not board.CLASSIFICATION_LINE_PATTERN.fullmatch(line)
+    )
+
+
+def _narrower_separator(dropped: str | None, following: str) -> str:
+    """The fewer-line of the two separators around a dropped paragraph,
+    `following` on a tie; `following` alone when nothing was dropped."""
+    if dropped is None:
+        return following
+    return min(following, dropped, key=lambda separator: separator.count("\n"))
+
+
+def _body_without_classification(body: str) -> str:
+    """`body` with its classification line removed; a paragraph the removal
+    leaves blank goes, and its neighbours keep the narrower of the two
+    separators around it, so no blank-line run stays where it stood
+    (issue #594 line 5)."""
+    pieces = _BLANK_LINE_RUN.split(body.replace("\r\n", "\n"))
+    composed = ""
+    dropped_separator: str | None = None
+    for separator, paragraph in zip(["", *pieces[1::2]], pieces[0::2], strict=True):
+        remaining = _without_classification_lines(paragraph)
+        if not remaining.strip():
+            dropped_separator = _narrower_separator(dropped_separator, separator)
+            continue
+        if composed:
+            composed += _narrower_separator(dropped_separator, separator)
+        composed += remaining
+        dropped_separator = None
+    return composed.strip()
+
+
+def _land_merge_body(title: str, body: str, classification: board.Classification) -> str:
     """The merge commit message `aco land` composes itself (issue #405,
     Befund 42 on #310): the pull request's own body with its classification
     line removed, then that classification, in the trunk's own trailer
-    grammar, as the message's own final paragraph -- so the trailer a later
-    trunk walk reads through git's own trailer parsing is never wherever
-    the pull request body happened to put it, always the message's own last
-    block."""
-    without_classification = board.CLASSIFICATION_LINE_PATTERN.sub("", body).strip()
+    grammar, as the message's own last line -- so the trailer a later trunk
+    walk reads through git's own trailer parsing is never wherever the pull
+    request body happened to put it. Git reads trailers from the last
+    paragraph only, so a body already ending in a trailer block (a
+    `Co-Authored-By:` line) takes the classification into that block
+    rather than behind a blank line that would orphan it -- but only where
+    git then reads that block's trailers and the classification both, a
+    question asked of the composed message itself: git reading the body
+    alone skips a trailing comment line and still finds the trailer block
+    above it, but once joined that comment line no longer ends the message,
+    and git reads it with the classification as the last paragraph instead
+    (issue #594)."""
+    without_classification = _body_without_classification(body)
     trailer = _land_trunk_trailer(classification)
     if not without_classification:
         return f"{trailer}\n"
+    joined = f"{without_classification}\n{trailer}"
+    body_trailers = checkout.message_trailers(f"{title}\n\n{without_classification}\n")
+    # Read as git reads it: a configured `trailer.<token>.key` renames it.
+    classification_trailers = checkout.message_trailers(f"{title}\n\n{trailer}\n")
+    joined_keeps_every_trailer = bool(body_trailers) and checkout.message_trailers(
+        f"{title}\n\n{joined}\n"
+    ) == (*body_trailers, *classification_trailers)
+    if joined_keeps_every_trailer:
+        return f"{joined}\n"
     return f"{without_classification}\n\n{trailer}\n"
 
 
@@ -6873,13 +6931,14 @@ def _land_merge(
     classification: board.Classification,
     method: board.MergeMethod,
 ) -> str:
+    title = _land_merge_title(method, detail)
     try:
         return client.merge_landing(
             detail.number,
             head_sha=readiness.head_sha,
             method=method,
-            title=_land_merge_title(method, detail),
-            body=_land_merge_body(detail.body, classification),
+            title=title,
+            body=_land_merge_body(title, detail.body, classification),
         )
     except forge.ForgeMergeConflictError as error:
         raise protocol.ClaimUnavailableError(
