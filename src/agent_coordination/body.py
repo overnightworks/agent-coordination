@@ -33,13 +33,6 @@ from . import metrics, protocol
 FENCE_OPENING_PATTERN = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})")
 FENCE_CLOSING_PATTERN = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})[ \t]*$")
 
-# `cut`'s fresh child, in the one grammar the tool reads: every projection
-# key present and empty, so `parse_body` reads it as `VALID` but
-# `contract_complete=False` -- invisible to `next`, refused by `claim` --
-# until the head fills it in. Empty strings, not omitted keys, which the
-# block schema would refuse. No `source_slice` -- title, sub-issue relation,
-# and GitHub history own provenance instead.
-BLOCK_CHILD_SKELETON = '```agent-claim\nversion = 1\nnow = ""\nnext = ""\ndone_when = ""\n```\n'
 # A fresh container carries no automatic parent-provenance the way `cut`
 # gives a fresh child one, so `item new` with nothing piped states the prose
 # the global contract requires when nothing blocks it (README "`Blocked by:`
@@ -1252,11 +1245,20 @@ _SKELETON_PROJECTION: Mapping[str, object] = {
 
 def prose_above_fresh_block(prose: str, fields: Mapping[str, object]) -> str:
     """`prose` above a fresh `agent-claim` block holding `fields` (issue
-    #555), every projection key `fields` leaves out written empty the way
-    `BLOCK_CHILD_SKELETON` writes it; the bare block when `prose` is empty."""
+    #555), every projection key `fields` leaves out written empty; the bare
+    block when `prose` is empty."""
     block = render_block({**_SKELETON_PROJECTION, **fields})
     fence = f"```{AGENT_CLAIM_FENCE_INFO}\n{block}```\n"
     return f"{prose}\n\n{fence}" if prose else fence
+
+
+# `cut`'s fresh child, in the one grammar the tool reads: every projection
+# key present and empty, so `parse_body` reads it as `VALID` but
+# `contract_complete=False` -- invisible to `next`, refused by `claim` --
+# until the head fills it in. Empty strings, not omitted keys, which the
+# block schema would refuse. No `source_slice` -- title, sub-issue relation,
+# and GitHub history own provenance instead.
+BLOCK_CHILD_SKELETON = prose_above_fresh_block("", {})
 
 
 def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
