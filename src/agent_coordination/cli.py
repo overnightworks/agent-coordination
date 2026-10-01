@@ -8123,14 +8123,15 @@ def _abandoned_release_command(
     claim: protocol.ActiveClaim, storage: body.Storage, *, by_holder: bool
 ) -> str:
     """The `release --abandoned` advice that ends live `claim` (issue #582):
-    an item claim by its item, a docs/ or fix/ lane claim by `--branch`,
+    an item claim by its item and claim id (so no attached branch is
+    needed, as reset needs none), a docs/ or fix/ lane claim by `--branch`,
     and, unless the running agent holds it (`by_holder`), as the
     coordinator -- each the form `release` itself accepts, so the line runs
     as printed once `<reason>` is filled in."""
     target = (
         ("--branch", claim.branch)
         if isinstance(claim.identity, protocol.LaneIdentity)
-        else (board.item_argument(claim.identity.issue, storage),)
+        else (board.item_argument(claim.identity.issue, storage), "--claim-id", claim.claim_id)
     )
     override = () if by_holder else ("--role", protocol.COORDINATOR_ROLE, "--coordinator-override")
     return f"{board.advice_command('release', *target, *override)} {_ABANDONED_PLACEHOLDER}"

@@ -21527,9 +21527,10 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
         "ERROR: refs/aco/state holds 3 live claim(s); release them first, "
         "or reset after they are gone: "
         "issue #42 by Codex Sol (builder) branch=codex/issue-42-reset claim=claim-42, "
-        "release: aco release 42 --abandoned <reason>; "
+        "release: aco release 42 --claim-id claim-42 --abandoned <reason>; "
         "issue #43 by Grok Ada (builder) branch=codex/issue-43-reset claim=claim-43, "
-        "release: aco release 43 --role coordinator --coordinator-override "
+        "release: aco release 43 --claim-id claim-43 --role coordinator "
+        "--coordinator-override "
         "--abandoned <reason>; "
         "lane fix/reset-docs by Grok Ada (builder) branch=fix/reset-docs claim=claim-lane, "
         "release: aco release --branch fix/reset-docs --role coordinator "
@@ -21540,6 +21541,8 @@ def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     assert not store.local_state_ref_exists(repository)
     assert _lineage_observation(repository) == lineage_before
 
+    # Reset needs no attached branch, so neither may the advice it prints.
+    _real_git(repository, "checkout", "-q", "--detach")
     printed_releases = [
         claim.split(", release: ", 1)[1]
         for claim in captured.err.rstrip("\n").split("gone: ", 1)[1].split("; ")
