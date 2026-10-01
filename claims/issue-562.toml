@@ -1,8 +1,0 @@
-claim_id = "d8370d08810e4eaf8ef8219f931fb98c"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "571a506fa554bd40209a11b494e01e38044a1902"
-branch = "claude/issue-562-next-advises-start"
-scope = ["specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py", "tests/test_state_board.py"]
-opened_commit = "621412a15a734b83c5cc579fcd29404941915c5a"
-whole_reason = "next's advice from the main checkout, its waiting line and its help text"
