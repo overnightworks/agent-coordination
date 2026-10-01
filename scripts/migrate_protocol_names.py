@@ -564,11 +564,11 @@ def main(
     arguments = parser.parse_args(argv)
     if arguments.dry_run and not arguments.repo:
         parser.error("--dry-run needs at least one --repo OWNER/REPO")
+    if arguments.apply and arguments.repo:
+        parser.error("--apply takes its repositories from the manifest; --repo is for --dry-run")
     # GitHub reads OWNER/REPO without regard to case, so Owner/Repo and owner/repo are one.
     if len({repository.casefold() for repository in arguments.repo}) < len(arguments.repo):
         parser.error("--repo names the same repository more than once")
-    if arguments.apply and arguments.repo:
-        parser.error("--apply takes its repositories from the manifest; --repo is for --dry-run")
     active_clock = clock if clock is not None else SystemClock()
     api = GitHubApi(run, active_clock)
     try:

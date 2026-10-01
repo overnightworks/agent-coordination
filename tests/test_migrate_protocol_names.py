@@ -217,6 +217,11 @@ def test_dry_run_refuses_and_names_every_shape_but_the_one_exact_fence(
             id="apply-with-repo",
         ),
         pytest.param(
+            ["--apply", "--repo", "owner/repo", "--repo", "owner/repo"],
+            "--apply takes its repositories from the manifest",
+            id="apply-with-a-repeated-repo",
+        ),
+        pytest.param(
             ["--dry-run", "--repo", "owner/repo", "--repo", "Owner/Repo"],
             "names the same repository more than once",
             id="repeated-repo",
