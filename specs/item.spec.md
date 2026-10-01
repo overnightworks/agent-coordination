@@ -48,6 +48,7 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
 | `--title` empty or whitespace only, either storage | ITEM-36 | — | — | — |
 | `--size` given, valid or invalid | ITEM-20 | — | ITEM-21, ITEM-22, ITEM-49, ITEM-51 | — |
 | `--whole` given, valid or invalid | ITEM-23 | — | ITEM-24, ITEM-49, ITEM-51 | — |
+| `--size`, `--whole` or `--kind` naming the value already set | — | — | ITEM-64 | — |
 | prose piped without a block, or nothing piped, either storage | ITEM-58, ITEM-60 | — | — | — |
 | a piped block a flag agrees with or contradicts, either storage | ITEM-59, ITEM-62 | — | — | — |
 | state-ref pin, a stored body leaving a section empty | ITEM-61 | — | — | — |
@@ -156,6 +157,15 @@ is its `storage = "github"` form; under `storage = "state-ref"` it prints
   $ printf 'body\n' | aco item edit 484 --size S
   2> ERROR: item edit --size reads no stdin; drop the redirect
   exit 2
+  ```
+- [ ] [ITEM-64] `--size`, `--whole` or `--kind` naming the value already set prints `UNCHANGED #<n> <field>=<value>` (`--json`: `reason: "unchanged"`, ITEM-22/24/47's keys), exit `0`, and writes nothing.
+
+  ```console
+  $ aco item edit 484 --size S
+  EDITED #484 size=S
+  $ aco item edit 484 --size S
+  UNCHANGED #484 size=S
+  exit 0
   ```
 - [ ] [ITEM-50] `--size`, `--whole` and `--kind` exclude one another: a second one refuses at argparse, `argument <second>: not allowed with argument <first>`, exit `2`, before any write.
 - [ ] [ITEM-51] A socket, terminal, `/dev/null` or closed stdin on `--kind`, `--size` or `--whole` passes unread, as an agent harness hands a socket when nothing was piped.

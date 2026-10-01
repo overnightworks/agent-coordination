@@ -4253,6 +4253,44 @@ class TestCliStateRefForge:
         expected = (0, f"EDITED {CHILD_A_ID}\n", "", True) if edits else (2, "", refusal, False)
         assert (status, captured.out, captured.err, wrote) == expected
 
+    @pytest.mark.parametrize(
+        ("flag", "value", "field"),
+        [
+            pytest.param("--size", "L", "size=L", id="size"),
+            pytest.param("--whole", "one PR", "whole=one PR", id="whole"),
+            pytest.param("--kind", "container", "kind=container", id="kind"),
+        ],
+    )
+    def test_a_narrow_item_edit_to_the_value_already_set_writes_nothing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+        flag: str,
+        value: str,
+        field: str,
+    ) -> None:
+        """Issue #572 line 3 (ITEM-64): the first `item edit --size/--whole/
+        --kind` sets the value; the same edit again reports `UNCHANGED` and
+        leaves the state ref's tip where the first one put it."""
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
+        command = ["item", "edit", str(CHILD_A_NUMBER), flag, value]
+        remote_url = f"file://{bare_remote}"
+        assert issue_claim.main(command) == 0
+        first = (capsys.readouterr().out, store.fetch_state(worktree=worktree, remote=remote_url))
+
+        repeated = issue_claim.main(command)
+
+        second = (capsys.readouterr().out, store.fetch_state(worktree=worktree, remote=remote_url))
+        assert (first[0], repeated, second[0], second[1].tip) == (
+            f"EDITED {CHILD_A_ID} {field}\n",
+            0,
+            f"UNCHANGED {CHILD_A_ID} {field}\n",
+            first[1].tip,
+        )
+
     def test_item_new_refuses_a_title_twinning_a_just_closed_item(
         self,
         monkeypatch: pytest.MonkeyPatch,

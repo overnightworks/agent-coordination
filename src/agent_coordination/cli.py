@@ -3300,7 +3300,9 @@ ITEM_NEW_ORIGIN_ON_GITHUB_REFUSAL = '--origin needs storage = "state-ref"'
 class ItemReason(StrEnum):
     """`aco item`'s own `--json` `reason` vocabulary, shared across its four
     subcommands (issue #425, `specs/item.spec.md`): `created`/`edited`/
-    `closed`/`shown` name each subcommand's own success. `body_invalid`
+    `closed`/`shown` name each subcommand's own success; `unchanged`, an
+    `item edit --size/--whole/--kind` whose value is already set, which
+    writes nothing (issue #572). `body_invalid`
     covers only `item new`'s and `item edit`'s own piped-body shape check
     (`_body_shape_defects`, the same check `body --check` runs), carrying
     `defects` the same way (`BodyCheckReason`, issue #404); `partial_write`
@@ -3313,6 +3315,7 @@ class ItemReason(StrEnum):
 
     CREATED = "created"
     EDITED = "edited"
+    UNCHANGED = "unchanged"
     CLOSED = "closed"
     SHOWN = "shown"
     PRECONDITION_FAILED = "precondition_failed"
@@ -3618,22 +3621,41 @@ def _cmd_item_edit_size(parsed: argparse.Namespace, context: RunContext) -> int:
             number, current_body, command=ITEM_EDIT_SIZE_COMMAND, storage=storage
         )
         new_data = {**located.data, "size": parsed.size}
-        client.update_item_body(
-            number, body.replace_agent_claim_block(current_body, located, new_data)
-        )
-        _print_item_edit_size_result(number, parsed.size, storage, as_json=as_json)
+        outcome = _write_block_data(client, number, current_body, located, new_data)
+        _print_item_edit_size_result(number, parsed.size, storage, outcome, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
+def _write_block_data(
+    client: forge.ForgeWriter,
+    number: int,
+    current_body: str,
+    located: body.LocatedBlock,
+    new_data: dict[str, object],
+) -> ItemReason:
+    """Writes `new_data` as item `number`'s block, every other byte
+    untouched, or nothing at all when the block already carries it (issue
+    #572), so a repeated narrow edit leaves no empty write behind."""
+    if new_data == located.data:
+        return ItemReason.UNCHANGED
+    client.update_item_body(number, body.replace_agent_claim_block(current_body, located, new_data))
+    return ItemReason.EDITED
+
+
+def _narrow_edit_word(outcome: ItemReason) -> str:
+    """The first word a narrow `item edit` prints: `EDITED` or `UNCHANGED`."""
+    return outcome.value.upper()
+
+
 def _print_item_edit_size_result(
-    number: int, size: str, storage: body.Storage, *, as_json: bool
+    number: int, size: str, storage: body.Storage, outcome: ItemReason, *, as_json: bool
 ) -> None:
     if as_json:
-        _emit_json(True, ItemReason.EDITED, item=number, size=size)
+        _emit_json(True, outcome, item=number, size=size)
     else:
-        print(f"EDITED {board.item_label(number, storage)} size={size}")
+        print(f"{_narrow_edit_word(outcome)} {board.item_label(number, storage)} size={size}")
 
 
 ITEM_EDIT_WHOLE_COMMAND = "item edit --whole"
@@ -3661,22 +3683,20 @@ def _cmd_item_edit_whole(parsed: argparse.Namespace, context: RunContext) -> int
         )
         reason = protocol._outbound_text(parsed.whole, _WHOLE_REASON_LABEL, maximum=512)
         new_data = {**located.data, "whole": reason}
-        client.update_item_body(
-            number, body.replace_agent_claim_block(current_body, located, new_data)
-        )
-        _print_item_edit_whole_result(number, reason, storage, as_json=as_json)
+        outcome = _write_block_data(client, number, current_body, located, new_data)
+        _print_item_edit_whole_result(number, reason, storage, outcome, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
 def _print_item_edit_whole_result(
-    number: int, reason: str, storage: body.Storage, *, as_json: bool
+    number: int, reason: str, storage: body.Storage, outcome: ItemReason, *, as_json: bool
 ) -> None:
     if as_json:
-        _emit_json(True, ItemReason.EDITED, item=number, whole=reason)
+        _emit_json(True, outcome, item=number, whole=reason)
     else:
-        print(f"EDITED {board.item_label(number, storage)} whole={reason}")
+        print(f"{_narrow_edit_word(outcome)} {board.item_label(number, storage)} whole={reason}")
 
 
 ITEM_EDIT_KIND_COMMAND = "item edit --kind"
@@ -3720,21 +3740,23 @@ def _cmd_item_edit_kind(parsed: argparse.Namespace, context: RunContext) -> int:
             raise protocol.ClaimUnavailableError(
                 f"{label} has an open child; a container with open children stays a container"
             )
-        client.set_item_kind(number, kind)
-        _print_item_edit_kind_result(number, kind, storage, as_json=as_json)
+        outcome = ItemReason.UNCHANGED if target.kind is kind else ItemReason.EDITED
+        if outcome is ItemReason.EDITED:
+            client.set_item_kind(number, kind)
+        _print_item_edit_kind_result(number, kind, storage, outcome, as_json=as_json)
         return 0
     except protocol.ClaimError as error:
         return _refuse(ItemReason.PRECONDITION_FAILED, error, as_json=as_json)
 
 
 def _print_item_edit_kind_result(
-    number: int, kind: body.ItemKind, storage: body.Storage, *, as_json: bool
+    number: int, kind: body.ItemKind, storage: body.Storage, outcome: ItemReason, *, as_json: bool
 ) -> None:
     label = board.item_label(number, storage)
     if as_json:
-        _emit_json(True, ItemReason.EDITED, item=label, number=number, kind=kind.value)
+        _emit_json(True, outcome, item=label, number=number, kind=kind.value)
     else:
-        print(f"EDITED {label} kind={kind.value}")
+        print(f"{_narrow_edit_word(outcome)} {label} kind={kind.value}")
 
 
 def _print_item_edit_result(
