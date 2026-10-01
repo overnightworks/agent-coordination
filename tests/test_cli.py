@@ -18397,6 +18397,13 @@ _CLOSES = f"Closes #{WORK_ITEM_ISSUE}"
             (_WORK_ITEM_TRAILER,),
             id="classification-before-a-blank-line-run",
         ),
+        pytest.param(
+            board.MergeMethod.MERGE,
+            f"{_CLOSES}\n\n{_WORK_ITEM_TRAILER}\n{_CO_AUTHOR}\n\n# Notes",
+            f"{_CLOSES}\n\n{_CO_AUTHOR}\n\n# Notes\n\n{_WORK_ITEM_TRAILER}\n",
+            (_WORK_ITEM_TRAILER,),
+            id="comment-line-after-trailer-block",
+        ),
     ],
 )
 def test_land_message_keeps_the_classification_inside_gits_trailer_block(

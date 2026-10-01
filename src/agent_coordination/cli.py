@@ -6872,14 +6872,22 @@ def _land_merge_body(title: str, body: str, classification: board.Classification
     request body happened to put it. Git reads trailers from the last
     paragraph only, so a body already ending in a trailer block (a
     `Co-Authored-By:` line) takes the classification into that block
-    rather than behind a blank line that would orphan it (issue #594)."""
+    rather than behind a blank line that would orphan it -- but only where
+    git then reads that block's trailers and the classification both, a
+    question asked of the composed message itself, since git skips a
+    trailing comment line the body's own reading would not (issue #594)."""
     without_classification = _body_without_classification(body)
     trailer = _land_trunk_trailer(classification)
     if not without_classification:
         return f"{trailer}\n"
-    joins_trailer_block = bool(checkout.message_trailers(f"{title}\n\n{without_classification}\n"))
-    separator = "\n" if joins_trailer_block else "\n\n"
-    return f"{without_classification}{separator}{trailer}\n"
+    joined = f"{without_classification}\n{trailer}"
+    body_trailers = checkout.message_trailers(f"{title}\n\n{without_classification}\n")
+    joined_keeps_every_trailer = bool(body_trailers) and checkout.message_trailers(
+        f"{title}\n\n{joined}\n"
+    ) == (*body_trailers, trailer)
+    if joined_keeps_every_trailer:
+        return f"{joined}\n"
+    return f"{without_classification}\n\n{trailer}\n"
 
 
 def _land_merge_method(
