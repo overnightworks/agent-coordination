@@ -21408,46 +21408,51 @@ def test_cli_reset_confirm_exports_a_verifiable_bundle_and_bootstraps_a_fresh_re
 
 
 @pytest.mark.parametrize(
-    "force_unreadable",
-    [pytest.param([], id="plain"), pytest.param(["--force-unreadable"], id="forced")],
+    "mode",
+    [
+        pytest.param([], id="dry-run"),
+        pytest.param(["--confirm"], id="confirm"),
+        pytest.param(["--confirm", "--force-unreadable"], id="forced"),
+    ],
 )
-def test_cli_reset_refuses_when_a_claim_is_live_and_touches_nothing(
+def test_cli_reset_refuses_naming_every_live_claim_and_touches_nothing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    force_unreadable: list[str],
+    mode: list[str],
 ) -> None:
-    """`--force-unreadable` (issue #341) only lifts the refusal over a
-    schema this aco cannot read; a readable tree's live claim still refuses."""
+    """CAS-40/CAS-62 (issue #582): confirmed or not, a live claim refuses
+    with one sentence on stderr naming why and every claim to release;
+    `--force-unreadable` (issue #341) only lifts the refusal over a schema
+    this aco cannot read."""
     _use_real_store(monkeypatch)
     repository, bare_remote = _reset_repository(monkeypatch, tmp_path)
     store.bootstrap(worktree=repository, remote=str(bare_remote))
-    store.commit_transition(
-        observed=fresh_observation(repository, bare_remote),
-        subject=store.ClaimTransitionSubject("claim issue 42", item="42"),
-        intent=_real_claim_intent(42),
-    )
-    tip_before = _real_git(repository, "ls-remote", str(bare_remote), store.STATE_REF).stdout.split(
-        "\t"
-    )[0]
+    for issue in (42, 43):
+        store.commit_transition(
+            observed=fresh_observation(repository, bare_remote),
+            subject=store.ClaimTransitionSubject(f"claim issue {issue}", item=str(issue)),
+            intent=_real_claim_intent(issue),
+        )
+    tip_before = _remote_state_tip(repository, bare_remote)
     lineage_before = _lineage_observation(repository)
     assert lineage_before != (None, None)
     export_dir = tmp_path / "export"
     export_dir.mkdir()
     monkeypatch.chdir(repository)
 
-    command = ["reset", "--confirm", *force_unreadable, "--export-dir", str(export_dir)]
-
-    status = issue_claim.main(command)
+    status = issue_claim.main(["reset", *mode, "--export-dir", str(export_dir)])
 
     assert status == 2
-    out = capsys.readouterr().out
-    assert "CLAIMED issue #42" in out
-    assert "codex/issue-42-reset" in out
-    tip_after = _real_git(repository, "ls-remote", str(bare_remote), store.STATE_REF).stdout.split(
-        "\t"
-    )[0]
-    assert tip_after == tip_before
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "ERROR: refs/aco/state holds 2 live claim(s); release them first "
+        "(aco release <id> --abandoned <reason>), or reset after they are gone: "
+        "issue #42 by Codex Sol (builder) branch=codex/issue-42-reset claim=claim-42, "
+        "issue #43 by Codex Sol (builder) branch=codex/issue-43-reset claim=claim-43\n"
+    )
+    assert _remote_state_tip(repository, bare_remote) == tip_before
     assert list(export_dir.iterdir()) == []
     assert not store.local_state_ref_exists(repository)
     assert _lineage_observation(repository) == lineage_before

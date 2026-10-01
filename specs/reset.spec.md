@@ -22,7 +22,7 @@ documents. `<repo>`/`<sha>`/`<tip>`/`<remote>` are the runner's own values;
 |---|---|---|
 | the canonical remote has no URL configured | RESET-18 | RESET-18 |
 | `refs/aco/state` never existed on the remote | RESET-01, RESET-02 | RESET-03 |
-| a live claim exists | CAS-40 | CAS-40 |
+| a live claim exists | CAS-40, CAS-62 | CAS-40, CAS-62 |
 | ref present, no live claim | CAS-39 | CAS-41, CAS-43, CAS-44 |
 | `--no-export` | — | CAS-45 |
 | export destination already carries that bundle's name | — | CAS-42 |

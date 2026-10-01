@@ -161,7 +161,8 @@ always refuses it outright, `--confirm` or not; a state whose schema it
 cannot read needs `--force-unreadable` besides (`specs/reset.spec.md`).
 
 - [ ] [CAS-39] `aco reset` without `--confirm` prints five `would: ` lines -- export, delete-remote, delete-local, clear-stamps, bootstrap -- exit `0`, and touches nothing.
-- [ ] [CAS-40] `aco reset`, confirmed or not, against a readable state with any live claim refuses before anything else runs, printing the same claim lines `status` prints, exit `2`.
+- [ ] [CAS-40] `aco reset`, confirmed or not, with a live claim in a readable state refuses before any write, stdout empty, naming each claim once: subject, holder, branch, id (see E-CAS-08).
+- [ ] [CAS-62] That refusal reads `refs/aco/state holds <n> live claim(s); release them first (aco release <id> --abandoned <reason>), or reset after they are gone: <claims>`, `, `-joined.
 - [ ] [CAS-41] `aco reset --confirm`, when the ref exists on the remote, exports its tip to a `git bundle`-verifiable `aco-state-<repo>-<date>-<12-hex>.bundle` under `--export-dir` before any deletion.
 - [ ] [CAS-42] `aco reset --confirm` against an export path that already carries that bundle's name refuses `<path> already exists; refusing to overwrite an export`, before anything is deleted.
 - [ ] [CAS-43] `aco reset --confirm` deletes `refs/aco/state` on the remote with `--force-with-lease` matched to the tip it read; a rejected or stale-leased push refuses and leaves the local ref untouched.
@@ -173,7 +174,7 @@ cannot read needs `--force-unreadable` besides (`specs/reset.spec.md`).
 
 - No command but `aco bootstrap` ever creates `refs/aco/state`; every other write path refuses (CAS-03) instead of creating it as a side effect.
 - A push against `refs/aco/state` is never `--force`/`--force-with-lease` outside the documented reset/recovery path (CAS-43): every ordinary transition is a plain fast-forward.
-- No refusal advises deleting or force-pushing `refs/aco/state` by hand: a stuck ref names only `aco reset`, which exports the state into a bundle before it deletes anything (CAS-15).
+- No refusal advises deleting or force-pushing `refs/aco/state` by hand: a stuck ref names only `aco reset`, which exports the state into a bundle by default before it deletes anything (CAS-15).
 - A worktree's own lineage stamp and fetch anchor are never shared with another linked worktree of the same checkout: each has its own git-dir.
 - A malformed fetched tree is never partially trusted: the whole read fails loud (CAS-22..38), never a single quarantined claim or resource; a malformed item file alone is refused only by its own read (`specs/item.spec.md` ITEM-38) and the writes `specs/storage-pin.spec.md` PIN-29 names, every board read lists it (`specs/board.spec.md` BOARD-54), and ITEM-42 alone reads its still-valid `record.title`.
 - No state-store fetch ever lands a tag or `FETCH_HEAD`: each carries `--no-tags --no-write-fetch-head`, so it writes only objects and the ref its own refspec names (issue #298 finding 2).
@@ -229,7 +230,7 @@ Setup: bare-remote, bootstrapped, `refs/aco/state.lock` held on `origin` for the
 
 ```console
 $ aco claim 42 --scope README.md
-2> ERROR: refs/aco/state rejected 32 pushes to origin without the ref ever moving: a stale lock or missing push rights, not a race -- check origin's refs/aco/state.lock (delete it if stale) and push permissions; if the ref itself is stuck, run `aco reset`, whose `--confirm` exports the state into a bundle before it deletes anything
+2> ERROR: refs/aco/state rejected 32 pushes to origin without the ref ever moving: a stale lock or missing push rights, not a race -- check origin's refs/aco/state.lock (delete it if stale) and push permissions; if the ref itself is stuck, run `aco reset`, whose `--confirm` exports the state into a bundle by default before it deletes anything
 exit 2
 ```
 
@@ -281,5 +282,15 @@ Setup: bare-remote, bootstrapped, this worktree's own stamped commit no longer r
 ```console
 $ aco status
 2> ERROR: cannot check whether <old> is an ancestor of <new>: <detail>
+exit 2
+```
+
+### E-CAS-08 — reset refuses while a claim is live
+
+Setup: bare-remote, bootstrapped, a live claim on issue 42 by `Ada` on branch `ada/issue-42`
+
+```console
+$ aco reset --confirm --export-dir <tmp>
+2> ERROR: refs/aco/state holds 1 live claim(s); release them first (aco release <id> --abandoned <reason>), or reset after they are gone: issue #42 by Ada (builder) branch=ada/issue-42 claim=<claim-id>
 exit 2
 ```

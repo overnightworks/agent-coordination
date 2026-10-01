@@ -8066,6 +8066,21 @@ def _build_reset_plan(
     )
 
 
+def _reset_live_claims_sentence(
+    claims: Iterable[protocol.ActiveClaim], storage: body.Storage
+) -> str:
+    named = [
+        f"{_claim_subject(claim, storage)} by {claim.agent} ({claim.role}) "
+        f"branch={claim.branch} claim={claim.claim_id}"
+        for claim in claims
+    ]
+    return (
+        f"{store.STATE_REF} holds {len(named)} live claim(s); release them first "
+        "(aco release <id> --abandoned <reason>), or reset after they are gone: "
+        + ", ".join(named)
+    )
+
+
 def _reset_unreadable_line(schema_version: int) -> str:
     return (
         f"schema {schema_version} not readable by this aco; live claims unknown "
@@ -8175,16 +8190,16 @@ def _reset_state(parsed: argparse.Namespace, context: RunContext) -> int:
     with a lease and locally if present, clears every worktree's lineage
     stamp and fetch anchor, and bootstraps a fresh empty state. Forge-free,
     like `bootstrap`. A live claim always refuses -- `--confirm` or not --
-    printing its claim lines instead of touching anything: a reset over live
+    naming every live claim instead of touching anything: a reset over live
     work is data loss with no owner. A state whose schema this aco cannot
     read has unknown live claims, so executing over it additionally needs
     `--force-unreadable` (issue #341); its bundle is still exported.
     """
     worktree, remote, state = _reset_observation(context)
     if isinstance(state, protocol.ClaimState) and state.claims:
-        ages = _claim_ages(worktree, state)
-        _status(tuple(state.claims.values()), None, ages, context.config.storage)
-        return 2
+        raise protocol.ClaimError(
+            _reset_live_claims_sentence(state.claims.values(), context.config.storage)
+        )
     export = _resolved_reset_export_config(parsed, context.toplevel)
     plan = _build_reset_plan(
         worktree=worktree,
