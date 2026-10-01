@@ -26,7 +26,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from http import HTTPStatus
@@ -255,12 +255,30 @@ class GitHubApi:
         item = json.loads(self._request("GET", f"repos/{repository}/issues/{number}").body)
         return item["body"] or ""
 
-    def update_body(self, repository: str, number: int, body: str) -> None:
+    def update_body(self, repository: str, number: int, old_hash: str, body: str) -> None:
+        """PATCH the body of an issue whose body was just read with `old_hash`.
+
+        GitHub's issue update takes no precondition, so the check cannot travel with the
+        write; the caller reads right before this call, and after every rate-limit wait the
+        body is read again so a stale PATCH is never resent over a newer edit."""
+
+        def stop_unless_unchanged() -> None:
+            if body_hash(self.issue_body(repository, number)) != old_hash:
+                raise drift_stop(item_reference(repository, number))
+
         # Only the body travels, so labels, type, assignees, state and comments stay as they are.
         payload = json.dumps({"body": body}).encode()
-        self._request("PATCH", f"repos/{repository}/issues/{number}", payload)
+        path = f"repos/{repository}/issues/{number}"
+        self._request("PATCH", path, payload, before_retry=stop_unless_unchanged)
 
-    def _request(self, method: str, path: str, payload: bytes | None = None) -> ApiResponse:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        payload: bytes | None = None,
+        *,
+        before_retry: Callable[[], None] | None = None,
+    ) -> ApiResponse:
         arguments = ["api", "--include", "--method", method, path]
         if payload is not None:
             arguments += ["--input", "-"]
@@ -270,6 +288,8 @@ class GitHubApi:
             if wait is None:
                 return _successful(response, method, path)
             self._clock.sleep(wait)
+            if before_retry is not None:
+                before_retry()
         raise MigrationStoppedError(
             f"{method} {path} still rate-limited after {MAX_RATE_LIMIT_WAITS} waits"
         )
@@ -304,20 +324,27 @@ def read_manifest(manifest: Path) -> list[ManifestRow]:
     return [ManifestRow(**row) for row in json.loads(manifest.read_text())]
 
 
+def drift_stop(reference: str) -> MigrationStoppedError:
+    return MigrationStoppedError(f"{reference}: the body changed since the dry run")
+
+
 def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_seconds: float) -> None:
     migrated = 0
+    last_patch_at: float | None = None
     for row in rows:
         reference = item_reference(row.repository, row.number)
+        # The pace runs out before the fresh read, so the read stays right before the PATCH.
+        if last_patch_at is not None:
+            _wait_out_pace(clock, last_patch_at + pace_seconds)
         body = api.issue_body(row.repository, row.number)
         current_hash = body_hash(body)
         if current_hash == row.new_hash:
             print(f"already migrated {reference}")
             continue
         if current_hash != row.old_hash:
-            raise MigrationStoppedError(f"{reference}: the body changed since the dry run")
-        if migrated:
-            clock.sleep(pace_seconds)
-        api.update_body(row.repository, row.number, _migrated_body(reference, body))
+            raise drift_stop(reference)
+        api.update_body(row.repository, row.number, row.old_hash, _migrated_body(reference, body))
+        last_patch_at = clock.now()
         migrated += 1
         if body_hash(api.issue_body(row.repository, row.number)) != row.new_hash:
             raise MigrationStoppedError(
@@ -325,6 +352,12 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_second
             )
         print(f"migrated {reference}")
     print(f"{migrated} migrated, {len(rows) - migrated} already migrated")
+
+
+def _wait_out_pace(clock: Clock, next_patch_at: float) -> None:
+    remaining = next_patch_at - clock.now()
+    if remaining > 0:
+        clock.sleep(remaining)
 
 
 def _migrated_body(reference: str, body: str) -> str:

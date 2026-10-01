@@ -22,6 +22,7 @@ migrate = SimpleNamespace(**runpy.run_path(str(_SCRIPT_PATH), run_name="migrate_
 
 PROTOCOL_BODY = 'Why\n\n```agent-claim\nversion = 1\nsize = "S"\n```\n'
 MIGRATED_BODY = 'Why\n\n```aco\nversion = 1\nsize = "S"\n```\n'
+EDITED_BODY = PROTOCOL_BODY + "edited after the dry run\n"
 REPOSITORY = "owner/repo"
 
 
@@ -75,8 +76,12 @@ class FakeGitHub:
 
 @dataclass
 class FakeClock:
+    """Records each wait instead of sleeping; `during_wait` stands for whatever else
+    happens on GitHub while the script waits."""
+
     waits: list[float] = field(default_factory=list)
     time: float = 1_000_000.0
+    during_wait: Callable[[], None] = lambda: None
 
     def now(self) -> float:
         return self.time
@@ -84,6 +89,7 @@ class FakeClock:
     def sleep(self, seconds: float) -> None:
         self.waits.append(seconds)
         self.time += seconds
+        self.during_wait()
 
 
 @dataclass
@@ -192,43 +198,71 @@ def test_apply_migrates_only_the_body_and_a_second_dry_run_reports_nothing_left(
     assert "0 bodies to change, 0 refused" in capsys.readouterr().out
 
 
-def _edit_issue_two(github: FakeGitHub) -> None:
-    github.add(2, PROTOCOL_BODY + "edited after the dry run\n")
+def _edit_issue_two(migration: Migration) -> None:
+    migration.github.add(2, EDITED_BODY)
 
 
-def _store_bodies_altered(github: FakeGitHub) -> None:
-    github.stored_suffix = "\n"
+def _edit_issue_two_during_the_pace(migration: Migration) -> None:
+    migration.clock.during_wait = lambda: migration.github.add(2, EDITED_BODY)
 
 
-def _refuse_permission(github: FakeGitHub) -> None:
-    github.patch_answers.append(_included(403, {"message": "Resource not accessible"}))
-
-
-def _rate_limit_forever(github: FakeGitHub) -> None:
+def _edit_issue_one_during_a_rate_limit_wait(migration: Migration) -> None:
     rate_limited = _included(429, {"message": "slow down"}, {"Retry-After": "1"})
-    github.patch_answers.extend([rate_limited] * (migrate.MAX_RATE_LIMIT_WAITS + 1))
+    migration.github.patch_answers.append(rate_limited)
+    migration.clock.during_wait = lambda: migration.github.add(1, EDITED_BODY)
+
+
+def _store_bodies_altered(migration: Migration) -> None:
+    migration.github.stored_suffix = "\n"
+
+
+def _refuse_permission(migration: Migration) -> None:
+    migration.github.patch_answers.append(_included(403, {"message": "Resource not accessible"}))
+
+
+def _rate_limit_forever(migration: Migration) -> None:
+    rate_limited = _included(429, {"message": "slow down"}, {"Retry-After": "1"})
+    migration.github.patch_answers.extend([rate_limited] * (migrate.MAX_RATE_LIMIT_WAITS + 1))
 
 
 @pytest.mark.parametrize(
-    ("perturb", "stop"),
+    ("perturb", "stop", "kept"),
     [
         pytest.param(
-            _edit_issue_two, "owner/repo#2: the body changed since the dry run", id="drift"
+            _edit_issue_two,
+            "owner/repo#2: the body changed since the dry run",
+            {2: EDITED_BODY, 3: PROTOCOL_BODY},
+            id="drift",
+        ),
+        pytest.param(
+            _edit_issue_two_during_the_pace,
+            "owner/repo#2: the body changed since the dry run",
+            {2: EDITED_BODY, 3: PROTOCOL_BODY},
+            id="drift-during-the-pace",
+        ),
+        pytest.param(
+            _edit_issue_one_during_a_rate_limit_wait,
+            "owner/repo#1: the body changed since the dry run",
+            {1: EDITED_BODY, 3: PROTOCOL_BODY},
+            id="drift-during-a-rate-limit-wait",
         ),
         pytest.param(
             _store_bodies_altered,
             "owner/repo#1: the body read back does not have the new hash",
+            {3: PROTOCOL_BODY},
             id="read-back-mismatch",
         ),
         pytest.param(
             _refuse_permission,
             "GitHub answered 403 to PATCH repos/owner/repo/issues/1",
+            {3: PROTOCOL_BODY},
             id="refused-permission",
         ),
         pytest.param(
             _rate_limit_forever,
             f"PATCH repos/owner/repo/issues/1 still rate-limited after "
             f"{migrate.MAX_RATE_LIMIT_WAITS} waits",
+            {3: PROTOCOL_BODY},
             id="rate-limit-never-lifts",
         ),
     ],
@@ -236,20 +270,21 @@ def _rate_limit_forever(github: FakeGitHub) -> None:
 def test_apply_stops_at_the_first_unsafe_row_and_names_it(
     migration: Migration,
     capsys: pytest.CaptureFixture[str],
-    perturb: Callable[[FakeGitHub], None],
+    perturb: Callable[[Migration], None],
     stop: str,
+    kept: dict[int, str],
 ) -> None:
     github = migration.github
     for number in (1, 2, 3):
         github.add(number, PROTOCOL_BODY)
     migration.dry_run(REPOSITORY)
-    perturb(github)
+    perturb(migration)
 
     exit_code = migration.apply()
 
     assert exit_code == 1
     assert f"stopped: {stop}" in capsys.readouterr().err
-    assert github.body(3) == PROTOCOL_BODY
+    assert {number: github.body(number) for number in kept} == kept
 
 
 @pytest.mark.parametrize(
