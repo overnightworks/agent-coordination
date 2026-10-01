@@ -1,0 +1,8 @@
+claim_id = "40fe589ea3f349248519aed02b291ea1"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "4ec395b8f07e820f4be11b2529918160bb403bf5"
+branch = "claude/issue-592-release-3-2-0"
+scope = ["README.md", "specs/land.spec.md", "src/agent_coordination/__init__.py", "tests/test_cli.py"]
+opened_commit = "ee620b34806c9c28296ae8e0a94cadb0b42b24b2"
+whole_reason = "version bump plus #590's three small follow-ups in the same docs, spec and test"
