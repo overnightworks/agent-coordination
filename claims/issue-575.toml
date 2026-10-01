@@ -1,8 +1,0 @@
-claim_id = "76bd6c869b2d447c8fea6c464b9f2141"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "7fa024d27e4f57281b6545047705ddeb45bdccd9"
-branch = "claude/issue-575-lane-shared-registries"
-scope = [".agent-claim/board.toml", ".agent-claim/brief.toml", "README.md", "scripts/test_budget_ratchet.txt", "scripts/vulture_whitelist.py", "specs/brief.spec.md", "specs/protect.spec.md", "specs/status.spec.md", "specs/storage-pin.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/protect.py", "src/agent_coordination/session.py", "tests/cli_fixtures.py", "tests/test_board.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_protect.py", "tests/test_state_board.py"]
-opened_commit = "5fec57d500843acc999054664ec24384f8af5b22"
-whole_reason = "one configured list of lane-shared registry files, honoured by protect, status and brief"
