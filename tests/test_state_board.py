@@ -3634,6 +3634,7 @@ class TestCliStateRefForge:
         item_files = {**_item_files(), **foreign}
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         _stub_claim_checkout(monkeypatch)
+        monkeypatch.setenv(checkout.ACO_AGENT_ENV, "Codex Sol")
         before = _state_ref_listing(bare_remote)
 
         status = issue_claim.main(["start", item_id, "--slug", "s", "--scope", "README"])
