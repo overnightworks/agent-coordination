@@ -352,18 +352,18 @@ class StateRefBoard:
         self._items: dict[str, _DecodedItem] = {}
         self._malformed: dict[str, _MalformedItem] = {}
         self._holds_items = False
-        self._foreign_filenames = sorted(
-            filename for filename in item_files if item_id_of_filename(filename) is None
-        )
+        foreign_filenames: list[str] = []
         for filename, content in item_files.items():
             item_id = item_id_of_filename(filename)
             if item_id is None:
+                foreign_filenames.append(filename)
                 continue
             decoded = _decode_item(item_id, content, item_oids[item_id])
             if isinstance(decoded, _MalformedItem):
                 self._malformed[item_id] = decoded
             else:
                 self._items[item_id] = decoded
+        self._foreign_filenames = sorted(foreign_filenames)
         self._by_number = {
             items.item_number(item_id): item_id for item_id in (*self._items, *self._malformed)
         }
