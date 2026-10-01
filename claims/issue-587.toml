@@ -1,0 +1,7 @@
+claim_id = "a899bb91d27948e2950d8a1a174635e5"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "e010c1a8f62cae34434d0fac32f96f96ed7d0e54"
+branch = "claude/issue-587-migration-script"
+scope = ["scripts/migrate_protocol_names.py", "tests/test_migrate_protocol_names.py"]
+opened_commit = "96f38047e6b2655c217d5c066298c6d51527f211"
