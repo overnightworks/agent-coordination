@@ -7,9 +7,11 @@ wait instead of sleeping. No test reaches GitHub.
 
 from __future__ import annotations
 
+import io
 import json
 import runpy
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -452,6 +454,7 @@ def test_apply_counts_a_body_migrated_during_a_rate_limit_wait_as_already_migrat
 )
 def test_apply_paces_its_patches_and_waits_out_a_rate_limit(
     migration: Migration,
+    capsys: pytest.CaptureFixture[str],
     rate_limited: str,
     wait: float,
     pace_arguments: list[str],
@@ -467,6 +470,9 @@ def test_apply_paces_its_patches_and_waits_out_a_rate_limit(
 
     assert exit_code == 0
     assert migration.clock.waits == [wait, pace, pace]
+    assert f"waiting {wait:g}s: rate limited on PATCH repos/owner/repo/issues/1" in (
+        capsys.readouterr().out
+    )
     assert [github.body(number) for number in (1, 2, 3)] == [MIGRATED_BODY] * 3
 
 
@@ -508,6 +514,44 @@ def test_apply_resumes_from_its_manifest_after_a_stopped_run(
     assert f"already migrated {REPOSITORY}#1" in output
     assert f"migrated {REPOSITORY}#2" in output
     assert [github.body(number) for number in (1, 2)] == [MIGRATED_BODY] * 2
+
+
+@pytest.mark.parametrize(
+    ("interruption", "stopped_exit_code"),
+    [
+        pytest.param(
+            migrate.MigrationStoppedError("gh api failed: connection reset"), 1, id="gh-fails"
+        ),
+    ],
+)
+def test_a_stopped_apply_has_already_written_out_every_row_it_patched(
+    migration: Migration,
+    monkeypatch: pytest.MonkeyPatch,
+    interruption: BaseException,
+    stopped_exit_code: int,
+) -> None:
+    github = migration.github
+    for number in (1, 2):
+        github.add(number, PROTOCOL_BODY)
+    migration.dry_run(REPOSITORY)
+    patches_sent: list[list[str]] = []
+
+    def run_until_the_second_patch(arguments: list[str], **options: bytes | None) -> str:
+        if "PATCH" in arguments:
+            patches_sent.append(arguments)
+            if len(patches_sent) == 2:
+                raise interruption
+        return github(arguments, **options)
+
+    terminal = io.BytesIO()
+    # A buffered stream like a terminal pipe: what is not flushed is lost when the run dies.
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(terminal, encoding="utf-8"))
+    command_line = ["--apply", "--manifest", str(migration.manifest)]
+
+    exit_code = migrate.main(command_line, run=run_until_the_second_patch, clock=migration.clock)
+
+    assert exit_code == stopped_exit_code
+    assert f"migrated {REPOSITORY}#1" in terminal.getvalue().decode()
 
 
 def test_a_gh_call_that_hangs_stops_the_run_and_names_the_call(

@@ -145,6 +145,12 @@ def item_reference(repository: str, number: int) -> str:
     return f"{repository}#{number}"
 
 
+def report_progress(line: str) -> None:
+    # Flushed at once, so the operator watching a live run sees each step as it happens and a
+    # killed run leaves its record of what was patched.
+    print(line, flush=True)
+
+
 def classify(body: str) -> Rewrite | Refusal | None:
     """The rewrite of a body, the reason it is refused, or None when it names no fence."""
     lines = body.split("\n")
@@ -324,6 +330,7 @@ class GitHubApi:
             if wait is None:
                 return _successful(response, method, path)
             if waits_done < MAX_RATE_LIMIT_WAITS:
+                report_progress(f"waiting {wait:g}s: rate limited on {method} {path}")
                 self._clock.sleep(wait)
                 if not resend_wanted():
                     raise _ResendDeclinedError
@@ -346,7 +353,7 @@ def dry_run(api: GitHubApi, repositories: Sequence[str], manifest: Path) -> None
             outcome = classify(issue.body)
             if isinstance(outcome, Refusal):
                 refused += 1
-                print(f"refused {item_reference(repository, issue.number)}: {outcome}")
+                report_progress(f"refused {item_reference(repository, issue.number)}: {outcome}")
             elif isinstance(outcome, Rewrite):
                 rows.append(
                     ManifestRow(
@@ -354,7 +361,9 @@ def dry_run(api: GitHubApi, repositories: Sequence[str], manifest: Path) -> None
                     )
                 )
     manifest.write_text(json.dumps([asdict(row) for row in rows], indent=2) + "\n")
-    print(f"{len(rows)} bodies to change, {refused} refused; manifest written to {manifest}")
+    report_progress(
+        f"{len(rows)} bodies to change, {refused} refused; manifest written to {manifest}"
+    )
 
 
 def read_manifest(manifest: Path) -> list[ManifestRow]:
@@ -421,15 +430,15 @@ def apply(api: GitHubApi, clock: Clock, rows: Sequence[ManifestRow], pace_second
             )
             last_patch_at = clock.monotonic()
         if not patched:
-            print(f"already migrated {reference}")
+            report_progress(f"already migrated {reference}")
             continue
         migrated += 1
         if body_hash(api.issue_body(row.repository, row.number)) != row.new_hash:
             raise MigrationStoppedError(
                 f"{reference}: the body read back does not have the new hash"
             )
-        print(f"migrated {reference}")
-    print(f"{migrated} migrated, {len(rows) - migrated} already migrated")
+        report_progress(f"migrated {reference}")
+    report_progress(f"{migrated} migrated, {len(rows) - migrated} already migrated")
 
 
 def _still_pending(api: GitHubApi, row: ManifestRow) -> bool:
