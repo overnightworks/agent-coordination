@@ -216,6 +216,34 @@ def test_main_refuses_a_command_line_it_cannot_honour_before_any_read(
     assert not migration.manifest.exists()
 
 
+@pytest.mark.parametrize(
+    "damage",
+    [
+        pytest.param({"repository": "owner/.."}, id="repository-not-owner-repo"),
+        pytest.param({"number": "1"}, id="number-not-an-integer"),
+        pytest.param({"old_hash": "abc"}, id="hash-not-sha256"),
+        pytest.param({"comment": "extra"}, id="unknown-field"),
+    ],
+)
+def test_apply_refuses_a_damaged_manifest_row_before_patching_any_row(
+    migration: Migration, capsys: pytest.CaptureFixture[str], damage: dict[str, object]
+) -> None:
+    sound_row = {
+        "repository": REPOSITORY,
+        "number": 1,
+        "old_hash": migrate.body_hash(PROTOCOL_BODY),
+        "new_hash": migrate.body_hash(MIGRATED_BODY),
+    }
+    migration.github.add(1, PROTOCOL_BODY)
+    migration.manifest.write_text(json.dumps([sound_row, {**sound_row, **damage}]))
+
+    exit_code = migration.apply()
+
+    assert exit_code == 1
+    assert "stopped: manifest row 2 is not a repository" in capsys.readouterr().err
+    assert migration.github.body(1) == PROTOCOL_BODY
+
+
 def test_dry_run_lists_every_issue_body_to_change_across_pages_and_writes_nothing(
     migration: Migration, capsys: pytest.CaptureFixture[str]
 ) -> None:

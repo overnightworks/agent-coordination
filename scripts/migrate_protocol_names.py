@@ -27,7 +27,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from functools import partial
 from http import HTTPStatus
@@ -55,6 +55,7 @@ _HEADER_END = re.compile(r"\r?\n\r?\n")
 # keeps this script free of aco imports.
 _REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}")
 _RESERVED_REPOSITORY_NAMES = frozenset({".", ".."})
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _RATE_LIMIT_STATUSES = frozenset({HTTPStatus.FORBIDDEN, HTTPStatus.TOO_MANY_REQUESTS})
 
 
@@ -357,7 +358,29 @@ def dry_run(api: GitHubApi, repositories: Sequence[str], manifest: Path) -> None
 
 
 def read_manifest(manifest: Path) -> list[ManifestRow]:
-    return [ManifestRow(**row) for row in json.loads(manifest.read_text())]
+    return [
+        _manifest_row(position, entry)
+        for position, entry in enumerate(json.loads(manifest.read_text()), start=1)
+    ]
+
+
+def _manifest_row(position: int, entry: object) -> ManifestRow:
+    """The manifest alone names what --apply patches, so a damaged row stops the run."""
+    if not (
+        isinstance(entry, dict)
+        and entry.keys() == {field.name for field in fields(ManifestRow)}
+        and _is_repository(entry["repository"])
+        and isinstance(entry["number"], int)
+        and not isinstance(entry["number"], bool)
+        and all(
+            isinstance(entry[key], str) and _SHA256_HEX.fullmatch(entry[key])
+            for key in ("old_hash", "new_hash")
+        )
+    ):
+        raise MigrationStoppedError(
+            f"manifest row {position} is not a repository, number and two hashes: {entry!r}"
+        )
+    return ManifestRow(**entry)
 
 
 class RowState(StrEnum):
@@ -427,10 +450,16 @@ def _migrated_body(reference: str, body: str) -> str:
 
 
 def _repository(value: str) -> str:
-    _, _, name = value.partition("/")
-    if _REPOSITORY.fullmatch(value) is None or name in _RESERVED_REPOSITORY_NAMES:
+    if not _is_repository(value):
         raise argparse.ArgumentTypeError(f"{value!r} is not OWNER/REPO")
     return value
+
+
+def _is_repository(value: object) -> bool:
+    if not isinstance(value, str) or _REPOSITORY.fullmatch(value) is None:
+        return False
+    _, _, name = value.partition("/")
+    return name not in _RESERVED_REPOSITORY_NAMES
 
 
 def _pace_seconds(value: str) -> float:
