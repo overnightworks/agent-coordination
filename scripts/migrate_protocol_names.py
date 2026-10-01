@@ -42,6 +42,8 @@ FALLBACK_RATE_LIMIT_WAIT_SECONDS = 60.0
 MAX_RATE_LIMIT_WAITS = 5
 PAGE_SIZE = 100
 GH_TIMEOUT_SECONDS = 60
+# The shell's code for a run ended by SIGINT (128 + 2).
+INTERRUPTED_EXIT_CODE = 130
 
 _FENCE = re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
 # A fence opening anywhere a reader would see one: after any indent and any blockquote or
@@ -360,17 +362,23 @@ def dry_run(api: GitHubApi, repositories: Sequence[str], manifest: Path) -> None
                         repository, issue.number, body_hash(issue.body), body_hash(outcome.body)
                     )
                 )
-    manifest.write_text(json.dumps([asdict(row) for row in rows], indent=2) + "\n")
+    try:
+        manifest.write_text(json.dumps([asdict(row) for row in rows], indent=2) + "\n")
+    except OSError as error:
+        raise MigrationStoppedError(f"cannot write the manifest {manifest}: {error}") from error
     report_progress(
         f"{len(rows)} bodies to change, {refused} refused; manifest written to {manifest}"
     )
 
 
 def read_manifest(manifest: Path) -> list[ManifestRow]:
-    return [
-        _manifest_row(position, entry)
-        for position, entry in enumerate(json.loads(manifest.read_text()), start=1)
-    ]
+    try:
+        entries = json.loads(manifest.read_text())
+    except (OSError, ValueError) as error:
+        raise MigrationStoppedError(f"cannot read the manifest {manifest}: {error}") from error
+    if not isinstance(entries, list):
+        raise MigrationStoppedError(f"the manifest {manifest} is not a list of rows")
+    return [_manifest_row(position, entry) for position, entry in enumerate(entries, start=1)]
 
 
 def _manifest_row(position: int, entry: object) -> ManifestRow:
@@ -472,9 +480,13 @@ def _is_repository(value: object) -> bool:
 
 
 def _pace_seconds(value: str) -> float:
-    seconds = float(value)
+    refusal = argparse.ArgumentTypeError(f"{value!r} is not a positive number of seconds")
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise refusal from None
     if not (math.isfinite(seconds) and seconds > 0):
-        raise argparse.ArgumentTypeError(f"{value!r} is not a positive number of seconds")
+        raise refusal
     return seconds
 
 
@@ -524,6 +536,9 @@ def main(
     except MigrationStoppedError as stopped:
         print(f"stopped: {stopped}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("stopped: interrupted", file=sys.stderr)
+        return INTERRUPTED_EXIT_CODE
     return 0
 
 

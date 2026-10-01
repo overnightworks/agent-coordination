@@ -200,6 +200,11 @@ def test_dry_run_refuses_and_names_every_shape_but_the_one_exact_fence(
             "--apply takes its repositories from the manifest",
             id="apply-with-repo",
         ),
+        pytest.param(
+            ["--apply", "--pace-seconds", "abc"],
+            "argument --pace-seconds: 'abc' is not a positive number of seconds",
+            id="pace-not-a-number",
+        ),
     ],
 )
 def test_main_refuses_a_command_line_it_cannot_honour_before_any_read(
@@ -246,6 +251,40 @@ def test_apply_refuses_a_damaged_manifest_row_before_patching_any_row(
 
     assert exit_code == 1
     assert "stopped: manifest row 2 is not a repository" in capsys.readouterr().err
+    assert migration.github.body(1) == PROTOCOL_BODY
+
+
+def _write_manifest(content: str) -> Callable[[Path], None]:
+    return lambda manifest: manifest.write_text(content)
+
+
+@pytest.mark.parametrize(
+    ("arrange", "mode", "stop"),
+    [
+        pytest.param(lambda _: None, "--apply", "cannot read the manifest", id="manifest-missing"),
+        pytest.param(
+            _write_manifest("not json"), "--apply", "cannot read the manifest", id="not-json"
+        ),
+        pytest.param(_write_manifest("7"), "--apply", "is not a list of rows", id="not-a-list"),
+        pytest.param(Path.mkdir, "--dry-run", "cannot write the manifest", id="unwritable"),
+    ],
+)
+def test_a_manifest_the_script_cannot_read_or_write_stops_the_run_by_name(
+    migration: Migration,
+    capsys: pytest.CaptureFixture[str],
+    arrange: Callable[[Path], None],
+    mode: str,
+    stop: str,
+) -> None:
+    migration.github.add(1, PROTOCOL_BODY)
+    arrange(migration.manifest)
+
+    exit_code = migration.dry_run(REPOSITORY) if mode == "--dry-run" else migration.apply()
+
+    error = capsys.readouterr().err
+    assert exit_code == 1
+    assert error.startswith("stopped: ")
+    assert stop in error
     assert migration.github.body(1) == PROTOCOL_BODY
 
 
@@ -522,10 +561,12 @@ def test_apply_resumes_from_its_manifest_after_a_stopped_run(
         pytest.param(
             migrate.MigrationStoppedError("gh api failed: connection reset"), 1, id="gh-fails"
         ),
+        pytest.param(KeyboardInterrupt(), 130, id="ctrl-c"),
     ],
 )
 def test_a_stopped_apply_has_already_written_out_every_row_it_patched(
     migration: Migration,
+    capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     interruption: BaseException,
     stopped_exit_code: int,
@@ -551,6 +592,7 @@ def test_a_stopped_apply_has_already_written_out_every_row_it_patched(
     exit_code = migrate.main(command_line, run=run_until_the_second_patch, clock=migration.clock)
 
     assert exit_code == stopped_exit_code
+    assert capsys.readouterr().err.startswith("stopped: ")
     assert f"migrated {REPOSITORY}#1" in terminal.getvalue().decode()
 
 
