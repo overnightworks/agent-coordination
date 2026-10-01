@@ -1261,7 +1261,8 @@ def _retry_exhaustion_error(
             f"{STATE_REF} rejected {attempts} pushes to {remote} without the ref ever "
             "moving: a stale lock or missing push rights, not a race -- check "
             f"{remote}'s {STATE_REF}.lock (delete it if stale) and push permissions; if "
-            f"the ref itself is stuck, `git update-ref -d {STATE_REF}` on {remote} clears it"
+            "the ref itself is stuck, run `aco reset`, whose `--confirm` exports the state "
+            "into a bundle before it deletes anything"
         )
     moved_report = f"{STATE_REF} moved {moves} {_pluralize_times(moves)} while retrying"
     if stationary_since_last_move == 0:

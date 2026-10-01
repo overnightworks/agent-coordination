@@ -90,7 +90,7 @@ transition), and which of the three causes applies.
 - [ ] [CAS-13] A transition whose push is rejected once, but whose commit actually landed (a lost response), is found by its own `operation_id` on retry, never pushed a second time.
 - [ ] [CAS-47] A retry's search for a lost response's own `operation_id` that fails to read one candidate commit refuses `cannot read commit <sha> while searching for operation_id <id>: <detail>` (see E-CAS-06).
 - [ ] [CAS-14] Two transitions on disjoint identities racing for the same tip both land (except CAS-51): the loser re-fetches, re-applies its own `operation_id`'s intent, and lands -- CLAIM-01 owns the printed line.
-- [ ] [CAS-15] 32 stuck pushes refuse `refs/aco/state rejected 32 pushes to <remote> without the ref ever moving: a stale lock or missing push rights`, fix `check <remote>'s refs/aco/state.lock` (see E-CAS-03).
+- [ ] [CAS-15] 32 stuck pushes refuse `refs/aco/state rejected 32 pushes to <remote> without the ref ever moving: a stale lock or missing push rights`, fix `refs/aco/state.lock`, then `aco reset` (see E-CAS-03).
 - [ ] [CAS-16] A transition rejected 32 times while the ref keeps moving refuses `refs/aco/state moved 32 times while retrying: another writer on <remote> keeps landing first; retry the command`.
 - [ ] [CAS-17] A moved-then-stuck ref refuses `refs/aco/state moved 1 time while retrying, then rejected 31 pushes to <remote> without the ref moving after it last moved`, fix `refs/aco/state.lock` (see E-CAS-04).
 - [ ] [CAS-56] A sent push the store cannot judge -- no answer, a failed re-read after a rejection, a failed lineage stamp after a landing -- refuses as an uncertain write, in that failure's own sentence.
@@ -173,6 +173,7 @@ cannot read needs `--force-unreadable` besides (`specs/reset.spec.md`).
 
 - No command but `aco bootstrap` ever creates `refs/aco/state`; every other write path refuses (CAS-03) instead of creating it as a side effect.
 - A push against `refs/aco/state` is never `--force`/`--force-with-lease` outside the documented reset/recovery path (CAS-43): every ordinary transition is a plain fast-forward.
+- No refusal advises deleting or force-pushing `refs/aco/state` by hand: a stuck ref names only `aco reset`, which exports the state into a bundle before it deletes anything (CAS-15).
 - A worktree's own lineage stamp and fetch anchor are never shared with another linked worktree of the same checkout: each has its own git-dir.
 - A malformed fetched tree is never partially trusted: the whole read fails loud (CAS-22..38), never a single quarantined claim or resource; a malformed item file alone is refused only by its own read (`specs/item.spec.md` ITEM-38) and the writes `specs/storage-pin.spec.md` PIN-29 names, every board read lists it (`specs/board.spec.md` BOARD-54), and ITEM-42 alone reads its still-valid `record.title`.
 - No state-store fetch ever lands a tag or `FETCH_HEAD`: each carries `--no-tags --no-write-fetch-head`, so it writes only objects and the ref its own refspec names (issue #298 finding 2).
@@ -228,7 +229,7 @@ Setup: bare-remote, bootstrapped, `refs/aco/state.lock` held on `origin` for the
 
 ```console
 $ aco claim 42 --scope README.md
-2> ERROR: refs/aco/state rejected 32 pushes to origin without the ref ever moving: a stale lock or missing push rights, not a race -- check origin's refs/aco/state.lock (delete it if stale) and push permissions; if the ref itself is stuck, `git update-ref -d refs/aco/state` on origin clears it
+2> ERROR: refs/aco/state rejected 32 pushes to origin without the ref ever moving: a stale lock or missing push rights, not a race -- check origin's refs/aco/state.lock (delete it if stale) and push permissions; if the ref itself is stuck, run `aco reset`, whose `--confirm` exports the state into a bundle before it deletes anything
 exit 2
 ```
 
