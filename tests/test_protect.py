@@ -1751,6 +1751,50 @@ def test_protect_denies_a_path_outside_every_claim_scope_still(
     _assert_protect_decision(capsys, decision="deny", reason="claim first")
 
 
+@pytest.mark.parametrize(
+    ("claimed_branch", "written", "decision", "reason"),
+    [
+        pytest.param(
+            "codex/issue-72-widget", "scripts/registry.txt", "allow", None, id="claimed-shared"
+        ),
+        pytest.param(
+            "codex/issue-99-other", "scripts/registry.txt", "deny", "claim first", id="unclaimed"
+        ),
+        pytest.param(
+            "codex/issue-72-widget", "docs/widget.md", "deny", "claim first", id="not-shared"
+        ),
+    ],
+)
+def test_protect_lets_any_live_claim_write_a_lane_shared_registry_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    claimed_branch: str,
+    written: str,
+    decision: str,
+    reason: str | None,
+) -> None:
+    """Issue #575 line 2 (PROT-46): a `lane_shared` file is writable by any
+    live claim this session holds in the checkout, though its scope (`src`)
+    never names it; without a claim on the branch it still denies, and a
+    file the configuration does not share stays bound to the scope."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _set_agent_identity_env(monkeypatch, {checkout.GROK_SESSION_ID_ENV: "sess-1"})
+    _use_real_path_is_tracked(monkeypatch)
+    _main, worktree = _protect_real_repo_with_worktree(tmp_path)
+    (worktree / board.CONFIG_PATH).write_text('lane_shared = ["scripts/registry.txt"]\n')
+    state = _protect_state_with_claim(_protect_active_claim("Grok sess-1", branch=claimed_branch))
+    monkeypatch.setattr(store, "fetch_state", lambda *, worktree, remote: state)
+    payload = {"toolName": "write", "toolInput": {"path": str(worktree / written)}}
+
+    exit_code = _protect_main(monkeypatch, payload)
+
+    assert exit_code == (0 if decision == "allow" else 2)
+    _assert_protect_decision(capsys, decision=decision, reason=reason)
+
+
 @pytest.mark.parametrize("payload_for", _TARGET_PATH_PAYLOAD_BUILDERS, ids=["write", "bash-rm"])
 def test_protect_allows_a_path_outside_every_repository_without_identity(
     monkeypatch: pytest.MonkeyPatch,
@@ -2440,7 +2484,7 @@ def test_rescope_json_reports_a_dotdot_path_through_a_missing_directory_as_unava
 # repository with a real linked worktree, driven through `judge` itself --
 # never `main(["protect"])` -- so none of these needs `sys.stdin` or the
 # process cwd stubbed at all; `judge` takes its payload and its one
-# dependency (`canonical_remote_for`) as plain arguments.
+# dependency (`board_config_for`) as plain arguments.
 
 
 def _judge_worktree(tmp_path: Path, *, branch: str) -> Path:
@@ -2488,7 +2532,7 @@ def test_judge_denies_an_apply_patch_path_outside_the_live_claims_scope(
         },
     }
 
-    verdict = protect.judge(payload, canonical_remote_for=lambda _toplevel: "origin")
+    verdict = protect.judge(payload, board_config_for=lambda _toplevel: board.BoardConfig())
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -2515,7 +2559,7 @@ def test_judge_denies_a_bash_recognized_pattern_path_outside_the_live_claims_sco
         "cwd": str(worktree),
     }
 
-    verdict = protect.judge(payload, canonical_remote_for=lambda _toplevel: "origin")
+    verdict = protect.judge(payload, board_config_for=lambda _toplevel: board.BoardConfig())
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,
@@ -2537,7 +2581,7 @@ def test_judge_denies_a_path_resolving_to_the_checkout_root_before_reading_the_s
     monkeypatch.setattr(store, "fetch_state", _store_must_not_be_read)
     payload = {"toolName": "Edit", "toolInput": {"path": str(worktree)}}
 
-    verdict = protect.judge(payload, canonical_remote_for=lambda _toplevel: "origin")
+    verdict = protect.judge(payload, board_config_for=lambda _toplevel: board.BoardConfig())
 
     assert _judge_decision_and_reason(verdict) == (
         protect.Decision.DENY,

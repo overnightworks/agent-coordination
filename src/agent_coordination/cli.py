@@ -3214,14 +3214,6 @@ def _verify_merged_release(
     return None
 
 
-def _canonical_remote_name(toplevel: Path) -> str:
-    """The configured `canonical_remote` of the checkout at `toplevel`, for
-    `protect` (handed into `protect.judge` as `canonical_remote_for`), which
-    judges from its own payload's resolved checkout and never builds a
-    `RunContext` (issue #457)."""
-    return board_config(toplevel).canonical_remote
-
-
 @dataclass(frozen=True)
 class _StoreItemWriter:
     """`state_board.ItemWriter`, implemented over `store` (issue #283): the
@@ -4143,7 +4135,10 @@ def _protect() -> int:
     # Grok fail-opens on crash or non-JSON hook output; deny instead of raising.
     try:
         payload = _hook_payload()
-        verdict = protect.judge(payload, canonical_remote_for=_canonical_remote_name)
+        # `protect` judges from its payload's own resolved checkout and never
+        # builds a `RunContext` (issue #457), so it reads each checkout's
+        # board configuration itself.
+        verdict = protect.judge(payload, board_config_for=board_config)
     except Exception as error:
         verdict = protect.Verdict.deny(str(error))
     if verdict.stdout_text is not None:

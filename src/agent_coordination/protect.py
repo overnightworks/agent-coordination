@@ -11,11 +11,12 @@ or stderr itself. `specs/protect.spec.md` owns every denial reason, the order
 they are judged in, and the output and exit codes `Verdict` produces -- this
 file cites those IDs rather than restating them.
 
-`judge` takes `canonical_remote_for` as an explicit dependency rather than
-resolving it itself: reading `.agent-claim/board.toml`'s own storage pin
-(PIN-01) is `cli`'s own board-configuration concern, shared by every store
-command, not something this lower layer re-implements or reaches upward
-for.
+`judge` takes `board_config_for` as an explicit dependency rather than
+reading the configuration itself: reading `.agent-claim/board.toml` behind
+its tracked-file precondition (PIN-01) is the board-configuration concern
+every store command shares, not something this lower layer re-implements
+or reaches upward for. From it this module takes the canonical remote and
+the lane-shared registry files (PROT-46).
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from functools import partial
 from pathlib import Path
 from typing import TypeVar
 
-from . import checkout, hook_input, protocol, store
+from . import board, checkout, hook_input, protocol, store
 
 
 class Decision(StrEnum):
@@ -76,7 +77,7 @@ class Verdict:
         return self.reason
 
 
-_CanonicalRemoteFor = Callable[[Path], str]
+_BoardConfigFor = Callable[[Path], board.BoardConfig]
 
 
 class HookToolEffect(StrEnum):
@@ -262,15 +263,15 @@ def _protect_claim_state_or_denial(worktree: Path, canonical_remote: str) -> _Pr
 class _ProtectContext:
     """One hook invocation's own shared dependencies, threaded through the
     whole judgement chain together (issue #394): `state_cache` and
-    `canonical_remote_for` are always needed by the same callers, so
+    `board_config_for` are always needed by the same callers, so
     bundling them keeps every chain function's own parameter list short
-    instead of two parallel threads of the same two values. `canonical_remote_for`
+    instead of two parallel threads of the same two values. `board_config_for`
     is `cli`'s own board-configuration reader: resolving
     `.agent-claim/board.toml`'s storage pin is that layer's own concern,
     handed down here rather than re-read from this lower module."""
 
     state_cache: _ProtectStateCache
-    canonical_remote_for: _CanonicalRemoteFor
+    board_config_for: _BoardConfigFor
 
 
 def _protect_cached_claim_state_or_denial(
@@ -288,7 +289,7 @@ def _protect_cached_claim_state_or_denial(
     cached = context.state_cache.get(path_checkout.common_directory)
     if cached is not None:
         return cached
-    canonical_remote = context.canonical_remote_for(path_checkout.toplevel)
+    canonical_remote = context.board_config_for(path_checkout.toplevel).canonical_remote
     outcome = _protect_claim_state_or_denial(path_checkout.toplevel, canonical_remote)
     context.state_cache[path_checkout.common_directory] = outcome
     return outcome
@@ -310,9 +311,17 @@ def _protect_session_claim_exists(state: protocol.ClaimState, *, agent: str, bra
 
 
 def _protect_scope_denial(
-    state: protocol.ClaimState, *, agent: str, branch: str, relative: str, miss_denial: str
+    state: protocol.ClaimState,
+    *,
+    agent: str,
+    question: _ClaimQuestion,
+    lane_shared: tuple[str, ...],
+    miss_denial: str,
 ) -> str | None:
-    """Whether a live claim covers `relative`, or `miss_denial` when not.
+    """Whether a live claim covers `question`'s path, or `miss_denial` when
+    not. A `lane_shared` registry file (PROT-46, issue #575) is covered by
+    any live claim this session holds on the branch, whatever its scope: it
+    follows every code change mechanically, so no scope can name it ahead.
 
     The one overlap check `_protect_path_denial` and `_protect_bash_path_denial`
     both share once they have a trustworthy state and a resolved checkout
@@ -323,7 +332,11 @@ def _protect_scope_denial(
     `apply_patch` (issue #252); `_protect_bash_path_denial` always names both
     the recognized pattern and the path (PROT-33), since a command's own
     several paths need telling apart."""
+    branch = question.path_checkout.branch
+    relative = question.relative
     if _protect_overlapping_claim_exists(state, agent=agent, branch=branch, relative=relative):
+        return None
+    if relative in lane_shared and _protect_session_claim_exists(state, agent=agent, branch=branch):
         return None
     return miss_denial
 
@@ -356,7 +369,7 @@ def _protect_not_main_denial(
     if path_checkout.kind is checkout.CheckoutKind.MAIN:
         return checkout.PROTECT_NOT_MAIN_REASON
     toplevel = path_checkout.toplevel
-    canonical_remote = context.canonical_remote_for(toplevel)
+    canonical_remote = context.board_config_for(toplevel).canonical_remote
     default_branch = checkout.recorded_default_branch(canonical_remote, directory=toplevel)
     unknown = checkout.default_branch_unknown_reason(
         canonical_remote, default_branch, directory=toplevel
@@ -684,8 +697,8 @@ def _protect_claim_denial(
     return _protect_scope_denial(
         state,
         agent=agent,
-        branch=question.path_checkout.branch,
-        relative=question.relative,
+        question=question,
+        lane_shared=context.board_config_for(question.path_checkout.toplevel).lane_shared,
         miss_denial=miss_denial(state, question.path_checkout, agent, question.relative),
     )
 
@@ -728,7 +741,7 @@ _ProtectItem = TypeVar("_ProtectItem")
 def _protect_first_denial(
     items: tuple[_ProtectItem, ...],
     *,
-    canonical_remote_for: _CanonicalRemoteFor,
+    board_config_for: _BoardConfigFor,
     denial_for: Callable[[_ProtectItem, _ProtectContext], str | None],
 ) -> Verdict:
     """Judges every one of `items` -- a mutating tool's own payload paths, or
@@ -742,7 +755,7 @@ def _protect_first_denial(
     and `_protect_bash` used to each build their own cache and run their own
     copy of this same loop instead of sharing it, risking the two drifting
     apart)."""
-    context = _ProtectContext(state_cache={}, canonical_remote_for=canonical_remote_for)
+    context = _ProtectContext(state_cache={}, board_config_for=board_config_for)
     for item in items:
         denial = denial_for(item, context)
         if denial is not None:
@@ -751,7 +764,7 @@ def _protect_first_denial(
 
 
 def _protect_write(
-    tool_name: str, payload: dict[str, object], *, canonical_remote_for: _CanonicalRemoteFor
+    tool_name: str, payload: dict[str, object], *, board_config_for: _BoardConfigFor
 ) -> Verdict:
     """`protect` is forge-free (issue #245): it authorizes a write from the
     live store state alone, never a forge target, so it never resolves a
@@ -765,7 +778,7 @@ def _protect_write(
     distinguish_scope = tool_name == APPLY_PATCH_TOOL_NAME
     return _protect_first_denial(
         raw_paths,
-        canonical_remote_for=canonical_remote_for,
+        board_config_for=board_config_for,
         denial_for=lambda raw_path, context: _protect_path_denial(
             raw_path, distinguish_scope=distinguish_scope, context=context
         ),
@@ -809,9 +822,7 @@ def _protect_bash_path_denial(
     )
 
 
-def _protect_bash(
-    payload: dict[str, object], *, canonical_remote_for: _CanonicalRemoteFor
-) -> Verdict:
+def _protect_bash(payload: dict[str, object], *, board_config_for: _BoardConfigFor) -> Verdict:
     """`Bash`'s (and `Monitor`'s) own command-text judgment (issue #380): every
     `(pattern, path)` pair `hook_input.hook_command_paths` recognizes in
     the call's own `command` runs `_protect_bash_path_denial`'s chain via
@@ -830,7 +841,7 @@ def _protect_bash(
         return Verdict.allow()
     return _protect_first_denial(
         pairs,
-        canonical_remote_for=canonical_remote_for,
+        board_config_for=board_config_for,
         denial_for=lambda pair, context: _protect_bash_path_denial(
             pair[0], pair[1], context=context
         ),
@@ -842,24 +853,22 @@ def _protect_dispatch(
     tool_name: str,
     payload: dict[str, object],
     *,
-    canonical_remote_for: _CanonicalRemoteFor,
+    board_config_for: _BoardConfigFor,
 ) -> Verdict:
     if effect is HookToolEffect.READ:
         return Verdict.allow()
     if effect is HookToolEffect.COMMAND_TEXT:
-        return _protect_bash(payload, canonical_remote_for=canonical_remote_for)
-    return _protect_write(tool_name, payload, canonical_remote_for=canonical_remote_for)
+        return _protect_bash(payload, board_config_for=board_config_for)
+    return _protect_write(tool_name, payload, board_config_for=board_config_for)
 
 
-def judge(
-    payload: dict[str, object] | None, *, canonical_remote_for: _CanonicalRemoteFor
-) -> Verdict:
+def judge(payload: dict[str, object] | None, *, board_config_for: _BoardConfigFor) -> Verdict:
     """`protect`'s own verdict for one already-parsed hook payload (issue
     #394): `payload` is `None` for unreadable stdin or invalid JSON (PROT-03,
     `cli`'s own concern before this ever runs); everything else -- a
     non-object payload reaching here as a plain `dict` already rules that
     out for its caller -- is judged here through to a `Verdict`. Raises
-    exactly what `canonical_remote_for` or the store boundary itself raises
+    exactly what `board_config_for` or the store boundary itself raises
     (a board-configuration precondition failure, PROT-29; a store fetch
     failure, PROT-15/PROT-16); `cli`'s own `except Exception` frame (PROT-17)
     is what turns any of those, or any other uncaught exception, into a deny
@@ -872,4 +881,4 @@ def judge(
     effect = HOOK_TOOL_EFFECTS.get(tool_name)
     if effect is None:
         return Verdict.deny(_unknown_hook_tool_reason(tool_name))
-    return _protect_dispatch(effect, tool_name, payload, canonical_remote_for=canonical_remote_for)
+    return _protect_dispatch(effect, tool_name, payload, board_config_for=board_config_for)

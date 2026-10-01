@@ -52,6 +52,7 @@ repository or a checkout's own `.git` directory, symlink-resolved.
 | a live claim whose scope misses the path | PROT-19 | PROT-19 | PROT-20 | PROT-33 (names pattern) | — |
 | a live claim covering the path | PROT-21 | PROT-21 | PROT-23 | PROT-21 | — |
 | a lane (issueless) claim covering the path | PROT-22 | PROT-22 | PROT-22 | PROT-22 | — |
+| a live claim, the path a `lane_shared` file its scope misses | PROT-46 | PROT-46 | PROT-46 | PROT-46 | — |
 | several paths, first one outside scope | — | — | PROT-24 | PROT-33 (each pair) | — |
 | paths across two linked worktrees | — | — | PROT-25 | PROT-33 (own checkout each) | — |
 | a `cd` changes the resolution directory | — | — | — | PROT-34 | — |
@@ -149,6 +150,7 @@ between separators is malformed like any other (PROT-41).
 - [ ] [PROT-20] The same scope miss under `apply_patch` denies `<path> outside claim scope`, naming the one path the payload's own grammar can name.
 - [ ] [PROT-21] A live claim covering the path allows (PROT-01) (see E-PROT-01).
 - [ ] [PROT-22] A lane (issueless) claim covering the path allows (PROT-01) exactly like an issue claim.
+- [ ] [PROT-46] A path the checkout's `lane_shared` names (PIN-35) allows for any live claim this session holds on the branch, whatever its scope; PROT-18 still denies without one (see E-PROT-16).
 
 ## `apply_patch`'s own multi-path payload
 
@@ -442,4 +444,13 @@ $ echo '{"tool_name": "Write", "tool_input": {"file_path": "<worktree>/README.md
 {"decision": "deny", "reason": "cannot determine the trunk: canonical remote 'upstream' is not configured"}
 2> cannot determine the trunk: canonical remote 'upstream' is not configured
 exit 2
+```
+
+### E-PROT-16 -- a lane-shared registry file is writable by any live claim
+
+Setup: bare-remote, bootstrapped, the tracked `.agent-claim/board.toml` naming `lane_shared = ["scripts/vulture_whitelist.py"]`, a linked worktree on `ada/issue-42`, already `aco claim 42 --scope README.md`
+
+```console
+$ echo '{"toolName": "Write", "toolInput": {"file_path": "<worktree>/scripts/vulture_whitelist.py"}}' | aco protect
+exit 0
 ```
