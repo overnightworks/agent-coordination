@@ -1,0 +1,8 @@
+claim_id = "850e0b0f669d45a7be652b23e79644cb"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "592e01cca30fc65e6d740c1fe4e285ef30cc6e02"
+branch = "claude/issue-558-store-keeps-foreign-entries"
+scope = ["scripts/test_budget_ratchet.txt", "specs/ref-store-cas.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/items.py", "src/agent_coordination/protocol.py", "src/agent_coordination/store.py", "tests/test_items.py", "tests/test_protocol.py", "tests/test_store.py"]
+opened_commit = "9d3a1ad970ec772866b2cc0f305edb4b7cf315f7"
+whole_reason = "the store's tree write keeps foreign entries byte for byte, and protocol owns the item file-name rule"
