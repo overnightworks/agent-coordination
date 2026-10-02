@@ -36,6 +36,7 @@ from .body import (
     missing_or_empty_sections,
     opening_fence_delimiter,
     parse_body,
+    unprintable_slice_line_key,
 )
 
 DEFAULT_PRIORITY_LABELS = ("security", "data", "ci", "product", "ux", "cleanup")
@@ -2672,14 +2673,16 @@ class NestedRepairVerdict:
 
 
 @dataclass(frozen=True)
-class UnprintableTitleVerdict:
-    """The first uncut row, the one `cut` links, has a title holding a line
-    break (issue #513) or another control character (issue #532): a `cut`
-    command naming it would spread over two printed lines or reach the
-    terminal raw, so only making that title one printable line helps. `row`
-    is the index `cut --row` names that row by."""
+class UnprintableRowVerdict:
+    """The first uncut row, the one `cut` links, has a one-line field, `key`,
+    holding a line break (issue #513) or another control character (issue
+    #532): a `cut` command naming its title would spread over two printed
+    lines or reach the terminal raw, and `cut` refuses its `done_when`
+    (issue #606 line 3), so only making that field one printable line helps.
+    `row` is the index `cut --row` names that row by."""
 
     row: int
+    key: str
 
 
 @dataclass(frozen=True)
@@ -2699,7 +2702,7 @@ class CloseVerdict:
 # What a container with no open child is up for (issue #503), each verdict
 # carrying the data its own answer needs.
 ChildlessContainerVerdict = (
-    CutVerdict | NestedRepairVerdict | UnprintableTitleVerdict | CheckVerdict | CloseVerdict
+    CutVerdict | NestedRepairVerdict | UnprintableRowVerdict | CheckVerdict | CloseVerdict
 )
 
 
@@ -2711,16 +2714,18 @@ def _childless_container_verdict(
     closable parent all read this answer rather than re-deriving it. An
     uncut `[[slice]]` row is the only thing to cut (#208) -- unless the
     container is itself a child, which `cut` refuses (CUT-03), so only a
-    repair helps, or the row's title holds a line break or control
-    character no printed one-line advice can carry (issues #513, #532);
+    repair helps, or the row's title or `done_when` holds a line break or
+    control character no printed one-line advice or `cut` can carry
+    (issues #513, #532, #606);
     with no row left, a `Next` line still naming work asks for a
     `done_when` check, and only one naming none is closable."""
     if nesting_parent is not None and slices:
         return NestedRepairVerdict(nesting_parent)
     if slices:
         first = slices[0]
-        if terminal_text(first.title) != first.title:
-            return UnprintableTitleVerdict(first.index)
+        unprintable_key = unprintable_slice_line_key(first)
+        if unprintable_key is not None:
+            return UnprintableRowVerdict(first.index, unprintable_key)
         return CutVerdict(first.title)
     if has_further_work(next_line):
         return CheckVerdict(next_line)
@@ -2758,9 +2763,9 @@ def _childless_container_reason(
     match verdict:
         case CutVerdict(title=title):
             return _cut_slice_reason(number, storage, title)
-        case UnprintableTitleVerdict(row=row):
+        case UnprintableRowVerdict(row=row, key=key):
             return (
-                f"slice row {row} title holds a line break or control character; "
+                f"slice row {row} {key} holds a line break or control character; "
                 "make it one printable line"
             )
         case CheckVerdict():

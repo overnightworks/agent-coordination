@@ -7623,47 +7623,49 @@ def test_state_ref_next_prints_cuts_bash_runs_as_printed_and_cut_accepts(
 
 
 @pytest.mark.parametrize(
-    "title",
+    ("field", "text"),
     [
         *(
-            f"Line one{line_break}Line two"
-            for line_break in ("\n", "\r", "\f", "\u0085", "\u2028", "\u2029")
+            pytest.param("title", f"Line one{line_break}Line two", id=f"title-{name}")
+            for line_break, name in (
+                ("\n", "LF"),
+                ("\r", "CR"),
+                ("\f", "FF"),
+                ("\u0085", "NEL"),
+                ("\u2028", "LS"),
+                ("\u2029", "PS"),
+            )
         ),
-        "Line one\n",
-        "Retitle\x1b]0;pwned\x07",
-        "Clear\x1b[2J",
-        "Rubout\x7f",
-        *(f"Flip{control}side" for control, _codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS),
-    ],
-    ids=[
-        "LF",
-        "CR",
-        "FF",
-        "NEL",
-        "LS",
-        "PS",
-        "trailing-LF",
-        "OSC-BEL",
-        "CSI",
-        "DEL",
-        *(codepoint for _control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS),
+        pytest.param("title", "Line one\n", id="title-trailing-LF"),
+        pytest.param("title", "Retitle\x1b]0;pwned\x07", id="title-OSC-BEL"),
+        pytest.param("title", "Clear\x1b[2J", id="title-CSI"),
+        pytest.param("title", "Rubout\x7f", id="title-DEL"),
+        *(
+            pytest.param("title", f"Flip{control}side", id=f"title-{codepoint}")
+            for control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS
+        ),
+        pytest.param("done_when", "Line one\vline two", id="done_when-VT"),
+        pytest.param("done_when", "Flip\N{RIGHT-TO-LEFT OVERRIDE}side", id="done_when-U+202E"),
     ],
 )
-def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_a_cut(
+def test_state_ref_next_names_a_slice_row_line_with_a_control_character_instead_of_a_cut(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    title: str,
+    field: str,
+    text: str,
 ) -> None:
-    """Issues #513 line 2, #517 line 3 and #532 line 2: a first uncut row
-    whose title, stored before `item edit` refused it, holds a line break or
-    another control character would split the printed `cut` over two lines
-    or hand it to the terminal raw, so `next` prints no `cut` for it and
-    names the row to fix instead."""
+    """Issues #513 line 2, #517 line 3, #532 line 2 and #606 line 3: a first
+    uncut row whose title or `done_when`, stored before `item edit` refused
+    it, holds a line break or another control character would split the
+    printed `cut` over two lines, hand it to the terminal raw, or be refused
+    by that very `cut` (CUT-39), so `next` prints no `cut` for it and names
+    the row to fix instead."""
+    row = {"index": 1, "title": "Slice", "done_when": "D", field: text}
     _real_state_ref_repository(
         monkeypatch,
         tmp_path,
-        {50: _state_ref_container_body("Epic", title)},
+        {50: _state_ref_item_body("Epic", kind=body.ItemKind.CONTAINER, slice=[row])},
     )
 
     exit_code = issue_claim.main(["next"])
@@ -7671,7 +7673,7 @@ def test_state_ref_next_names_a_slice_title_with_a_control_character_instead_of_
 
     assert exit_code == 3
     assert (
-        f"\n{items.format_item_id(50)}: slice row 1 title holds a line break or control "
+        f"\n{items.format_item_id(50)}: slice row 1 {field} holds a line break or control "
         "character; make it one printable line\n"
     ) in out
     assert "cut" not in out

@@ -1528,20 +1528,39 @@ def _slice_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, .
     `protocol.is_display_control` character is a defect (issue #538); a
     row's `done_when` keeps the same rule, since `cut` copies it into the
     child's one-line `done_when` (issue #606). `board` and `next` keep
-    reading a body stored before this rule, and `next` names a row with
-    such a title instead of printing its `cut`."""
+    reading a body stored before this rule, and `next` names such a row
+    instead of printing its `cut` (`unprintable_slice_line_key`)."""
     return tuple(
         defect
         for position, row in enumerate(slices)
-        for key, text in zip(SLICE_LINE_KEYS, (row.title, row.done_when), strict=True)
+        for key, text in _slice_lines(row)
         if (defect := _slice_line_defect(position, row.index, key, text)) is not None
     )
+
+
+def unprintable_slice_line_key(row: SliceRow) -> str | None:
+    """The first of `row`'s one-line fields that breaks BODY-66, or `None`:
+    `next` withholds the row's `cut` on it (NEXT-32), since a title would
+    split the printed command and a `done_when` makes that `cut` refuse
+    (CUT-39; issue #606 line 3)."""
+    return next(
+        (key for key, text in _slice_lines(row) if _display_control_in(text) is not None),
+        None,
+    )
+
+
+def _slice_lines(row: SliceRow) -> tuple[tuple[str, str | None], ...]:
+    return tuple(zip(SLICE_LINE_KEYS, (row.title, row.done_when), strict=True))
+
+
+def _display_control_in(text: str | None) -> str | None:
+    return next(filter(protocol.is_display_control, text or ""), None)
 
 
 def _slice_line_defect(
     position: int, index: int, key: str, text: str | None
 ) -> ContractDefect | None:
-    breaking = next(filter(protocol.is_display_control, text or ""), None)
+    breaking = _display_control_in(text)
     if breaking is None:
         return None
     field = f"slice[{position}].{key}"
