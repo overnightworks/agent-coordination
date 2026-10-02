@@ -31,7 +31,9 @@ it (a newline as `\n`, ESC as `\x1b`, U+202E by its code point), while TAB
 and NBSP stay as they are, so a capped refusal is always one line. A refusal before any write
 prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 `specs/ref-store-cas.spec.md`'s own preamble documents; `aco land` has no
-`--json` mode.
+`--json` mode. `<branch>` is the forge's default branch, `<m>` the `merge_method`
+pinned in `<path>`, and `<list>` GitHub's allowed methods (LANDCMD-39) comma-joined in the
+order `merge`, `squash`, `rebase`.
 
 ## Behavior table
 
@@ -56,8 +58,10 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | claim held by another agent or role | LANDCMD-10 |
 | checkout unclean or off the default branch | LANDCMD-11 |
 | checkout without a git identity | LANDCMD-25 |
-| the repository allows neither a merge commit nor a squash merge | LANDCMD-28 |
-| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-29, LANDCMD-34, LANDCMD-35, LANDCMD-36 |
+| the repository's own settings allow neither a merge commit nor a squash merge | LANDCMD-28 |
+| the `merge_method` pin in `<path>` is not among GitHub's allowed methods | LANDCMD-40 |
+| the default branch's rules leave neither a merge commit nor a squash merge | LANDCMD-41 |
+| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-39, LANDCMD-42, LANDCMD-29, LANDCMD-34, LANDCMD-35, LANDCMD-36 |
 | the pull request changed since it was read | LANDCMD-14 |
 | GitHub refuses the merge | LANDCMD-37 |
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
@@ -96,8 +100,12 @@ preflight, refused or not, exactly as `reset`'s own read does.
 ## Merge, composed by `aco land`
 
 - [ ] [LANDCMD-12] `aco land` merges pinned to the head sha read during preflight, never an unpinned re-read, with the method LANDCMD-27 picks: a merge commit or one squash commit, never a rebase.
-- [ ] [LANDCMD-27] `merge_method` `"merge"`/`"squash"` in `<path>` picks the method; else GitHub's `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge`: a merge commit if allowed or withheld, else a squash.
-- [ ] [LANDCMD-28] A repository allowing neither refuses `pull request #<n> cannot land: this repository allows neither a merge commit nor a squash merge`, exit `2`, before any write (E-LANDCMD-28).
+- [ ] [LANDCMD-27] `merge_method` `"merge"`/`"squash"` in `<path>` picks the method; else a merge commit if GitHub's allowed methods (LANDCMD-39) include one, else a squash.
+- [ ] [LANDCMD-39] GitHub's allowed methods are `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge` (all three where withheld), narrowed by every rule on `<branch>` (LANDCMD-42).
+- [ ] [LANDCMD-42] A `pull_request` rule narrows them to its `allowed_merge_methods` (not at all without that list), a `required_linear_history` rule drops `merge`, and a plan without rulesets narrows nothing.
+- [ ] [LANDCMD-40] A pin non-empty allowed methods exclude refuses `board.toml merge_method <m> is not allowed on <branch>: GitHub allows <list>`, exit `2`, before any write, after LANDCMD-28 (E-LANDCMD-40).
+- [ ] [LANDCMD-41] Rules narrowing the settings to no method, or an unpinned land's to only a rebase, refuse `GitHub allows no merge method aco can use on <branch>`, exit `2`, before any write (E-LANDCMD-41).
+- [ ] [LANDCMD-28] Settings allowing neither refuse `pull request #<n> cannot land: this repository allows neither a merge commit nor a squash merge`, exit `2`, before any write (E-LANDCMD-28).
 - [ ] [LANDCMD-30] Any other `merge_method` refuses `board configuration <path> merge_method must be 'merge' or 'squash'`, exit `2`; a head carrying one refuses as LANDCMD-24.
 - [ ] [LANDCMD-29] The landed commit's title is `Merge pull request #<n>` for a merge commit and `<title> (#<n>)` for a squash commit.
 - [ ] [LANDCMD-13] Its message is the pull request body with its classification line removed, then that classification as the message's last line, nothing after it, for a merge and a squash commit alike (E-LANDCMD-13).
@@ -127,7 +135,7 @@ the default branch` on every rerun; it is removed by hand.
 - `aco land` never runs `release`'s own close, store transition, `freed`/`next` report, or worktree cleanup a second time; it delegates to the one existing `release --merged` path (`specs/release.spec.md`).
 - A step after the merge never re-merges: recovery always resumes from the pull request's own already-merged state, read fresh on every rerun.
 - Once merged, the delegated release never reads the pull request's own mutable body for routing: a fixer editing it away afterward changes nothing this pull request already landed (LAND-64).
-- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25, LANDCMD-28, LANDCMD-31, LANDCMD-33) refuses.
+- `aco land` never writes when any preflight check (LANDCMD-01..11, LANDCMD-22..25, LANDCMD-28, LANDCMD-31, LANDCMD-33, LANDCMD-40, LANDCMD-41) refuses.
 - `aco land` never takes its storage, canonical remote, forge, or claim store from a head's `<path>`: this checkout's own tracked copy governs, and the head's copy is only checked (LANDCMD-22..24).
 
 ## Examples
@@ -271,6 +279,40 @@ Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check g
 ```console
 $ aco land 57
 2> ERROR: pull request #57 cannot land: this repository allows neither a merge commit nor a squash merge
+exit 2
+```
+
+### E-LANDCMD-39 — a ruleset narrowing the settings picks a squash
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, no `merge_method` in `<path>`, the repository's settings allowing all three methods, a ruleset on `main` allowing only squash and rebase
+
+```console
+$ aco land 57
+RELEASED issue #42: <claim-id>
+freed: none
+next: none
+exit 0
+```
+
+`main` gains one squash commit titled `<title> (#57)` (LANDCMD-29), never a merge commit the ruleset forbids.
+
+### E-LANDCMD-40 — a pin the default branch's rules exclude refuses before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, `merge_method = "merge"` in `<path>`, a ruleset on `main` allowing only squash and rebase
+
+```console
+$ aco land 57
+2> ERROR: board.toml merge_method merge is not allowed on main: GitHub allows squash, rebase
+exit 2
+```
+
+### E-LANDCMD-41 — rules leaving no usable method refuse before any write
+
+Setup: bare-remote, fake `gh`, pull request `#57` open, mergeable, every check green, no `merge_method` in `<path>`, the repository's settings allowing only merge commits, a ruleset on `main` allowing only squash and rebase
+
+```console
+$ aco land 57
+2> ERROR: GitHub allows no merge method aco can use on main
 exit 2
 ```
 

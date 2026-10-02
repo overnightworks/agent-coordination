@@ -1151,25 +1151,180 @@ def test_github_adapter_reads_the_repositorys_allowed_merge_methods(
     ]
 
 
+def _read_merge_settings(client: GitHubForge) -> object:
+    return client.allowed_merge_methods()
+
+
+def _read_main_merge_rules(client: GitHubForge) -> object:
+    return client.branch_merge_rules("main")
+
+
+def _pull_request_rule(allowed_merge_methods: object) -> str:
+    rule = {"type": "pull_request", "parameters": {"allowed_merge_methods": allowed_merge_methods}}
+    return json.dumps(rule) + "\n"
+
+
+_MALFORMED_SETTINGS = "malformed repository merge settings"
+_MALFORMED_RULE = "malformed branch merge rule"
+
+
 @pytest.mark.parametrize(
-    "answer",
+    ("read", "answer", "refusal"),
     [
         pytest.param(
-            json.dumps({"merge": True, "squash": True, "rebase": "yes"}), id="not-a-boolean"
+            _read_merge_settings,
+            json.dumps({"merge": True, "squash": True, "rebase": "yes"}),
+            _MALFORMED_SETTINGS,
+            id="settings-not-a-boolean",
         ),
         pytest.param(
-            json.dumps({"merge": False, "squash": True, "rebase": None}), id="half-withheld"
+            _read_merge_settings,
+            json.dumps({"merge": False, "squash": True, "rebase": None}),
+            _MALFORMED_SETTINGS,
+            id="settings-half-withheld",
         ),
-        pytest.param(json.dumps([True, True]), id="not-an-object"),
+        pytest.param(
+            _read_merge_settings,
+            json.dumps([True, True]),
+            _MALFORMED_SETTINGS,
+            id="settings-not-an-object",
+        ),
+        pytest.param(
+            _read_main_merge_rules,
+            _pull_request_rule(["squash", "fast-forward"]),
+            _MALFORMED_RULE,
+            id="rule-unknown-method",
+        ),
+        pytest.param(
+            _read_main_merge_rules,
+            _pull_request_rule([["squash"]]),
+            _MALFORMED_RULE,
+            id="rule-not-a-method-name",
+        ),
+        pytest.param(
+            _read_main_merge_rules,
+            _pull_request_rule("squash"),
+            _MALFORMED_RULE,
+            id="rule-not-a-list",
+        ),
+        pytest.param(_read_main_merge_rules, '"squash"', _MALFORMED_RULE, id="rule-not-an-object"),
+        pytest.param(
+            _read_main_merge_rules,
+            json.dumps({"type": "pull_request", "parameters": ["squash"]}),
+            _MALFORMED_RULE,
+            id="rule-parameters-not-an-object",
+        ),
     ],
 )
-def test_github_adapter_fails_loud_on_malformed_merge_settings(answer: str) -> None:
+def test_github_adapter_fails_loud_on_malformed_merge_answers(
+    read: Callable[[GitHubForge], object], answer: str, refusal: str
+) -> None:
+    """Issues #578 and #615: a merge-settings or branch-rule answer this
+    adapter cannot read as merge methods fails loud rather than guessing."""
     client = GitHubForge(
         github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: answer
     )
 
-    with pytest.raises(ClaimError, match="malformed repository merge settings"):
-        client.allowed_merge_methods()
+    with pytest.raises(ClaimError, match=refusal):
+        read(client)
+
+
+_RULESETS_UPGRADE_MESSAGE = (
+    "Upgrade to GitHub Pro or make this repository public to enable this feature."
+)
+
+
+def _branch_rules_refused_with(message: str, status: int = 403) -> GitHubForge:
+    def refuse(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        raise forge.ForgePermissionDeniedError(f"gh: {message} (HTTP {status})")
+
+    return GitHubForge(github.repository_id(REPOSITORY), run=refuse)
+
+
+def test_github_adapter_reads_no_merge_rules_on_a_plan_without_rulesets() -> None:
+    """Issue #615 line 5: a private repository on a plan without rulesets
+    answers the branch-rules read with GitHub's own upgrade 403, which means
+    no rule narrows the settings."""
+    client = _branch_rules_refused_with(_RULESETS_UPGRADE_MESSAGE)
+
+    assert client.branch_merge_rules("main") == ()
+
+
+@pytest.mark.parametrize(
+    ("message", "status"),
+    [
+        pytest.param("Resource not accessible by integration", 403, id="other-403"),
+        pytest.param(_RULESETS_UPGRADE_MESSAGE, 401, id="upgrade-phrase-under-401"),
+    ],
+)
+def test_github_adapter_fails_loud_on_any_other_branch_rules_refusal(
+    message: str, status: int
+) -> None:
+    """Issue #615 line 5: every other refusal of the branch-rules read fails
+    loud rather than reading as no rules -- the upgrade phrase too, unless
+    GitHub answered it with a 403."""
+    client = _branch_rules_refused_with(message, status)
+
+    with pytest.raises(forge.ForgePermissionDeniedError, match=f"HTTP {status}"):
+        client.branch_merge_rules("main")
+
+
+@pytest.mark.parametrize(
+    ("answer", "rules"),
+    [
+        pytest.param("", (), id="no-rule"),
+        pytest.param(
+            json.dumps({"type": "pull_request", "parameters": {}}),
+            (),
+            id="pull-request-rule-without-a-method-list",
+        ),
+        pytest.param(
+            json.dumps({"type": "pull_request"}),
+            (),
+            id="pull-request-rule-without-parameters",
+        ),
+        pytest.param(json.dumps({"type": "deletion"}), (), id="rule-without-a-merge-restriction"),
+        pytest.param(
+            json.dumps({"type": "required_linear_history"}),
+            (frozenset({board.MergeMethod.SQUASH, board.MergeMethod.REBASE}),),
+            id="required-linear-history-drops-the-merge-commit",
+        ),
+        pytest.param(
+            _pull_request_rule(["squash", "rebase"]) + _pull_request_rule(["squash"]),
+            (
+                frozenset({board.MergeMethod.SQUASH, board.MergeMethod.REBASE}),
+                frozenset({board.MergeMethod.SQUASH}),
+            ),
+            id="two-rulesets",
+        ),
+    ],
+)
+def test_github_adapter_reads_the_default_branchs_merge_rules(
+    answer: str, rules: tuple[frozenset[board.MergeMethod], ...]
+) -> None:
+    """Issue #615 lines 4, 6 and 7: `branch_merge_rules` reads every rule on
+    the branch through the branch-rules endpoint, one method set per
+    `pull_request` rule carrying a method list and per
+    `required_linear_history` rule, and an empty tuple where no rule
+    restricts the methods."""
+    observed: list[list[str]] = []
+
+    def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        observed.append(arguments)
+        return answer
+
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
+
+    assert client.branch_merge_rules("main") == rules
+    assert observed == [
+        [
+            "api",
+            "--paginate",
+            f"repos/{REPOSITORY}/rules/branches/main?per_page=100",
+            "--jq",
+            ".[]",
+        ]
+    ]
 
 
 @pytest.mark.parametrize(

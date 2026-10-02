@@ -209,6 +209,7 @@ class FakeForge:
     merge_remote: Path | None = None
     closes_on_merge: bool = False
     allowed_methods: frozenset[board.MergeMethod] | None = None
+    branch_rules: dict[str, tuple[frozenset[board.MergeMethod], ...]] = field(default_factory=dict)
     deleted_branches: list[str] = field(default_factory=list)
     head_board_config: str | None = ""
     file_reads: list[tuple[Path, str]] = field(default_factory=list)
@@ -323,6 +324,12 @@ class FakeForge:
         #578): `allowed_methods`, `None` -- settings withheld -- by default."""
         self._run()
         return self.allowed_methods
+
+    def branch_merge_rules(self, branch: str) -> tuple[frozenset[board.MergeMethod], ...]:
+        """This fake's mirror of `GitHubForge.branch_merge_rules` (issue
+        #615): `branch_rules` for `branch`, no rule by default."""
+        self._run()
+        return self.branch_rules.get(branch, ())
 
     def merge_landing(
         self,
@@ -18109,32 +18116,87 @@ _SQUASH = board.MergeMethod.SQUASH
 _REBASE = board.MergeMethod.REBASE
 
 
+_MERGE_COMMIT = (_MERGE, "Merge pull request #12", 2)
+_SQUASH_COMMIT = (_SQUASH, "feat: land the lane (#12)", 1)
+_SQUASH_OR_REBASE_RULE = (frozenset({_SQUASH, _REBASE}),)
+
+
 @pytest.mark.parametrize(
-    ("pinned", "allowed", "landed"),
+    ("pinned", "allowed", "rules", "outcome"),
     [
-        pytest.param(None, None, (_MERGE, "Merge pull request #12", 2), id="settings-withheld"),
-        pytest.param(
-            None, frozenset({_MERGE, _SQUASH}), (_MERGE, "Merge pull request #12", 2), id="both"
-        ),
+        pytest.param(None, None, (), _MERGE_COMMIT, id="settings-withheld"),
+        pytest.param(None, frozenset({_MERGE, _SQUASH}), (), _MERGE_COMMIT, id="both"),
         pytest.param(
             None,
             frozenset({_SQUASH, _REBASE}),
-            (_SQUASH, "feat: land the lane (#12)", 1),
+            (),
+            _SQUASH_COMMIT,
             id="squash-and-rebase-without-a-merge-commit",
         ),
         pytest.param(
             "squash",
             frozenset({_MERGE, _SQUASH}),
-            (_SQUASH, "feat: land the lane (#12)", 1),
-            id="pinned-squash-beats-the-forge",
+            (),
+            _SQUASH_COMMIT,
+            id="pinned-squash-beats-the-default",
+        ),
+        pytest.param(
+            None,
+            frozenset({_REBASE}),
+            (),
+            "pull request #12 cannot land: this repository allows neither a merge commit nor "
+            "a squash merge",
+            id="only-rebase-refuses-before-the-merge",
+        ),
+        pytest.param(
+            None,
+            frozenset(board.MergeMethod),
+            _SQUASH_OR_REBASE_RULE,
+            _SQUASH_COMMIT,
+            id="ruleset-narrows-all-three-settings-to-a-squash",
+        ),
+        pytest.param(
+            None,
+            None,
+            (*_SQUASH_OR_REBASE_RULE, frozenset({_MERGE, _SQUASH})),
+            _SQUASH_COMMIT,
+            id="withheld-settings-narrowed-by-every-ruleset",
+        ),
+        pytest.param(
+            "merge",
+            None,
+            _SQUASH_OR_REBASE_RULE,
+            "board.toml merge_method merge is not allowed on main: GitHub allows squash, rebase",
+            id="pinned-merge-a-ruleset-excludes-refuses-before-the-merge",
         ),
         pytest.param(
             "merge",
             frozenset({_SQUASH}),
-            (_MERGE, "Merge pull request #12", 2),
-            id="pinned-merge-beats-the-forge",
+            (),
+            "board.toml merge_method merge is not allowed on main: GitHub allows squash",
+            id="pinned-merge-the-settings-exclude-refuses-before-the-merge",
         ),
-        pytest.param(None, frozenset({_REBASE}), None, id="only-rebase-refuses-before-the-merge"),
+        pytest.param(
+            "merge",
+            frozenset(board.MergeMethod),
+            (frozenset({_REBASE}),),
+            "board.toml merge_method merge is not allowed on main: GitHub allows rebase",
+            id="pinned-merge-a-rebase-only-ruleset-excludes-refuses-before-the-merge",
+        ),
+        pytest.param(
+            None,
+            frozenset({_MERGE}),
+            _SQUASH_OR_REBASE_RULE,
+            "GitHub allows no merge method aco can use on main",
+            id="ruleset-leaving-no-usable-method-refuses-before-the-merge",
+        ),
+        pytest.param(
+            "squash",
+            frozenset({_MERGE}),
+            _SQUASH_OR_REBASE_RULE,
+            "GitHub allows no merge method aco can use on main",
+            id="pinned-squash-a-ruleset-leaving-no-method-refuses-before-the-merge",
+        ),
     ],
 )
 def test_land_merges_with_the_method_the_repository_allows(
@@ -18143,16 +18205,21 @@ def test_land_merges_with_the_method_the_repository_allows(
     tmp_path: Path,
     pinned: str | None,
     allowed: frozenset[board.MergeMethod] | None,
-    landed: tuple[board.MergeMethod, str, int] | None,
+    rules: tuple[frozenset[board.MergeMethod], ...],
+    outcome: tuple[board.MergeMethod, str, int] | str,
 ) -> None:
-    """Issue #578 line 2: `land` merges with the board configuration's own
-    `merge_method` pin, else the method the forge allows -- a squash commit
-    titled `<pull request title> (#<n>)` where only squash is allowed -- and
-    the delegated `release --merged` accepts that single-parent commit's own
-    trailer exactly as it accepts a merge commit's, and removes the clean
-    lane worktree whose tip is the head the merge pinned, squashed or not."""
+    """Issues #578 line 2 and #615 lines 1-3: `land` merges with the board
+    configuration's own `merge_method` pin, else the method the forge allows
+    -- its settings narrowed by every `pull_request` rule on the default
+    branch, a squash commit titled `<pull request title> (#<n>)` where only
+    squash remains -- and refuses before any merge a pin the forge excludes
+    or a forge leaving no method it can use. The delegated
+    `release --merged` accepts a single-parent commit's own trailer exactly
+    as it accepts a merge commit's, and removes the clean lane worktree
+    whose tip is the head the merge pinned, squashed or not."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.allowed_methods = allowed
+    client.branch_rules = {"main": rules}
     lane = tmp_path / "lane"
     _real_git(repo, "worktree", "add", "-q", str(lane), LANDING_BRANCH)
     _real_git(repo, "branch", "-q", "--set-upstream-to", f"origin/{LANDING_BRANCH}", LANDING_BRANCH)
@@ -18168,18 +18235,13 @@ def test_land_merges_with_the_method_the_repository_allows(
 
     output = capsys.readouterr()
     error = output.err
-    if landed is None:
-        assert (status, error, client.merge_calls) == (
-            2,
-            "ERROR: pull request #12 cannot land: this repository allows neither a merge "
-            "commit nor a squash merge\n",
-            [],
-        )
+    if isinstance(outcome, str):
+        assert (status, error, client.merge_calls) == (2, f"ERROR: {outcome}\n", [])
         return
     [(_number, _head_sha, method, title, body)] = client.merge_calls
     trunk = _real_git(repo, "rev-parse", "main").stdout.strip()
     parents = _real_git(repo, "rev-list", "--parents", "-n", "1", trunk).stdout.split()[1:]
-    assert (status, error, method, title, len(parents)) == (0, "", *landed)
+    assert (status, error, method, title, len(parents)) == (0, "", *outcome)
     assert body.strip().split("\n\n")[-1] == f"Work-Item: #{WORK_ITEM_ISSUE}"
     assert client.closed_issues == {WORK_ITEM_ISSUE}
     assert "worktree: removed\n" in output.out

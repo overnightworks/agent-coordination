@@ -87,6 +87,7 @@ ISSUES_PER_PAGE = 100
 MALFORMED_PULL_REQUEST = "GitHub returned a malformed pull request"
 MALFORMED_FILE_CONTENTS = "GitHub returned malformed file contents"
 MALFORMED_MERGE_SETTINGS = "GitHub returned malformed repository merge settings"
+MALFORMED_BRANCH_RULES = "GitHub returned a malformed branch merge rule"
 MALFORMED_CLOSED_ISSUE = "GitHub returned a malformed closed issue"
 # The combined-status endpoint's own aggregate `state` can be `pending`,
 # `failure`, or `error` with a `statuses` page that, this instant, names no
@@ -106,6 +107,10 @@ _HTTP_SERVER_ERROR_PATTERN = re.compile(r"HTTP 5\d\d")
 # required review, an unmergeable state, which no re-run repairs (issue #603).
 _MERGE_HEAD_MOVED_STATUS = "HTTP 409"
 _MERGE_REFUSED_STATUS = "HTTP 405"
+# GitHub's own 403 message where the repository's plan offers no rulesets (a
+# private repository on the Free plan); such a branch carries no rules.
+_RULESETS_UNAVAILABLE_ON_PLAN = "Upgrade to GitHub Pro or make this repository public"
+_RULESETS_UNAVAILABLE_STATUS = "HTTP 403"
 
 
 def _branch_already_absent(error_text: str) -> bool:
@@ -1006,6 +1011,59 @@ class GitHubForge:
         if not all(isinstance(allowed, bool) for allowed in settings.values()):
             raise forge.ForgeMalformedResponseError(MALFORMED_MERGE_SETTINGS)
         return frozenset(method for method, allowed in settings.items() if allowed)
+
+    def branch_merge_rules(self, branch: str) -> tuple[frozenset[board.MergeMethod], ...]:
+        """The merge methods each rule on `branch` allows (issue #615), one
+        set per rule, read through the branch-rules endpoint that resolves
+        every ruleset applying to it: GitHub refuses a method any one rule
+        excludes, even where the repository settings allow it. A
+        `pull_request` rule allows its own `allowed_merge_methods`, and a
+        `required_linear_history` rule everything but a merge commit. A
+        branch without such a rule, or on a plan without rulesets, answers an
+        empty tuple."""
+        try:
+            raw = self._run(
+                [
+                    "api",
+                    "--paginate",
+                    f"repos/{self.repository}/rules/branches/{branch}?per_page=100",
+                    "--jq",
+                    ".[]",
+                ]
+            )
+        except forge.ForgePermissionDeniedError as error:
+            refusal = str(error)
+            if _RULESETS_UNAVAILABLE_STATUS in refusal and _RULESETS_UNAVAILABLE_ON_PLAN in refusal:
+                return ()
+            raise
+        allowed_per_rule = (
+            self._rule_merge_methods(rule) for rule in self._json_lines(raw, "branch rules")
+        )
+        return tuple(allowed for allowed in allowed_per_rule if allowed is not None)
+
+    @staticmethod
+    def _rule_merge_methods(rule: object) -> frozenset[board.MergeMethod] | None:
+        """The methods one branch rule allows, or None where it restricts none."""
+        if not isinstance(rule, dict):
+            raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
+        if rule.get("type") == "required_linear_history":
+            return frozenset(board.MergeMethod) - {board.MergeMethod.MERGE}
+        if rule.get("type") != "pull_request":
+            return None
+        parameters = rule.get("parameters")
+        if parameters is None:
+            return None
+        if not isinstance(parameters, dict):
+            raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
+        methods = parameters.get("allowed_merge_methods")
+        if methods is None:
+            return None
+        known = {method.value for method in board.MergeMethod}
+        if not isinstance(methods, list) or not all(
+            isinstance(method, str) and method in known for method in methods
+        ):
+            raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
+        return frozenset(board.MergeMethod(method) for method in methods)
 
     def merge_landing(
         self,
