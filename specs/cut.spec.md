@@ -74,7 +74,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 ## The body precondition
 
 - [ ] [CUT-05] `<n>` with a malformed body (BODY-50) refuses `#<n> body malformed: <field>: <message>; cut needs a valid aco block`, exit `2`; an incomplete body (BODY-51) is accepted.
-- [ ] [CUT-39] When the row cut selects has a `done_when` holding a display control (BODY-66), `cut` refuses in CUT-05's form with `body --check`'s sentence before any write; another row never refuses (issue #606).
+- [ ] [CUT-39] If the row cut selects has a `done_when` with a display control (BODY-66), `cut` refuses in CUT-05's form with `body --check`'s sentence before any write; no other row refuses (issue #606, E-CUT-03).
 
 ## Row selection
 
@@ -186,15 +186,19 @@ slice; claim it with aco start."`, `done_when = "Slice A is merged."`;
 
 ### E-CUT-03 -- row refusals
 
-Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90`, one
-`[[slice]]` row `index = 1` titled `Slice A`
+Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90` with two
+`[[slice]]` rows, `index = 1` titled `Slice A`, `index = 2` titled `Slice B`
+with `done_when = "one\u000Btwo"`
 
 ```console
 $ aco cut 90 --row 9
-2> ERROR: #90 has no row 9; cuttable rows: 1
+2> ERROR: #90 has no row 9; cuttable rows: 1, 2
 exit 2
 $ aco cut 90 --title "Wrong title"
 2> ERROR: #90's slice 1 is titled 'Slice A'; --title must match it exactly
+exit 2
+$ aco cut 90 --row 2
+2> ERROR: #90 body malformed: slice[1].done_when: slice[1].done_when of row 2 holds U+000B; a slice done_when stays on one line; cut needs a valid aco block
 exit 2
 ```
 
