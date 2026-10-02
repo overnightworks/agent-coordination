@@ -6302,33 +6302,36 @@ def _unclaimed_rerun_branch(
     return release_branch
 
 
-def _refuse_a_claim_the_pull_request_did_not_land(
+def _refuse_a_claim_the_landing_did_not_land(
     selected: protocol.ActiveClaim,
-    merged: protocol.MergedRelease,
-    verified: _VerifiedMerge,
+    landing: str,
+    landing_branch: str,
+    trunk_since_landing: frozenset[str],
     storage: body.Storage,
 ) -> None:
-    """REL-48/REL-53 (issue #605): an issue's claim is keyed by the issue
-    alone, so an old pull request's rerun would otherwise release a newer
+    """REL-48/REL-53 (issues #605, #611), the one judge under both storage
+    pins of whether `selected` belongs to `landing` -- `pull request #<n>`
+    from its source branch, or `commit <sha>` from an explicit `--branch`,
+    else the claim's own branch (REL-56). An issue's claim is keyed by the
+    issue alone, so an old landing's rerun would otherwise release a newer
     claim on the same issue -- a lane on another branch (REL-48), or one a
     fresh `start` built on the same branch from a trunk that already holds
-    this landing (START-01, REL-53). That claim is never released and never
-    skipped. A same-branch claim based off the trunk, such as START-11 or
-    `aco claim` in a lane worktree still standing, passes both: the
-    residual #310 finding 356 owns."""
+    this landing (START-01, REL-53). That claim is never released and never skipped. A same-branch
+    claim based off the trunk, such as START-11 or `aco claim` in a lane
+    worktree still standing, passes both: the residual #310 finding 356
+    owns."""
     subject = protocol.identity_summary(
         selected.identity, selected.branch, board.item_labeller(storage)
     )
-    if selected.branch != verified.source_branch:
+    if selected.branch != landing_branch:
         raise protocol.ClaimUnavailableError(
-            f"{subject} is claimed on {selected.branch!r}, not on pull request "
-            f"#{merged.pull_request}'s branch {verified.source_branch!r}; "
-            "release that claim by itself"
+            f"{subject} is claimed on {selected.branch!r}, not on {landing}'s branch "
+            f"{landing_branch!r}; release that claim by itself"
         )
-    if selected.base in verified.trunk_since_landing:
+    if selected.base in trunk_since_landing:
         raise protocol.ClaimUnavailableError(
-            f"{subject} was claimed on {selected.branch!r} after pull request "
-            f"#{merged.pull_request} landed; release that claim by itself"
+            f"{subject} was claimed on {selected.branch!r} after {landing} landed; "
+            "release that claim by itself"
         )
 
 
@@ -6534,7 +6537,13 @@ def _verify_and_close_merged_release(
     client = cast(github.GitHubForge, context.forge)
     storage = context.config.storage
     verified = _verify_merged_release(context, client, identity, merged)
-    _refuse_a_claim_the_pull_request_did_not_land(selected, merged, verified, storage)
+    _refuse_a_claim_the_landing_did_not_land(
+        selected,
+        f"pull request #{merged.pull_request}",
+        verified.source_branch,
+        verified.trunk_since_landing,
+        storage,
+    )
     pending_close = _pending_landing_close(client, identity, merged.pull_request)
     if pending_close is not None:
         client.close_landed_item(pending_close.issue, pull_request=pending_close.pull_request)
@@ -7401,9 +7410,10 @@ def _cmd_release_landed(
     `protocol.LandingIntent` then closes the item and releases the claim in
     one commit, one CAS -- `_cmd_release`'s own `ReleaseIntent` path never
     runs for this storage pin's `--merged`. With no live claim left to
-    release (REL-47) it writes nothing and only cleans up, before the item
+    release (REL-47) it writes nothing and only cleans up, and a claim the
+    landing did not land refuses (REL-48, REL-53), both before the item
     write is prepared: that write refuses an item the landing already
-    closed (issue #605).
+    closed (issues #605, #611).
     """
     if not isinstance(identity, protocol.IssueIdentity):
         raise protocol.ClaimUnavailableError(
@@ -7425,18 +7435,26 @@ def _cmd_release_landed(
     observed = context.observation
     _require_state_ref(observed)
     unclaimed_branch = _unclaimed_rerun_branch(parsed, observed, identity, release_branch)
+    landing_label = f"commit {commit}"
     if unclaimed_branch is not None:
         _report_nothing_left_to_release(
             parsed,
             context,
-            f"commit {commit}",
+            landing_label,
             _landed_lane(identity, storage, commit, unclaimed_branch, None),
             context.fetched_trunk_ref,
         )
         return ReleaseEnding.NOTHING_LEFT
+    resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
+    _refuse_a_claim_the_landing_did_not_land(
+        resolved.selected,
+        landing_label,
+        resolved.selected.branch if parsed.branch is None else parsed.branch,
+        _trunk_since(landings, commit),
+        storage,
+    )
     write = client.prepare_landing(identity.issue)
     worktree = context.toplevel
-    resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     new_oid = store.hash_blob(worktree, write.content)
     outcome = protocol.LandedRelease(commit=protocol.ObjectId(commit))
     intent = protocol.LandingIntent(

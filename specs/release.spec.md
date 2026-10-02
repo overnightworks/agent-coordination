@@ -37,7 +37,7 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | `--coordinator-override` without `--role coordinator` | REL-08 | REL-08 | REL-08 |
 | identity/branch resolve to no live claim | REL-09 | REL-09, REL-54 | REL-09 |
 | no live claim on the identity, no `--claim-id`, the landing verified | — | REL-47, REL-49..REL-51 | — |
-| a live claim off the pull request's own source branch | — | REL-48 | — |
+| a live claim off the landing's own branch | — | REL-48, REL-56 | — |
 | a live claim on that branch opened from a trunk already holding the landing | — | REL-53 | — |
 | `--claim-id` mismatches the resolved claim | REL-10 | REL-10 | REL-10 |
 | `--branch` and `--claim-id` disagree | REL-11 | REL-11 | REL-11 |
@@ -104,8 +104,11 @@ Accepted residual: a claim taken between that read and the removal is not seen; 
 removed is clean and merged into the default branch, so nothing is lost, and `aco start` builds it
 again for that claim.
 
-- [ ] [REL-48] A live claim off the pull request's branch refuses `<identity> is claimed on '<branch>', not on pull request #<n>'s branch '<source>'; release that claim by itself`, exit `2` (see E-REL-25).
-- [ ] [REL-53] A claim on that branch based on the merge commit or a later trunk commit (START-01) refuses `<identity> was claimed on '<branch>' after pull request #<n> landed; release that claim by itself`.
+- [ ] [REL-48] A live claim off the landing's branch refuses `<identity> is claimed on '<branch>', not on <landing>'s branch '<source>'; release that claim by itself`, exit `2` (see E-REL-25, E-REL-26).
+- [ ] [REL-56] `<landing>` is REL-49's; `<source>` is the pull request's source branch or, under `storage = "state-ref"`, an explicit `--branch` (REL-04), else the claim's own branch.
+- [ ] [REL-53] A claim on that branch based on the landing commit or a later trunk commit (START-01) refuses `<identity> was claimed on '<branch>' after <landing> landed; release that claim by itself`.
+
+Both storages judge REL-48 and REL-53 alike, before anything is written, closed or removed.
 
 Residual, owned by #310 finding 356: a same-branch claim based off the trunk, such as START-11 or
 `aco claim` in a lane worktree still standing, passes both REL-48 and REL-53; a rerun releases that
@@ -545,3 +548,19 @@ exit 2
 ```
 
 The claim on `ada/issue-42-again` still stands.
+
+### E-REL-26 — an abandoned landing's rerun never ends the lane that claimed its item again
+
+Setup: `storage = "state-ref"`, commit `4c1e9a0d6b7f3e2a1c9d8b7a6f5e4d3c2b1a0f9e` on `main`
+trailer-naming `Work-Item: aco-00002a`, landed from `ada/issue-42`; the claim released
+`--abandoned`, so `aco-00002a` stayed open; then claimed again on `ada/issue-42-again`, whose
+clean linked worktree stands in this checkout
+
+```console
+$ aco release aco-00002a --merged 4c1e9a0d6b7f3e2a1c9d8b7a6f5e4d3c2b1a0f9e --branch ada/issue-42
+2> ERROR: issue aco-00002a is claimed on 'ada/issue-42-again', not on commit 4c1e9a0d6b7f3e2a1c9d8b7a6f5e4d3c2b1a0f9e's branch 'ada/issue-42'; release that claim by itself
+exit 2
+```
+
+The claim on `ada/issue-42-again`, the open item and its worktree all stand; `refs/aco/state`
+does not move. With no live claim on `aco-00002a` the same command meets REL-47 instead.

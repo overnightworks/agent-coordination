@@ -9652,7 +9652,13 @@ def _seed_real_claim_and_item(
 
 
 def _land_real_claim(
-    worktree: Path, remote: Path, *, issue: int, claim_id: str
+    worktree: Path,
+    remote: Path,
+    *,
+    issue: int,
+    claim_id: str,
+    branch: str | None = None,
+    base: str = "c" * 40,
 ) -> protocol.ActiveClaim:
     claim_state = store.commit_transition(
         observed=fresh_observation(worktree, remote),
@@ -9661,8 +9667,8 @@ def _land_real_claim(
             identity=protocol.IssueIdentity(issue),
             agent="Codex Sol",
             role="builder",
-            base=protocol.ObjectId("c" * 40),
-            branch=f"codex/issue-{issue}-claims",
+            base=protocol.ObjectId(base),
+            branch=branch or f"codex/issue-{issue}-claims",
             scope=("src",),
             claim_id=protocol.ClaimId(claim_id),
             operation_id=f"claim-op-{issue}",
@@ -9702,7 +9708,16 @@ def _state_ref_tip(repo: Path, remote: Path) -> str:
     return _real_git(repo, "ls-remote", str(remote), store.STATE_REF).stdout.split()[0]
 
 
-def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_closed(
+def _state_ref_item_state(repo: Path, tip: str, number: int) -> items.RecordState:
+    item_id = items.format_item_id(number)
+    parsed = body.parse_body(
+        _state_ref_blob(repo, tip, f"items/{item_id}.md"), storage=body.Storage.STATE_REF
+    )
+    assert parsed.record is not None
+    return items.parse_item_record(item_id, parsed.record).state
+
+
+def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_whose_claim_is_gone(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
@@ -9710,9 +9725,9 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
     """Issue #359 R3: a real `file://` proof of Beweis 1 -- one landing is
     exactly one new commit on `refs/aco/state` whose tree closes the item
     and drops the claim -- and of the replay case `_FakeStore` cannot see: a
-    second `release` against the now-closed item refuses by name, through
-    the real `state_board.StateRefBoard` re-read from the real ref, and
-    moves the ref not at all."""
+    second `release` naming the released claim refuses it as gone (REL-09),
+    through the real state re-read from the real ref, and moves the ref not
+    at all."""
     repo, remote = _real_landing_scenario(monkeypatch, tmp_path, numbers=(10,))
     sha = _real_git(repo, "rev-parse", "main~2").stdout.strip()
     item_id = items.format_item_id(10)
@@ -9732,12 +9747,7 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
     paths_after = _state_ref_paths(repo, tip_after)
     assert "claims/issue-10.toml" not in paths_after
     assert f"items/{item_id}.md" in paths_after
-    closed_body = body.parse_body(
-        _state_ref_blob(repo, tip_after, f"items/{item_id}.md"), storage=body.Storage.STATE_REF
-    )
-    assert closed_body.record is not None
-    closed_record = items.parse_item_record(item_id, closed_body.record)
-    assert closed_record.state is items.RecordState.CLOSED
+    assert _state_ref_item_state(repo, tip_after, 10) is items.RecordState.CLOSED
     capsys.readouterr()
 
     replay_status = issue_claim.main(
@@ -9745,7 +9755,7 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
     )
 
     assert replay_status == 2
-    assert capsys.readouterr().err.startswith("ERROR: aco-00000a is already closed (closed on ")
+    assert capsys.readouterr().err == "ERROR: issue aco-00000a has no active build claim\n"
     assert _state_ref_tip(repo, remote) == tip_after
 
 
@@ -9798,6 +9808,113 @@ def test_release_merged_rerun_under_state_ref_writes_nothing_and_names_its_own_r
         else f"LANDED commit {sha} already; nothing left to release\nworktree: {kept}\n",
     )
     assert _state_ref_tip(repo, remote) == tip_after_release
+
+
+@pytest.mark.parametrize(
+    "reclaim_on",
+    ["codex/issue-10-again", "codex/issue-10-claims", None],
+    ids=["reclaimed-elsewhere", "reclaimed-on-the-landed-branch", "unclaimed"],
+)
+def test_release_merged_rerun_under_state_ref_never_touches_a_lane_opened_after_an_abandon(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    reclaim_on: str | None,
+) -> None:
+    """Issue #611 lines 1 to 3: a lane lands on its branch, its claim is
+    abandoned, the item stays open and may be claimed again; the old
+    landing's rerun then refuses that newer claim by name -- on another
+    branch (REL-48), or on the landed branch from a trunk that already holds
+    the landing (REL-53) -- or, with no live claim, has nothing left to
+    release (REL-47). Either way the newer claim, the open item and the
+    newer lane's worktree and branch -- on the landed branch itself for
+    REL-53 -- all survive, and `refs/aco/state` does not move."""
+    repo, remote = _real_landing_scenario(monkeypatch, tmp_path, numbers=(10,))
+    sha = _real_git(repo, "rev-parse", "main~2").stdout.strip()
+    landed_branch = "codex/issue-10-claims"
+    newer_branch = reclaim_on or "codex/issue-10-again"
+    newer_worktree = tmp_path / "issue-10-newer"
+    rerun = ["release", "10", "--agent", "Codex Sol", "--merged", sha, "--branch", landed_branch]
+    assert (
+        issue_claim.main(
+            ["release", "10", "--agent", "Codex Sol", "--claim-id", "claim-10", "--abandoned", "x"]
+        )
+        == 0
+    )
+    _real_git(repo, "worktree", "add", "-q", "-b", newer_branch, str(newer_worktree), "main")
+    if reclaim_on is not None:
+        _land_real_claim(
+            repo, remote, issue=10, claim_id="claim-10-again", branch=reclaim_on, base=sha
+        )
+    tip_before = _state_ref_tip(repo, remote)
+    capsys.readouterr()
+
+    status = issue_claim.main(rerun)
+
+    printed_rerun = (
+        f"aco release {items.format_item_id(10)} --merged {sha} --branch {landed_branch}"
+    )
+    refusals = {
+        "codex/issue-10-again": (
+            f"ERROR: issue aco-00000a is claimed on 'codex/issue-10-again', not on commit "
+            f"{sha}'s branch '{landed_branch}'; release that claim by itself\n"
+        ),
+        landed_branch: (
+            f"ERROR: issue aco-00000a was claimed on '{landed_branch}' after commit {sha} "
+            "landed; release that claim by itself\n"
+        ),
+    }
+    expected = (
+        (
+            0,
+            f"LANDED commit {sha} already; nothing left to release\n"
+            f"worktree: kept -- no linked worktree on {landed_branch} in this checkout; "
+            f"run {printed_rerun} in the checkout that holds it\n",
+            "",
+        )
+        if reclaim_on is None
+        else (2, "", refusals[reclaim_on])
+    )
+    printed = capsys.readouterr()
+    observed = (status, printed.out, printed.err)
+    assert observed == expected
+    assert _state_ref_tip(repo, remote) == tip_before
+    assert _state_ref_item_state(repo, tip_before, 10) is items.RecordState.OPEN
+    live_branches = [
+        claim.branch for claim in fresh_observation(repo, remote).state.claims.values()
+    ]
+    assert live_branches == ([] if reclaim_on is None else [reclaim_on])
+    assert newer_worktree.is_dir()
+    assert _real_git(repo, "branch", "--list", newer_branch).stdout.strip()
+
+
+def test_release_merged_rerun_under_state_ref_refuses_a_newer_claim_before_judging_the_item(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """Issue #611: the claim decision comes before the close write is
+    prepared, so a rerun of a landing whose item is already closed still
+    names the newer claim on another branch (REL-48) rather than the closed
+    item, and moves `refs/aco/state` not at all."""
+    repo, remote = _real_landing_scenario(monkeypatch, tmp_path, numbers=(10,))
+    sha = _real_git(repo, "rev-parse", "main~2").stdout.strip()
+    landed_branch = "codex/issue-10-claims"
+    newer_branch = "codex/issue-10-again"
+    landing = ["release", "10", "--agent", "Codex Sol", "--merged", sha]
+    assert issue_claim.main([*landing, "--claim-id", "claim-10"]) == 0
+    _land_real_claim(repo, remote, issue=10, claim_id="claim-10-again", branch=newer_branch)
+    tip_before = _state_ref_tip(repo, remote)
+    capsys.readouterr()
+
+    status = issue_claim.main([*landing, "--branch", landed_branch])
+
+    assert (status, capsys.readouterr().err) == (
+        2,
+        f"ERROR: issue aco-00000a is claimed on '{newer_branch}', not on commit {sha}'s "
+        f"branch '{landed_branch}'; release that claim by itself\n",
+    )
+    assert _state_ref_tip(repo, remote) == tip_before
 
 
 class _RaceOnceTransport:
