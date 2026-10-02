@@ -39,6 +39,7 @@ branch prefix, `<claim-id>` the acquired claim's own id.
 | the claim write's outcome is unknown after its push was sent | START-25 |
 | a `state-ref` item closed or edited after the checks read it, before or under the claim's push | START-27 |
 | git will not delete the branch a refused `start` built | START-21 |
+| the delete of the branch a refused `start` built timed out | START-30 |
 | git will not remove the worktree a refused `start` built | START-23 |
 | run from a linked worktree | START-19 |
 | run from a linked worktree whose git directory names no checkout | START-24 |
@@ -103,8 +104,9 @@ outcome the store cannot tell keeps it and says so (START-25); an interrupt remo
 - [ ] [START-26] A build or gone-worktree rebuild standing on a trunk moved after the checks refuses `the trunk moved after start checked it; run start again`, exit 2, then removes it as START-18 says.
 - [ ] [START-25] Unknown outcome (CAS-56) keeps both, even one that stood (START-11): `the claim's push was sent, its outcome unknown; worktree <path> and branch '<branch>' kept; run start again to resume it`; exit 2.
 - [ ] [START-27] A `state-ref` item closed or edited after the checks read it refuses CAS-20's sentence (CAS-59), no claim, and the build goes (START-18), before or under the claim's push; see E-START-16.
-- [ ] [START-21] When git will not delete that branch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
+- [ ] [START-21] When git will not delete that branch, by exit or launch, the line reads `removed worktree <path> this start created; branch '<branch>' kept: <reason>` instead (see E-START-14).
 - [ ] [START-23] When git will not remove that worktree, the refusal and exit 2 stay and the line reads `worktree <path> and branch '<branch>' this start created kept: git failure: <reason>`.
+- [ ] [START-30] A timed-out delete may have run: `removed worktree <path> this start created; branch '<branch>' unknown: git <subcommand> timed out; check git branch --list <branch>` (E-START-19).
 
 ## Never
 
@@ -297,6 +299,19 @@ worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
 branch: ada/issue-314-fresh-slug
 2> ERROR: issue #314 is claimed by Grok sess-9 (builder) on issue #314 branch grok/issue-314-other
 2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug this start created; branch 'ada/issue-314-fresh-slug' kept: git failure: error: branch not fully merged
+exit 2
+```
+
+### E-START-19 -- a timed-out delete leaves the branch a refused call built unknown
+
+Setup: as E-START-15, and `git branch -d ada/issue-314-fresh-slug` times out
+
+```console
+$ aco start 314
+worktree: /work/agent-coordination-worktrees/issue-314-fresh-slug
+branch: ada/issue-314-fresh-slug
+2> ERROR: issue #314 is claimed by Grok sess-9 (builder) on issue #314 branch grok/issue-314-other
+2> removed worktree /work/agent-coordination-worktrees/issue-314-fresh-slug this start created; branch 'ada/issue-314-fresh-slug' unknown: git branch timed out; check git branch --list ada/issue-314-fresh-slug
 exit 2
 ```
 

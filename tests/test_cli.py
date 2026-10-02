@@ -2503,6 +2503,19 @@ def _git_keeps_the_raced_branch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> 
     )
 
 
+def _the_raced_branch_delete_fails_to_finish(
+    failure: Exception,
+) -> Callable[[pytest.MonkeyPatch, Path], None]:
+    """The raced claim refuses the build, and the git deleting its branch
+    raises `failure` instead of running."""
+
+    def arrange(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+        _claim_lands_before_the_commit(monkeypatch, repo)
+        _fail_the_git_launch(["branch", "-d"], failure)(monkeypatch, repo, repo)
+
+    return arrange
+
+
 def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
     """The ledger write fails before anything is written, with a refusal
     that is no claim conflict."""
@@ -2559,6 +2572,20 @@ _REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start cr
             id="git-keeps-the-branch",
         ),
         pytest.param(
+            _the_raced_branch_delete_fails_to_finish(PermissionError("permission denied")),
+            "issue #314 is claimed by Grok sess-9",
+            "removed worktree {worktree} this start created; "
+            "branch '{branch}' kept: git failure: git failed to launch: permission denied",
+            id="branch-delete-fails-to-launch",
+        ),
+        pytest.param(
+            _the_raced_branch_delete_fails_to_finish(process.ProcessTimedOutError()),
+            "issue #314 is claimed by Grok sess-9",
+            "removed worktree {worktree} this start created; "
+            "branch '{branch}' unknown: git branch timed out; check git branch --list {branch}",
+            id="branch-delete-timed-out",
+        ),
+        pytest.param(
             _trunk_moves_after_the_fetch,
             "the trunk moved after start checked it; run start again\n",
             _REMOVED_BOTH,
@@ -2592,7 +2619,8 @@ def test_a_claim_refused_after_the_build_removes_what_start_built(
     live claim's rebuilt worktree included -- removes exactly the worktree
     and branch this call built, and says so; when git
     will not delete the branch the safe way, it says which branch stays and
-    why."""
+    why, and a delete that timed out reads the branch unknown with the check
+    that tells (issue #603, START-30)."""
     repo = _start_scenario(monkeypatch, tmp_path)
     arrange(monkeypatch, repo)
     monkeypatch.chdir(repo)
