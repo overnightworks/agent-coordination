@@ -10,7 +10,8 @@ these IDs instead of restating them.
 
 Every defect sentence below is printed by `aco body --check` on stderr, one
 line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
-`<n>` is an item number, `<path>` a repository-relative path.
+`<n>` is an item number, `<path>` a repository-relative path, `<keys>` the
+empty projection keys, comma-joined in the order `Now, Next, Done when`.
 
 ## Behavior table
 
@@ -24,7 +25,7 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 | valid block, prose around it | BODY-06, BODY-07 | — | — |
 | `version` missing or not `1` | BODY-08, BODY-09 | BODY-50 | BODY-52 |
 | `now`/`next`/`done_when` missing or not a string | BODY-10, BODY-11 | BODY-50 | BODY-52 |
-| every projection key present and empty | BODY-12 | BODY-51 | BODY-52 |
+| every projection key present, one or more empty | BODY-12 | BODY-51 | BODY-52 |
 | unknown top-level key | BODY-13 | BODY-50 | BODY-52 |
 | `[record]` under `storage = "github"` | BODY-15 | BODY-50 | BODY-52 |
 | `[record]` under `storage = "state-ref"` | BODY-16..BODY-20 | — | — |
@@ -57,7 +58,7 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 - [ ] [BODY-09] A block whose `version` is any value but the integer `1` prints `body malformed: version: version must be exactly 1` on stderr, exit `2`.
 - [ ] [BODY-10] A block missing `now`, `next` or `done_when` prints one `body malformed: <key>: <key> is required` line per missing key on stderr, exit `2`.
 - [ ] [BODY-11] A block whose `now`, `next` or `done_when` is not a string prints `body malformed: <key>: <key> must be a string` on stderr, exit `2`.
-- [ ] [BODY-12] A block with all three projection keys present and empty is valid but unfilled: `aco body --check` prints `body incomplete: Now, Next, Done when` on stderr, exit `2`.
+- [ ] [BODY-12] A block whose projection keys are present but not all filled is valid but unfilled: `aco body --check` prints `body incomplete: <keys>` on stderr, exit `2` (see E-BODY-02).
 - [ ] [BODY-13] A top-level key outside `version`, `now`, `next`, `done_when`, `frozen_until`, `scope`, `size`, `whole`, `expectation`, `slice` prints `body malformed: <key>: unknown top-level key <key>`, exit `2`.
 - [ ] [BODY-14] A block whose three projection keys are all non-empty and whose optional tables are valid prints `body ok` on stdout, exit `0`, with nothing on stderr (see E-BODY-01).
 
@@ -119,7 +120,7 @@ line per defect, and by a reader as the item's own reason (BODY-50..BODY-52).
 ## What a reader does with a defect
 
 - [ ] [BODY-50] An item whose body carries any defect above is named by `aco board` with its first defect sentence as its reason, `body malformed: <field>: <message>`, and is never proposed as a cut or a close.
-- [ ] [BODY-51] An item whose block is valid but whose projection keys are empty is skipped by `aco next`, which names it `SKIPPED` with `body incomplete: Now, Next, Done when`.
+- [ ] [BODY-51] An item whose block is valid but carries an empty projection key is skipped by `aco next`, which names it `SKIPPED` with BODY-12's `body incomplete: <keys>`.
 - [ ] [BODY-52] Issue-mode `aco claim <n>` against such an item refuses before any write with the same sentence as a `body-contract` check, exit `2` (see E-BODY-03).
 
 ## `scope`, the item's own files
@@ -199,6 +200,22 @@ done_when = ""
 ```
 BODY
 2> body incomplete: Now, Next, Done when
+exit 2
+````
+
+A block with only `done_when` left empty, as an untied cut writes it
+(`specs/cut.spec.md` CUT-37), names that one key:
+
+````console
+$ aco body --check <<'BODY'
+```aco
+version = 1
+now = "Cut from #90"
+next = "Build this slice; claim it with aco start."
+done_when = ""
+```
+BODY
+2> body incomplete: Done when
 exit 2
 ````
 

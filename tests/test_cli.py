@@ -20234,6 +20234,34 @@ def test_body_check_names_defects_with_checks_own_sentences(
     assert capsys.readouterr().err == f"body malformed: {reason}\n"
 
 
+@pytest.mark.parametrize(
+    ("toml_text", "keys"),
+    [
+        pytest.param(
+            'version = 1\nnow = ""\nnext = ""\ndone_when = ""\n',
+            "Now, Next, Done when",
+            id="every-key-empty",
+        ),
+        pytest.param(
+            'version = 1\nnow = "Cut from #90"\nnext = "Build it."\ndone_when = ""\n',
+            "Done when",
+            id="only-done-when-empty",
+        ),
+    ],
+)
+def test_body_check_names_each_empty_projection_key_as_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    toml_text: str,
+    keys: str,
+) -> None:
+    """BODY-12 (issue #606): a defect-free block with empty projection keys
+    is incomplete, and the sentence names exactly the empty ones."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(block_body(toml_text)))
+    assert body_check_main() == 2
+    assert capsys.readouterr().err == f"body incomplete: {keys}\n"
+
+
 def test_body_check_prints_every_simultaneous_defect_not_just_the_first(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
