@@ -208,7 +208,6 @@ class FakeForge:
     merge_remote: Path | None = None
     closes_on_merge: bool = False
     allowed_methods: frozenset[board.MergeMethod] | None = None
-    fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
     head_board_config: str | None = ""
     file_reads: list[tuple[Path, str]] = field(default_factory=list)
@@ -345,8 +344,6 @@ class FakeForge:
         GitHub does (issue #590)."""
         self._run()
         self.merge_calls.append((number, head_sha, method, title, body))
-        if self.fail_merge is not None:
-            raise self.fail_merge
         sha = self.merge_sha
         landing = self.landings[number]
         if self.closes_on_merge:
@@ -18162,15 +18159,15 @@ def test_land_refuses_under_the_state_ref_pin(
 
 
 @pytest.mark.parametrize(
-    ("refusal", "printed"),
+    ("gh_failure", "printed"),
     [
         pytest.param(
-            forge.ForgeMergeConflictError("HTTP 409 head changed"),
+            "gh: Head branch was modified. Review and try the merge again. (HTTP 409)",
             "ERROR: pull request #12 changed while it was checked; re-run land\n",
             id="head-moved-409",
         ),
         pytest.param(
-            forge.ForgeMergeRefusedError("gh: Repository rule violations found (HTTP 405)"),
+            "gh: Repository rule violations found (HTTP 405)",
             "ERROR: GitHub refused the merge of pull request #12: "
             "gh: Repository rule violations found (HTTP 405)\n",
             id="refused-405",
@@ -18181,21 +18178,29 @@ def test_land_names_the_forges_merge_refusal(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
-    refusal: ClaimError,
+    gh_failure: str,
     printed: str,
 ) -> None:
     """Issue #405: a 409 from the merge endpoint means the pull request's
     head moved since preflight read it -- refused by name, before any
     follow-up step, with its one recovery: re-run. A 405 is GitHub refusing
     to perform the merge at all, which no re-run repairs, so it names the
-    forge's own reason instead (issue #603)."""
+    forge's own reason instead (issue #603). The merge runs through the real
+    GitHub adapter, so its status mapping is proven at `land`'s entry point."""
+    merge_requests: list[list[str]] = []
+
+    def gh_answers_the_merge(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        merge_requests.append(arguments)
+        raise forge.ForgeError(gh_failure)
+
+    github_merge = github.GitHubForge(github.repository_id(REPOSITORY), run=gh_answers_the_merge)
     _repo, client = _land_scenario(monkeypatch, tmp_path)
-    client.fail_merge = refusal
+    monkeypatch.setattr(client, "merge_landing", github_merge.merge_landing)
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
 
     assert capsys.readouterr().err == printed
-    assert len(client.merge_calls) == 1
+    assert len(merge_requests) == 1
     assert client.deleted_branches == []
 
 
