@@ -1151,25 +1151,62 @@ def test_github_adapter_reads_the_repositorys_allowed_merge_methods(
     ]
 
 
+def _read_merge_settings(client: GitHubForge) -> object:
+    return client.allowed_merge_methods()
+
+
+def _read_main_merge_rules(client: GitHubForge) -> object:
+    return client.branch_merge_rules("main")
+
+
+_MALFORMED_SETTINGS = "malformed repository merge settings"
+_MALFORMED_RULE = "malformed branch merge rule"
+
+
 @pytest.mark.parametrize(
-    "answer",
+    ("read", "answer", "refusal"),
     [
         pytest.param(
-            json.dumps({"merge": True, "squash": True, "rebase": "yes"}), id="not-a-boolean"
+            _read_merge_settings,
+            json.dumps({"merge": True, "squash": True, "rebase": "yes"}),
+            _MALFORMED_SETTINGS,
+            id="settings-not-a-boolean",
         ),
         pytest.param(
-            json.dumps({"merge": False, "squash": True, "rebase": None}), id="half-withheld"
+            _read_merge_settings,
+            json.dumps({"merge": False, "squash": True, "rebase": None}),
+            _MALFORMED_SETTINGS,
+            id="settings-half-withheld",
         ),
-        pytest.param(json.dumps([True, True]), id="not-an-object"),
+        pytest.param(
+            _read_merge_settings,
+            json.dumps([True, True]),
+            _MALFORMED_SETTINGS,
+            id="settings-not-an-object",
+        ),
+        pytest.param(
+            _read_main_merge_rules,
+            '["squash","fast-forward"]',
+            _MALFORMED_RULE,
+            id="rule-unknown-method",
+        ),
+        pytest.param(
+            _read_main_merge_rules, '[["squash"]]', _MALFORMED_RULE, id="rule-not-a-method-name"
+        ),
+        pytest.param(_read_main_merge_rules, '"squash"', _MALFORMED_RULE, id="rule-not-a-list"),
     ],
 )
-def test_github_adapter_fails_loud_on_malformed_merge_settings(answer: str) -> None:
+def test_github_adapter_fails_loud_on_malformed_merge_answers(
+    read: Callable[[GitHubForge], object], answer: str, refusal: str
+) -> None:
+    """Issues #578 and #615: a merge-settings or branch-rule answer this
+    adapter cannot read as merge methods fails loud rather than guessing."""
     client = GitHubForge(
         github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: answer
     )
 
-    with pytest.raises(ClaimError, match="malformed repository merge settings"):
-        client.allowed_merge_methods()
+    with pytest.raises(ClaimError, match=refusal):
+        read(client)
 
 
 @pytest.mark.parametrize(
@@ -1211,23 +1248,6 @@ def test_github_adapter_reads_the_default_branchs_merge_rules(
             '.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods',
         ]
     ]
-
-
-@pytest.mark.parametrize(
-    "answer",
-    [
-        pytest.param('["squash","fast-forward"]', id="unknown-method"),
-        pytest.param('[["squash"]]', id="not-a-method-name"),
-        pytest.param('"squash"', id="not-a-list"),
-    ],
-)
-def test_github_adapter_fails_loud_on_a_malformed_branch_merge_rule(answer: str) -> None:
-    client = GitHubForge(
-        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: answer
-    )
-
-    with pytest.raises(ClaimError, match="malformed branch merge rule"):
-        client.branch_merge_rules("main")
 
 
 @pytest.mark.parametrize(

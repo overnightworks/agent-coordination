@@ -7137,24 +7137,51 @@ def _land_merge_body(title: str, body: str, classification: board.Classification
 
 
 def _land_merge_method(
-    pinned: board.MergeMethod | None, client: github.GitHubForge, number: int
+    pinned: board.MergeMethod | None, client: github.GitHubForge, number: int, branch: str
 ) -> board.MergeMethod:
-    """The method `aco land` merges pull request `number` with (issue
-    #578): the board configuration's own pin beats the forge; otherwise a
-    merge commit wherever the forge allows one or withholds its settings,
-    and a squash where it allows a squash but no merge commit -- never a
-    rebase, even where the forge allows only that."""
-    if pinned is not None:
-        return pinned
-    allowed = client.allowed_merge_methods()
-    if allowed is None or board.MergeMethod.MERGE in allowed:
-        return board.MergeMethod.MERGE
-    if board.MergeMethod.SQUASH in allowed:
-        return board.MergeMethod.SQUASH
-    raise protocol.ClaimUnavailableError(
-        f"pull request #{number} cannot land: this repository allows neither a merge commit "
-        "nor a squash merge"
-    )
+    """The method `aco land` merges pull request `number` into `branch` with
+    (issues #578, #615): the board configuration's own pin, refused where
+    the forge would refuse it; otherwise a merge commit wherever the forge
+    allows one, and a squash where it allows a squash but no merge commit --
+    never a rebase, even where the forge allows only that."""
+    allowed = _forge_allowed_merge_methods(client, number, branch)
+    if pinned is None:
+        return (
+            board.MergeMethod.MERGE
+            if board.MergeMethod.MERGE in allowed
+            else (board.MergeMethod.SQUASH)
+        )
+    if pinned not in allowed:
+        allowed_list = ", ".join(method.value for method in board.MergeMethod if method in allowed)
+        raise protocol.ClaimUnavailableError(
+            f"board.toml merge_method {pinned.value} is not allowed on {branch}: "
+            f"GitHub allows {allowed_list}"
+        )
+    return pinned
+
+
+def _forge_allowed_merge_methods(
+    client: github.GitHubForge, number: int, branch: str
+) -> frozenset[board.MergeMethod]:
+    """Every method the forge allows on `branch`, refused before any write
+    unless one `aco land` can use remains: the repository's own settings --
+    every method where it withholds them from a token without push rights --
+    narrowed by each `pull_request` rule on `branch`, since GitHub refuses
+    a method any one of them excludes."""
+    settings = client.allowed_merge_methods()
+    allowed = frozenset(board.MergeMethod) if settings is None else settings
+    if not allowed & board.LANDING_MERGE_METHODS:
+        raise protocol.ClaimUnavailableError(
+            f"pull request #{number} cannot land: this repository allows neither a merge commit "
+            "nor a squash merge"
+        )
+    for rule in client.branch_merge_rules(branch):
+        allowed &= rule
+    if not allowed & board.LANDING_MERGE_METHODS:
+        raise protocol.ClaimUnavailableError(
+            f"GitHub allows no merge method aco can use on {branch}"
+        )
+    return allowed
 
 
 def _land_merge_title(method: board.MergeMethod, detail: forge.Landing) -> str:
@@ -7352,7 +7379,7 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
             client, claims_provider, check_context, number, parsed
         )
         checkout.refuse_unlandable_checkout(context.default_branch, directory=toplevel)
-        method = _land_merge_method(config.merge_method, client, number)
+        method = _land_merge_method(config.merge_method, client, number, context.default_branch)
         merge_sha = _land_merge(client, detail, readiness, classification, method)
     _land_step(
         number, merge_sha, "delete-branch", lambda: client.delete_branch(detail.source_branch)
