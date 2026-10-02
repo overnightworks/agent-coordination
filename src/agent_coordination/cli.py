@@ -3231,9 +3231,12 @@ class _VerifiedMerge:
     """What `_verify_merged_release` proved about a merged pull request:
     `landed_head`, the head the forge recorded as landed -- the one tip a
     squashed lane's worktree and branch are removed by, on a first run or
-    a rerun alike (issue #590) -- and the still-open item to close, if any."""
+    a rerun alike (issue #590) -- the branch it was merged from, which the
+    released claim must sit on (issue #605), and the still-open item to
+    close, if any."""
 
     landed_head: str
+    source_branch: str
     pending_close: _MergedLandingClose | None
 
 
@@ -3309,7 +3312,11 @@ def _verify_merged_release(
     pending_close = _pending_landing_close(
         context, client, identity, detail.number, detail.merge_commit
     )
-    return _VerifiedMerge(landed_head=detail.head_sha, pending_close=pending_close)
+    return _VerifiedMerge(
+        landed_head=detail.head_sha,
+        source_branch=detail.source_branch,
+        pending_close=pending_close,
+    )
 
 
 def _pending_landing_close(
@@ -6249,6 +6256,45 @@ def _resolve_release_claimant(
     return _authorize_releaser(parsed, selected, _release_repeat_command(parsed))
 
 
+def _unclaimed_rerun_branch(
+    parsed: argparse.Namespace,
+    observed: protocol.ClaimState,
+    identity: protocol.ClaimIdentity,
+    release_branch: str | None,
+) -> str | None:
+    """The release's own branch when a `--merged` release has nothing left
+    to release (issue #605, REL-47): no `--claim-id` and no live claim on its
+    identity, the state a rerun after a completed release finds. The missing
+    claim is the trigger, never a closed item: GitHub closes the item at
+    merge time through `Closes #<n>`. A `--claim-id` names one claim, so its
+    absence stays `_select_release_claim`'s refusal; `None` hands every other
+    release to that selection."""
+    if parsed.merged is None or parsed.claim_id is not None or not release_branch:
+        return None
+    if protocol.claim_key(identity, release_branch) in observed.claims:
+        return None
+    return release_branch
+
+
+def _refuse_a_claim_off_the_pull_request_branch(
+    selected: protocol.ActiveClaim,
+    merged: protocol.MergedRelease,
+    source_branch: str,
+    storage: body.Storage,
+) -> None:
+    """REL-48 (issue #605): an issue's claim is keyed by the issue alone, so
+    an old pull request's rerun would otherwise release a newer lane's claim
+    on the same issue. That claim is never released and never skipped."""
+    if selected.branch != source_branch:
+        subject = protocol.identity_summary(
+            selected.identity, selected.branch, board.item_labeller(storage)
+        )
+        raise protocol.ClaimUnavailableError(
+            f"{subject} is claimed on {selected.branch!r}, not on pull request "
+            f"#{merged.pull_request}'s branch {source_branch!r}; release that claim by itself"
+        )
+
+
 def _select_release_claim(
     parsed: argparse.Namespace,
     observed: protocol.ClaimState,
@@ -6348,14 +6394,24 @@ def _cmd_release(
     `precondition_failed`, rather than escaping the envelope entirely."""
     as_json = parsed.json
     try:
-        return _release_transition(parsed, context, release_branch)
+        _release_transition(parsed, context, release_branch)
     except protocol.ClaimError as error:
         return _refuse(ReleaseReason.PRECONDITION_FAILED, error, as_json=as_json)
+    return 0
+
+
+class ReleaseEnding(StrEnum):
+    """How one `release` ended (issue #605): it released a claim, or a
+    `--merged` rerun found nothing left to release (REL-47), after which
+    `aco land` prints no reinstall line (LANDCMD-38)."""
+
+    RELEASED = "released"
+    NOTHING_LEFT = "nothing left to release"
 
 
 def _release_transition(
     parsed: argparse.Namespace, context: RunContext, release_branch: str | None
-) -> int:
+) -> ReleaseEnding:
     """A `--merged` release judges a squashed lane by the head the forge
     recorded as landed (issue #590), whether `aco land` merged it a moment
     ago, a rerun resumes it, or a standalone release follows a merge made
@@ -6369,28 +6425,18 @@ def _release_transition(
     outcome = _release_outcome(merged, parsed.abandoned)
     observed = context.observation
     _require_state_ref(observed)
+    if (
+        isinstance(outcome, protocol.MergedRelease)
+        and _unclaimed_rerun_branch(parsed, observed, identity, release_branch) is not None
+    ):
+        _report_merged_pull_request_left_nothing(parsed, context, identity, outcome)
+        return ReleaseEnding.NOTHING_LEFT
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
-    client: github.GitHubForge | None = None
-    verified: _VerifiedMerge | None = None
-    if isinstance(outcome, protocol.MergedRelease):
-        # Authorization above gates every forge read and write here (issue
-        # #359 R1): an unauthorized or mismatched-claim `--merged` release
-        # never reaches the forge at all, so it can neither verify, comment
-        # on, nor close a pull request's issue. `storage` is already proven
-        # `github` here (the `state-ref` branch above returned), so this
-        # cast is honest, not a suppression: `_build_forge` builds
-        # exactly a `github.GitHubForge` for every other storage pin.
-        client = cast(github.GitHubForge, context.forge)
-        verified = _verify_merged_release(context, client, identity, outcome)
-        pending_close = verified.pending_close
-        if pending_close is not None:
-            # Runs before the release transition below (issue #359 R1): a
-            # close failure here -- a transient forge error, most often --
-            # leaves this function raising before the release transition
-            # ever runs, so the claim it would have released stays exactly
-            # as live as it was, and `main`'s own `ClaimError` handler
-            # prints the failure as the one sentence the operator sees.
-            client.close_landed_item(pending_close.issue, pull_request=pending_close.pull_request)
+    lane = (
+        _verify_and_close_merged_release(context, identity, outcome, resolved.selected)
+        if isinstance(outcome, protocol.MergedRelease)
+        else None
+    )
     intent = protocol.ReleaseIntent(
         claim_id=resolved.selected.claim_id,
         agent=parsed.agent,
@@ -6407,21 +6453,15 @@ def _release_transition(
     # default branch to verify the merge, so this ref costs no read.
     landing = (
         None
-        if client is None
+        if lane is None
         else _landing_report(
             context, identity, new_state, storage, context.fetched_default_branch_ref()
         )
     )
     worktree_cleanup = (
-        _cleanup_landed_worktree(
-            parsed,
-            resolved.selected.branch,
-            context,
-            context.fetched_default_branch_ref,
-            verified.landed_head,
-        )
-        if verified is not None
-        else None
+        None
+        if lane is None
+        else _cleanup_landed_worktree(parsed, lane, context, context.fetched_default_branch_ref)
     )
     _print_release_result(
         ReleaseReport(
@@ -6435,15 +6475,135 @@ def _release_transition(
         ),
         as_json=parsed.json,
     )
-    return 0
+    return ReleaseEnding.RELEASED
+
+
+def _verify_and_close_merged_release(
+    context: RunContext,
+    identity: protocol.ClaimIdentity,
+    merged: protocol.MergedRelease,
+    selected: protocol.ActiveClaim,
+) -> _LandedLane:
+    """A github `--merged` release's forge half, run once `selected` is
+    resolved and its releaser authorized (issue #359 R1): an unauthorized
+    or mismatched-claim release never reaches the forge at all, so it can
+    neither verify, comment on, nor close a pull request's issue. `storage`
+    is proven `github` here (`_release_transition` returned for
+    `state-ref`), so the cast is honest: `_build_forge` builds exactly a
+    `github.GitHubForge` for every other storage pin. The close runs before
+    the release transition: a close failure -- a transient forge error,
+    most often -- raises before that transition ever runs, so the claim it
+    would have released stays exactly as live as it was."""
+    client = cast(github.GitHubForge, context.forge)
+    storage = context.config.storage
+    verified = _verify_merged_release(context, client, identity, merged)
+    _refuse_a_claim_off_the_pull_request_branch(selected, merged, verified.source_branch, storage)
+    pending_close = verified.pending_close
+    if pending_close is not None:
+        client.close_landed_item(pending_close.issue, pull_request=pending_close.pull_request)
+    return _landed_lane(
+        identity, storage, str(merged.pull_request), selected.branch, verified.landed_head
+    )
+
+
+def _report_merged_pull_request_left_nothing(
+    parsed: argparse.Namespace,
+    context: RunContext,
+    identity: protocol.ClaimIdentity,
+    merged: protocol.MergedRelease,
+) -> None:
+    """REL-47 under `storage = "github"` (issue #605): the merge verifies
+    exactly as a release's would, then only its lane is cleaned up -- on
+    the pull request's own source branch, the one fact the forge records
+    about where the lane lived (REL-50)."""
+    client = cast(github.GitHubForge, context.forge)
+    storage = context.config.storage
+    verified = _verify_merged_release(context, client, identity, merged)
+    _report_nothing_left_to_release(
+        parsed,
+        context,
+        f"pull request #{merged.pull_request}",
+        _landed_lane(
+            identity,
+            storage,
+            str(merged.pull_request),
+            verified.source_branch,
+            verified.landed_head,
+        ),
+        context.fetched_default_branch_ref,
+    )
+
+
+NOTHING_LEFT_TO_RELEASE = "nothing left to release"
+
+
+def _report_nothing_left_to_release(
+    parsed: argparse.Namespace,
+    context: RunContext,
+    landing: str,
+    lane: _LandedLane,
+    fetched_trunk_ref: Callable[[], str],
+) -> None:
+    """REL-49/REL-51 (issue #605): a verified landing whose release already
+    happened closes nothing and writes no claim state; it reports that, then
+    its lane's cleanup, which may still be due in this checkout."""
+    worktree = worktree_cleanup_outcome_text(
+        _cleanup_landed_worktree(parsed, lane, context, fetched_trunk_ref)
+    )
+    if parsed.json:
+        _emit_json(
+            True,
+            ReleaseReason.MERGED,
+            outcome=NOTHING_LEFT_TO_RELEASE,
+            **_identity_json(lane.identity),
+            branch=lane.branch,
+            worktree=worktree,
+        )
+        return
+    print(f"LANDED {landing} already; {NOTHING_LEFT_TO_RELEASE}")
+    print(f"worktree: {worktree}")
+
+
+@dataclass(frozen=True)
+class _LandedLane:
+    """The lane a `--merged` release cleans up after (issue #605): its
+    identity and branch, the head the forge recorded as landed (`None` under
+    `storage = "state-ref"`, which has no pull request), and `rerun`, the
+    `release` line that repeats this cleanup in the checkout holding its
+    worktree (REL-52)."""
+
+    identity: protocol.ClaimIdentity
+    branch: str
+    landed_head: str | None
+    rerun: str
+
+
+def _landed_lane(
+    identity: protocol.ClaimIdentity,
+    storage: body.Storage,
+    landing: str,
+    branch: str,
+    landed_head: str | None,
+) -> _LandedLane:
+    """`branch`'s lane, landed as `landing` -- a pull request number, or the
+    verified trunk sha under `storage = "state-ref"` -- with its `rerun`
+    rendered by the one advice renderer, so it runs as printed under either
+    storage pin and from any checkout (REL-52)."""
+    item = (
+        ()
+        if isinstance(identity, protocol.LaneIdentity)
+        else (board.item_argument(identity.issue, storage),)
+    )
+    rerun = board.advice_command("release", *item, "--merged", landing, "--branch", branch)
+    return _LandedLane(identity, branch, landed_head, rerun)
 
 
 WORKTREE_KEPT_FLAG_REASON = "--keep-worktree was given"
 WORKTREE_KEPT_RAN_FROM_INSIDE_REASON = "release ran from inside it"
-# Names the branch (issue #578): a landing from a separate clone holds no
-# lane worktree, which stays where it lives for that checkout to remove.
+# Names the repair (issues #578, #605): a landing from a separate clone holds
+# no lane worktree, which stays where it lives for that checkout to remove.
 WORKTREE_KEPT_NO_WORKTREE_REASON = (
-    "no linked worktree on {branch} in this checkout; if one exists, it lives in another checkout"
+    "no linked worktree on {branch} in this checkout; run {rerun} in the checkout that holds it"
 )
 
 
@@ -6468,10 +6628,9 @@ def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> s
 
 def _cleanup_landed_worktree(
     parsed: argparse.Namespace,
-    branch: str,
+    lane: _LandedLane,
     context: RunContext,
     fetched_trunk_ref: Callable[[], str],
-    landed_head: str | None,
 ) -> checkout.WorktreeCleanupOutcome:
     """After a successful `--merged` release, remove the lane's local
     worktree and local branch when both are safe to remove, and report
@@ -6487,12 +6646,11 @@ def _cleanup_landed_worktree(
     context already holds, never resolved a second time (issue #472).
     `fetched_trunk_ref` names the ref the lane must be merged into -- the
     one its release judged the landing on (issue #492) -- asked only here,
-    so a failure to resolve it reads as `kept` too. `landed_head` is the
-    merged pull request's recorded head, `None` under `storage = state-ref`,
-    which has no pull request. The remote branch
+    so a failure to resolve it reads as `kept` too. The remote branch
     stays the forge merge's own business either way."""
     if parsed.keep_worktree:
         return checkout.worktree_cleanup_kept(WORKTREE_KEPT_FLAG_REASON)
+    branch = lane.branch
     try:
         toplevel = context.toplevel
         others = tuple(path for path in store.list_worktrees(toplevel) if path != toplevel)
@@ -6501,13 +6659,13 @@ def _cleanup_landed_worktree(
         matching = checkout.worktree_on_branch(others, branch)
         if matching is None:
             return checkout.worktree_cleanup_kept(
-                WORKTREE_KEPT_NO_WORKTREE_REASON.format(branch=branch)
+                WORKTREE_KEPT_NO_WORKTREE_REASON.format(branch=branch, rerun=lane.rerun)
             )
         return checkout.cleanup_landed_worktree(
             matching,
             branch,
             trunk=fetched_trunk_ref(),
-            landed_head=landed_head,
+            landed_head=lane.landed_head,
             directory=toplevel,
         )
     except protocol.ClaimError as error:
@@ -6961,7 +7119,12 @@ def _land_merge(
         ) from error
 
 
-def _land_step(number: int, sha: str, step: str, action: Callable[[], None]) -> None:
+_LandStepResult = TypeVar("_LandStepResult")
+
+
+def _land_step(
+    number: int, sha: str, step: str, action: Callable[[], _LandStepResult]
+) -> _LandStepResult:
     """Every step `aco land` runs once its merge already landed (issue
     #405): a failure here never means "not merged" -- the merge already
     happened -- so it reports the one ruled recovery line instead of the
@@ -6971,7 +7134,7 @@ def _land_step(number: int, sha: str, step: str, action: Callable[[], None]) -> 
     forge's own text, so its display controls print escaped and the
     recovery stays one line."""
     try:
-        action()
+        return action()
     except protocol.ClaimError as error:
         raise protocol.ClaimUnavailableError(
             f"MERGED pull request #{number} as {sha}; follow-up incomplete: {step} "
@@ -7018,7 +7181,7 @@ def _land_release(
     context: RunContext,
     issue: int | None,
     branch: str,
-) -> None:
+) -> ReleaseEnding:
     """`aco land`'s own delegated call into the existing `release --merged`
     path (issue #405): never a second copy of its close/release/report/
     cleanup -- `--branch` selects the lane by name without requiring this
@@ -7049,7 +7212,7 @@ def _land_release(
         json=False,
         repo=parsed.repo,
     )
-    _release_transition(release_parsed, context.fresh(), branch)
+    return _release_transition(release_parsed, context.fresh(), branch)
 
 
 def _land_is_own_repository(toplevel: Path) -> bool:
@@ -7129,7 +7292,7 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
             context.fetched_default_branch_ref(), directory=toplevel
         ),
     )
-    _land_step(
+    ending = _land_step(
         number,
         merge_sha,
         "release",
@@ -7140,7 +7303,8 @@ def _cmd_land(parsed: argparse.Namespace, context: RunContext) -> None:
             detail.source_branch,
         ),
     )
-    if _land_is_own_repository(toplevel):
+    # The run whose release succeeded already printed it (LANDCMD-38).
+    if ending is ReleaseEnding.RELEASED and _land_is_own_repository(toplevel):
         print(LAND_REINSTALL_LINE)
 
 
@@ -7166,13 +7330,16 @@ def _cmd_release_landed(
     identity: protocol.ClaimIdentity,
     storage: body.Storage,
     release_branch: str | None,
-) -> int:
+) -> ReleaseEnding:
     """`release --merged <sha|empty>` under `storage = "state-ref"` (issue
     #359, LAND-47/LAND-52): the trunk walk (`checkout.trunk_landings`,
     issue #304) names, or verifies, the landing commit; one
     `protocol.LandingIntent` then closes the item and releases the claim in
     one commit, one CAS -- `_cmd_release`'s own `ReleaseIntent` path never
-    runs for this storage pin's `--merged`.
+    runs for this storage pin's `--merged`. With no live claim left to
+    release (REL-47) it writes nothing and only cleans up, before the item
+    write is prepared: that write refuses an item the landing already
+    closed (issue #605).
     """
     if not isinstance(identity, protocol.IssueIdentity):
         raise protocol.ClaimUnavailableError(
@@ -7191,10 +7358,20 @@ def _cmd_release_landed(
         raise protocol.ClaimUnavailableError(
             _missing_item_refusal(identity.issue, client, context.config.storage)
         )
-    write = client.prepare_landing(identity.issue)
-    worktree = context.toplevel
     observed = context.observation
     _require_state_ref(observed)
+    unclaimed_branch = _unclaimed_rerun_branch(parsed, observed, identity, release_branch)
+    if unclaimed_branch is not None:
+        _report_nothing_left_to_release(
+            parsed,
+            context,
+            f"commit {commit}",
+            _landed_lane(identity, storage, commit, unclaimed_branch, None),
+            context.fetched_trunk_ref,
+        )
+        return ReleaseEnding.NOTHING_LEFT
+    write = client.prepare_landing(identity.issue)
+    worktree = context.toplevel
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     new_oid = store.hash_blob(worktree, write.content)
     outcome = protocol.LandedRelease(commit=protocol.ObjectId(commit))
@@ -7216,7 +7393,10 @@ def _cmd_release_landed(
     client.mark_landed(write, new_oid)
     landing = _landing_report(context, identity, new_state, storage, trunk_ref)
     worktree_cleanup = _cleanup_landed_worktree(
-        parsed, resolved.selected.branch, context, context.fetched_trunk_ref, None
+        parsed,
+        _landed_lane(identity, storage, commit, resolved.selected.branch, None),
+        context,
+        context.fetched_trunk_ref,
     )
     _print_release_result(
         ReleaseReport(
@@ -7230,7 +7410,7 @@ def _cmd_release_landed(
         ),
         as_json=parsed.json,
     )
-    return 0
+    return ReleaseEnding.RELEASED
 
 
 _BoardRead = TypeVar("_BoardRead")

@@ -9561,6 +9561,56 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
     assert _state_ref_tip(repo, remote) == tip_after
 
 
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_release_merged_rerun_under_state_ref_writes_nothing_and_names_its_own_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    as_json: bool,
+) -> None:
+    """Issue #605 lines 1 and 3 under `storage = "state-ref"`: a release
+    whose lane worktree lives elsewhere names the line that repeats its
+    cleanup there; run as printed once the claim is gone, it verifies the
+    trunk commit, closes nothing, moves `refs/aco/state` not at all, and
+    reports only the cleanup (REL-47, REL-49, REL-51, REL-52)."""
+    repo, remote = _real_landing_scenario(monkeypatch, tmp_path, numbers=(10,))
+    sha = _real_git(repo, "rev-parse", "main~2").stdout.strip()
+    branch = "codex/issue-10-claims"
+    rerun = f"aco release {items.format_item_id(10)} --merged {sha} --branch {branch}"
+    kept = (
+        f"kept -- no linked worktree on {branch} in this checkout; "
+        f"run {rerun} in the checkout that holds it"
+    )
+    assert (
+        issue_claim.main(
+            ["release", "10", "--agent", "Codex Sol", "--claim-id", "claim-10", "--merged", sha]
+        )
+        == 0
+    )
+    assert capsys.readouterr().out.splitlines()[-1] == f"worktree: {kept}"
+    tip_after_release = _state_ref_tip(repo, remote)
+
+    status = issue_claim.main([*shlex.split(rerun)[1:], *(["--json"] if as_json else [])])
+
+    output = capsys.readouterr().out
+    reported = json.loads(output) if as_json else output
+    assert (status, reported) == (
+        0,
+        {
+            "ok": True,
+            "reason": "merged",
+            "outcome": "nothing left to release",
+            "issue": 10,
+            "lane": None,
+            "branch": branch,
+            "worktree": kept,
+        }
+        if as_json
+        else f"LANDED commit {sha} already; nothing left to release\nworktree: {kept}\n",
+    )
+    assert _state_ref_tip(repo, remote) == tip_after_release
+
+
 class _RaceOnceTransport:
     """A `store.PushTransport` that lets one other writer land on
     `refs/aco/state` between this transition's own read and its first real
@@ -16033,7 +16083,6 @@ def test_release_merged_refuses_a_non_numeric_pull_request_under_github(
     [
         pytest.param(("72", "--agent", "Other"), id="mismatched-claimant"),
         pytest.param(("72", "--claim-id", "no-such-claim"), id="no-matching-claim"),
-        pytest.param(("999", "--agent", "Ada"), id="no-claim-on-this-issue"),
     ],
 )
 def test_release_merged_unauthorized_makes_no_forge_call_close_or_comment(
@@ -16042,11 +16091,12 @@ def test_release_merged_unauthorized_makes_no_forge_call_close_or_comment(
     args: tuple[str, ...],
 ) -> None:
     """Issue #359 R1: authorization gates every forge read and write on a
-    `--merged` release -- a mismatched claimant, an explicit claim id that
-    matches nothing, or an issue with no live claim at all never reaches the
-    forge, so it can neither verify the pull request, comment on its issue,
-    nor close it; the forge is never asked in the first place
-    (`client.requests == 0`)."""
+    `--merged` release -- a mismatched claimant or an explicit claim id that
+    matches nothing never reaches the forge, so it can neither verify the
+    pull request, comment on its issue, nor close it; the forge is never
+    asked in the first place (`client.requests == 0`). An issue with no live
+    claim at all has nothing to authorize; its landing still has to verify
+    (issue #605, see the test below)."""
     client = merged_release_client(monkeypatch, body="Work-Item: #72\n\nCloses #72")
 
     status = issue_claim.main(["--repo", REPOSITORY, "release", *args, "--merged", "12"])
@@ -16056,6 +16106,50 @@ def test_release_merged_unauthorized_makes_no_forge_call_close_or_comment(
     assert client.requests == 0
     assert client.closed_issues == set()
     assert client.landing_comments == {}
+    assert store.fetch_state(worktree=Path("."), remote="origin").claims
+
+
+_OLD_LANE_BRANCH = "codex/issue-72-old"
+
+
+@pytest.mark.parametrize(
+    ("args", "source_branch", "refusal"),
+    [
+        pytest.param(
+            ("999",),
+            LANDING_BRANCH,
+            f"merge commit {MERGE_COMMIT_SHA} of pull request #12 does not name work item #999",
+            id="no-claim-and-a-merge-naming-another-item",
+        ),
+        pytest.param(
+            ("72", "--branch", _OLD_LANE_BRANCH),
+            _OLD_LANE_BRANCH,
+            f"issue #72 is claimed on '{LANDING_BRANCH}', not on pull request #12's branch "
+            f"'{_OLD_LANE_BRANCH}'; release that claim by itself",
+            id="claim-off-the-pull-requests-branch",
+        ),
+    ],
+)
+def test_release_merged_refuses_what_its_landing_does_not_back_and_keeps_every_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    args: tuple[str, ...],
+    source_branch: str,
+    refusal: str,
+) -> None:
+    """Issue #605 lines 1 and 2: an issue with no live claim skips the
+    release only once its landing verifies -- a merge commit naming another
+    item refuses (REL-47). An issue's claim is keyed by the issue alone, so
+    an old pull request's release, `aco land`'s rerun included, meets a
+    newer lane's claim on that issue: it refuses by name and that claim is
+    neither released nor skipped (REL-48, E-REL-25)."""
+    client = merged_release_client(monkeypatch, body="Work-Item: #72\n\nCloses #72")
+    client.landings[12] = replace(client.landings[12], source_branch=source_branch)
+
+    status = issue_claim.main(["--repo", REPOSITORY, "release", *args, "--merged", "12"])
+
+    assert (status, capsys.readouterr().err) == (2, f"ERROR: {refusal}\n")
+    assert (client.closed_issues, client.landing_comments) == (set(), {})
     assert store.fetch_state(worktree=Path("."), remote="origin").claims
 
 
@@ -16996,8 +17090,8 @@ _WORKTREE_CLEANUP_KEPT_SCENARIOS: tuple[
         "no-linked-worktree",
         _no_linked_worktree_scenario,
         (),
-        f"no linked worktree on {_CLEANUP_BRANCH} in this checkout; "
-        "if one exists, it lives in another checkout",
+        f"no linked worktree on {_CLEANUP_BRANCH} in this checkout; run aco release "
+        f"{WORK_ITEM_ISSUE} --merged 12 --branch {_CLEANUP_BRANCH} in the checkout that holds it",
     ),
     (
         "not-merged-locally",
@@ -18323,17 +18417,23 @@ def test_land_prints_the_reinstall_line_in_this_packages_own_repository(
 ) -> None:
     """Issue #405: a successful landing in this very package's own
     repository ends with its own reinstall reminder; every other repository
-    prints nothing further."""
+    prints nothing further. A rerun with nothing left to release prints it
+    no second time (issue #605, LANDCMD-38)."""
     repo, _client = _land_scenario(monkeypatch, tmp_path)
     (repo / "pyproject.toml").write_text('[project]\nname = "agent-coordination"\n')
     _real_git(repo, "add", "pyproject.toml")
     _real_git(repo, "commit", "-q", "-m", "add pyproject.toml")
     _real_git(repo, "push", "-q", "origin", "main")
+    reinstall = "reinstall: uv tool install --force --from . agent-coordination"
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
 
-    assert capsys.readouterr().out.splitlines()[-1] == (
-        "reinstall: uv tool install --force --from . agent-coordination"
+    assert capsys.readouterr().out.splitlines()[-1] == reinstall
+    assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
+    rerun_lines = capsys.readouterr().out.splitlines()
+    assert (rerun_lines[0], reinstall in rerun_lines) == (
+        "LANDED pull request #12 already; nothing left to release",
+        False,
     )
 
 
@@ -18794,13 +18894,14 @@ def test_land_rerun_recovers_release_routing_after_the_body_changed(
 
 def _land_from_a_separate_clone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, git_identity: bool
-) -> tuple[Path, FakeForge]:
+) -> tuple[Path, Path, FakeForge]:
     """`_land_scenario`'s claim, held for real in `refs/aco/state`, with the
     lane worktree beside the primary checkout and `aco land` running from a
     second, clean clone that holds no worktree at all (issue #578, the
-    songmaker landing clone). The forge closes the item through its own
-    `Closes #<n>` on the merge. `git_identity=False` leaves the clone with no
-    user.name or user.email, which git may never guess."""
+    songmaker landing clone): the primary checkout, the clone, and the
+    forge. The forge closes the item through its own `Closes #<n>` on the
+    merge. `git_identity=False` leaves the clone with no user.name or
+    user.email, which git may never guess."""
     repo, client = _land_scenario(monkeypatch, tmp_path)
     client.closes_on_merge = True
     _use_real_store(monkeypatch)
@@ -18831,7 +18932,7 @@ def _land_from_a_separate_clone(
         _real_git(clone, "config", "user.email", "lander@example.com")
     _redirect_toplevel(monkeypatch, clone)
     monkeypatch.chdir(clone)
-    return clone, client
+    return repo, clone, client
 
 
 def _without_git_identity(monkeypatch: pytest.MonkeyPatch, checkout_path: Path) -> None:
@@ -18881,7 +18982,9 @@ def test_land_from_a_separate_clone_releases_or_refuses_before_the_merge(
     the claim, the lane worktree kept where it lives and named as kept. The
     songmaker cause: a clone with no git identity cannot commit that release
     to the claim state, so it refuses before anything merges (LANDCMD-25)."""
-    clone, client = _land_from_a_separate_clone(monkeypatch, tmp_path, git_identity=git_identity)
+    _repo, clone, client = _land_from_a_separate_clone(
+        monkeypatch, tmp_path, git_identity=git_identity
+    )
 
     status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
 
@@ -18894,10 +18997,57 @@ def test_land_from_a_separate_clone_releases_or_refuses_before_the_merge(
     )
     kept_elsewhere = (
         f"worktree: kept -- no linked worktree on {LANDING_BRANCH} in this checkout; "
-        "if one exists, it lives in another checkout\n"
+        f"run aco release {WORK_ITEM_ISSUE} --merged 12 --branch {LANDING_BRANCH} "
+        "in the checkout that holds it\n"
     )
     assert (not claims, kept_elsewhere in output.out) == (released, released)
     assert (tmp_path / "lane").exists()
+
+
+@pytest.mark.usefixtures("isolated_global_git_config")
+def test_land_rerun_after_its_release_finishes_and_names_the_release_that_removes_the_lane(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Issue #605 lines 1, 3 and 4 (E-LANDCMD-18a, E-REL-24): once a landing
+    clone released the claim of a squashed pull request, rerunning `aco
+    land` there no longer loops on `follow-up incomplete`: it verifies the
+    merge, writes nothing, and names the `aco release` line that, run as
+    printed in the checkout holding the clean lane at the recorded head,
+    removes it."""
+    repo, clone, client = _land_from_a_separate_clone(monkeypatch, tmp_path, git_identity=True)
+    client.allowed_methods = frozenset({_SQUASH})
+    recorded_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
+    client.readiness_by_number[12] = replace(client.readiness_by_number[12], head_sha=recorded_head)
+    remote = tmp_path / "remote.git"
+    assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
+    capsys.readouterr()
+    state_after_release = _state_ref_tip(clone, remote)
+    rerun = f"aco release {WORK_ITEM_ISSUE} --merged 12 --branch {LANDING_BRANCH}"
+
+    land_status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
+
+    land_output = capsys.readouterr()
+    assert (land_status, land_output.err, land_output.out) == (
+        0,
+        "",
+        "LANDED pull request #12 already; nothing left to release\n"
+        f"worktree: kept -- no linked worktree on {LANDING_BRANCH} in this checkout; "
+        f"run {rerun} in the checkout that holds it\n",
+    )
+    _redirect_toplevel(monkeypatch, repo)
+    monkeypatch.chdir(repo)
+
+    release_status = issue_claim.main(["--repo", REPOSITORY, *shlex.split(rerun)[1:]])
+
+    release_output = capsys.readouterr()
+    assert (release_status, release_output.err, release_output.out) == (
+        0,
+        "",
+        "LANDED pull request #12 already; nothing left to release\nworktree: removed\n",
+    )
+    assert not (tmp_path / "lane").exists()
+    assert checkout.branch_exists(LANDING_BRANCH) is False
+    assert (len(client.merge_calls), _state_ref_tip(clone, remote)) == (1, state_after_release)
 
 
 @pytest.mark.parametrize(
