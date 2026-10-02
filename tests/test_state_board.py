@@ -2284,6 +2284,19 @@ class TestCliStateRefForge:
                 "nested containers are not supported",
                 id="nested-container",
             ),
+            *(
+                pytest.param(
+                    _item_files_with_container_block(
+                        {"slice": [{"index": 1, "title": "X", "done_when": f"one{control}two"}]}
+                    ),
+                    [],
+                    f"{CONTAINER_ID} body malformed: slice[0].done_when: slice[0].done_when "
+                    f"of row 1 holds {codepoint}; a slice done_when stays on one line; "
+                    "cut needs a valid aco block",
+                    id=f"row-done-when-{codepoint}",
+                )
+                for control, codepoint in (("\v", "U+000B"), ("\x1b", "U+001B"))
+            ),
         ],
     )
     def test_cut_refuses_by_item_id_before_any_write_under_state_ref(
@@ -2297,10 +2310,11 @@ class TestCliStateRefForge:
         row: list[str],
         refusal: str,
     ) -> None:
-        """Issue #291 proof 2 (refusal) and issue #467: `--row 9` naming no
-        entry, or a container that is itself a child, refuses by the item
-        id -- the same by-name refusals GitHub's own cut tests prove -- and
-        nothing reaches the remote."""
+        """Issue #291 proof 2 (refusal), issue #467 and issue #606 line 3:
+        `--row 9` naming no entry, a container that is itself a child, or a
+        row whose `done_when` holds a display control (BODY-66, CUT-05)
+        refuses by the item id -- the same by-name refusals GitHub's own
+        cut tests prove -- and nothing reaches the remote."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
         remote_url = f"file://{bare_remote}"
         before = store.fetch_state(worktree=worktree, remote=remote_url)

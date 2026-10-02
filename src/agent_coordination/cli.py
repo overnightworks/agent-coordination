@@ -7720,16 +7720,18 @@ def _located_block_or_refuse(
     number: int, raw_body: str, *, command: str, storage: body.Storage = body.Storage.GITHUB
 ) -> body.LocatedBlock:
     """`raw_body`'s located `aco` block, or a by-name refusal before
-    any write: `cut`, `rule`, and `ask` all need a body `parse_body` reads as
-    VALID before they touch it, and share this one gate so the message is
-    the same shape for all three. `storage` is forwarded to `parse_body`
+    any write: `cut`, `rule`, and `ask` all need a body that is not
+    malformed before they touch it, and share this one gate so the message
+    is the same shape for all three. The verdict is `body.body_shape_check`'s,
+    the one `body --check` prints, so a `[[slice]]` row whose `title` or
+    `done_when` holds a display control refuses here too and `cut` never
+    copies it into a child (issue #606 line 3). `storage` is forwarded
     unchanged (issue #283): a state-ref item's own `[record]` table must
     read as a known key, not a malformed one."""
-    parsed = body.parse_body(raw_body, storage=storage)
-    if parsed.read_state is body.BodyReadState.MALFORMED:
-        defect = parsed.contract.defects[0]
+    shape = body.body_shape_check(raw_body, storage=storage)
+    if shape.verdict is body.BodyShapeVerdict.MALFORMED:
         raise protocol.ClaimUnavailableError(
-            f"{board.item_label(number, storage)} {body.body_defect_text(defect)}; "
+            f"{board.item_label(number, storage)} {shape.defects[0]}; "
             f"{command} needs a valid {body.BLOCK_FENCE_INFO} block"
         )
     return body.locate_block(raw_body)
