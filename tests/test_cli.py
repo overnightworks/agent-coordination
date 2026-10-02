@@ -6655,7 +6655,8 @@ def test_next_prints_a_cut_command_block_mode_accepts_a_differing_next_line(
     --json` carries the same split as two fields: `slice` is that human
     step, `cut_title` is the title `cut` accepts -- a JSON consumer must
     build `--title` from `cut_title`, never `slice` (the README used to say
-    otherwise)."""
+    otherwise). The child each cut writes carries `cut`'s own fixed `next`
+    (CUT-25, issue #606), never the container's `next` line."""
     toml_text = (
         f'version = 1\nnow = "N"\nnext = "{_DIFFERING_NEXT_LINE}"\ndone_when = "D"\n'
         '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\ndone_when = "D"\n'
@@ -6698,6 +6699,10 @@ def test_next_prints_a_cut_command_block_mode_accepts_a_differing_next_line(
     remaining_slice_entries = body.locate_block(client.item_bodies[CUT_CONTAINER]).data["slice"]
     assert remaining_slice_entries == []
     assert capsys.readouterr().out == f"CUT #{CUT_CONTAINER} row 1 -> #{child}\n"
+    assert {
+        body.parse_body(child_body).contract.next
+        for _parent, _title, child_body, _kind in client.created_children
+    } == {"Build this slice; claim it with aco start."}
 
 
 def test_claim_json_refusal_carries_refused_issue_and_checks(

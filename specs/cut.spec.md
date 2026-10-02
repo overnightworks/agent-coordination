@@ -133,7 +133,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 - `aco cut` never touches the container's own `now`, `next`, or `done_when` fields, or any `[[slice]]` row but the one linked: a row removal's own rewrite carries every other field forward unchanged (CUT-26).
 - `aco cut` never re-parents an issue by title alone: an orphan is adopted only through CUT-16's own recovery-shape check, never a bare string match.
 - `aco cut`'s own `--json` object never uses the storage-aware `<label>` form (`specs/landing-grammar.spec.md`): `container`, `child`, and `written` are always the bare number, under either storage pin.
-- CUT-25's own body shape differs between the storage pins only in its `Parent:` line's `<label>`; only `storage = "state-ref"` additionally sets `[record].parent` (CUT-27) -- GitHub carries no such field, so its own retry (CUT-19) reads the `Parent:` prose line instead, while a state-ref retry reads `record.parent` alone.
+- CUT-25's own body shape differs between the storage pins only in `<label>`, in its `Parent:` line and its `now`; only `storage = "state-ref"` additionally sets `[record].parent` (CUT-27) -- GitHub carries no such field, so its own retry (CUT-19) reads the `Parent:` prose line instead, while a state-ref retry reads `record.parent` alone.
 - Under `storage = "state-ref"`, a CUT-19 retry caused by a competing write names CAS-20's own "written since it was read" sentence as CUT-18's own `<cause>`.
 
 ## Examples
