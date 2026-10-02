@@ -725,7 +725,12 @@ def _add_cut_parser(commands: argparse._SubParsersAction) -> None:
     cut = commands.add_parser("cut", help="create a container's next slice as a fresh child issue")
     cut.add_argument("issue", type=board.parse_item_reference, help="the container to cut")
     cut.add_argument(
-        "--title", required=True, type=_nonblank_title, help="the fresh child issue's title"
+        "--title",
+        type=_nonblank_title,
+        help=(
+            "the fresh child issue's title; default is the linked slice row's own title, "
+            "which a given --title must match; required when no row is linked"
+        ),
     )
     cut.add_argument(
         "--row",
@@ -2112,7 +2117,7 @@ def _next_action_command(
     printed (issue #510).
     """
     if isinstance(action, board.CutSliceAction):
-        return board.cut_command(action.container.number, storage, action.cut_title)
+        return board.cut_command(action.container.number, storage)
     item = action.item
     pull = board.PullScope(item.scope, action.scope, item.whole, site.scope_is_wide)
     if site.claims_in_place:
@@ -7684,11 +7689,19 @@ def _cut_link(
     return _slice_row(match)
 
 
-def _require_matching_title(label: str, link: body.SliceRow, title: str) -> None:
-    if title != link.title:
+def _child_title(label: str, link: body.SliceRow | None, title: str | None) -> str:
+    """The title `cut`'s child gets (issue #604): the linked row's own title,
+    which a given `--title` must match exactly; with no linked row, `--title`
+    itself, which is then required."""
+    if link is None:
+        if title is None:
+            raise protocol.ClaimUnavailableError(f"{label} has no slice row; pass --title")
+        return title
+    if title is not None and title != link.title:
         raise protocol.ClaimUnavailableError(
             f"{label}'s slice {link.index} is titled {link.title!r}; --title must match it exactly"
         )
+    return link.title
 
 
 def _located_block_or_refuse(
@@ -7744,13 +7757,12 @@ def _cut_slice(
     label = board.item_label(number, storage)
     located = _located_block_or_refuse(number, target.body, command="cut", storage=storage)
     link = _cut_link(label, located.data, parsed.row)
-    if link is not None:
-        _require_matching_title(label, link, parsed.title)
+    title = _child_title(label, link, parsed.title)
     child_scope = _cut_row_scope(link, _requested_body_scope(parsed.scope))
-    adopted = _adoptable_child(client, number, parsed.title, config, open_issues)
+    adopted = _adoptable_child(client, number, title, config, open_issues)
     if adopted is None and not parsed.not_a_twin:
         _refuse_possible_twin(
-            client, parsed.title, _numbered_titles(open_issues), parent=number, storage=storage
+            client, title, _numbered_titles(open_issues), parent=number, storage=storage
         )
     try:
         child = (
@@ -7758,7 +7770,7 @@ def _cut_slice(
             if adopted is not None
             else client.create_child(
                 parent=number,
-                title=parsed.title,
+                title=title,
                 body=_cut_child_body(number, storage, child_scope),
                 kind=body.ItemKind.TASK,
             )
