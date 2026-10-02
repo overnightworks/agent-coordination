@@ -16117,12 +16117,13 @@ _UNCLAIMED_LANE_BRANCH = "docs/unclaimed"
 
 
 @pytest.mark.parametrize(
-    ("args", "lane", "source_branch", "refusal"),
+    ("args", "lane", "source_branch", "trunk_after_merge", "refusal"),
     [
         pytest.param(
             ("999",),
             False,
             LANDING_BRANCH,
+            (),
             f"merge commit {MERGE_COMMIT_SHA} of pull request #12 does not name work item #999",
             id="no-claim-and-a-merge-naming-another-item",
         ),
@@ -16130,14 +16131,25 @@ _UNCLAIMED_LANE_BRANCH = "docs/unclaimed"
             ("72", "--branch", _OLD_LANE_BRANCH),
             False,
             _OLD_LANE_BRANCH,
+            (),
             f"issue #72 is claimed on '{LANDING_BRANCH}', not on pull request #12's branch "
             f"'{_OLD_LANE_BRANCH}'; release that claim by itself",
             id="claim-off-the-pull-requests-branch",
         ),
         pytest.param(
+            ("72",),
+            False,
+            LANDING_BRANCH,
+            (BASE,),
+            f"issue #72 was claimed on '{LANDING_BRANCH}' after pull request #12 landed; "
+            "release that claim by itself",
+            id="claim-opened-again-on-the-pull-requests-branch-after-it-landed",
+        ),
+        pytest.param(
             ("--branch", _UNCLAIMED_LANE_BRANCH),
             True,
             LANE_BRANCH,
+            (),
             f"lane '{_UNCLAIMED_LANE_BRANCH}' has no active build claim",
             id="unclaimed-lane-off-the-pull-requests-claimed-branch",
         ),
@@ -16149,20 +16161,31 @@ def test_release_merged_refuses_what_its_landing_does_not_back_and_keeps_every_c
     args: tuple[str, ...],
     lane: bool,
     source_branch: str,
+    trunk_after_merge: tuple[str, ...],
     refusal: str,
 ) -> None:
     """Issue #605 lines 1 and 2: an issue with no live claim skips the
     release only once its landing verifies -- a merge commit naming another
     item refuses (REL-47). An issue's claim is keyed by the issue alone, so
     an old pull request's release, `aco land`'s rerun included, meets a
-    newer lane's claim on that issue: it refuses by name and that claim is
-    neither released nor skipped (REL-48, E-REL-25). An issue-less lane's
-    claim is keyed by its branch, so an unclaimed lane says nothing about
-    the claimed lane its pull request came from: REL-09 refuses as before."""
+    newer claim on that issue -- a lane on another branch, or one opened on
+    the same branch from a trunk that already holds the landing: it refuses
+    by name and that claim is neither released nor skipped (REL-48, REL-53,
+    E-REL-25). An issue-less lane's claim is keyed by its branch, so an
+    unclaimed lane says nothing about the claimed lane its pull request came
+    from: REL-09 refuses as before."""
+    landing = _trunk_landing(
+        MERGE_COMMIT_SHA, board.TrunkWorkItemClassification((WORK_ITEM_ISSUE,))
+    )
     client = merged_release_client(
         monkeypatch,
         body="No-Item: docs" if lane else "Work-Item: #72\n\nCloses #72",
         lane=lane,
+        landings=(
+            (landing, *(_trunk_landing(sha, None) for sha in trunk_after_merge))
+            if trunk_after_merge
+            else None
+        ),
     )
     client.landings[12] = replace(client.landings[12], source_branch=source_branch)
 

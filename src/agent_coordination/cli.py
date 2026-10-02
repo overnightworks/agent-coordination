@@ -3232,11 +3232,14 @@ class _VerifiedMerge:
     `landed_head`, the head the forge recorded as landed -- the one tip a
     squashed lane's worktree and branch are removed by, on a first run or
     a rerun alike (issue #590) -- the branch it was merged from, which the
-    released claim must sit on (issue #605), and the still-open item to
-    close, if any."""
+    released claim must sit on (issue #605), the first-parent trunk commits
+    from its merge onward, none of which the released claim may be based on
+    (issue #605: such a claim was opened after this landing), and the
+    still-open item to close, if any."""
 
     landed_head: str
     source_branch: str
+    trunk_since_landing: frozenset[str]
     pending_close: _MergedLandingClose | None
 
 
@@ -3309,39 +3312,54 @@ def _verify_merged_release(
             f"not the default branch {default_branch!r}"
         )
     assert detail.merge_commit is not None  # `detail.merged` is true; github.py guarantees this.
-    pending_close = _pending_landing_close(
-        context, client, identity, detail.number, detail.merge_commit
+    landings = checkout.trunk_landings(
+        context.fetched_default_branch_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
+    )
+    _verify_landing_authority(
+        identity, landings, detail.number, detail.merge_commit, context.config.storage
     )
     return _VerifiedMerge(
         landed_head=detail.head_sha,
         source_branch=detail.source_branch,
-        pending_close=pending_close,
+        trunk_since_landing=_trunk_since(landings, detail.merge_commit),
+        pending_close=_pending_landing_close(client, identity, detail.number),
     )
 
 
-def _pending_landing_close(
-    context: RunContext,
-    client: github.GitHubForge,
+def _trunk_since(landings: tuple[checkout.TrunkLanding, ...], sha: str) -> frozenset[str]:
+    """The walked first-parent trunk commits from `sha` -- one of them, the
+    trailer check already proved -- to the walk's tip (`landings` reads
+    oldest first)."""
+    shas = [landing.sha for landing in landings]
+    return frozenset(shas[shas.index(sha) :])
+
+
+def _verify_landing_authority(
     identity: protocol.ClaimIdentity,
+    landings: tuple[checkout.TrunkLanding, ...],
     pull_request: int,
     merge_commit: str,
-) -> _MergedLandingClose | None:
+    storage: body.Storage,
+) -> None:
     """`_verify_merged_release`'s trailer authority check on the fetched
-    trunk, and the still-open item it leaves for `_cmd_release` to close,
-    or `None`."""
-    landings = checkout.trunk_landings(
-        context.fetched_default_branch_ref(), TRUNK_LANDING_DEPTH, directory=context.toplevel
-    )
+    trunk's `landings`."""
     if isinstance(identity, protocol.LaneIdentity):
         defect = _trunk_no_item_landing_defect(landings, merge_commit, pull_request)
         if defect is not None:
             raise protocol.ClaimUnavailableError(
                 f"merge commit {merge_commit} of pull request #{pull_request} {defect}"
             )
+        return
+    _verify_merge_commit_authority(landings, pull_request, identity.issue, merge_commit, storage)
+
+
+def _pending_landing_close(
+    client: github.GitHubForge, identity: protocol.ClaimIdentity, pull_request: int
+) -> _MergedLandingClose | None:
+    """The still-open item a verified landing leaves for `_cmd_release` to
+    close, or `None`: an issue-less lane has none."""
+    if isinstance(identity, protocol.LaneIdentity):
         return None
-    _verify_merge_commit_authority(
-        landings, pull_request, identity.issue, merge_commit, context.config.storage
-    )
     reference = _fetch_issue_reference(client, identity.issue)
     if reference.state is forge.ItemState.OPEN:
         return _MergedLandingClose(identity.issue, pull_request)
@@ -6283,22 +6301,31 @@ def _unclaimed_rerun_branch(
     return release_branch
 
 
-def _refuse_a_claim_off_the_pull_request_branch(
+def _refuse_a_claim_the_pull_request_did_not_land(
     selected: protocol.ActiveClaim,
     merged: protocol.MergedRelease,
-    source_branch: str,
+    verified: _VerifiedMerge,
     storage: body.Storage,
 ) -> None:
-    """REL-48 (issue #605): an issue's claim is keyed by the issue alone, so
-    an old pull request's rerun would otherwise release a newer lane's claim
-    on the same issue. That claim is never released and never skipped."""
-    if selected.branch != source_branch:
-        subject = protocol.identity_summary(
-            selected.identity, selected.branch, board.item_labeller(storage)
-        )
+    """REL-48/REL-53 (issue #605): an issue's claim is keyed by the issue
+    alone, so an old pull request's rerun would otherwise release a newer
+    claim on the same issue -- a lane on another branch (REL-48), or one
+    `start` opened afresh on the same branch once the item reopened (START-11),
+    whose base already holds this landing (REL-53). That claim is never
+    released and never skipped."""
+    subject = protocol.identity_summary(
+        selected.identity, selected.branch, board.item_labeller(storage)
+    )
+    if selected.branch != verified.source_branch:
         raise protocol.ClaimUnavailableError(
             f"{subject} is claimed on {selected.branch!r}, not on pull request "
-            f"#{merged.pull_request}'s branch {source_branch!r}; release that claim by itself"
+            f"#{merged.pull_request}'s branch {verified.source_branch!r}; "
+            "release that claim by itself"
+        )
+    if selected.base in verified.trunk_since_landing:
+        raise protocol.ClaimUnavailableError(
+            f"{subject} was claimed on {selected.branch!r} after pull request "
+            f"#{merged.pull_request} landed; release that claim by itself"
         )
 
 
@@ -6504,7 +6531,7 @@ def _verify_and_close_merged_release(
     client = cast(github.GitHubForge, context.forge)
     storage = context.config.storage
     verified = _verify_merged_release(context, client, identity, merged)
-    _refuse_a_claim_off_the_pull_request_branch(selected, merged, verified.source_branch, storage)
+    _refuse_a_claim_the_pull_request_did_not_land(selected, merged, verified, storage)
     pending_close = verified.pending_close
     if pending_close is not None:
         client.close_landed_item(pending_close.issue, pull_request=pending_close.pull_request)

@@ -18,7 +18,7 @@ grammar `CLAIMED`/`RESCOPED` already print: `issue <label>` or `lane <branch>`
 (`<label>` is
 `specs/landing-grammar.spec.md`'s own convention -- `#<n>` under
 `storage = "github"`, `aco-xxxxxx` under `storage = "state-ref"`).
-`<identity>`, printed only by the claim-selection refusals below (REL-09, REL-48), differs only
+`<identity>`, printed only by the claim-selection refusals below (REL-09, REL-48, REL-53), differs only
 in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal reaching the shared collection point prints
 `ERROR: <sentence>` on stderr and exits `2`, exactly as
 `specs/claim-record.spec.md` already documents.
@@ -35,9 +35,10 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | `--branch` omitted, no issue, empty checkout branch | REL-06 | REL-06 | REL-06 |
 | `--branch` omitted, issue without `--claim-id`, empty checkout branch | REL-07 | REL-07 | REL-07 |
 | `--coordinator-override` without `--role coordinator` | REL-08 | REL-08 | REL-08 |
-| identity/branch resolve to no live claim | REL-09 | REL-09 | REL-09 |
+| identity/branch resolve to no live claim | REL-09 | REL-09, REL-54 | REL-09 |
 | no live claim on the identity, no `--claim-id`, the landing verified | — | REL-47, REL-49..REL-51 | — |
 | a live claim off the pull request's own source branch | — | REL-48 | — |
+| a live claim on that branch opened from a trunk already holding the landing | — | REL-53 | — |
 | `--claim-id` mismatches the resolved claim | REL-10 | REL-10 | REL-10 |
 | `--branch` and `--claim-id` disagree | REL-11 | REL-11 | REL-11 |
 | wrong claimant, no override | REL-12 (CLAIM-38) | REL-12 | REL-12 |
@@ -92,11 +93,13 @@ rerun, or REL-52's `<rerun>` from the checkout that holds the lane -- finds
 no live claim. Its trigger is that missing claim, never a closed item:
 GitHub closes the item at merge time through `Closes #<n>`.
 
-- [ ] [REL-47] A `--merged` release without `--claim-id` whose identity has no live claim, once its landing verifies (REL-16, REL-17), closes nothing, releases nothing, and exits `0` (see E-REL-24); an issue-less lane's pull request from another branch than the release's own still refuses REL-09.
+- [ ] [REL-47] A `--merged` release without `--claim-id` whose identity has no live claim, once its landing verifies (REL-16, REL-17), closes nothing, releases nothing, and exits `0` (see E-REL-24).
+- [ ] [REL-54] An issue-less lane's pull request merged from a branch other than the release's own is no such rerun: REL-09 refuses.
 - [ ] [REL-49] Its text is `LANDED <landing> already; nothing left to release`, `<landing>` `pull request #<n>` or, under `storage = "state-ref"`, `commit <sha>`, then its `worktree:` line.
 - [ ] [REL-50] Its cleanup (REL-25..REL-34) acts on the pull request's own source branch, or under `storage = "state-ref"` on the release's own branch (REL-04, REL-06).
 - [ ] [REL-51] Its `--json` prints `specs/output.spec.md`'s envelope, `reason` `merged`, then `outcome` `"nothing left to release"`, `issue`, `lane`, `branch`, `worktree`.
 - [ ] [REL-48] A live claim off the pull request's branch refuses `<identity> is claimed on '<branch>', not on pull request #<n>'s branch '<source>'; release that claim by itself`, exit `2` (see E-REL-25).
+- [ ] [REL-53] A claim on that branch based on the merge commit or a later trunk commit (START-11) refuses `<identity> was claimed on '<branch>' after pull request #<n> landed; release that claim by itself`.
 
 ## What a `--merged` release verifies and never checks
 
@@ -164,7 +167,7 @@ never a commit; `git branch -u` restores it.
 - A forge outage discovered after the release's own store transition already committed never undoes or fails that transition (LAND-50): the claim stays released regardless of whether `freed`/`next` could be reported.
 - A worktree/branch cleanup problem after that same commit never undoes or fails it either (REL-28..REL-32, REL-34): the claim stays released regardless of whether cleanup removed anything.
 - Cleanup never touches the remote branch a forge merge already owns: only the local worktree and local branch are ever removed.
-- A release with nothing left to release never closes an item or writes the claim state (REL-47); a claim REL-48 names is never released and never skipped.
+- A release with nothing left to release never closes an item or writes the claim state (REL-47); a claim REL-48 or REL-53 names is never released and never skipped.
 
 ## Examples
 
