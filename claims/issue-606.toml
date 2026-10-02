@@ -1,0 +1,8 @@
+claim_id = "97680aad046d45ccaa8981c173819093"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "9b94276a658d2cd06b86a39c237125dd70c3fdcb"
+branch = "claude/issue-606-cut-fills-child"
+scope = ["README.md", "specs/body-block.spec.md", "specs/cut.spec.md", "src/agent_coordination/body.py", "src/agent_coordination/cli.py", "tests/test_body.py", "tests/test_cli.py"]
+opened_commit = "f27ee5174c7bf9095fed3dedbe9fef01fb01b458"
+whole_reason = "slice-row schema, cut's child block, the empty-slice renderer, their specs, examples and tests"
