@@ -40,6 +40,11 @@ assertions, `tests/test_cli.py`'s `"age_days"` envelope pin).
 `NoItemKind.DOCS`: `GitHubForge.allowed_merge_methods` iterates `MergeMethod`
 to read each of GitHub's merge settings, and no code names the one method
 `aco land` never merges with.
+
+`BLOCK_CHILD_SKELETON` (issue #606) lost its one production reader when `cut`
+began filling its child's `now` and `done_when`; tests across four modules
+still build their unfilled bodies from it. Removing it needs
+`tests/test_github.py`, outside #606's claim -- the head names its owner.
 """
 
 from datetime import UTC, date, datetime
@@ -57,6 +62,7 @@ from agent_coordination.board import (
     Stage,
 )
 from agent_coordination.board_serve import _BoardRequestHandler
+from agent_coordination.body import BLOCK_CHILD_SKELETON
 from agent_coordination.forge import Capability, ForgeUnsupportedError
 from agent_coordination.metrics import (
     ContainerSum,
@@ -145,6 +151,7 @@ _referenced_only_for_vulture = (
     NoItemKind.DOCS,
     NoItemKind.FIX,
     MergeMethod.REBASE,
+    BLOCK_CHILD_SKELETON,
     ForgeUnsupportedError,
     Capability.UNSUPPORTED,
     _BoardRequestHandler.do_GET,

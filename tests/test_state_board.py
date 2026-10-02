@@ -24,7 +24,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -300,7 +300,9 @@ def _container_body_with_slices(
     carries a `slice` array)."""
     data = {
         **_CONTAINER_PROJECTION.block_data(),
-        "slice": [{"index": index, "title": title} for index, title in slice_rows],
+        "slice": [
+            {"index": index, "title": title, "done_when": "D"} for index, title in slice_rows
+        ],
         "record": _record(
             title="Epic", state="open", kind="container", blocked_by=blocked_by, parent=parent
         ),
@@ -326,12 +328,20 @@ def _item_files_with_one_scoped_slice(
     own `scope` set to `scope` (issue #337) -- `None` names a row with no
     scope of its own, matching how `_render_scope` omits the key entirely
     rather than writing an empty one."""
-    entry: dict[str, object] = {"index": index, "title": title}
+    entry: dict[str, object] = {"index": index, "title": title, "done_when": "D"}
     if scope is not None:
         entry["scope"] = list(scope)
+    return _item_files_with_container_block({"slice": [entry]})
+
+
+def _item_files_with_container_block(fields: Mapping[str, object]) -> dict[str, bytes]:
+    """`_item_files`'s own scenario, `CONTAINER_ID`'s block carrying
+    `fields` beside its projection and `[record]` -- a container shape the
+    other builders cannot express, such as a row without `done_when` or an
+    `[[expectation]]` beside the slice table (issue #606)."""
     data = {
         **_CONTAINER_PROJECTION.block_data(),
-        "slice": [entry],
+        **fields,
         "record": _record(title="Epic", state="open", kind="container"),
     }
     container_body = _prose_body(render_block(data))
@@ -2159,7 +2169,7 @@ class TestCliStateRefForge:
             before_container[before_located.content_end :]
             == (after_container[after_located.content_end :])
         )
-        assert after_located.data["slice"] == [{"index": 2, "title": "Slice D"}]
+        assert after_located.data["slice"] == [{"index": 2, "title": "Slice D", "done_when": "D"}]
         assert after_located.data["now"] == before_located.data["now"]
         assert after_located.data["next"] == before_located.data["next"]
         assert after_located.data["done_when"] == before_located.data["done_when"]
@@ -2204,7 +2214,7 @@ class TestCliStateRefForge:
         assert state.tip is not None
         container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
         remaining = locate_block(container_body).data
-        assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
+        assert remaining["slice"] == [{"index": 1, "title": "Slice C", "done_when": "D"}]
 
     @pytest.mark.parametrize(
         "stored_blockers",
@@ -2242,7 +2252,7 @@ class TestCliStateRefForge:
         assert state.tip is not None
         container_body = store.read_item_files(worktree, state.tip)[f"{CONTAINER_ID}.md"].decode()
         remaining = locate_block(container_body).data
-        assert remaining["slice"] == [{"index": 1, "title": "Slice C"}]
+        assert remaining["slice"] == [{"index": 1, "title": "Slice C", "done_when": "D"}]
 
     @pytest.mark.parametrize(
         ("item_files", "row", "refusal"),
@@ -2252,6 +2262,13 @@ class TestCliStateRefForge:
                 ["--row", "9"],
                 f"{CONTAINER_ID} has no row 9; cuttable rows: 1",
                 id="missing-row",
+            ),
+            pytest.param(
+                _item_files_with_container_block({"slice": [{"index": 1, "title": "X"}]}),
+                [],
+                f"slice row 1 of {CONTAINER_ID} carries no done_when; "
+                f"add it with aco item edit {CONTAINER_ID}",
+                id="row-without-done-when",
             ),
             pytest.param(
                 {
@@ -2297,6 +2314,44 @@ class TestCliStateRefForge:
         assert capsys.readouterr().err == f"ERROR: {refusal}\n"
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
+
+    def test_cut_fills_the_childs_block_and_keeps_an_emptied_container_body_ok(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
+        bare_remote: Path,
+        worktree: Path,
+    ) -> None:
+        """CUT-25 and BODY-67 under state-ref (issue #606, #310 finding
+        350): the fresh child's block names the container it was cut from
+        and takes the row's own `done_when`; the container whose last row
+        was cut, a ruled `[[expectation]]` beside it, still passes `aco body
+        --check`."""
+        item_files = _item_files_with_container_block(
+            {
+                "expectation": [
+                    {"text": EXPECTATION_TEXT, "ruling": "yes", "ruled_on": date(2026, 10, 2)}
+                ],
+                "slice": [{"index": 1, "title": "Slice C", "done_when": "Slice C is merged."}],
+            }
+        )
+        self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
+
+        child_id = _run_ok(["cut", str(CONTAINER_NUMBER)], capsys).strip().rsplit(" ", 1)[1]
+
+        state = store.fetch_state(worktree=worktree, remote=f"file://{bare_remote}")
+        assert state.tip is not None
+        files_after = store.read_item_files(worktree, state.tip)
+        child_body = files_after[f"{child_id}.md"].decode()
+        child_contract = parse_body(child_body, storage=Storage.STATE_REF).contract
+        assert (child_contract.now, child_contract.done_when) == (
+            f"Cut from {CONTAINER_ID}",
+            "Slice C is merged.",
+        )
+        container_body = files_after[f"{CONTAINER_ID}.md"].decode()
+        monkeypatch.setattr(sys, "stdin", io.StringIO(container_body))
+        assert _run_ok(["body", "--check"], capsys) == "body ok\n"
 
     def _nested_container_files(
         self, slice_rows: tuple[tuple[int, str], ...]
@@ -2565,7 +2620,7 @@ class TestCliStateRefForge:
                 competing_data = {
                     **_CONTAINER_PROJECTION.block_data(),
                     "now": "Competing edit landed mid-cut.",
-                    "slice": [{"index": 1, "title": "Slice C"}],
+                    "slice": [{"index": 1, "title": "Slice C", "done_when": "D"}],
                     "record": _record(title="Epic", state="open", kind="container"),
                 }
                 competing_body = _prose_body(render_block(competing_data)).encode()
@@ -2606,7 +2661,7 @@ class TestCliStateRefForge:
         ].decode()
         raced_data = locate_block(raced_container).data
         assert raced_data["now"] == "Competing edit landed mid-cut."
-        assert raced_data["slice"] == [{"index": 1, "title": "Slice C"}]
+        assert raced_data["slice"] == [{"index": 1, "title": "Slice C", "done_when": "D"}]
 
         second_status = issue_claim.main(["cut", str(CONTAINER_NUMBER), "--title", "Slice C"])
 

@@ -7491,19 +7491,26 @@ def _requested_whole_reason(raw: str | None) -> str | None:
 
 
 def _cut_child_body(
-    container: int, storage: body.Storage, scope: tuple[str, ...] | None = None
+    container: int,
+    storage: body.Storage,
+    scope: tuple[str, ...] | None = None,
+    done_when: str | None = None,
 ) -> str:
-    """The body `cut` writes for a fresh child: `_parent_line` ahead of
-    `body.BLOCK_CHILD_SKELETON`, plus the cut slice's own
-    top-level `scope = [...]` (issue #337) when the cut carries one -- the
-    linked row's own scope, or a filled `--scope`. A repeat `cut` after a
-    partial failure reads the parent line back (`_orphan_names_container`)
-    to tell `container`'s own orphan apart from an unrelated open issue that
-    merely shares the row's title (#260)."""
-    skeleton = f"{_parent_line(container, storage)}\n\n{body.BLOCK_CHILD_SKELETON}"
-    if scope is None:
-        return skeleton
-    return body.body_with_block_fields(skeleton, {"scope": list(scope)})
+    """The body `cut` writes for a fresh child: `_parent_line` above a fresh
+    block whose `now` names the container it was cut from and whose
+    `done_when` is the linked row's own (issue #606), plus the cut slice's
+    own top-level `scope = [...]` (issue #337) when the cut carries one --
+    the linked row's own scope, or a filled `--scope`. An untied cut has no
+    row to take a `done_when` from, so that key stays empty. A repeat `cut`
+    after a partial failure reads the parent line back
+    (`_orphan_names_container`) to tell `container`'s own orphan apart from
+    an unrelated open issue that merely shares the row's title (#260)."""
+    fields: dict[str, object] = {"now": f"Cut from {board.item_label(container, storage)}"}
+    if done_when is not None:
+        fields["done_when"] = done_when
+    if scope is not None:
+        fields["scope"] = list(scope)
+    return body.prose_above_fresh_block(_parent_line(container, storage), fields)
 
 
 def _orphan_names_container(raw_body: str, container: int, storage: body.Storage) -> bool:
@@ -7655,16 +7662,6 @@ def _block_slice_entries(data: Mapping[str, object]) -> list[dict[str, object]]:
     return [entry for entry in value if isinstance(entry, dict)]
 
 
-def _slice_row(entry: dict[str, object]) -> body.SliceRow:
-    """One `[[slice]]` entry as `cut` sees it. `entry`'s own `scope` (issue
-    #337), when it carries one, already passed `protocol.valid_scope` at
-    `_located_block_or_refuse`'s own `parse_body` gate -- a body that failed
-    that check never reaches here -- so this is the one canonicalizing pass,
-    not a second validation of an already-checked value."""
-    scope = protocol.valid_scope(entry["scope"]) if "scope" in entry else None
-    return body.SliceRow(cast(int, entry["index"]), cast(str, entry["title"]), scope)
-
-
 def _cut_link(
     label: str, data: Mapping[str, object], row_number: int | None
 ) -> body.SliceRow | None:
@@ -7675,7 +7672,7 @@ def _cut_link(
     linked entry is removed from `data["slice"]` at the moment it is cut)."""
     entries = _block_slice_entries(data)
     if row_number is None:
-        return _slice_row(entries[0]) if entries else None
+        return body.slice_row(entries[0]) if entries else None
     if "slice" not in data:
         raise protocol.ClaimUnavailableError(
             f"{label} has no slice table; --row needs one to select a row from"
@@ -7686,7 +7683,7 @@ def _cut_link(
         raise protocol.ClaimUnavailableError(
             f"{label} has no row {row_number}; cuttable rows: {cuttable}"
         )
-    return _slice_row(match)
+    return body.slice_row(match)
 
 
 def _child_title(label: str, link: body.SliceRow | None, title: str | None) -> str:
@@ -7741,6 +7738,24 @@ def _cut_row_scope(
     return requested
 
 
+def _cut_row_done_when(
+    number: int, link: body.SliceRow | None, storage: body.Storage
+) -> str | None:
+    """The `done_when` `cut`'s fresh child takes (issue #606): the linked
+    row's own, refusing before any write when the row carries none, so a cut
+    never writes an empty `done_when` for a slice its container planned;
+    `None` for an untied cut, which has no row to take one from."""
+    if link is None:
+        return None
+    if link.done_when is None:
+        edit = board.advice_command("item", "edit", board.item_argument(number, storage))
+        raise protocol.ClaimUnavailableError(
+            f"slice row {link.index} of {board.item_label(number, storage)} carries no "
+            f"done_when; add it with {edit}"
+        )
+    return link.done_when
+
+
 CUT_RERUN_RECOVERY = "re-run the same cut -- it adopts the child"
 CUT_TYPE_RECOVERY = f"set that type on the forge by hand, then {CUT_RERUN_RECOVERY}"
 
@@ -7759,6 +7774,7 @@ def _cut_slice(
     link = _cut_link(label, located.data, parsed.row)
     title = _child_title(label, link, parsed.title)
     child_scope = _cut_row_scope(link, _requested_body_scope(parsed.scope))
+    child_done_when = _cut_row_done_when(number, link, storage)
     adopted = _adoptable_child(client, number, title, config, open_issues)
     if adopted is None and not parsed.not_a_twin:
         _refuse_possible_twin(
@@ -7771,7 +7787,7 @@ def _cut_slice(
             else client.create_child(
                 parent=number,
                 title=title,
-                body=_cut_child_body(number, storage, child_scope),
+                body=_cut_child_body(number, storage, child_scope, child_done_when),
                 kind=body.ItemKind.TASK,
             )
         )

@@ -4854,6 +4854,19 @@ def test_claim_names_an_incomplete_body_even_when_the_item_is_also_blocked(
 CUT_CONTAINER = 79
 
 
+def _cuttable_row_toml(title: str) -> str:
+    """A complete block with one `[[slice]]` row, `index = 1`, carrying the
+    `done_when` `cut` needs (issue #606) -- the container block every
+    one-row cut scenario starts from."""
+    return f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "{title}"\ndone_when = "D"\n'
+
+
+def _cuttable_slice_entries(*titles: str) -> list[dict[str, object]]:
+    """`slice_entries(*titles)`, each row carrying the `done_when` `cut`
+    needs (issue #606)."""
+    return [{**entry, "done_when": "D"} for entry in slice_entries(*titles)]
+
+
 def _cut_container_issue(toml_text: str) -> board.Issue:
     return board.Issue(
         CUT_CONTAINER,
@@ -4869,7 +4882,7 @@ def _cut_container_issue(toml_text: str) -> board.Issue:
 
 
 def _one_slice_container() -> board.Issue:
-    return _cut_container_issue(f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n')
+    return _cut_container_issue(_cuttable_row_toml("Scheibe 1"))
 
 
 def test_cut_refuses_a_non_container(
@@ -5007,7 +5020,7 @@ def test_cut_names_the_created_child_when_the_relation_post_fails(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D"),
             body.ItemKind.TASK,
         )
     ]
@@ -5085,15 +5098,15 @@ def _write_block_pin(tmp_path: Path) -> None:
     [
         pytest.param(
             f"{MINIMAL_BLOCK_TOML}"
-            '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
-            '[[slice]]\nindex = 2\ntitle = "Scheibe 2"\n',
+            '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\ndone_when = "D"\n'
+            '[[slice]]\nindex = 2\ntitle = "Scheibe 2"\ndone_when = "D"\n',
             (),
             None,
-            [{"index": 2, "title": "Scheibe 2"}],
+            [{"index": 2, "title": "Scheibe 2", "done_when": "D"}],
             id="no-scope-leaves-the-remaining-row",
         ),
         pytest.param(
-            f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n',
+            _cuttable_row_toml("Scheibe 1"),
             ("--scope", "src/c.py"),
             ("src/c.py",),
             [],
@@ -5138,7 +5151,9 @@ def test_cut_creates_a_child_and_removes_the_first_cuttable_slice(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, created_scope),
+            issue_claim._cut_child_body(
+                CUT_CONTAINER, body.Storage.GITHUB, created_scope, done_when="D"
+            ),
             body.ItemKind.TASK,
         )
     ]
@@ -5152,8 +5167,8 @@ def test_cut_selects_a_row_by_number_and_removes_only_that_entry(
 ) -> None:
     toml_text = (
         f"{MINIMAL_BLOCK_TOML}"
-        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
-        '[[slice]]\nindex = 2\ntitle = "Scheibe 2"\n'
+        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\ndone_when = "D"\n'
+        '[[slice]]\nindex = 2\ntitle = "Scheibe 2"\ndone_when = "D"\n'
     )
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
@@ -5182,7 +5197,7 @@ def test_cut_selects_a_row_by_number_and_removes_only_that_entry(
         "child": child,
     }
     remaining = body.locate_block(client.item_bodies[CUT_CONTAINER]).data
-    assert remaining["slice"] == [{"index": 1, "title": "Scheibe 1"}]
+    assert remaining["slice"] == [{"index": 1, "title": "Scheibe 1", "done_when": "D"}]
 
 
 def test_cut_creates_an_untied_child_with_no_slice_table(
@@ -5252,9 +5267,7 @@ def test_cut_without_a_title_searches_twins_by_the_linked_rows_title(
 ) -> None:
     """Issue #604 line 2 with CUT-29: an omitted `--title` takes the linked
     row's title, and the twin search compares that title."""
-    container = _cut_container_issue(
-        f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Import the ledger"\n'
-    )
+    container = _cut_container_issue(_cuttable_row_toml("Import the ledger"))
     look_alike = board_issue(951, "Import ledger", complete_contract("Ship it."))
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container, look_alike))
     _write_block_pin(tmp_path)
@@ -5303,7 +5316,7 @@ def test_cut_refuses_a_row_with_no_cuttable_row(
     """`--row 9` names no entry while row 1 is still cuttable: the refusal
     names the requested row and the row that is actually still cuttable,
     not the unqualified (and false) claim that none is."""
-    toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
+    toml_text = _cuttable_row_toml("Scheibe 1")
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
@@ -5327,7 +5340,7 @@ def test_cut_refuses_a_row_with_no_cuttable_row(
 def test_cut_refuses_a_title_mismatch_before_any_write(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
+    toml_text = _cuttable_row_toml("Scheibe 1")
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
@@ -5343,6 +5356,59 @@ def test_cut_refuses_a_title_mismatch_before_any_write(
     )
     assert client.created_children == []
     assert client.item_bodies == {}
+
+
+def test_cut_refuses_a_row_without_done_when_before_any_write(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """CUT-36 (issue #606): a linked row carrying no `done_when` refuses
+    by name before anything is created or rewritten -- `cut` never writes
+    an empty child `done_when` for a planned slice."""
+    container = _cut_container_issue(
+        f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
+    )
+    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
+    _write_block_pin(tmp_path)
+
+    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER)])
+
+    assert exit_code == 2
+    assert capsys.readouterr().err == (
+        f"ERROR: slice row 1 of #{CUT_CONTAINER} carries no done_when; "
+        f"add it with aco item edit {CUT_CONTAINER}\n"
+    )
+    assert client.created_children == []
+    assert client.item_bodies == {}
+
+
+def test_cut_fills_the_childs_block_and_keeps_an_emptied_container_body_ok(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """CUT-25 and BODY-67 (issue #606, #310 finding 350): the fresh child's
+    block says where it was cut from and takes the row's own `done_when`;
+    the container whose last row was cut, with a ruled `[[expectation]]`
+    beside it, still passes `aco body --check`."""
+    container = _cut_container_issue(
+        f"{MINIMAL_BLOCK_TOML}"
+        '[[expectation]]\ntext = "A line"\nruling = "yes"\nruled_on = 2026-10-02\n'
+        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\ndone_when = "Scheibe 1 is merged."\n'
+    )
+    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
+    _write_block_pin(tmp_path)
+
+    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER)])
+
+    assert exit_code == 0
+    [(_parent, _title, child_body, _kind)] = client.created_children
+    child_contract = body.parse_body(child_body).contract
+    assert (child_contract.now, child_contract.done_when) == (
+        f"Cut from #{CUT_CONTAINER}",
+        "Scheibe 1 is merged.",
+    )
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(client.item_bodies[CUT_CONTAINER]))
+    assert body_check_main() == 0
+    assert capsys.readouterr().out == "body ok\n"
 
 
 def test_cut_refuses_a_blockless_container_before_any_write(
@@ -5389,7 +5455,7 @@ def test_cut_refuses_a_malformed_container_before_any_write(
 def test_cut_names_the_created_child_when_linking_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
+    toml_text = _cuttable_row_toml("Scheibe 1")
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
@@ -5405,7 +5471,7 @@ def test_cut_names_the_created_child_when_linking_fails(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D"),
             body.ItemKind.TASK,
         )
     ]
@@ -5429,7 +5495,7 @@ def _forge_with_existing_child(
     pass `_orphan_names_container`, exactly like a real linked issue: a
     broken `parent_issue` filter in `_adoptable_child` would then double-count
     it as its own orphan, and the surrounding test would fail."""
-    child_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB)
+    child_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D")
     open_issues = (_one_slice_container(),)
     if child_state is board.ChildState.OPEN:
         open_issues = (
@@ -5514,7 +5580,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
     orphan = board_issue(
         951,
         "Scheibe 1",
-        issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
+        issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D"),
         kind=body.ItemKind.TASK,
     )
     monkeypatch.setattr(client, "list_open_board_issues", lambda: (_one_slice_container(), orphan))
@@ -5550,7 +5616,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
             board_issue(
                 951,
                 "Scheibe 1",
-                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
+                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D"),
                 labels=("idea",),
                 kind=body.ItemKind.TASK,
             ),
@@ -5561,7 +5627,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
             board_issue(
                 CUT_CONTAINER,
                 "Scheibe 1",
-                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
+                issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D"),
                 kind=body.ItemKind.TASK,
             ),
             None,
@@ -5571,7 +5637,7 @@ def test_cut_refuses_to_adopt_when_two_open_issues_match_the_row_title(
             board_issue(
                 951,
                 "Scheibe 1",
-                issue_claim._cut_child_body(80, body.Storage.GITHUB),
+                issue_claim._cut_child_body(80, body.Storage.GITHUB, done_when="D"),
                 kind=body.ItemKind.TASK,
             ),
             None,
@@ -5609,7 +5675,7 @@ def test_cut_never_adopts_an_orphan_that_is_not_this_containers_recovery_shape(
         (
             CUT_CONTAINER,
             "Scheibe 1",
-            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB),
+            issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D"),
             body.ItemKind.TASK,
         )
     ]
@@ -5770,7 +5836,7 @@ def test_cut_adopts_the_orphan_after_a_relation_partial_failure(
 
     assert first_exit_code == 2
     child = client.next_created_child_number - 1
-    expected_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB)
+    expected_body = issue_claim._cut_child_body(CUT_CONTAINER, body.Storage.GITHUB, done_when="D")
     assert client.created_issues == [("Scheibe 1", expected_body, body.ItemKind.TASK)]
     assert client.linked_children == [(CUT_CONTAINER, child)]
     capsys.readouterr()
@@ -6516,7 +6582,7 @@ def test_next_prints_a_cut_command_bash_runs_as_printed_and_cut_accepts(
     the row's own title whatever it holds -- a leading `-` included."""
     toml_text = (
         'version = 1\nnow = "N"\nnext = "nichts"\ndone_when = "D"\n'
-        f"[[slice]]\nindex = 1\ntitle = {json.dumps(slice_title)}\n"
+        f'[[slice]]\nindex = 1\ntitle = {json.dumps(slice_title)}\ndone_when = "D"\n'
     )
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
@@ -6548,7 +6614,7 @@ def test_next_prints_a_cut_command_block_mode_accepts_a_differing_next_line(
     otherwise)."""
     toml_text = (
         f'version = 1\nnow = "N"\nnext = "{_DIFFERING_NEXT_LINE}"\ndone_when = "D"\n'
-        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
+        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\ndone_when = "D"\n'
     )
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
@@ -6910,7 +6976,7 @@ def _uncut_row_case(
     return _CutRoundTripCase(
         case_id,
         container_number,
-        complete_contract(next_line, slice=slice_entries(row_title)),
+        complete_contract(next_line, slice=_cuttable_slice_entries(row_title)),
         row_title,
         lambda _child: {container_number: complete_contract(next_line, slice=[])},
         lambda child: f"CUT #{container_number} row 1 -> #{child}\n",
@@ -6971,7 +7037,7 @@ def test_next_prints_a_cut_command_that_cut_accepts(
         (
             case.container_number,
             case.expected_created_title,
-            issue_claim._cut_child_body(case.container_number, body.Storage.GITHUB),
+            issue_claim._cut_child_body(case.container_number, body.Storage.GITHUB, done_when="D"),
             body.ItemKind.TASK,
         )
     ]
@@ -6996,7 +7062,7 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
         130,
         "Epic ranked first",
         (),
-        complete_contract(_DIFFERING_NEXT_LINE, slice=slice_entries("Scheibe I-top")),
+        complete_contract(_DIFFERING_NEXT_LINE, slice=_cuttable_slice_entries("Scheibe I-top")),
         "2026-08-20T00:00:00Z",
         "2026-08-20T00:00:00Z",
         kind=body.ItemKind.CONTAINER,
@@ -7007,7 +7073,7 @@ def test_next_prints_a_cut_command_that_cut_accepts_for_every_qualifying_contain
         145,
         "Epic ranked second",
         (),
-        complete_contract(_DIFFERING_NEXT_LINE, slice=slice_entries("Scheibe I")),
+        complete_contract(_DIFFERING_NEXT_LINE, slice=_cuttable_slice_entries("Scheibe I")),
         "2026-08-20T00:00:00Z",
         "2026-08-20T00:00:00Z",
         kind=body.ItemKind.CONTAINER,
@@ -7365,7 +7431,10 @@ _BIDI_AND_ZERO_WIDTH_CONTROLS = (
 
 
 def _state_ref_container_body(title: str, *slice_titles: str, parent: int | None = None) -> str:
-    rows = [{"index": index, "title": row} for index, row in enumerate(slice_titles, start=1)]
+    rows = [
+        {"index": index, "title": row, "done_when": "D"}
+        for index, row in enumerate(slice_titles, start=1)
+    ]
     return _state_ref_item_body(title, kind=body.ItemKind.CONTAINER, parent=parent, slice=rows)
 
 
@@ -23243,8 +23312,8 @@ def _rescope_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Counte
 def _cut_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _CountedRun:
     toml_text = (
         f"{MINIMAL_BLOCK_TOML}"
-        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
-        '[[slice]]\nindex = 2\ntitle = "Scheibe 2"\n'
+        '[[slice]]\nindex = 1\ntitle = "Scheibe 1"\ndone_when = "D"\n'
+        '[[slice]]\nindex = 2\ntitle = "Scheibe 2"\ndone_when = "D"\n'
     )
     _configured_board_client(monkeypatch, tmp_path, open_issues=(_cut_container_issue(toml_text),))
     _write_block_pin(tmp_path)
