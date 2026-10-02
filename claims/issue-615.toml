@@ -1,8 +1,0 @@
-claim_id = "d853581000004a6caca5a3437ff92772"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "d107a277c130aecf264d3828b2fdfea3bd3ed18a"
-branch = "claude/issue-615-ruleset-merge-methods"
-scope = ["specs/land.spec.md", "src/agent_coordination/cli.py", "src/agent_coordination/github.py", "tests/test_cli.py", "tests/test_github.py"]
-opened_commit = "d49675c4d2c76f227c3474d0ffb8838e9708bf5a"
-whole_reason = "land's merge-method choice across the forge adapter, its caller, spec and tests"
