@@ -30,7 +30,7 @@ ALLOWED_ROOT_FILES = frozenset(
 )
 
 ALLOWED_ROOT_DIRECTORIES = frozenset(
-    {".agent-claim", ".github", "docs", "scripts", "specs", "src", "tests"}
+    {".aco", ".github", "docs", "scripts", "specs", "src", "tests"}
 )
 
 VIOLATION_MESSAGE = (
