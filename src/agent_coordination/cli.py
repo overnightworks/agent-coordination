@@ -6406,7 +6406,7 @@ class ReleaseEnding(StrEnum):
     `aco land` prints no reinstall line (LANDCMD-38)."""
 
     RELEASED = "released"
-    NOTHING_LEFT = "nothing left to release"
+    NOTHING_LEFT = "nothing-left"
 
 
 def _release_transition(
