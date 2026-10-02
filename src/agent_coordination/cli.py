@@ -7410,9 +7410,10 @@ def _cmd_release_landed(
     `protocol.LandingIntent` then closes the item and releases the claim in
     one commit, one CAS -- `_cmd_release`'s own `ReleaseIntent` path never
     runs for this storage pin's `--merged`. With no live claim left to
-    release (REL-47) it writes nothing and only cleans up, before the item
+    release (REL-47) it writes nothing and only cleans up, and a claim the
+    landing did not land refuses (REL-48, REL-53), both before the item
     write is prepared: that write refuses an item the landing already
-    closed (issue #605).
+    closed (issues #605, #611).
     """
     if not isinstance(identity, protocol.IssueIdentity):
         raise protocol.ClaimUnavailableError(
@@ -7444,8 +7445,6 @@ def _cmd_release_landed(
             context.fetched_trunk_ref,
         )
         return ReleaseEnding.NOTHING_LEFT
-    write = client.prepare_landing(identity.issue)
-    worktree = context.toplevel
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     _refuse_a_claim_the_landing_did_not_land(
         resolved.selected,
@@ -7454,6 +7453,8 @@ def _cmd_release_landed(
         _trunk_since(landings, commit),
         storage,
     )
+    write = client.prepare_landing(identity.issue)
+    worktree = context.toplevel
     new_oid = store.hash_blob(worktree, write.content)
     outcome = protocol.LandedRelease(commit=protocol.ObjectId(commit))
     intent = protocol.LandingIntent(
