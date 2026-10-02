@@ -1208,6 +1208,12 @@ _MALFORMED_RULE = "malformed branch merge rule"
             id="rule-not-a-list",
         ),
         pytest.param(_read_main_merge_rules, '"squash"', _MALFORMED_RULE, id="rule-not-an-object"),
+        pytest.param(
+            _read_main_merge_rules,
+            json.dumps({"type": "pull_request", "parameters": ["squash"]}),
+            _MALFORMED_RULE,
+            id="rule-parameters-not-an-object",
+        ),
     ],
 )
 def test_github_adapter_fails_loud_on_malformed_merge_answers(
@@ -1258,6 +1264,11 @@ def test_github_adapter_fails_loud_on_any_other_branch_rules_refusal() -> None:
             json.dumps({"type": "pull_request", "parameters": {}}),
             (),
             id="pull-request-rule-without-a-method-list",
+        ),
+        pytest.param(
+            json.dumps({"type": "pull_request"}),
+            (),
+            id="pull-request-rule-without-parameters",
         ),
         pytest.param(json.dumps({"type": "deletion"}), (), id="rule-without-a-merge-restriction"),
         pytest.param(

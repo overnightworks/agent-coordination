@@ -1049,6 +1049,8 @@ class GitHubForge:
         if rule.get("type") != "pull_request":
             return None
         parameters = rule.get("parameters")
+        if parameters is None:
+            return None
         if not isinstance(parameters, dict):
             raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
         methods = parameters.get("allowed_merge_methods")
