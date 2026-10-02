@@ -1012,12 +1012,14 @@ class GitHubForge:
         return frozenset(method for method, allowed in settings.items() if allowed)
 
     def branch_merge_rules(self, branch: str) -> tuple[frozenset[board.MergeMethod], ...]:
-        """The merge methods each `pull_request` rule on `branch` allows
-        (issue #615), one set per rule, read through the branch-rules
-        endpoint that resolves every ruleset applying to it: GitHub refuses a
-        method any one rule excludes, even where the repository settings
-        allow it. A branch without such a rule, or on a plan without
-        rulesets, answers an empty tuple."""
+        """The merge methods each rule on `branch` allows (issue #615), one
+        set per rule, read through the branch-rules endpoint that resolves
+        every ruleset applying to it: GitHub refuses a method any one rule
+        excludes, even where the repository settings allow it. A
+        `pull_request` rule allows its own `allowed_merge_methods`, and a
+        `required_linear_history` rule everything but a merge commit. A
+        branch without such a rule, or on a plan without rulesets, answers an
+        empty tuple."""
         try:
             raw = self._run(
                 [
@@ -1025,27 +1027,39 @@ class GitHubForge:
                     "--paginate",
                     f"repos/{self.repository}/rules/branches/{branch}?per_page=100",
                     "--jq",
-                    '.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods',
+                    ".[]",
                 ]
             )
         except forge.ForgePermissionDeniedError as error:
             if _RULESETS_UNAVAILABLE_ON_PLAN in str(error):
                 return ()
             raise
-        return tuple(
-            self._rule_merge_methods(value)
-            for value in self._json_lines(raw, "branch rules")
-            if value is not None
+        allowed_per_rule = (
+            self._rule_merge_methods(rule) for rule in self._json_lines(raw, "branch rules")
         )
+        return tuple(allowed for allowed in allowed_per_rule if allowed is not None)
 
     @staticmethod
-    def _rule_merge_methods(value: object) -> frozenset[board.MergeMethod]:
+    def _rule_merge_methods(rule: object) -> frozenset[board.MergeMethod] | None:
+        """The methods one branch rule allows, or None where it restricts none."""
+        if not isinstance(rule, dict):
+            raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
+        if rule.get("type") == "required_linear_history":
+            return frozenset(board.MergeMethod) - {board.MergeMethod.MERGE}
+        if rule.get("type") != "pull_request":
+            return None
+        parameters = rule.get("parameters")
+        if not isinstance(parameters, dict):
+            raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
+        methods = parameters.get("allowed_merge_methods")
+        if methods is None:
+            return None
         known = {method.value for method in board.MergeMethod}
-        if not isinstance(value, list) or not all(
-            isinstance(method, str) and method in known for method in value
+        if not isinstance(methods, list) or not all(
+            isinstance(method, str) and method in known for method in methods
         ):
             raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
-        return frozenset(board.MergeMethod(method) for method in value)
+        return frozenset(board.MergeMethod(method) for method in methods)
 
     def merge_landing(
         self,

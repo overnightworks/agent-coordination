@@ -1159,6 +1159,11 @@ def _read_main_merge_rules(client: GitHubForge) -> object:
     return client.branch_merge_rules("main")
 
 
+def _pull_request_rule(allowed_merge_methods: object) -> str:
+    rule = {"type": "pull_request", "parameters": {"allowed_merge_methods": allowed_merge_methods}}
+    return json.dumps(rule) + "\n"
+
+
 _MALFORMED_SETTINGS = "malformed repository merge settings"
 _MALFORMED_RULE = "malformed branch merge rule"
 
@@ -1186,14 +1191,23 @@ _MALFORMED_RULE = "malformed branch merge rule"
         ),
         pytest.param(
             _read_main_merge_rules,
-            '["squash","fast-forward"]',
+            _pull_request_rule(["squash", "fast-forward"]),
             _MALFORMED_RULE,
             id="rule-unknown-method",
         ),
         pytest.param(
-            _read_main_merge_rules, '[["squash"]]', _MALFORMED_RULE, id="rule-not-a-method-name"
+            _read_main_merge_rules,
+            _pull_request_rule([["squash"]]),
+            _MALFORMED_RULE,
+            id="rule-not-a-method-name",
         ),
-        pytest.param(_read_main_merge_rules, '"squash"', _MALFORMED_RULE, id="rule-not-a-list"),
+        pytest.param(
+            _read_main_merge_rules,
+            _pull_request_rule("squash"),
+            _MALFORMED_RULE,
+            id="rule-not-a-list",
+        ),
+        pytest.param(_read_main_merge_rules, '"squash"', _MALFORMED_RULE, id="rule-not-an-object"),
     ],
 )
 def test_github_adapter_fails_loud_on_malformed_merge_answers(
@@ -1240,9 +1254,19 @@ def test_github_adapter_fails_loud_on_any_other_branch_rules_refusal() -> None:
     ("answer", "rules"),
     [
         pytest.param("", (), id="no-rule"),
-        pytest.param("null\n", (), id="pull-request-rule-without-a-method-list"),
         pytest.param(
-            '["squash","rebase"]\n["squash"]\n',
+            json.dumps({"type": "pull_request", "parameters": {}}),
+            (),
+            id="pull-request-rule-without-a-method-list",
+        ),
+        pytest.param(json.dumps({"type": "deletion"}), (), id="rule-without-a-merge-restriction"),
+        pytest.param(
+            json.dumps({"type": "required_linear_history"}),
+            (frozenset({board.MergeMethod.SQUASH, board.MergeMethod.REBASE}),),
+            id="required-linear-history-drops-the-merge-commit",
+        ),
+        pytest.param(
+            _pull_request_rule(["squash", "rebase"]) + _pull_request_rule(["squash"]),
             (
                 frozenset({board.MergeMethod.SQUASH, board.MergeMethod.REBASE}),
                 frozenset({board.MergeMethod.SQUASH}),
@@ -1254,9 +1278,11 @@ def test_github_adapter_fails_loud_on_any_other_branch_rules_refusal() -> None:
 def test_github_adapter_reads_the_default_branchs_merge_rules(
     answer: str, rules: tuple[frozenset[board.MergeMethod], ...]
 ) -> None:
-    """Issue #615 line 4: `branch_merge_rules` reads every `pull_request`
-    rule on the branch through the branch-rules endpoint, one method set per
-    rule, and an empty tuple where no rule restricts the methods."""
+    """Issue #615 lines 4, 6 and 7: `branch_merge_rules` reads every rule on
+    the branch through the branch-rules endpoint, one method set per
+    `pull_request` rule carrying a method list and per
+    `required_linear_history` rule, and an empty tuple where no rule
+    restricts the methods."""
     observed: list[list[str]] = []
 
     def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
@@ -1272,7 +1298,7 @@ def test_github_adapter_reads_the_default_branchs_merge_rules(
             "--paginate",
             f"repos/{REPOSITORY}/rules/branches/main?per_page=100",
             "--jq",
-            '.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods',
+            ".[]",
         ]
     ]
 
