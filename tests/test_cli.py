@@ -4807,9 +4807,7 @@ def test_claim_refuses_a_freshly_cut_childs_incomplete_skeleton(
     defect-free but incomplete -- `now` and `next` filled, `done_when`
     empty -- so it is invisible to `next`, and refused here too, exactly as
     ruled: `claim` requires a complete projection."""
-    cut_child_body = body.prose_above_fresh_block(
-        "Parent: #90", {"now": "Cut from #90", "next": issue_claim.CUT_CHILD_NEXT}
-    )
+    cut_child_body = issue_claim._cut_child_body(90, body.Storage.GITHUB)
     child = board_issue(101, "Scheibe 1", cut_child_body)
     _configured_board_client(monkeypatch, tmp_path, open_issues=(child,))
     monkeypatch.setattr(

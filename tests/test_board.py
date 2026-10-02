@@ -862,7 +862,7 @@ def test_timestamp_fails_loud_on_a_malformed_github_timestamp(raw_timestamp: str
         board._timestamp(raw_timestamp)
 
 
-def test_child_skeleton_is_an_incomplete_contract_with_no_defects() -> None:
+def test_a_fresh_unfilled_block_is_an_incomplete_contract_with_no_defects() -> None:
     """A fresh block with no fields written keeps every projection key
     present and empty: valid, but incomplete."""
     parsed = parse_body(unfilled_block_body())
