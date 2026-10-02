@@ -1,0 +1,7 @@
+claim_id = "c7349c15472642bda027e1cf6907f7a4"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "811bed7fd8eb4067f8cfee829c2cf683223f74ac"
+branch = "claude/issue-613-release-4-1-0"
+scope = ["README.md", "src/agent_coordination/__init__.py"]
+opened_commit = "0f3585feb8243e8f1a74f1fe85a244d5c7b1b0d8"
