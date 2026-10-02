@@ -105,7 +105,7 @@ removed is clean and merged into the default branch, so nothing is lost, and `ac
 again for that claim.
 
 - [ ] [REL-48] A live claim off the landing's branch refuses `<identity> is claimed on '<branch>', not on <landing>'s branch '<source>'; release that claim by itself`, exit `2` (see E-REL-25, E-REL-26).
-- [ ] [REL-56] `<landing>` is REL-49's; `<source>` is the pull request's source branch or, under `storage = "state-ref"`, the release's own branch (REL-04, REL-07), with REL-05 the claim's own.
+- [ ] [REL-56] `<landing>` is REL-49's; `<source>` is the pull request's source branch or, under `storage = "state-ref"`, an explicit `--branch` (REL-04), else the claim's own branch.
 - [ ] [REL-53] A claim on that branch based on the landing commit or a later trunk commit (START-01) refuses `<identity> was claimed on '<branch>' after <landing> landed; release that claim by itself`.
 
 Both storages judge REL-48 and REL-53 alike, before anything is written, closed or removed.
@@ -551,13 +551,14 @@ The claim on `ada/issue-42-again` still stands.
 
 ### E-REL-26 — an abandoned landing's rerun never ends the lane that claimed its item again
 
-Setup: `storage = "state-ref"`, commit `4c1e9a0` on `main` trailer-naming `Work-Item: aco-00002a`,
-landed from `ada/issue-42`; the claim released `--abandoned`, so `aco-00002a` stayed open; then
-claimed again on `ada/issue-42-again`, whose clean linked worktree stands in this checkout
+Setup: `storage = "state-ref"`, commit `4c1e9a0d6b7f3e2a1c9d8b7a6f5e4d3c2b1a0f9e` on `main`
+trailer-naming `Work-Item: aco-00002a`, landed from `ada/issue-42`; the claim released
+`--abandoned`, so `aco-00002a` stayed open; then claimed again on `ada/issue-42-again`, whose
+clean linked worktree stands in this checkout
 
 ```console
-$ aco release aco-00002a --merged 4c1e9a0 --branch ada/issue-42
-2> ERROR: issue aco-00002a is claimed on 'ada/issue-42-again', not on commit 4c1e9a0's branch 'ada/issue-42'; release that claim by itself
+$ aco release aco-00002a --merged 4c1e9a0d6b7f3e2a1c9d8b7a6f5e4d3c2b1a0f9e --branch ada/issue-42
+2> ERROR: issue aco-00002a is claimed on 'ada/issue-42-again', not on commit 4c1e9a0d6b7f3e2a1c9d8b7a6f5e4d3c2b1a0f9e's branch 'ada/issue-42'; release that claim by itself
 exit 2
 ```
 
