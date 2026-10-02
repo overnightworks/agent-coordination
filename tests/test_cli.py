@@ -9589,6 +9589,7 @@ def test_release_merged_rerun_under_state_ref_writes_nothing_and_names_its_own_r
     )
     assert capsys.readouterr().out.splitlines()[-1] == f"worktree: {kept}"
     tip_after_release = _state_ref_tip(repo, remote)
+    _set_agent_identity_env(monkeypatch, {checkout.ACO_AGENT_ENV: "Codex Sol"})
 
     status = issue_claim.main([*shlex.split(rerun)[1:], *(["--json"] if as_json else [])])
 
