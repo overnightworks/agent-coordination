@@ -7964,10 +7964,10 @@ def _located_block_or_refuse(
     number: int, raw_body: str, *, command: str, storage: body.Storage = body.Storage.GITHUB
 ) -> body.LocatedBlock:
     """`raw_body`'s located `aco` block, or a by-name refusal before
-    any write: a command that rewrites a block needs a body `parse_body`
-    reads as VALID before it touches it, and every such command asks this
-    one gate so its refusal has one shape. `storage` is forwarded to
-    `parse_body` unchanged (issue #283): a state-ref item's own `[record]`
+    any write: `cut`, `rescope`, `rule`, `ask`, and `item edit --size` /
+    `--whole` need a body `parse_body` reads as VALID before they rewrite
+    its block, and share this one gate so their refusal has one shape.
+    `storage` is forwarded to `parse_body` unchanged (issue #283): a state-ref item's own `[record]`
     table must read as a known key, not a malformed one."""
     parsed = body.parse_body(raw_body, storage=storage)
     if parsed.read_state is body.BodyReadState.MALFORMED:
