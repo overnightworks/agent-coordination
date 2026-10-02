@@ -7757,20 +7757,36 @@ def _requested_whole_reason(raw: str | None) -> str | None:
     return None if raw is None else protocol._outbound_text(raw, _WHOLE_REASON_LABEL, maximum=512)
 
 
+# Fixed text naming no child number (issue #606 line 2), so the child is
+# written once, in the same create call that mints its number.
+CUT_CHILD_NEXT = f"Build this slice; claim it with {board.advice_command('start')}."
+
+
 def _cut_child_body(
-    container: int, storage: body.Storage, scope: tuple[str, ...] | None = None
+    container: int,
+    storage: body.Storage,
+    scope: tuple[str, ...] | None = None,
+    done_when: str | None = None,
 ) -> str:
-    """The body `cut` writes for a fresh child: `_parent_line` ahead of
-    `body.BLOCK_CHILD_SKELETON`, plus the cut slice's own
-    top-level `scope = [...]` (issue #337) when the cut carries one -- the
-    linked row's own scope, or a filled `--scope`. A repeat `cut` after a
-    partial failure reads the parent line back (`_orphan_names_container`)
-    to tell `container`'s own orphan apart from an unrelated open issue that
-    merely shares the row's title (#260)."""
-    skeleton = f"{_parent_line(container, storage)}\n\n{body.BLOCK_CHILD_SKELETON}"
-    if scope is None:
-        return skeleton
-    return body.body_with_block_fields(skeleton, {"scope": list(scope)})
+    """The body `cut` writes for a fresh child: `_parent_line` above a fresh
+    block whose `now` names the container it was cut from, whose `next` is
+    `CUT_CHILD_NEXT`, and whose `done_when` is the linked row's own (issue
+    #606), plus the cut slice's own top-level `scope = [...]` (issue #337)
+    when the cut carries one -- the linked row's own scope, or a filled
+    `--scope`. With no row `done_when` to take -- the row carries none, or
+    the cut is untied -- that key stays empty, never a refusal. A repeat
+    `cut` after a partial failure reads the parent line back
+    (`_orphan_names_container`) to tell `container`'s own orphan apart from
+    an unrelated open issue that merely shares the row's title (#260)."""
+    fields: dict[str, object] = {
+        "now": f"Cut from {board.item_label(container, storage)}",
+        "next": CUT_CHILD_NEXT,
+    }
+    if done_when is not None:
+        fields["done_when"] = done_when
+    if scope is not None:
+        fields["scope"] = list(scope)
+    return body.prose_above_fresh_block(_parent_line(container, storage), fields)
 
 
 def _orphan_names_container(raw_body: str, container: int, storage: body.Storage) -> bool:
@@ -7922,16 +7938,6 @@ def _block_slice_entries(data: Mapping[str, object]) -> list[dict[str, object]]:
     return [entry for entry in value if isinstance(entry, dict)]
 
 
-def _slice_row(entry: dict[str, object]) -> body.SliceRow:
-    """One `[[slice]]` entry as `cut` sees it. `entry`'s own `scope` (issue
-    #337), when it carries one, already passed `protocol.valid_scope` at
-    `_located_block_or_refuse`'s own `parse_body` gate -- a body that failed
-    that check never reaches here -- so this is the one canonicalizing pass,
-    not a second validation of an already-checked value."""
-    scope = protocol.valid_scope(entry["scope"]) if "scope" in entry else None
-    return body.SliceRow(cast(int, entry["index"]), cast(str, entry["title"]), scope)
-
-
 def _cut_link(
     label: str, data: Mapping[str, object], row_number: int | None
 ) -> body.SliceRow | None:
@@ -7942,7 +7948,7 @@ def _cut_link(
     linked entry is removed from `data["slice"]` at the moment it is cut)."""
     entries = _block_slice_entries(data)
     if row_number is None:
-        return _slice_row(entries[0]) if entries else None
+        return body.slice_row(entries[0]) if entries else None
     if "slice" not in data:
         raise protocol.ClaimUnavailableError(
             f"{label} has no slice table; --row needs one to select a row from"
@@ -7953,7 +7959,7 @@ def _cut_link(
         raise protocol.ClaimUnavailableError(
             f"{label} has no row {row_number}; cuttable rows: {cuttable}"
         )
-    return _slice_row(match)
+    return body.slice_row(match)
 
 
 def _child_title(label: str, link: body.SliceRow | None, title: str | None) -> str:
@@ -7975,19 +7981,26 @@ def _located_block_or_refuse(
     number: int, raw_body: str, *, command: str, storage: body.Storage = body.Storage.GITHUB
 ) -> body.LocatedBlock:
     """`raw_body`'s located `aco` block, or a by-name refusal before
-    any write: `cut`, `rule`, and `ask` all need a body `parse_body` reads as
-    VALID before they touch it, and share this one gate so the message is
-    the same shape for all three. `storage` is forwarded to `parse_body`
-    unchanged (issue #283): a state-ref item's own `[record]` table must
-    read as a known key, not a malformed one."""
+    any write: `cut`, `rescope`, `rule`, `ask`, and `item edit --size` /
+    `--whole` need a body `parse_body` reads as VALID before they rewrite
+    its block, and share this one gate so their refusal has one shape.
+    `storage` is forwarded to `parse_body` unchanged (issue #283): a state-ref item's own `[record]`
+    table must read as a known key, not a malformed one."""
     parsed = body.parse_body(raw_body, storage=storage)
     if parsed.read_state is body.BodyReadState.MALFORMED:
-        defect = parsed.contract.defects[0]
-        raise protocol.ClaimUnavailableError(
-            f"{board.item_label(number, storage)} {body.body_defect_text(defect)}; "
-            f"{command} needs a valid {body.BLOCK_FENCE_INFO} block"
+        _refuse_malformed_block(
+            number, body.body_defect_text(parsed.contract.defects[0]), command, storage
         )
     return body.locate_block(raw_body)
+
+
+def _refuse_malformed_block(
+    number: int, defect_text: str, command: str, storage: body.Storage
+) -> NoReturn:
+    raise protocol.ClaimUnavailableError(
+        f"{board.item_label(number, storage)} {defect_text}; "
+        f"{command} needs a valid {body.BLOCK_FENCE_INFO} block"
+    )
 
 
 CUT_ROW_SCOPE_ALREADY_SET = "slice {index} already names a scope; edit the container instead"
@@ -8008,6 +8021,20 @@ def _cut_row_scope(
     return requested
 
 
+def _cut_row_done_when(
+    number: int, located: body.LocatedBlock, link: body.SliceRow | None, storage: body.Storage
+) -> str | None:
+    """The `done_when` `cut`'s fresh child inherits (issue #606 line 2):
+    the linked row's own, refused in CUT-05's form before any write when it
+    breaks BODY-66 (CUT-39)."""
+    if link is None:
+        return None
+    defect = body.slice_done_when_defect(located, link)
+    if defect is not None:
+        _refuse_malformed_block(number, defect, "cut", storage)
+    return link.done_when
+
+
 CUT_RERUN_RECOVERY = "re-run the same cut -- it adopts the child"
 CUT_TYPE_RECOVERY = f"set that type on the forge by hand, then {CUT_RERUN_RECOVERY}"
 
@@ -8026,6 +8053,7 @@ def _cut_slice(
     link = _cut_link(label, located.data, parsed.row)
     title = _child_title(label, link, parsed.title)
     child_scope = _cut_row_scope(link, _requested_body_scope(parsed.scope))
+    child_done_when = _cut_row_done_when(number, located, link, storage)
     adopted = _adoptable_child(client, number, title, config, open_issues)
     if adopted is None and not parsed.not_a_twin:
         _refuse_possible_twin(
@@ -8038,7 +8066,7 @@ def _cut_slice(
             else client.create_child(
                 parent=number,
                 title=title,
-                body=_cut_child_body(number, storage, child_scope),
+                body=_cut_child_body(number, storage, child_scope, child_done_when),
                 kind=body.ItemKind.TASK,
             )
         )

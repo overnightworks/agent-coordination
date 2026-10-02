@@ -43,7 +43,7 @@ other printable space are text.
 | a container qualifies to be cut | NEXT-05, NEXT-31 | NEXT-12 |
 | an advice command carries an option value | NEXT-27, NEXT-31 | NEXT-11, NEXT-12 |
 | a title, `Next`, slice title or `SKIPPED` reason holds a display control | NEXT-37 | NEXT-11..14 |
-| its first uncut row's title holds a line break or control character | NEXT-32 | NEXT-14 |
+| its first uncut row's title or `done_when` holds a line break or control character | NEXT-32 | NEXT-14 |
 | a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
 | a container whose every open child is such an item | NEXT-38 | NEXT-14 |
 | a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
@@ -82,7 +82,7 @@ other printable space are text.
 - [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n>`, which cuts that row under its own title (CUT-06), exit `0` (E-NEXT-03).
 - [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: scope path `docs/my notes.md` prints `--scope='docs/my notes.md'`.
 - [ ] [NEXT-31] An advice command attaches each option's value as `--<option>=<quoted>`, so a value starting with `-` still reaches it; a cut advice carries no title at all (see E-NEXT-10).
-- [ ] [NEXT-32] A first uncut row whose title NEXT-37 escapes gets no `cut`; `SKIPPED` reads `slice row <i> title holds a line break or control character; make it one printable line` (E-NEXT-10).
+- [ ] [NEXT-32] A display control in the first uncut row's title or `done_when` withholds `cut`; `SKIPPED`: `slice row <i> <field> holds a line break or control character; make it one printable line` (E-NEXT-10).
 - [ ] [NEXT-36] An item PIN-14/PIN-15 refuses is named under `SKIPPED` as `<item-id>: body malformed: <field>: <message>`; every other item still reads, one it blocks stays blocked (see E-NEXT-11).
 - [ ] [NEXT-38] A container whose every open child, ITEM-54's included, is such an item reads `container; its open children do not read: <item-ids>` under `SKIPPED`, never `close:` (see E-NEXT-12).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
@@ -299,9 +299,9 @@ exit 2
 
 The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; the named claim then claims the row's paths past any higher-ranked free item (NEXT-33), and once retyped `next`'s own `Run:` line names that same claim without `--out-of-order <reason>` (NEXT-30). A container naming its own top-level `scope` ends the reason `claim it with aco claim 299 --out-of-order <reason>` instead, the claim that derives that scope (NEXT-03); a row without a `scope` of its own, under a container without one, ends it `claim it with aco claim 299 --scope <paths> --out-of-order <reason>`. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
 
-### E-NEXT-10 — a second cuttable container, and a row title holding a line break
+### E-NEXT-10 — a second cuttable container, and row fields holding a line break or control character
 
-Setup: bare-remote, fake `gh`, containers `#181`, `#183` and `#184`, each with no open child; `#181`'s row is `Scheibe C` and `#183`'s `-draft`, both with `scope = ["docs/c.md"]`; `#184`'s row 2 is titled `Zeile eins`, a line break, `Zeile zwei`
+Setup: bare-remote, fake `gh`, containers `#181`, `#183`, `#184` and `#185`, each with no open child; `#181`'s row is `Scheibe C` and `#183`'s `-draft`, both with `scope = ["docs/c.md"]`; `#184`'s row 2 is titled `Zeile eins`, a line break, `Zeile zwei`; `#185`'s row 1 `done_when` holds U+000B
 
 ```console
 $ aco next
@@ -314,6 +314,7 @@ close: none
 SKIPPED
 #183: cut slice "-draft"; run aco cut 183
 #184: slice row 2 title holds a line break or control character; make it one printable line
+#185: slice row 1 done_when holds a line break or control character; make it one printable line
 exit 0
 ```
 
