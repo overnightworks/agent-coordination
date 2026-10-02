@@ -2097,7 +2097,8 @@ class TestCliStateRefForge:
         write -- with no `KeyError` from a missing `LINK_CHILD` capability
         and no refusal; this container's own `[record]` carries no `slice`
         rows, so it creates an untied child exactly like GitHub does for the
-        same shape (`test_cut_creates_an_untied_child_with_no_slice_table`).
+        same shape (the `no_linked_row` case of
+        `test_cut_leaves_the_childs_done_when_empty_without_a_row_done_when`).
         The byte-exact `[[slice]]` row removal itself is issue #291's own
         proof, below."""
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, _item_files())
@@ -2343,11 +2344,11 @@ class TestCliStateRefForge:
         row_done_when: dict[str, str],
         child_done_when: str,
     ) -> None:
-        """CUT-25 and BODY-67 under state-ref (issue #606, #310 finding
-        350): the fresh child's block names the container it was cut from,
-        carries the fixed `next`, and takes the row's own `done_when`, empty
-        when the row carries none -- never a refusal; the container whose
-        last row was cut, a ruled `[[expectation]]` beside it, still passes
+        """CUT-25 and BODY-67 under state-ref (issue #606; #310 finding 350):
+        the fresh child's block names the container it was cut from, carries
+        the fixed `next`, and takes the row's own `done_when`, empty when the
+        row carries none -- never a refusal; the container whose last row was
+        cut, a ruled `[[expectation]]` beside it, still passes
         `aco body --check`."""
         item_files = _item_files_with_container_block(
             {
