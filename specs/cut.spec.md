@@ -1,6 +1,6 @@
 # `aco cut`
 
-`aco cut <container> --title T`: create a container's next slice as a fresh
+`aco cut <container> [--title T]`: create a container's next slice as a fresh
 child, remove that slice's own `[[slice]]` row from the container's block,
 and recover instead of duplicating when a prior run already got partway.
 This file owns the command's own target precondition, row selection,
@@ -26,7 +26,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 ## Behavior table
 
-| state \ trigger | `cut <n> --title T` | `--row N` | `--scope P` | `--json` |
+| state \ trigger | `cut <n> [--title T]` | `--row N` | `--scope P` | `--json` |
 |---|---|---|---|---|
 | `<n>` not open, or not on the board | CUT-01 | CUT-01 | CUT-01 | CUT-01 |
 | `--title` empty or whitespace only | CUT-33 | CUT-33 | CUT-33 | CUT-33 |
@@ -37,6 +37,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 | a slice table, no `--row` | CUT-06, CUT-11 | — | — | CUT-12 |
 | a slice table, `--row N` present | — | CUT-06, CUT-11 | — | CUT-12 |
 | `--title` mismatches the linked row | CUT-07 | CUT-07 | — | CUT-07 |
+| no linked row, `--title` omitted | CUT-35 | — | CUT-35 | CUT-35 |
 | `--row N`, no slice table at all | — | CUT-08 | — | CUT-08 |
 | `--row N`, no such row | — | CUT-09 | — | CUT-09 |
 | no slice table, or `slice = []` | CUT-10 | — | CUT-23, CUT-24 | CUT-10 |
@@ -74,8 +75,9 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 ## Row selection
 
-- [ ] [CUT-06] With no `--row`, `aco cut <n> --title T` links the first `[[slice]]` entry; `--row N` links entry `N` by its own `index` instead, whichever position it holds.
-- [ ] [CUT-07] A linked row whose own `title` differs from `--title` refuses `#<n>'s slice <idx> is titled '<row-title>'; --title must match it exactly`, exit `2`, before any write.
+- [ ] [CUT-06] With no `--row`, `aco cut <n>` links the first `[[slice]]` entry, `--row N` entry `N` by its `index`; without `--title` the linked row's `title` is the child's title (see E-CUT-02).
+- [ ] [CUT-07] A `--title` given that differs from the linked row's own `title` refuses `#<n>'s slice <idx> is titled '<row-title>'; --title must match it exactly`, exit `2`, before any write.
+- [ ] [CUT-35] With no linked row (CUT-10), an omitted `--title` refuses `#<n> has no slice row; pass --title`, exit `2`, before any write (see E-CUT-04).
 - [ ] [CUT-08] `--row N` against a block with no `slice` key at all refuses `#<n> has no slice table; --row needs one to select a row from`, exit `2`.
 - [ ] [CUT-09] `--row N` naming no entry refuses `#<n> has no row N; cuttable rows: <comma-joined indices, or none>`, exit `2` (see E-CUT-03).
 - [ ] [CUT-10] A block with no `slice` key, or `slice = []`, links no row: the child gets none, the container's body stays unwritten, the printed line carries no ` row <idx>` suffix (see E-CUT-04).
@@ -88,14 +90,14 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 ## Adopting instead of duplicating
 
-- [ ] [CUT-13] An open issue titled exactly `--title` -- linked already, or a recovery orphan (CUT-16) -- is adopted: `ADOPTED` replaces `CUT`, `reason: "adopted"` in `--json` (see E-CUT-05).
-- [ ] [CUT-14] A closed child already titled `--title`, with no open match, refuses `#<n> already has a closed child #<child> titled '<title>'; reopen it or remove the row by hand`, exit `2`.
+- [ ] [CUT-13] An open issue titled exactly the child's title -- linked already, or a recovery orphan (CUT-16) -- is adopted: `ADOPTED` replaces `CUT`, `reason: "adopted"` in `--json` (see E-CUT-05).
+- [ ] [CUT-14] A closed child already bearing the child's title, with no open match, refuses `#<n> already has a closed child #<child> titled '<title>'; reopen it or remove the row by hand`, exit `2`.
 - [ ] [CUT-15] Two or more open matches refuses `#<n>'s row '<title>' matches more than one open issue (#a, #b); adopt the right one by hand and remove the row`, exit `2`, naming every match.
-- [ ] [CUT-16] An open issue sharing `--title` is adopted only in CUT-13's recovery shape -- never the container itself, idea-labelled, non-`task`, or naming a different `Parent:` (see E-CUT-05).
+- [ ] [CUT-16] An open issue sharing the child's title is adopted only in CUT-13's recovery shape -- never the container itself, idea-labelled, non-`task`, or naming a different `Parent:` (see E-CUT-05).
 
 ## The twin search (issue #444)
 
-- [ ] [CUT-29] Before a fresh child exists, `aco cut` compares `--title` with the titles of every open issue and every issue closed within the last 30 days, the container itself excepted.
+- [ ] [CUT-29] Before a fresh child exists, `aco cut` compares the child's title (CUT-06) with the titles of every open issue and every issue closed within the last 30 days, the container itself excepted.
 - [ ] [CUT-30] Titles sharing at least 60 % of their combined distinct casefolded words (3 of 5 twin, 2 of 4 not) refuse `possible twin #<n>; pass --not-a-twin`, exit `2`, before any write (see E-CUT-05, E-CUT-09).
 - [ ] [CUT-31] An identical title always twins, even without a word; the refusal names the closest title, the lower number on a tie; `--not-a-twin` skips the search and creates; an adoption (CUT-13) never searches.
 
@@ -161,10 +163,10 @@ Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90` with two
 `[[slice]]` rows, `index = 1` titled `Slice A`, `index = 2` titled `Slice B`
 
 ```console
-$ aco cut 90 --title "Slice A"
+$ aco cut 90
 CUT #90 row 1 -> #<child-a>
 exit 0
-$ aco cut 90 --title "Slice B" --row 2 --json
+$ aco cut 90 --row 2 --json
 {"ok": true, "reason": "cut", "container": 90, "row": 2, "child": <child-b>}
 exit 0
 ```
@@ -175,7 +177,7 @@ Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90`, one
 `[[slice]]` row `index = 1` titled `Slice A`
 
 ```console
-$ aco cut 90 --title "Slice A" --row 9
+$ aco cut 90 --row 9
 2> ERROR: #90 has no row 9; cuttable rows: 1
 exit 2
 $ aco cut 90 --title "Wrong title"
@@ -191,6 +193,9 @@ Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90` with no
 ```console
 $ aco cut 90 --title "Loose work" --row 1
 2> ERROR: #90 has no slice table; --row needs one to select a row from
+exit 2
+$ aco cut 90
+2> ERROR: #90 has no slice row; pass --title
 exit 2
 $ aco cut 90 --title "Loose work"
 CUT #90 -> #<child>

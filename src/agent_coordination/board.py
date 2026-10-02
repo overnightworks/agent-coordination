@@ -507,6 +507,10 @@ class BoardItem:
     score: int
     actionable: bool
     actionable_reason: str | None
+    # Whether the operator's ruling, not an agent, frees this item (issues
+    # #553, #604), decided once by `_waits_on_operator`: `next` names it under
+    # `waiting on operator:` and never cuts or checks such a container.
+    waits_on_operator: bool
     # `actionable_reason` as `next`'s text prints it under `SKIPPED` (issue
     # #532): through `terminal_text`. The prose itself, a cut slice's title
     # quoted by `_quoted_prose` included (#310 finding 190), is one reason
@@ -1541,30 +1545,29 @@ def _board_item(
             parsed.slices, contract.next, context.nesting_parents.get(issue.number)
         )
     )
-    actionable_reason = _actionable_reason(
-        _ActionabilityFacts(
-            kind=issue.kind,
-            frozen_trigger=frozen,
-            active_claim=active_claim,
-            open_blockers=open_blockers,
-            repository=context.repository,
-            storage=config.storage,
-            contract=contract,
-            contract_complete=parsed.contract_complete,
-            projectionless_idea=projectionless_idea,
-            waits_on_operator=has_label(issue.labels, NEEDS_OPERATOR_LABEL),
-            read_state=parsed.read_state,
-            malformed_defect=(
-                contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
-            ),
-            childless_container_reason=_childless_container_reason(
-                issue.number, childless_verdict, parsed, config.storage
-            ),
-            unreadable_container_reason=_unreadable_children_reason(
-                container_progress, context.unreadable_numbers, config.storage
-            ),
-        )
+    actionability = _ActionabilityFacts(
+        kind=issue.kind,
+        frozen_trigger=frozen,
+        active_claim=active_claim,
+        open_blockers=open_blockers,
+        repository=context.repository,
+        storage=config.storage,
+        contract=contract,
+        contract_complete=parsed.contract_complete,
+        projectionless_idea=projectionless_idea,
+        labelled_needs_operator=has_label(issue.labels, NEEDS_OPERATOR_LABEL),
+        read_state=parsed.read_state,
+        malformed_defect=(
+            contract.defects[0] if parsed.read_state is BodyReadState.MALFORMED else None
+        ),
+        childless_container_reason=_childless_container_reason(
+            issue.number, childless_verdict, parsed, config.storage
+        ),
+        unreadable_container_reason=_unreadable_children_reason(
+            container_progress, context.unreadable_numbers, config.storage
+        ),
     )
+    actionable_reason = _actionable_reason(actionability)
     return BoardItem(
         number=issue.number,
         title=issue.title,
@@ -1599,6 +1602,7 @@ def _board_item(
         score=_board_score(stage, unblocks_count, single_next),
         actionable=actionable_reason is None,
         actionable_reason=actionable_reason,
+        waits_on_operator=_waits_on_operator(actionability),
         terminal_actionable_reason=(
             None if actionable_reason is None else terminal_text(actionable_reason)
         ),
@@ -1947,13 +1951,12 @@ class CutSliceAction:
     is the only thing this action ever fires on (issue #208). `next_step` is
     the container's own words (its `Next` line when it still names work,
     else the row's own title) for the human-readable action line;
-    `cut_title` is the exact string `cut` itself accepts for the printed
-    `cut` command -- always the first uncut row's title, the entry `cut`
-    without `--row` links. The two agree only when the `Next` line names no
-    work of its own. A container with no uncut row is never a
+    `cut_title` is the title the printed `cut` gives the child -- always the
+    first uncut row's title, the entry `cut` without `--row` links and names
+    the child after (issue #604). The two agree only when the `Next` line
+    names no work of its own. A container with no uncut row is never a
     `CutSliceAction`, however much prose its `Next` line still carries: that
-    prose is not a slice title, and printing it as one built an unrunnable
-    `cut --title "<paragraph>"` from a container's whole sentence."""
+    prose is not a slice title (#208)."""
 
     container: BoardItem
     container_progress: ContainerProgress
@@ -2191,8 +2194,8 @@ def parallel_set(
 
 
 def waiting_on_operator(board: Board) -> tuple[int, ...]:
-    """The numbers of every item `NEEDS_OPERATOR_LABEL` holds (issue #553),
-    in board order, less those `zero_cost_closes` already names (issue
+    """The numbers of every item that waits on the operator (issues #553,
+    #604), in board order, less those `zero_cost_closes` already names (issue
     #562): `next` names these apart from `SKIPPED`, since the operator's
     ruling, not an agent's repair, is what frees them, while a landed item
     only waits to be closed."""
@@ -2200,7 +2203,7 @@ def waiting_on_operator(board: Board) -> tuple[int, ...]:
     return tuple(
         item.number
         for item in board.items
-        if item.actionable_reason == WAITING_ON_OPERATOR and item.number not in closable
+        if item.waits_on_operator and item.number not in closable
     )
 
 
@@ -2260,12 +2263,16 @@ def closable_container_number(
 def _container_next_action(item: BoardItem, container: ContainerProgress) -> NextAction | None:
     """The action a childless container qualifies for, read off its one
     `childless_verdict`, or `None` to skip it: a non-`VALID` body names its
-    own finding elsewhere and is never guessed through, and a
+    own finding elsewhere and is never guessed through, a
     `NestedRepairVerdict` names its repair under `SKIPPED` instead of a `cut`
-    that `cut` refuses (issue #503)."""
+    that `cut` refuses (issue #503), and a container waiting on the operator
+    is only ever closed, never cut or checked (issue #604)."""
     if item.read_state is not BodyReadState.VALID:
         return None
-    match item.childless_verdict:
+    verdict = item.childless_verdict
+    if item.waits_on_operator and not isinstance(verdict, CloseVerdict):
+        return None
+    match verdict:
         case CutVerdict(title=cut_title):
             next_line = item.contract.next
             next_step = next_line if has_further_work(next_line) else cut_title
@@ -2369,6 +2376,9 @@ def board_payload(board: Board) -> dict[str, object]:
             # `whole` feeds `next`'s advice only (issue #566); board.spec
             # names no such `--json` key.
             item.pop("whole")
+            # `waiting_on_operator` is `next`'s own projection (issue #604);
+            # board.spec names no such per-item `--json` key.
+            item.pop("waits_on_operator")
             _project_blocker_references(item, "open_blockers", repository)
             container = item["container"]
             if container is not None:
@@ -2601,11 +2611,11 @@ def _pull_command(
     return " ".join((advice_command(*arguments, *scope_options), *unknown))
 
 
-def cut_command(number: int, storage: Storage, title: str) -> str:
-    """The `cut` advice for container `number`'s first uncut row, titled
-    `title` (issue #510): `next`'s own action line and a `SKIPPED`
-    container's reason (issue #513) print this one command."""
-    return advice_command("cut", item_argument(number, storage), AdviceOption("--title", title))
+def cut_command(number: int, storage: Storage) -> str:
+    """The `cut` advice for container `number`'s first uncut row (issues
+    #510, #604): `next`'s own action line and a `SKIPPED` container's reason
+    (issue #513) print this one command, which takes that row's own title."""
+    return advice_command("cut", item_argument(number, storage))
 
 
 # git's own default abbreviation length -- a Landungen row's sha is evidence
@@ -2630,7 +2640,7 @@ class _ActionabilityFacts:
     contract: Contract
     contract_complete: bool
     projectionless_idea: bool
-    waits_on_operator: bool
+    labelled_needs_operator: bool
     read_state: BodyReadState = BodyReadState.VALID
     malformed_defect: ContractDefect | None = None
     childless_container_reason: str | None = None
@@ -2763,7 +2773,7 @@ def _cut_slice_reason(number: int, storage: Storage, title: str) -> str:
     """The `SKIPPED` reason of a cuttable container `number` that is not
     `next`'s first action (issue #513): its first uncut row `title`, quoted
     by `_quoted_prose`, and the `cut` that row takes."""
-    return f"cut slice {_quoted_prose(title)}; run {cut_command(number, storage, title)}"
+    return f"cut slice {_quoted_prose(title)}; run {cut_command(number, storage)}"
 
 
 def _nested_container_repair(
@@ -2818,8 +2828,6 @@ def _claim_or_completeness_reason(facts: _ActionabilityFacts) -> str | None:
         return f"frozen: {facts.frozen_trigger}"
     if facts.active_claim is not None:
         return "claimed"
-    if facts.waits_on_operator:
-        return WAITING_ON_OPERATOR
     if facts.open_blockers:
         return "blocked by " + ", ".join(
             open_blocker_label(reference, facts.repository, facts.storage)
@@ -2831,10 +2839,29 @@ def _claim_or_completeness_reason(facts: _ActionabilityFacts) -> str | None:
     return None
 
 
+def _waits_on_operator(facts: _ActionabilityFacts) -> bool:
+    """Whether only the operator's ruling frees this item (issues #553,
+    #604): a readable container labelled `NEEDS_OPERATOR_LABEL` or frozen,
+    which `next` then never cuts or checks, or any other readable item so
+    labelled while unfrozen and unclaimed -- a frozen or claimed one names
+    that reason instead."""
+    if facts.read_state is BodyReadState.MALFORMED:
+        return False
+    if facts.kind is ItemKind.CONTAINER:
+        return facts.labelled_needs_operator or facts.frozen_trigger is not None
+    return (
+        facts.labelled_needs_operator
+        and facts.frozen_trigger is None
+        and facts.active_claim is None
+    )
+
+
 def _actionable_reason(facts: _ActionabilityFacts) -> str | None:
     read_state_reason = _read_state_actionable_reason(facts)
     if read_state_reason is not None:
         return read_state_reason
+    if _waits_on_operator(facts):
+        return WAITING_ON_OPERATOR
     if facts.kind is ItemKind.CONTAINER:
         return (
             facts.childless_container_reason

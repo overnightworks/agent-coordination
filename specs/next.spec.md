@@ -40,7 +40,8 @@ other printable space are text.
 | that action, run outside a linked non-default worktree | NEXT-41 | NEXT-11 |
 | that action's scope is wide and the body names no `whole` | NEXT-42 | NEXT-11 |
 | that item's expectations are proposed or old-ruled | NEXT-04 | NEXT-11 |
-| a container qualifies to be cut | NEXT-05, NEXT-27, NEXT-31 | NEXT-12 |
+| a container qualifies to be cut | NEXT-05, NEXT-31 | NEXT-12 |
+| an advice command carries an option value | NEXT-27, NEXT-31 | NEXT-11, NEXT-12 |
 | a title, `Next`, slice title or `SKIPPED` reason holds a display control | NEXT-37 | NEXT-11..14 |
 | its first uncut row's title holds a line break or control character | NEXT-32 | NEXT-14 |
 | a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
@@ -52,6 +53,7 @@ other printable space are text.
 | a landed-but-open item exists | LAND-53 (cited) | NEXT-14 |
 | an unworkable item exists beside the top action | NEXT-08 | NEXT-14 |
 | an item carries the label `needs-operator` | NEXT-39, NEXT-40 | NEXT-14 |
+| a container is labelled `needs-operator` or frozen | NEXT-39, NEXT-28 | NEXT-14 |
 | further free items exist, disjoint from the first action | NEXT-09, NEXT-21, NEXT-22 | NEXT-15 |
 | more than three such candidates | NEXT-10 | NEXT-15 |
 | the first action itself names no scope | NEXT-16 | NEXT-15 |
@@ -77,9 +79,9 @@ other printable space are text.
 
 ## A container's own action
 
-- [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n> --title=<cut title>`, exit `0` (see E-NEXT-03).
-- [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: title `Say "hi" to $HOME` prints `--title='Say "hi" to $HOME'`.
-- [ ] [NEXT-31] An advice command attaches each option's value as `--title=<quoted>` or `--scope=<quoted>`, so a value starting with `-` still reaches it: title `-draft` prints `--title=-draft`.
+- [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n>`, which cuts that row under its own title (CUT-06), exit `0` (E-NEXT-03).
+- [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: scope path `docs/my notes.md` prints `--scope='docs/my notes.md'`.
+- [ ] [NEXT-31] An advice command attaches each option's value as `--<option>=<quoted>`, so a value starting with `-` still reaches it; a cut advice carries no title at all (see E-NEXT-10).
 - [ ] [NEXT-32] A first uncut row whose title NEXT-37 escapes gets no `cut`; `SKIPPED` reads `slice row <i> title holds a line break or control character; make it one printable line` (E-NEXT-10).
 - [ ] [NEXT-36] An item PIN-14/PIN-15 refuses is named under `SKIPPED` as `<item-id>: body malformed: <field>: <message>`; every other item still reads, one it blocks stays blocked (see E-NEXT-11).
 - [ ] [NEXT-38] A container whose every open child, ITEM-54's included, is such an item reads `container; its open children do not read: <item-ids>` under `SKIPPED`, never `close:` (see E-NEXT-12).
@@ -95,7 +97,7 @@ other printable space are text.
 - [ ] [NEXT-26] A NEXT-06 container that is not the first action reads `no open children; check done_when` under `SKIPPED`, never `container; claim a child` and never `close:`.
 - [ ] [NEXT-34] A NEXT-05 container not the first action reads `cut slice "<title>"; run <its cut command>` under `SKIPPED`, `\` and `"` in `<title>` escaped in text and `--json`; never `container; claim a child`.
 - [ ] [NEXT-28] An item `close:` lists is never also named under `SKIPPED` or `waiting on operator:`, in text or `--json` (see E-NEXT-06).
-- [ ] [NEXT-39] An open, unclaimed, unfrozen item labelled `needs-operator` is never pulled; a line `waiting on operator: <labels>` after `close:` names it instead of `SKIPPED` (E-NEXT-13).
+- [ ] [NEXT-39] An unclaimed, unfrozen item or any container labelled `needs-operator`, or a frozen container, is never pulled, cut or checked; `waiting on operator: <labels>` names it (E-NEXT-13, E-NEXT-15).
 - [ ] [NEXT-40] `aco next --help` names that label and how to set or remove it: `gh issue edit <n> --add-label/--remove-label`, or `aco item edit <item-id>` under `storage = "state-ref"`.
 
 ## `parallel:`
@@ -188,7 +190,7 @@ Setup: bare-remote, fake `gh`, container `#181`, no open child, one `[[slice]]` 
 ```console
 $ aco next
 cut_slice #181: Scheibe C
-Next: aco cut 181 --title='Scheibe C'
+Next: aco cut 181
 parallel: none
 scope unknown: none
 close: none
@@ -260,7 +262,7 @@ Setup: bare-remote, fake `gh`, container `#181` as in E-NEXT-03
 
 ```console
 $ aco next --json
-{"ok": true, "reason": "cut_slice", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": false, "candidates": [], "scope_unknown": []}, "close": [], "waiting_on_operator": [], "number": 181, "title": "Epic", "slice": "Scheibe C", "cut_title": "Scheibe C", "command": "aco cut 181 --title='Scheibe C'"}
+{"ok": true, "reason": "cut_slice", "recovery": [], "skipped": [], "parallel": {"first_scope_unknown": false, "candidates": [], "scope_unknown": []}, "close": [], "waiting_on_operator": [], "number": 181, "title": "Epic", "slice": "Scheibe C", "cut_title": "Scheibe C", "command": "aco cut 181"}
 exit 0
 ```
 
@@ -304,13 +306,13 @@ Setup: bare-remote, fake `gh`, containers `#181`, `#183` and `#184`, each with n
 ```console
 $ aco next
 cut_slice #181: Scheibe C
-Next: aco cut 181 --title='Scheibe C'
+Next: aco cut 181
 parallel: none
 scope unknown: none
 close: none
 
 SKIPPED
-#183: cut slice "-draft"; run aco cut 183 --title=-draft
+#183: cut slice "-draft"; run aco cut 183
 #184: slice row 2 title holds a line break or control character; make it one printable line
 exit 0
 ```
@@ -392,3 +394,21 @@ exit 0
 `aco start 10 --slug=work` then builds `issue-10-work` beside the checkout and claims `#10` there, as E-NEXT-01's `claim` would from that worktree. A title yielding no slug, such as `!!! ???`, prints `Run: aco start 10 --slug=10`; under `storage = "state-ref"` the id's own, `Run: aco start aco-1234ab --slug=aco-1234ab`.
 
 The same item with `scope` naming five paths and no `whole` prints `Run: aco start 10 --slug=work --whole <reason>`; with the reason filled in, `aco start 10 --slug=work --whole 'One sweep over five files.'` claims it.
+
+### E-NEXT-15 — containers the operator holds
+
+Setup: bare-remote, fake `gh`, each container with no open child; `#441` labelled `needs-operator` with one `[[slice]]` row, `#442` frozen (`frozen_until`) with `Next` naming work, `#443` labelled `needs-operator` with `Next` line `keiner`; `#11` a scopeless open item
+
+```console
+$ aco next
+#11 score -10: Top work
+Next: Claim #11.
+Run: aco claim 11 --scope <paths>
+scope unknown
+parallel: unknown (first action names no scope)
+close: #443
+waiting on operator: #441, #442
+exit 0
+```
+
+`#441` gets no `cut` and `#442` no `check_container`, nor a `SKIPPED` line; `#443`, closable, stays under `close:` alone (NEXT-28).
