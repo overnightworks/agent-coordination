@@ -99,12 +99,13 @@ EXTERNAL_STATUS_FALLBACK_NAME = "external status checks"
 # code but never its class, so any 5xx is matched by digit rather than by an
 # enumerated list of codes that would need to grow with the API.
 _HTTP_SERVER_ERROR_PATTERN = re.compile(r"HTTP 5\d\d")
-# `merge_landing`'s own conflict signal (issue #405): GitHub answers a
-# pinned merge whose `sha` no longer names the pull request's real head with
-# HTTP 405 (closed/not mergeable) or 409 (head moved) -- neither is a 4xx
-# `_nonzero_exit_failure` above already classifies, so `merge_landing`
-# matches this pattern itself and raises `ForgeMergeConflictError`.
-_MERGE_CONFLICT_PATTERN = re.compile(r"HTTP 40[59]")
+# `merge_landing`'s own two refusal signals, neither a 4xx
+# `_nonzero_exit_failure` above already classifies. GitHub's REST reference
+# for the merge endpoint: 409 "if sha was provided and pull request head did
+# not match" (issue #405), 405 "if merge cannot be performed" -- a rule, a
+# required review, an unmergeable state, which no re-run repairs (issue #603).
+_MERGE_HEAD_MOVED_STATUS = "HTTP 409"
+_MERGE_REFUSED_STATUS = "HTTP 405"
 
 
 def _branch_already_absent(error_text: str) -> bool:
@@ -1019,10 +1020,10 @@ class GitHubForge:
         (issues #405, #578): never `gh pr merge`, which re-reads the pull
         request's current head itself rather than merging the exact commit
         `landing_readiness` already proved green. `title` and `body` are the
-        landed commit's own message either way. A 405 or 409 means the pull
-        request changed since that read -- translated to
-        `ForgeMergeConflictError` so `aco land` can name the one recovery
-        that ever applies: re-run.
+        landed commit's own message either way. A 409 means the pull request's
+        head moved since that read -- `ForgeMergeConflictError`, whose
+        recovery is a re-run; a 405 means GitHub will not perform the merge
+        at all -- `ForgeMergeRefusedError`, carrying the forge's own reason.
         """
         try:
             raw = self._run(
@@ -1044,8 +1045,10 @@ class GitHubForge:
                 ).encode("utf-8"),
             )
         except forge.ForgeError as error:
-            if _MERGE_CONFLICT_PATTERN.search(str(error)) is not None:
+            if _MERGE_HEAD_MOVED_STATUS in str(error):
                 raise forge.ForgeMergeConflictError(str(error)) from error
+            if _MERGE_REFUSED_STATUS in str(error):
+                raise forge.ForgeMergeRefusedError(str(error)) from error
             raise
         values = self._json_lines(raw, "merge result")
         if len(values) != 1 or not isinstance(values[0], dict):

@@ -5923,7 +5923,7 @@ def _remove_refused_start_worktree(target: _StartTarget) -> None:
             file=sys.stderr,
         )
         return
-    if outcome.branch.removed:
+    if outcome.branch.fate is checkout.BranchFate.REMOVED:
         print(
             f"removed worktree {target.path} and branch '{target.branch}' this start created",
             file=sys.stderr,
@@ -5931,7 +5931,7 @@ def _remove_refused_start_worktree(target: _StartTarget) -> None:
         return
     print(
         f"removed worktree {target.path} this start created; "
-        f"branch '{target.branch}' kept: {outcome.branch.reason}",
+        f"branch '{target.branch}' {outcome.branch.fate}: {outcome.branch.reason}",
         file=sys.stderr,
     )
 
@@ -6454,11 +6454,12 @@ def worktree_cleanup_outcome_text(outcome: checkout.WorktreeCleanupOutcome) -> s
     failure after the worktree is already gone names both halves -- never a
     bare `kept`, which would hide that the worktree itself is gone; a
     section git kept after the branch itself went names that section, never
-    the branch (issue #578)."""
+    the branch (issue #578); a delete that timed out reads the branch
+    unknown, never kept (issue #603)."""
     if not outcome.worktree.removed:
         return f"kept -- {outcome.worktree.reason}"
-    if not outcome.branch.removed:
-        return f"removed; branch kept -- {outcome.branch.reason}"
+    if outcome.branch.fate is not checkout.BranchFate.REMOVED:
+        return f"removed; branch {outcome.branch.fate} -- {outcome.branch.reason}"
     section_kept = outcome.branch.section_kept
     if section_kept is not None:
         return f"removed; {section_kept.section} section kept -- {section_kept.reason}"
@@ -6952,6 +6953,11 @@ def _land_merge(
     except forge.ForgeMergeConflictError as error:
         raise protocol.ClaimUnavailableError(
             f"pull request #{detail.number} changed while it was checked; re-run land"
+        ) from error
+    except forge.ForgeMergeRefusedError as error:
+        raise protocol.ClaimUnavailableError(
+            f"GitHub refused the merge of pull request #{detail.number}: "
+            f"{board.terminal_text(str(error))}"
         ) from error
 
 

@@ -527,7 +527,7 @@ _ISOLATED_NON_MAIN_BRANCH_SENTENCE = (
             "main",
             checkout.CheckoutKind.LINKED_WORKTREE,
             None,
-            checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
+            "default branch unknown; run git remote set-head origin --auto",
             id="unrecorded-default-branch-never-guessed",
         ),
     ],
@@ -618,24 +618,26 @@ def test_versioned_paths_reads_nul_terminated_ls_files_without_stripping(
 
 
 @pytest.mark.parametrize(
-    "git_call",
+    ("git_call", "subcommand"),
     [
-        pytest.param(_LIVE_VERSIONED_PATHS, id="versioned-paths"),
-        pytest.param(lambda: checkout.remote_url("origin"), id="remote-url"),
+        pytest.param(_LIVE_VERSIONED_PATHS, "ls-files", id="versioned-paths"),
+        pytest.param(lambda: checkout.remote_url("origin"), "config", id="remote-url"),
         pytest.param(
-            lambda: checkout.path_is_tracked(board.CONFIG_PATH.as_posix()), id="path-is-tracked"
+            lambda: checkout.path_is_tracked(board.CONFIG_PATH.as_posix()),
+            "ls-files",
+            id="path-is-tracked",
         ),
     ],
 )
 @pytest.mark.parametrize(
-    ("raised", "match"),
+    ("raised", "refusal"),
     [
         pytest.param(
             FileNotFoundError("git"), "git is required for issue claims", id="missing-executable"
         ),
         pytest.param(
             subprocess.TimeoutExpired(["git"], process.DEFAULT_TIMEOUT_SECONDS),
-            "git timed out while validating the build checkout",
+            "git {subcommand} timed out",
             id="timed-out",
         ),
     ],
@@ -643,19 +645,21 @@ def test_versioned_paths_reads_nul_terminated_ls_files_without_stripping(
 def test_checkout_git_calls_fail_loud_when_git_is_missing_or_times_out(
     monkeypatch: pytest.MonkeyPatch,
     git_call: Callable[[], object],
+    subcommand: str,
     raised: Exception,
-    match: str,
+    refusal: str,
 ) -> None:
     """`versioned_paths`, `remote_url`, and `path_is_tracked` -- all
     direct `subprocess.run` callers (`_git_output` backs `remote_url`)
-    -- must translate a missing executable or a timeout to the same
-    `ClaimError` text."""
+    -- must translate a missing executable or a timeout to a `ClaimError`;
+    a timeout names the git step that ran, never a purpose (issue #603)."""
+    expected = refusal.format(subcommand=subcommand)
 
     def fails(*_arguments, **_kwargs):
         raise raised
 
     monkeypatch.setattr(subprocess, "run", fails)
-    with pytest.raises(ClaimError, match=match):
+    with pytest.raises(ClaimError, match=f"^{expected}$"):
         git_call()
 
 
@@ -1633,7 +1637,7 @@ def test_remove_linked_worktree_deletes_the_directory_and_the_branch(
     assert not worktree.exists()
     assert checkout.branch_exists("codex/issue-1-widget") is False
     assert outcome.worktree.removed is True
-    assert outcome.branch.removed is True
+    assert outcome.branch.fate is checkout.BranchFate.REMOVED
 
 
 def test_branch_merged_into_default_is_true_only_after_a_real_merge(tmp_path: Path) -> None:
@@ -1722,7 +1726,7 @@ def test_remove_linked_worktree_reports_the_worktree_removed_and_the_branch_kept
 
     assert not worktree.exists()
     assert outcome.worktree.removed is True
-    assert outcome.branch.removed is False
+    assert outcome.branch.fate is checkout.BranchFate.KEPT
     assert outcome.branch.reason is not None
     assert "not fully merged" in outcome.branch.reason
 

@@ -15,8 +15,8 @@ refusal (CLAIM-37), that a rescope replaces only the scope while
 `claim_id`, `base` and age keep counting (CLAIM-49), and one claim's own
 `--json` field order (CLAIM-69); `specs/protect.spec.md` owns the checkout
 resolver's `not in a repository` reason, which `rescope` names its entry
-with, and its `no commit on this branch` and `default branch unknown`
-sentences (PROT-10, PROT-11, PROT-13),
+with, and its `no commit on this branch` and `default branch unknown; run
+git remote set-head <remote> --auto` sentences (PROT-10, PROT-11, PROT-13),
 the sentence naming a canonical remote with no URL configured (PROT-45),
 and the sentences for a path no claim can ever cover (PROT-14, PROT-42,
 PROT-43) that `rescope` shares verbatim, `protect`'s own docstring names the

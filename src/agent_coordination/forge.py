@@ -49,9 +49,16 @@ class ForgeMalformedResponseError(ForgeError):
 
 class ForgeMergeConflictError(ForgeError):
     """`merge_landing` refused a pinned merge because the pull request
-    changed since its head sha was read (HTTP 405/409): `aco land`'s own
+    changed since its head sha was read (HTTP 409): `aco land`'s own
     preflight already proved every other precondition, so a caller re-reads
     and re-runs rather than merging a commit it never actually validated."""
+
+
+class ForgeMergeRefusedError(ForgeError):
+    """`merge_landing`'s pinned merge was refused outright (HTTP 405, issue
+    #603) -- a rule, a required review, an unmergeable state: the forge's
+    own message is the reason, kept apart from a moved head, whose repair
+    is a re-run."""
 
 
 class ForgePartialCreationError(ForgeError):
