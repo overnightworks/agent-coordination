@@ -6949,6 +6949,11 @@ def _land_merge(
         raise protocol.ClaimUnavailableError(
             f"pull request #{detail.number} changed while it was checked; re-run land"
         ) from error
+    except github.MergeRefusedError as error:
+        raise protocol.ClaimUnavailableError(
+            f"GitHub refused the merge of pull request #{detail.number}: "
+            f"{board.terminal_text(str(error))}"
+        ) from error
 
 
 def _land_step(number: int, sha: str, step: str, action: Callable[[], None]) -> None:

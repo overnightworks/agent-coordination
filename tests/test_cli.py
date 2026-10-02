@@ -18133,20 +18133,40 @@ def test_land_refuses_under_the_state_ref_pin(
     )
 
 
-def test_land_reports_a_merge_conflict_when_the_pull_request_changed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+@pytest.mark.parametrize(
+    ("refusal", "printed"),
+    [
+        pytest.param(
+            forge.ForgeMergeConflictError("HTTP 409 head changed"),
+            "ERROR: pull request #12 changed while it was checked; re-run land\n",
+            id="head-moved-409",
+        ),
+        pytest.param(
+            github.MergeRefusedError("gh: Repository rule violations found (HTTP 405)"),
+            "ERROR: GitHub refused the merge of pull request #12: "
+            "gh: Repository rule violations found (HTTP 405)\n",
+            id="refused-405",
+        ),
+    ],
+)
+def test_land_names_the_forges_merge_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    refusal: ClaimError,
+    printed: str,
 ) -> None:
-    """Issue #405: a 405/409 from the merge endpoint means the pull request
-    changed since preflight read it -- refused by name, before any
-    follow-up step, with the one recovery this refusal ever names: re-run."""
+    """Issue #405: a 409 from the merge endpoint means the pull request's
+    head moved since preflight read it -- refused by name, before any
+    follow-up step, with its one recovery: re-run. A 405 is GitHub refusing
+    to perform the merge at all, which no re-run repairs, so it names the
+    forge's own reason instead (issue #603)."""
     _repo, client = _land_scenario(monkeypatch, tmp_path)
-    client.fail_merge = forge.ForgeMergeConflictError("HTTP 409 head changed")
+    client.fail_merge = refusal
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
 
-    assert capsys.readouterr().err == (
-        "ERROR: pull request #12 changed while it was checked; re-run land\n"
-    )
+    assert capsys.readouterr().err == printed
     assert len(client.merge_calls) == 1
     assert client.deleted_branches == []
 
