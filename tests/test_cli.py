@@ -16044,7 +16044,7 @@ def test_release_merged_refuses_an_unclassified_lane_merge_commit(
 def test_release_merged_refuses_a_work_item_neither_open_nor_closed(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """`_verify_merged_release`'s third `reference.state` branch: the named
+    """`_pending_landing_close`'s third `reference.state` branch: the named
     work item vanished between the pull request's own classification and
     this read (a real race, not reachable through the already-covered open/
     closed cases), so the release refuses rather than guessing either
@@ -16226,7 +16226,7 @@ def test_release_merged_retries_after_a_post_close_cas_failure_without_a_second_
     release transition itself strikes *after* `close_landed_item` already
     ran -- the comment is posted and the issue closed on the forge before
     `store.commit_transition` ever raises. The retry's own
-    `_verify_merged_release` now finds the work item already closed and
+    `_pending_landing_close` now finds the work item already closed and
     returns no pending close (the same branch the replay-refusal proof
     exercises under `storage = state-ref`), so `close_landed_item` never
     runs a second time -- one comment total -- and the retried transition

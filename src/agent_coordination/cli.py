@@ -6313,9 +6313,9 @@ def _refuse_a_claim_the_pull_request_did_not_land(
     claim on the same issue -- a lane on another branch (REL-48), or one a
     fresh `start` built on the same branch from a trunk that already holds
     this landing (START-01, REL-53). That claim is never released and never
-    skipped. A START-11 claim in a lane worktree still standing at the
-    recorded head is based off the trunk and passes both: the residual
-    #310 finding 356 owns."""
+    skipped. A same-branch claim based off the trunk, such as START-11 or
+    `aco claim` in a lane worktree still standing, passes both: the
+    residual #310 finding 356 owns."""
     subject = protocol.identity_summary(
         selected.identity, selected.branch, board.item_labeller(storage)
     )
