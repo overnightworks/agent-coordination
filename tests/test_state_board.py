@@ -29,7 +29,12 @@ from pathlib import Path
 from typing import TextIO
 
 import pytest
-from board_fixtures import MINIMAL_BLOCK_TOML, block_body, write_repository_config
+from board_fixtures import (
+    MINIMAL_BLOCK_TOML,
+    block_body,
+    unfilled_block_body,
+    write_repository_config,
+)
 from cli_fixtures import count_context_reads, fresh_observation, stub_board_config_tracked
 from test_cli import (
     FakeForge,
@@ -58,7 +63,6 @@ from agent_coordination.body import (
     expectation_lines,
     locate_block,
     parse_body,
-    prose_above_fresh_block,
     render_block,
 )
 from agent_coordination.protocol import ClaimUnavailableError, MalformedStateTreeError
@@ -1672,7 +1676,7 @@ class TestStateRefBoardWrites:
         _push_item_tree(bare_remote, worktree, _item_files())
         writer = self._writer(bare_remote, worktree)
         adapter = _fetch_state_ref_board(bare_remote, worktree, writer=writer)
-        body = prose_above_fresh_block(f"Parent: #{CONTAINER_NUMBER}", {})
+        body = unfilled_block_body(f"Parent: #{CONTAINER_NUMBER}")
 
         child_number = adapter.create_child(
             parent=CONTAINER_NUMBER, title="Slice C", body=body, kind=ItemKind.TASK
@@ -5249,7 +5253,7 @@ class TestCliStateRefForge:
         assert items.ITEM_ID_PATTERN.fullmatch(container_id)
 
         container_body = _filled_body(
-            prose_above_fresh_block(CONTAINER_SKELETON_PROSE, {}),
+            unfilled_block_body(CONTAINER_SKELETON_PROSE),
             now="Land every slice.",
             next_step="Cut the first slice.",
             done_when="Both slices are closed.",
@@ -5269,7 +5273,7 @@ class TestCliStateRefForge:
         child_number = items.item_number(child_id)
 
         child_body = _filled_body(
-            prose_above_fresh_block("", {}),
+            unfilled_block_body(),
             now="Build slice one.",
             next_step="Ship slice one.",
             done_when="Slice one is merged.",

@@ -13,7 +13,12 @@ from pathlib import Path
 from types import MappingProxyType
 
 from agent_coordination import board, metrics, protocol
-from agent_coordination.body import BLOCK_FENCE_INFO, ItemKind, render_block
+from agent_coordination.body import (
+    BLOCK_FENCE_INFO,
+    ItemKind,
+    prose_above_fresh_block,
+    render_block,
+)
 from agent_coordination.protocol import ClaimRequest
 
 BASE = "a" * 40
@@ -261,6 +266,14 @@ def complete_contract(
         **block_entries,
     }
     return block_body(render_block(data).rstrip("\n"))
+
+
+def unfilled_block_body(prose: str = "") -> str:
+    """`prose` above a block whose three projection keys are present and
+    empty -- a body nobody has filled yet: valid, but incomplete (BODY-12).
+    Written by the production writer of a fresh block, so no test
+    hand-writes its TOML."""
+    return prose_above_fresh_block(prose, {})
 
 
 FROZEN_TRIGGER = "eine zweite Maschine bekommt einen Grund"

@@ -33,6 +33,7 @@ from board_fixtures import (
     request,
     ruled_expectation,
     slice_entries,
+    unfilled_block_body,
 )
 
 from agent_coordination import board, checkout, metrics, protocol
@@ -60,7 +61,6 @@ from agent_coordination.body import (
     locate_block,
     missing_or_empty_sections,
     parse_body,
-    prose_above_fresh_block,
     render_block,
     replace_block,
     rule_expectation,
@@ -865,7 +865,7 @@ def test_timestamp_fails_loud_on_a_malformed_github_timestamp(raw_timestamp: str
 def test_child_skeleton_is_an_incomplete_contract_with_no_defects() -> None:
     """A fresh block with no fields written keeps every projection key
     present and empty: valid, but incomplete."""
-    parsed = parse_body(prose_above_fresh_block("", {}))
+    parsed = parse_body(unfilled_block_body())
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.contract_complete is False

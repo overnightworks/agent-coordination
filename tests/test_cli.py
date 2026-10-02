@@ -44,6 +44,7 @@ from board_fixtures import (
     request,
     ruled_expectation,
     slice_entries,
+    unfilled_block_body,
     write_repository_config,
 )
 from cli_fixtures import (
@@ -2346,7 +2347,7 @@ def _serve_a_container(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _serve_an_incomplete_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    _serve_start_board(monkeypatch, _start_item(body.prose_above_fresh_block("", {})))
+    _serve_start_board(monkeypatch, _start_item(unfilled_block_body()))
 
 
 def _serve_a_higher_priority_item(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -11210,7 +11211,7 @@ def test_every_output_names_a_github_item_by_its_number(
     `TestCliStateRefForge`'s id proof: the same commands name an item
     `#<n>`, and a pasteable argument its bare `n`. `item edit`/`close` have
     no twin: under `github` they refuse outright (PIN-10, PIN-11)."""
-    unfilled_body = body.prose_above_fresh_block("", {})
+    unfilled_body = unfilled_block_body()
     incomplete = board_issue(10, "Fresh work", unfilled_body)
     actionable = board_issue(11, "Slice A", complete_contract("Ship slice A."))
     blocked, dependencies = blocked_issue(12, "Slice B", block_dependency(11))
