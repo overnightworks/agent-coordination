@@ -9876,7 +9876,8 @@ def test_release_merged_rerun_under_state_ref_never_touches_a_lane_opened_after_
         else (2, "", refusals[reclaim_on])
     )
     printed = capsys.readouterr()
-    assert (status, printed.out, printed.err) == expected
+    observed = (status, printed.out, printed.err)
+    assert observed == expected
     assert _state_ref_tip(repo, remote) == tip_before
     assert _state_ref_item_state(repo, tip_before, 10) is items.RecordState.OPEN
     live_branches = [
