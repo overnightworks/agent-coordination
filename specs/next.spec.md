@@ -299,9 +299,9 @@ exit 2
 
 The named `item edit --kind task` runs under either storage (ITEM-47), `#299` printed as the id the storage takes back; the named claim then claims the row's paths past any higher-ranked free item (NEXT-33), and once retyped `next`'s own `Run:` line names that same claim without `--out-of-order <reason>` (NEXT-30). A container naming its own top-level `scope` ends the reason `claim it with aco claim 299 --out-of-order <reason>` instead, the claim that derives that scope (NEXT-03); a row without a `scope` of its own, under a container without one, ends it `claim it with aco claim 299 --scope <paths> --out-of-order <reason>`. With two or more uncut rows, the `SKIPPED` reason reads `nested container, which cut refuses; move its slice rows to example/agent-coordination#298`, the parent named as `cut`'s refusal names it. The same holds when `#298` is a Feature or Task, closed, or in another repository: `next` reads the parent relation `cut` refuses on.
 
-### E-NEXT-10 — a second cuttable container, and a row title holding a line break
+### E-NEXT-10 — a second cuttable container, and row fields holding a line break or control character
 
-Setup: bare-remote, fake `gh`, containers `#181`, `#183` and `#184`, each with no open child; `#181`'s row is `Scheibe C` and `#183`'s `-draft`, both with `scope = ["docs/c.md"]`; `#184`'s row 2 is titled `Zeile eins`, a line break, `Zeile zwei`
+Setup: bare-remote, fake `gh`, containers `#181`, `#183`, `#184` and `#185`, each with no open child; `#181`'s row is `Scheibe C` and `#183`'s `-draft`, both with `scope = ["docs/c.md"]`; `#184`'s row 2 is titled `Zeile eins`, a line break, `Zeile zwei`; `#185`'s row 1 `done_when` holds U+000B
 
 ```console
 $ aco next
@@ -314,6 +314,7 @@ close: none
 SKIPPED
 #183: cut slice "-draft"; run aco cut 183
 #184: slice row 2 title holds a line break or control character; make it one printable line
+#185: slice row 1 done_when holds a line break or control character; make it one printable line
 exit 0
 ```
 
