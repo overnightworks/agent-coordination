@@ -89,7 +89,8 @@ starts from. The pull request names `Closes #42` and `Work-Item: #42`.
 `--head <sha>`, pinned to the head its reviewers saw and refused when the head moved -- merges it
 with a merge commit, or squashes it where the repository allows no merge
 commit or `merge_method` asks for it, deletes the branch, removes the lane's
-worktree (or names its branch when the worktree lives in another checkout),
+worktree (or, when the worktree lives in another checkout, names the `aco release` command
+that removes it there; a rerun after the release finishes with `LANDED ... already`),
 closes the item, releases the claim, and reports what that landing freed and what
 to pull next. The exact preconditions, identity resolution, and refusals are
 `specs/next.spec.md`, `specs/start.spec.md`, `specs/brief.spec.md`,
