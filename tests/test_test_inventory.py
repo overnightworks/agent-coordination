@@ -54,9 +54,8 @@ def _commit(repo_root: Path, content: str | None) -> str:
     else:
         module.parent.mkdir(exist_ok=True)
         module.write_text(content, encoding="utf-8")
-    (repo_root / "README").write_text(content or "", encoding="utf-8")
     _git(repo_root, "add", "--all")
-    _git(repo_root, "commit", "--quiet", "--message", "step")
+    _git(repo_root, "commit", "--quiet", "--allow-empty", "--message", "step")
     return _git(repo_root, "rev-parse", "HEAD")
 
 
