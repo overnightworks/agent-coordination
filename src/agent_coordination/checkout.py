@@ -45,7 +45,16 @@ IDENTITY_ENVIRONMENT_ORDER = (
 # `versioned_paths`, and `path_is_tracked` each interpret a successful
 # launch's exit status their own way.
 _GIT_MISSING_EXECUTABLE_ERROR = "git is required for issue claims"
-_GIT_TIMED_OUT_ERROR = "git timed out while validating the build checkout"
+
+
+class GitTimedOutError(ClaimError):
+    """A git step that ran past its timeout (issue #603), named by its own
+    subcommand, never by a purpose it may not serve. Typed apart from every
+    other launch failure, since a write git may already have committed
+    before it was stopped, where one that never started has not."""
+
+    def __init__(self, subcommand: str) -> None:
+        super().__init__(f"git {subcommand} timed out")
 
 
 def _git_run(arguments: list[str], *, directory: Path | None = None) -> process.CapturedResult:
@@ -59,14 +68,15 @@ def _git_run(arguments: list[str], *, directory: Path | None = None) -> process.
     anything else (permission denied, out of file descriptors, `-C` naming a
     non-directory, ...) -- fails closed as a `ClaimError`, never an
     uncaught traceback out of `protect`'s hook boundary. Interpreting a
-    successful launch's exit status is each caller's own job.
+    successful launch's exit status is each caller's own job. A timeout
+    raises `GitTimedOutError`, naming `arguments`' own subcommand.
     """
     try:
         return process.run_git(arguments, directory=directory)
     except process.ExecutableMissingError as error:
         raise ClaimError(_GIT_MISSING_EXECUTABLE_ERROR) from error
     except process.ProcessTimedOutError as error:
-        raise ClaimError(_GIT_TIMED_OUT_ERROR) from error
+        raise GitTimedOutError(arguments[0]) from error
     except OSError as error:
         raise ClaimError(f"git failed to launch: {error}") from error
 
@@ -758,8 +768,10 @@ DEFAULT_BRANCH_FALLBACK = frozenset({"main", "master"})
 # `is_default_branch` fallback below, they never guess -- see
 # `_refuse_shared_checkout`'s and `_protect_not_main_denial`'s own
 # docstrings for why the callers of the same `recorded_default_branch`
-# reader accept different risk here.
-DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown"
+# reader accept different risk here. It names the one git command that
+# records the canonical remote's `HEAD` (issue #603), since a bare "unknown"
+# left an agent no repair to run.
+_DEFAULT_BRANCH_UNKNOWN_REASON = "default branch unknown; run git remote set-head {remote} --auto"
 
 # Every trunk reader's refusal prefix (issues #492, #508), one spelling
 # for each reason it names after it.
@@ -802,7 +814,7 @@ def default_branch_unknown_reason(
     if unconfigured is not None:
         return unconfigured
     if default_branch is None:
-        return DEFAULT_BRANCH_UNKNOWN_REASON
+        return _DEFAULT_BRANCH_UNKNOWN_REASON.format(remote=remote)
     return None
 
 
@@ -1444,6 +1456,16 @@ class SectionKept:
     reason: str
 
 
+class BranchFate(StrEnum):
+    """What the branch deletion left: gone, still there, or -- after a
+    delete git that timed out and so may already have committed (issue
+    #603) -- not known without looking."""
+
+    REMOVED = "removed"
+    KEPT = "kept"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class BranchRemoval:
     """Whether the same cleanup also removed the lane's own local branch,
@@ -1456,7 +1478,7 @@ class BranchRemoval:
     deleted squashed branch's section whose removal git refused or never
     completed."""
 
-    removed: bool
+    fate: BranchFate
     reason: str | None
     section_kept: SectionKept | None = None
 
@@ -1472,7 +1494,7 @@ class WorktreeCleanupOutcome:
 
 
 _WORKTREE_REMOVED = WorktreeRemoval(removed=True, reason=None)
-_BRANCH_REMOVED = BranchRemoval(removed=True, reason=None)
+_BRANCH_REMOVED = BranchRemoval(fate=BranchFate.REMOVED, reason=None)
 
 
 def worktree_cleanup_kept(reason: str) -> WorktreeCleanupOutcome:
@@ -1483,7 +1505,7 @@ def worktree_cleanup_kept(reason: str) -> WorktreeCleanupOutcome:
     itself is kept."""
     return WorktreeCleanupOutcome(
         worktree=WorktreeRemoval(removed=False, reason=reason),
-        branch=BranchRemoval(removed=False, reason=None),
+        branch=BranchRemoval(fate=BranchFate.KEPT, reason=None),
     )
 
 
@@ -1556,36 +1578,49 @@ def _delete_branch(branch: str, landed_head: str | None) -> BranchRemoval:
     whose own merged check guards a merged lane, or -- for a squash git's
     merged check cannot see (issue #578) -- with `_delete_squashed_branch`."""
     if landed_head is None:
-        deleted = _git_run(["branch", "-d", branch])
-        if deleted.exit_status != 0:
-            return _branch_kept(process.git_failure_detail(deleted))
-        return _BRANCH_REMOVED
+        return _run_branch_deletion(branch, ["branch", "-d", branch])
     return _delete_squashed_branch(branch, landed_head)
 
 
+def _run_branch_deletion(branch: str, arguments: list[str]) -> BranchRemoval:
+    """Run the one git that deletes `branch` and read what it left. No
+    failure escapes, since the worktree is already gone (issue #603): a git
+    that exits nonzero or never launches kept the branch, and one that timed
+    out may already have deleted it, so that branch reads unknown, naming
+    the check that tells."""
+    try:
+        deleted = _git_run(arguments)
+    except GitTimedOutError as error:
+        return BranchRemoval(
+            fate=BranchFate.UNKNOWN, reason=f"{error}; check git branch --list {branch}"
+        )
+    except ClaimError as error:
+        return _branch_kept(str(error))
+    if deleted.exit_status != 0:
+        return _branch_kept(process.git_failure_detail(deleted))
+    return _BRANCH_REMOVED
+
+
 def _branch_kept(failure: str) -> BranchRemoval:
-    return BranchRemoval(removed=False, reason=f"git failure: {failure}")
+    return BranchRemoval(fate=BranchFate.KEPT, reason=f"git failure: {failure}")
 
 
 def _delete_squashed_branch(branch: str, landed_head: str) -> BranchRemoval:
     """Delete a squashed lane's `branch` with one compare-and-delete against
     `landed_head` (issue #578 line 4), so a branch that moved on is refused
     by git and kept and no commit is ever lost, then drop its own
-    `branch.<name>` section. A git run that fails to launch or times out
-    never escapes, since the worktree is already gone: the compare-and-delete
-    reads the branch kept, and once it succeeded the branch reads removed,
-    and a section step git refuses or never completes is named on its own."""
-    try:
-        deleted = _git_run(["update-ref", "-d", f"refs/heads/{branch}", landed_head])
-    except ClaimError as error:
-        return _branch_kept(str(error))
-    if deleted.exit_status != 0:
-        return _branch_kept(process.git_failure_detail(deleted))
+    `branch.<name>` section once that delete removed the branch; a section
+    step git refuses or never completes is named on its own."""
+    deletion = _run_branch_deletion(
+        branch, ["update-ref", "-d", f"refs/heads/{branch}", landed_head]
+    )
+    if deletion.fate is not BranchFate.REMOVED:
+        return deletion
     try:
         _remove_deleted_branch_section(branch)
     except ClaimError as error:
         return BranchRemoval(
-            removed=True,
+            fate=BranchFate.REMOVED,
             reason=None,
             section_kept=SectionKept(section=f"branch.{branch}", reason=f"git failure: {error}"),
         )
