@@ -6949,7 +6949,7 @@ def _land_merge(
         raise protocol.ClaimUnavailableError(
             f"pull request #{detail.number} changed while it was checked; re-run land"
         ) from error
-    except github.MergeRefusedError as error:
+    except forge.ForgeMergeRefusedError as error:
         raise protocol.ClaimUnavailableError(
             f"GitHub refused the merge of pull request #{detail.number}: "
             f"{board.terminal_text(str(error))}"

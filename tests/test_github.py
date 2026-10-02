@@ -1178,7 +1178,7 @@ def test_github_adapter_fails_loud_on_malformed_merge_settings(answer: str) -> N
     ("status", "refusal"),
     [
         pytest.param(409, forge.ForgeMergeConflictError, id="head-moved"),
-        pytest.param(405, github.MergeRefusedError, id="merge-refused"),
+        pytest.param(405, forge.ForgeMergeRefusedError, id="merge-refused"),
     ],
 )
 def test_github_adapter_tells_a_moved_head_from_a_refused_merge(
@@ -1187,7 +1187,7 @@ def test_github_adapter_tells_a_moved_head_from_a_refused_merge(
     """Issue #405: a 409 from the merge endpoint means the pull request's
     head moved since `landing_readiness` read it -- `ForgeMergeConflictError`,
     whose recovery is a re-run. GitHub's REST reference reads a 405 as "merge
-    cannot be performed" (issue #603) -- `MergeRefusedError`, carrying the
+    cannot be performed" (issue #603) -- `ForgeMergeRefusedError`, carrying the
     forge's own message, since no re-run repairs it."""
     message = f"gh: merge not possible (HTTP {status})"
     client = GitHubForge(

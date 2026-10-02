@@ -18170,7 +18170,7 @@ def test_land_refuses_under_the_state_ref_pin(
             id="head-moved-409",
         ),
         pytest.param(
-            github.MergeRefusedError("gh: Repository rule violations found (HTTP 405)"),
+            forge.ForgeMergeRefusedError("gh: Repository rule violations found (HTTP 405)"),
             "ERROR: GitHub refused the merge of pull request #12: "
             "gh: Repository rule violations found (HTTP 405)\n",
             id="refused-405",

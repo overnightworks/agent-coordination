@@ -108,12 +108,6 @@ _MERGE_HEAD_MOVED_STATUS = "HTTP 409"
 _MERGE_REFUSED_STATUS = "HTTP 405"
 
 
-class MergeRefusedError(forge.ForgeError):
-    """GitHub refused to perform a pinned merge (HTTP 405, issue #603): the
-    forge's own message is the reason, kept apart from a moved head, whose
-    repair is a re-run."""
-
-
 def _branch_already_absent(error_text: str) -> bool:
     """`delete_branch`'s own idempotent-absence signal (issue #405 review
     finding; S8786): `gh api`'s own error text puts the message before the
@@ -1029,7 +1023,7 @@ class GitHubForge:
         landed commit's own message either way. A 409 means the pull request's
         head moved since that read -- `ForgeMergeConflictError`, whose
         recovery is a re-run; a 405 means GitHub will not perform the merge
-        at all -- `MergeRefusedError`, carrying the forge's own reason.
+        at all -- `ForgeMergeRefusedError`, carrying the forge's own reason.
         """
         try:
             raw = self._run(
@@ -1054,7 +1048,7 @@ class GitHubForge:
             if _MERGE_HEAD_MOVED_STATUS in str(error):
                 raise forge.ForgeMergeConflictError(str(error)) from error
             if _MERGE_REFUSED_STATUS in str(error):
-                raise MergeRefusedError(str(error)) from error
+                raise forge.ForgeMergeRefusedError(str(error)) from error
             raise
         values = self._json_lines(raw, "merge result")
         if len(values) != 1 or not isinstance(values[0], dict):
