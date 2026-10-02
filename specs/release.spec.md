@@ -52,7 +52,7 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | landing board read hits an unreachable forge | — | REL-22 | — |
 | no landing to report | — | — | REL-21 |
 | any refusal past the parser, with `--json` | REL-24 | REL-24 | REL-24 |
-| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42..REL-44 | REL-33 |
+| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42..REL-46 | REL-33 |
 
 ## Flags and outcome
 
@@ -116,9 +116,10 @@ branch stays the forge merge's own business: only the local worktree and the loc
 here, never anything on `remote`. Every outcome is loud: exactly one `worktree: <outcome>` line
 follows the report in text, and the same text becomes `--json`'s own `worktree` value -- `removed`
 when both are gone, `kept -- <reason>` when neither moves, `removed; branch kept -- <reason>`
-when the worktree is gone but the branch delete itself failed (REL-34), or
+when the worktree is gone but the branch delete itself failed (REL-34),
+`removed; branch unknown -- <reason>` when that delete timed out (REL-45), or
 `removed; branch.<name> section kept -- <reason>` when both are gone but a squashed branch's own
-section stayed (REL-42) -- one owner for all four shapes so they can never drift apart. Accepted residual of REL-42: a same-name branch another process
+section stayed (REL-42) -- one owner for all five shapes so they can never drift apart. Accepted residual of REL-42: a same-name branch another process
 creates between its compare-and-delete and the section removal can lose its upstream setting,
 never a commit; `git branch -u` restores it.
 
@@ -134,7 +135,9 @@ never a commit; `git branch -u` restores it.
 - [ ] [REL-31] The branch checked out on this repository's own shared main checkout, not a linked worktree, keeps it: `worktree: kept -- branch checked out elsewhere` (see E-REL-14).
 - [ ] [REL-32] A git failure resolving which worktree matches the lane's branch keeps both and reports it: `worktree: kept -- git failure: <detail>`, the release itself stays committed regardless (see E-REL-15).
 - [ ] [REL-33] `--abandoned` never attempts this cleanup at all, the same as it never resolves a forge target (LAND-39).
-- [ ] [REL-34] A git failure deleting the local branch after the worktree is already removed reports both halves, never a bare `kept`: `worktree: removed; branch kept -- git failure: <detail>` (see E-REL-16).
+- [ ] [REL-34] A git failure deleting the branch after the worktree is removed, by exit or launch, merged or squashed, names both halves: `worktree: removed; branch kept -- git failure: <detail>` (see E-REL-16).
+- [ ] [REL-45] A delete git that timed out after the worktree is removed may have deleted it: `worktree: removed; branch unknown -- git <subcommand> timed out; check git branch --list <branch>` (see E-REL-22).
+- [ ] [REL-46] A git step that timed out names itself wherever its `<detail>` stands: `git <subcommand> timed out`, never a step it did not run (see E-REL-23).
 
 ## Never
 
@@ -450,5 +453,33 @@ RELEASED issue #42: <claim-id>
 freed: none
 next: none
 worktree: removed
+exit 0
+```
+
+### E-REL-22 — a branch delete that timed out reads unknown, never kept
+
+Setup: bare-remote, fake `gh`, its merge commit's trailer naming `Work-Item: #42`, a linked
+worktree on `ada/issue-42`, already merged into `main`, run from the main checkout, issue `#42`
+claimed, `git branch -d` timing out once the worktree itself is already removed
+
+```console
+$ aco release 42 --merged 57
+RELEASED issue #42: <claim-id>
+freed: none
+next: none
+worktree: removed; branch unknown -- git branch timed out; check git branch --list ada/issue-42
+exit 0
+```
+
+### E-REL-23 — a timed-out git step names itself
+
+Setup: E-REL-20's, the squashed branch deleted, then its section listing `git config` timing out
+
+```console
+$ aco release 42 --merged 57
+RELEASED issue #42: <claim-id>
+freed: none
+next: none
+worktree: removed; branch.ada/issue-42 section kept -- git failure: git config timed out
 exit 0
 ```
