@@ -5554,6 +5554,8 @@ def _forge_with_existing_child(
 def test_cut_adopts_an_existing_open_child_instead_of_creating_one(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
+    """CUT-13 and CUT-37 (issue #606 line 3a): the adopted child is linked
+    and the row removed, but only the container's body is written."""
     client = _forge_with_existing_child(
         monkeypatch, tmp_path, child_number=950, child_state=board.ChildState.OPEN
     )
@@ -5580,6 +5582,7 @@ def test_cut_adopts_an_existing_open_child_instead_of_creating_one(
         "row": 1,
         "child": 950,
     }
+    assert list(client.item_bodies) == [CUT_CONTAINER]
     remaining = body.locate_block(client.item_bodies[CUT_CONTAINER]).data
     assert remaining["slice"] == []
 

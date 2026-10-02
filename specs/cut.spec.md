@@ -42,7 +42,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 | `--row N`, no such row | — | CUT-09 | — | CUT-09 |
 | no slice table, or `slice = []` | CUT-10, CUT-36 | — | CUT-23, CUT-24 | CUT-10 |
 | the linked row carries no `done_when` | CUT-36 | CUT-36 | — | CUT-12 |
-| an open child already matches the title | CUT-13 | CUT-13 | — | CUT-13 |
+| an open child already matches the title | CUT-13, CUT-37 | CUT-13, CUT-37 | — | CUT-13 |
 | a closed child matches, none open | CUT-14 | — | — | CUT-14 |
 | two or more open matches | CUT-15 | — | — | CUT-15 |
 | an orphan shares the title, wrong shape | CUT-16 | — | — | — |
@@ -108,6 +108,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 - [ ] [CUT-17] GitHub's own failed sub-issue relation write refuses `created #<child> but failed to record #<child> as a sub-issue of #<n>: <cause>; re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-18] A failed row-removal write, either storage, refuses `created #<child> but failed to remove row <idx> from #<n>'s aco block: <cause>; re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-19] An identical re-run after CUT-17, CUT-18, or -- once its type is set -- CUT-32 prints `ADOPTED` (CUT-13) instead of a second child, then finishes the row removal when a row was linked (see E-CUT-06).
+- [ ] [CUT-37] An adoption (CUT-13, CUT-19) never writes the child's body. Accepted residual: a row `done_when` edited between a lost race and its retry is not copied; the container's edit history keeps it.
 - [ ] [CUT-32] A child created without its `Task` type refuses `created #<child> but GitHub did not set its type Task; set that type on the forge by hand, then re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-28] CUT-17/CUT-18/CUT-32's partial write reports `reason: "partial_write"`, `written` (`<child>`) and `failed` (the step) as siblings, exit `2` (see E-CUT-08).
 
