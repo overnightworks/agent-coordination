@@ -1229,9 +1229,14 @@ def test_github_adapter_fails_loud_on_malformed_merge_answers(
         read(client)
 
 
-def _branch_rules_refused_with(message: str) -> GitHubForge:
+_RULESETS_UPGRADE_MESSAGE = (
+    "Upgrade to GitHub Pro or make this repository public to enable this feature."
+)
+
+
+def _branch_rules_refused_with(message: str, status: int = 403) -> GitHubForge:
     def refuse(arguments: list[str], *, input_data: bytes | None = None) -> str:
-        raise forge.ForgePermissionDeniedError(f"gh: {message} (HTTP 403)")
+        raise forge.ForgePermissionDeniedError(f"gh: {message} (HTTP {status})")
 
     return GitHubForge(github.repository_id(REPOSITORY), run=refuse)
 
@@ -1240,19 +1245,27 @@ def test_github_adapter_reads_no_merge_rules_on_a_plan_without_rulesets() -> Non
     """Issue #615 line 5: a private repository on a plan without rulesets
     answers the branch-rules read with GitHub's own upgrade 403, which means
     no rule narrows the settings."""
-    client = _branch_rules_refused_with(
-        "Upgrade to GitHub Pro or make this repository public to enable this feature."
-    )
+    client = _branch_rules_refused_with(_RULESETS_UPGRADE_MESSAGE)
 
     assert client.branch_merge_rules("main") == ()
 
 
-def test_github_adapter_fails_loud_on_any_other_branch_rules_refusal() -> None:
+@pytest.mark.parametrize(
+    ("message", "status"),
+    [
+        pytest.param("Resource not accessible by integration", 403, id="other-403"),
+        pytest.param(_RULESETS_UPGRADE_MESSAGE, 401, id="upgrade-phrase-under-401"),
+    ],
+)
+def test_github_adapter_fails_loud_on_any_other_branch_rules_refusal(
+    message: str, status: int
+) -> None:
     """Issue #615 line 5: every other refusal of the branch-rules read fails
-    loud rather than reading as no rules."""
-    client = _branch_rules_refused_with("Resource not accessible by integration")
+    loud rather than reading as no rules -- the upgrade phrase too, unless
+    GitHub answered it with a 403."""
+    client = _branch_rules_refused_with(message, status)
 
-    with pytest.raises(forge.ForgePermissionDeniedError, match="not accessible"):
+    with pytest.raises(forge.ForgePermissionDeniedError, match=f"HTTP {status}"):
         client.branch_merge_rules("main")
 
 

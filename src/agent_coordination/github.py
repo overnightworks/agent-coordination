@@ -110,6 +110,7 @@ _MERGE_REFUSED_STATUS = "HTTP 405"
 # GitHub's own 403 message where the repository's plan offers no rulesets (a
 # private repository on the Free plan); such a branch carries no rules.
 _RULESETS_UNAVAILABLE_ON_PLAN = "Upgrade to GitHub Pro or make this repository public"
+_RULESETS_UNAVAILABLE_STATUS = "HTTP 403"
 
 
 def _branch_already_absent(error_text: str) -> bool:
@@ -1031,7 +1032,8 @@ class GitHubForge:
                 ]
             )
         except forge.ForgePermissionDeniedError as error:
-            if _RULESETS_UNAVAILABLE_ON_PLAN in str(error):
+            refusal = str(error)
+            if _RULESETS_UNAVAILABLE_STATUS in refusal and _RULESETS_UNAVAILABLE_ON_PLAN in refusal:
                 return ()
             raise
         allowed_per_rule = (
