@@ -2327,7 +2327,8 @@ class TestCliStateRefForge:
     ) -> None:
         """CUT-25, CUT-36 and BODY-67 under state-ref (issue #606, #310
         finding 350): the fresh child's block names the container it was cut
-        from and takes the row's own `done_when`, empty when the row carries
+        from, carries the fixed `next`, and takes the row's own `done_when`,
+        empty when the row carries
         none -- never a refusal; the container whose last row was cut, a
         ruled `[[expectation]]` beside it, still passes `aco body --check`."""
         item_files = _item_files_with_container_block(
@@ -2347,8 +2348,9 @@ class TestCliStateRefForge:
         files_after = store.read_item_files(worktree, state.tip)
         child_body = files_after[f"{child_id}.md"].decode()
         child_contract = parse_body(child_body, storage=Storage.STATE_REF).contract
-        assert (child_contract.now, child_contract.done_when) == (
+        assert (child_contract.now, child_contract.next, child_contract.done_when) == (
             f"Cut from {CONTAINER_ID}",
+            "Build this slice; claim it with aco start.",
             child_done_when,
         )
         container_body = files_after[f"{CONTAINER_ID}.md"].decode()

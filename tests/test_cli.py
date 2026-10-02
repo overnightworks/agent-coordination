@@ -5401,9 +5401,10 @@ def test_cut_leaves_the_childs_done_when_empty_without_a_row_done_when(
     toml_text: str,
     title: list[str],
 ) -> None:
-    """CUT-36 (issue #606 line 3): a linked row carrying no `done_when`,
-    or no linked row at all, still cuts -- never a refusal -- and the
-    written child's `done_when` stays empty while `now` is filled."""
+    """CUT-25 and CUT-36 (issue #606 lines 2 and 3): a linked row carrying
+    no `done_when`, or no linked row at all, still cuts -- never a refusal
+    -- and the written child's block fills `now` and the fixed `next`
+    while its `done_when` stays empty."""
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
@@ -5412,17 +5413,18 @@ def test_cut_leaves_the_childs_done_when_empty_without_a_row_done_when(
 
     assert (exit_code, capsys.readouterr().err) == (0, "")
     [(_parent, _title, child_body, _kind)] = client.created_children
-    child_contract = body.parse_body(child_body).contract
-    assert (child_contract.now, child_contract.done_when) == (f"Cut from #{CUT_CONTAINER}", "")
+    assert body.parse_body(child_body).contract == body.Contract(
+        f"Cut from #{CUT_CONTAINER}", "Build this slice; claim it with aco start.", ""
+    )
 
 
 def test_cut_fills_the_childs_block_and_keeps_an_emptied_container_body_ok(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     """CUT-25 and BODY-67 (issue #606, #310 finding 350): the fresh child's
-    block says where it was cut from and takes the row's own `done_when`;
-    the container whose last row was cut, with a ruled `[[expectation]]`
-    beside it, still passes `aco body --check`."""
+    block says where it was cut from, carries the fixed `next`, and takes
+    the row's own `done_when`; the container whose last row was cut, with a
+    ruled `[[expectation]]` beside it, still passes `aco body --check`."""
     container = _cut_container_issue(
         f"{MINIMAL_BLOCK_TOML}"
         '[[expectation]]\ntext = "A line"\nruling = "yes"\nruled_on = 2026-10-02\n'
@@ -5435,9 +5437,9 @@ def test_cut_fills_the_childs_block_and_keeps_an_emptied_container_body_ok(
 
     assert exit_code == 0
     [(_parent, _title, child_body, _kind)] = client.created_children
-    child_contract = body.parse_body(child_body).contract
-    assert (child_contract.now, child_contract.done_when) == (
+    assert body.parse_body(child_body).contract == body.Contract(
         f"Cut from #{CUT_CONTAINER}",
+        "Build this slice; claim it with aco start.",
         "Scheibe 1 is merged.",
     )
     capsys.readouterr()

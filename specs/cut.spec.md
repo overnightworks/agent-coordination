@@ -87,8 +87,8 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 - [ ] [CUT-11] A successful cut prints `CUT #<n>[ row <idx>] -> #<child>`, the `row <idx>` clause present only when a row was linked, exit `0` (see E-CUT-02, E-CUT-04).
 - [ ] [CUT-12] `aco cut ... --json` prints `specs/output.spec.md`'s envelope, `reason` `cut` or `adopted` (CUT-13), then `container`, `row`, `child` (see E-CUT-02).
-- [ ] [CUT-25] The fresh child's body is a `Parent: <label>` line, a blank line, a block with `now = "Cut from <label>"`, `next = ""`, the linked row's `done_when`, plus CUT-20/CUT-23's `scope` (see E-CUT-07).
-- [ ] [CUT-36] A linked row with no `done_when`, or no linked row at all (CUT-10), leaves the fresh child's `done_when` `""`, never a refusal; the child stays outside `next` (BODY-51) until it is filled.
+- [ ] [CUT-25] A fresh child's block holds `now = "Cut from <label>"`, `next = "Build this slice; claim it with aco start."`, `done_when` (CUT-36), `scope` (CUT-20), under a `Parent: <label>` line (see E-CUT-07).
+- [ ] [CUT-36] A fresh child's `done_when` is its linked row's own; a row without one, or no linked row (CUT-10), leaves it `""`, never a refusal, and the child outside `next` (BODY-51) until it is filled.
 
 ## Adopting instead of duplicating
 
@@ -163,7 +163,8 @@ exit 2
 ### E-CUT-02 -- a tied cut, text and `--json`, then row selection by number
 
 Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90` with two
-`[[slice]]` rows, `index = 1` titled `Slice A`, `index = 2` titled `Slice B`
+`[[slice]]` rows, `index = 1` titled `Slice A` with `done_when = "Slice A is
+merged."`, `index = 2` titled `Slice B` with no `done_when`
 
 ```console
 $ aco cut 90
@@ -173,6 +174,10 @@ $ aco cut 90 --row 2 --json
 {"ok": true, "reason": "cut", "container": 90, "row": 2, "child": <child-b>}
 exit 0
 ```
+
+`#<child-a>`'s block reads `now = "Cut from #90"`, `next = "Build this
+slice; claim it with aco start."`, `done_when = "Slice A is merged."`;
+`#<child-b>`'s is the same but for `done_when = ""` (CUT-36).
 
 ### E-CUT-03 -- row refusals
 
@@ -242,6 +247,9 @@ CUT #90 row 1 -> #<child>
 exit 0
 ```
 
+`#<child>`'s block reads CUT-25's `now` and `next`, `done_when = ""` (row 1
+carries none, CUT-36), and `scope = ["src/a.py"]`.
+
 A second container `#91`'s row already names `scope = ["src/b.py"]`:
 
 ```console
@@ -270,7 +278,7 @@ Parent: aco-000001
 ```aco
 version = 1
 now = "Cut from aco-000001"
-next = ""
+next = "Build this slice; claim it with aco start."
 done_when = "Slice C is merged."
 
 [record]

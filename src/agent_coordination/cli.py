@@ -7496,6 +7496,11 @@ def _requested_whole_reason(raw: str | None) -> str | None:
     return None if raw is None else protocol._outbound_text(raw, _WHOLE_REASON_LABEL, maximum=512)
 
 
+# Fixed text naming no child number (issue #606 line 2), so the child is
+# written once, in the same create call that mints its number.
+CUT_CHILD_NEXT = f"Build this slice; claim it with {board.advice_command('start')}."
+
+
 def _cut_child_body(
     container: int,
     storage: body.Storage,
@@ -7503,16 +7508,19 @@ def _cut_child_body(
     done_when: str | None = None,
 ) -> str:
     """The body `cut` writes for a fresh child: `_parent_line` above a fresh
-    block whose `now` names the container it was cut from and whose
-    `done_when` is the linked row's own (issue #606), plus the cut slice's
-    own top-level `scope = [...]` (issue #337) when the cut carries one --
-    the linked row's own scope, or a filled `--scope`. With no row
-    `done_when` to take -- the row carries none, or the cut is untied --
-    that key stays empty, never a refusal. A repeat `cut`
-    after a partial failure reads the parent line back
+    block whose `now` names the container it was cut from, whose `next` is
+    `CUT_CHILD_NEXT`, and whose `done_when` is the linked row's own (issue
+    #606), plus the cut slice's own top-level `scope = [...]` (issue #337)
+    when the cut carries one -- the linked row's own scope, or a filled
+    `--scope`. With no row `done_when` to take -- the row carries none, or
+    the cut is untied -- that key stays empty, never a refusal. A repeat
+    `cut` after a partial failure reads the parent line back
     (`_orphan_names_container`) to tell `container`'s own orphan apart from
     an unrelated open issue that merely shares the row's title (#260)."""
-    fields: dict[str, object] = {"now": f"Cut from {board.item_label(container, storage)}"}
+    fields: dict[str, object] = {
+        "now": f"Cut from {board.item_label(container, storage)}",
+        "next": CUT_CHILD_NEXT,
+    }
     if done_when is not None:
         fields["done_when"] = done_when
     if scope is not None:
