@@ -1,8 +1,0 @@
-claim_id = "6cd2ef35cad34af09e53874a08c0978e"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "c59a7333a3224bdead18eba553fea3321d6b7bf2"
-branch = "claude/issue-604-next-cut-ergonomics"
-scope = ["specs/cut.spec.md", "specs/next.spec.md", "src/agent_coordination/board.py", "src/agent_coordination/cli.py", "tests/test_board.py", "tests/test_cli.py"]
-opened_commit = "eda717d1f276b0ebb193135bf03f1c9e64219ea8"
-whole_reason = "next's container advice and cut's title rule share one action"
