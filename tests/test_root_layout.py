@@ -7,26 +7,12 @@ so faking its output would test the wrong layer.
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
-import sys
 from pathlib import Path
-from types import ModuleType
 
-_MODULE_PATH = Path(__file__).parent.parent / "scripts" / "check_root_layout.py"
+from script_fixtures import load_script
 
-
-def _load_check_root_layout() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("check_root_layout", _MODULE_PATH)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-check_root_layout = _load_check_root_layout()
-sys.modules.setdefault("check_root_layout", check_root_layout)
+check_root_layout = load_script("check_root_layout")
 violations = check_root_layout.violations
 VIOLATION_MESSAGE = check_root_layout.VIOLATION_MESSAGE
 

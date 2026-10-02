@@ -62,7 +62,9 @@ A test module counts as **rewritten** when the diff against the base removes ``g
 --numstat``'s own deleted-line count for at least ``REWRITE_DROP_THRESHOLD_PCT`` percent of its
 base line count -- the simplest honest signal that a file was rebuilt rather than edited, and
 the same number a reviewer sees in the diff stat. A brand-new file (absent at the base) has
-nothing to shrink and is never "rewritten" by this rule.
+nothing to shrink and is never "rewritten" by this rule; neither is a deleted file (absent at
+HEAD), whose removal is the change's own reviewed decision rather than a rewrite that quietly
+drops literals.
 
 With no rewritten module in the diff, the job SKIPS with a one-line sentence naming the base and
 the threshold (exit 0). With one or more, each rewritten module's BASE and HEAD inventories are
@@ -745,6 +747,8 @@ def rewritten_modules(base: str) -> list[str]:
     for path, (_added, deleted) in changed_test_module_stats(base).items():
         base_source = git_show_file(base, path)
         if base_source is None:  # new at HEAD, nothing to shrink
+            continue
+        if git_show_file("HEAD", path) is None:  # deleted at HEAD, a removal and not a rewrite
             continue
         base_lines = len(base_source.splitlines())
         if base_lines and deleted * 100 / base_lines >= REWRITE_DROP_THRESHOLD_PCT:
