@@ -1,0 +1,7 @@
+claim_id = "39cc1a54cd3b44c2864cff6290f2ec13"
+agent = "Claude head (coordinator)"
+role = "builder"
+base = "7ef5d3da06a1bb75756365460fb3d8c93f8c3de3"
+branch = "claude/issue-611-state-ref-release-branch"
+scope = ["specs/release.spec.md", "src/agent_coordination/cli.py", "tests/test_cli.py"]
+opened_commit = "d291066a57f5cf759843c0d2d4d008233e9cce73"
