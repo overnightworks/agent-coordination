@@ -2325,7 +2325,7 @@ class TestCliStateRefForge:
         row_done_when: dict[str, str],
         child_done_when: str,
     ) -> None:
-        """CUT-25, CUT-36 and BODY-67 under state-ref (issue #606, #310
+        """CUT-25 and BODY-67 under state-ref (issue #606, #310
         finding 350): the fresh child's block names the container it was cut
         from, carries the fixed `next`, and takes the row's own `done_when`,
         empty when the row carries

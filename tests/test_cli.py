@@ -4802,7 +4802,7 @@ def test_claim_refuses_a_freshly_cut_childs_incomplete_skeleton(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """`cut`'s fresh child from a row without `done_when` (CUT-36) is
+    """`cut`'s fresh child from a row without `done_when` (CUT-25) is
     defect-free but incomplete -- `now` and `next` filled, `done_when`
     empty -- so it is invisible to `next`, and refused here too, exactly as
     ruled: `claim` requires a complete projection."""
@@ -5229,23 +5229,6 @@ def test_cut_selects_a_row_by_number_and_removes_only_that_entry(
     assert remaining["slice"] == [{"index": 1, "title": "Scheibe 1", "done_when": "D"}]
 
 
-def test_cut_creates_an_untied_child_with_no_slice_table(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    container = _cut_container_issue(MINIMAL_BLOCK_TOML)
-    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
-    _write_block_pin(tmp_path)
-
-    exit_code = issue_claim.main(
-        ["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), "--title", "Untied"]
-    )
-
-    assert exit_code == 0
-    assert client.item_bodies == {}
-    child = client.next_created_child_number - 1
-    assert capsys.readouterr().out == f"CUT #{CUT_CONTAINER} -> #{child}\n"
-
-
 def test_cut_creates_an_untied_child_when_slice_is_explicitly_empty(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -5388,14 +5371,16 @@ def test_cut_refuses_a_title_mismatch_before_any_write(
 
 
 @pytest.mark.parametrize(
-    ("toml_text", "title"),
+    ("toml_text", "title_arguments", "row_clause", "written_bodies"),
     [
         pytest.param(
             f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n',
             [],
+            " row 1",
+            [CUT_CONTAINER],
             id="row_without_done_when",
         ),
-        pytest.param(MINIMAL_BLOCK_TOML, ["--title", "Untied"], id="no_linked_row"),
+        pytest.param(MINIMAL_BLOCK_TOML, ["--title", "Untied"], "", [], id="no_linked_row"),
     ],
 )
 def test_cut_leaves_the_childs_done_when_empty_without_a_row_done_when(
@@ -5403,19 +5388,31 @@ def test_cut_leaves_the_childs_done_when_empty_without_a_row_done_when(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
     toml_text: str,
-    title: list[str],
+    title_arguments: list[str],
+    row_clause: str,
+    written_bodies: list[int],
 ) -> None:
-    """CUT-25 and CUT-36 (issue #606 lines 2 and 3): a linked row carrying
+    """CUT-25 and CUT-37 (issue #606 lines 2 and 3): a linked row carrying
     no `done_when`, or no linked row at all, still cuts -- never a refusal
     -- and the written child's block fills `now` and the fixed `next`
-    while its `done_when` stays empty."""
+    while its `done_when` stays empty; an untied cut writes no container
+    body, since no row is removed."""
     container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
 
-    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), *title])
+    exit_code = issue_claim.main(
+        ["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), *title_arguments]
+    )
 
-    assert (exit_code, capsys.readouterr().err) == (0, "")
+    child = client.next_created_child_number - 1
+    captured = capsys.readouterr()
+    assert (exit_code, captured.out, captured.err) == (
+        0,
+        f"CUT #{CUT_CONTAINER}{row_clause} -> #{child}\n",
+        "",
+    )
+    assert list(client.item_bodies) == written_bodies
     [(_parent, _title, child_body, _kind)] = client.created_children
     assert body.parse_body(child_body).contract == body.Contract(
         f"Cut from #{CUT_CONTAINER}", "Build this slice; claim it with aco start.", ""
@@ -5558,7 +5555,7 @@ def _forge_with_existing_child(
 def test_cut_adopts_an_existing_open_child_instead_of_creating_one(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """CUT-13 and CUT-37 (issue #606 line 3a): the adopted child is linked
+    """CUT-13 and CUT-38 (issue #606 line 3a): the adopted child is linked
     and the row removed, but only the container's body is written."""
     client = _forge_with_existing_child(
         monkeypatch, tmp_path, child_number=950, child_state=board.ChildState.OPEN
