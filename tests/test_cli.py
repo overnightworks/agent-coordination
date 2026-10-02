@@ -9827,11 +9827,13 @@ def test_release_merged_rerun_under_state_ref_never_touches_a_lane_opened_after_
     branch (REL-48), or on the landed branch from a trunk that already holds
     the landing (REL-53) -- or, with no live claim, has nothing left to
     release (REL-47). Either way the newer claim, the open item and the
-    newer lane's worktree all survive, and `refs/aco/state` does not move."""
+    newer lane's worktree and branch -- on the landed branch itself for
+    REL-53 -- all survive, and `refs/aco/state` does not move."""
     repo, remote = _real_landing_scenario(monkeypatch, tmp_path, numbers=(10,))
     sha = _real_git(repo, "rev-parse", "main~2").stdout.strip()
     landed_branch = "codex/issue-10-claims"
-    newer_worktree = tmp_path / "issue-10-again"
+    newer_branch = reclaim_on or "codex/issue-10-again"
+    newer_worktree = tmp_path / "issue-10-newer"
     rerun = ["release", "10", "--agent", "Codex Sol", "--merged", sha, "--branch", landed_branch]
     assert (
         issue_claim.main(
@@ -9839,9 +9841,7 @@ def test_release_merged_rerun_under_state_ref_never_touches_a_lane_opened_after_
         )
         == 0
     )
-    _real_git(
-        repo, "worktree", "add", "-q", "-b", "codex/issue-10-again", str(newer_worktree), "main"
-    )
+    _real_git(repo, "worktree", "add", "-q", "-b", newer_branch, str(newer_worktree), "main")
     if reclaim_on is not None:
         _land_real_claim(
             repo, remote, issue=10, claim_id="claim-10-again", branch=reclaim_on, base=sha
@@ -9884,6 +9884,7 @@ def test_release_merged_rerun_under_state_ref_never_touches_a_lane_opened_after_
     ]
     assert live_branches == ([] if reclaim_on is None else [reclaim_on])
     assert newer_worktree.is_dir()
+    assert _real_git(repo, "branch", "--list", newer_branch).stdout.strip()
 
 
 def test_release_merged_rerun_under_state_ref_refuses_a_newer_claim_before_judging_the_item(
