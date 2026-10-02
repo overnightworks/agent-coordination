@@ -1173,6 +1173,64 @@ def test_github_adapter_fails_loud_on_malformed_merge_settings(answer: str) -> N
 
 
 @pytest.mark.parametrize(
+    ("answer", "rules"),
+    [
+        pytest.param("", (), id="no-rule"),
+        pytest.param("null\n", (), id="pull-request-rule-without-a-method-list"),
+        pytest.param(
+            '["squash","rebase"]\n["squash"]\n',
+            (
+                frozenset({board.MergeMethod.SQUASH, board.MergeMethod.REBASE}),
+                frozenset({board.MergeMethod.SQUASH}),
+            ),
+            id="two-rulesets",
+        ),
+    ],
+)
+def test_github_adapter_reads_the_default_branchs_merge_rules(
+    answer: str, rules: tuple[frozenset[board.MergeMethod], ...]
+) -> None:
+    """Issue #615 line 4: `branch_merge_rules` reads every `pull_request`
+    rule on the branch through the branch-rules endpoint, one method set per
+    rule, and an empty tuple where no rule restricts the methods."""
+    observed: list[list[str]] = []
+
+    def fake_run(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        observed.append(arguments)
+        return answer
+
+    client = GitHubForge(github.repository_id(REPOSITORY), run=fake_run)
+
+    assert client.branch_merge_rules("main") == rules
+    assert observed == [
+        [
+            "api",
+            "--paginate",
+            f"repos/{REPOSITORY}/rules/branches/main?per_page=100",
+            "--jq",
+            '.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods',
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param('["squash","fast-forward"]', id="unknown-method"),
+        pytest.param('[["squash"]]', id="not-a-method-name"),
+        pytest.param('"squash"', id="not-a-list"),
+    ],
+)
+def test_github_adapter_fails_loud_on_a_malformed_branch_merge_rule(answer: str) -> None:
+    client = GitHubForge(
+        github.repository_id(REPOSITORY), run=lambda arguments, input_data=None: answer
+    )
+
+    with pytest.raises(ClaimError, match="malformed branch merge rule"):
+        client.branch_merge_rules("main")
+
+
+@pytest.mark.parametrize(
     ("status", "refusal"),
     [
         pytest.param(409, forge.ForgeMergeConflictError, id="head-moved"),

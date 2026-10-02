@@ -87,6 +87,7 @@ ISSUES_PER_PAGE = 100
 MALFORMED_PULL_REQUEST = "GitHub returned a malformed pull request"
 MALFORMED_FILE_CONTENTS = "GitHub returned malformed file contents"
 MALFORMED_MERGE_SETTINGS = "GitHub returned malformed repository merge settings"
+MALFORMED_BRANCH_RULES = "GitHub returned a malformed branch merge rule"
 MALFORMED_CLOSED_ISSUE = "GitHub returned a malformed closed issue"
 # The combined-status endpoint's own aggregate `state` can be `pending`,
 # `failure`, or `error` with a `statuses` page that, this instant, names no
@@ -1006,6 +1007,36 @@ class GitHubForge:
         if not all(isinstance(allowed, bool) for allowed in settings.values()):
             raise forge.ForgeMalformedResponseError(MALFORMED_MERGE_SETTINGS)
         return frozenset(method for method, allowed in settings.items() if allowed)
+
+    def branch_merge_rules(self, branch: str) -> tuple[frozenset[board.MergeMethod], ...]:
+        """The merge methods each `pull_request` rule on `branch` allows
+        (issue #615), one set per rule, read through the branch-rules
+        endpoint that resolves every ruleset applying to it: GitHub refuses a
+        method any one rule excludes, even where the repository settings
+        allow it. A branch without such a rule answers an empty tuple."""
+        raw = self._run(
+            [
+                "api",
+                "--paginate",
+                f"repos/{self.repository}/rules/branches/{branch}?per_page=100",
+                "--jq",
+                '.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods',
+            ]
+        )
+        return tuple(
+            self._rule_merge_methods(value)
+            for value in self._json_lines(raw, "branch rules")
+            if value is not None
+        )
+
+    @staticmethod
+    def _rule_merge_methods(value: object) -> frozenset[board.MergeMethod]:
+        known = {method.value for method in board.MergeMethod}
+        if not isinstance(value, list) or not all(
+            isinstance(method, str) and method in known for method in value
+        ):
+            raise forge.ForgeMalformedResponseError(MALFORMED_BRANCH_RULES)
+        return frozenset(board.MergeMethod(method) for method in value)
 
     def merge_landing(
         self,
