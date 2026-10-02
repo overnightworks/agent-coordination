@@ -61,7 +61,7 @@ order `merge`, `squash`, `rebase`.
 | the repository's own settings allow neither a merge commit nor a squash merge | LANDCMD-28 |
 | the `merge_method` pin in `<path>` is not among GitHub's allowed methods | LANDCMD-40 |
 | the default branch's rules leave neither a merge commit nor a squash merge | LANDCMD-41 |
-| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-39, LANDCMD-29, LANDCMD-34, LANDCMD-35, LANDCMD-36 |
+| every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-39, LANDCMD-42, LANDCMD-29, LANDCMD-34, LANDCMD-35, LANDCMD-36 |
 | the pull request changed since it was read | LANDCMD-14 |
 | GitHub refuses the merge | LANDCMD-37 |
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
@@ -101,7 +101,8 @@ preflight, refused or not, exactly as `reset`'s own read does.
 
 - [ ] [LANDCMD-12] `aco land` merges pinned to the head sha read during preflight, never an unpinned re-read, with the method LANDCMD-27 picks: a merge commit or one squash commit, never a rebase.
 - [ ] [LANDCMD-27] `merge_method` `"merge"`/`"squash"` in `<path>` picks the method; else a merge commit if GitHub's allowed methods (LANDCMD-39) include one, else a squash.
-- [ ] [LANDCMD-39] GitHub's allowed methods are `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge` (all three where withheld), narrowed by every `pull_request` rule's `allowed_merge_methods` on `<branch>`.
+- [ ] [LANDCMD-39] GitHub's allowed methods are `allow_merge_commit`/`allow_squash_merge`/`allow_rebase_merge` (all three where withheld), narrowed by every rule on `<branch>` (LANDCMD-42).
+- [ ] [LANDCMD-42] A `pull_request` rule narrows them to its `allowed_merge_methods`, one without that list narrows nothing, and so does a plan without rulesets.
 - [ ] [LANDCMD-40] A pin non-empty allowed methods exclude refuses `board.toml merge_method <m> is not allowed on <branch>: GitHub allows <list>`, exit `2`, before any write, after LANDCMD-28 (E-LANDCMD-40).
 - [ ] [LANDCMD-41] Rules narrowing the settings to no method, or an unpinned land's to only a rebase, refuse `GitHub allows no merge method aco can use on <branch>`, exit `2`, before any write (E-LANDCMD-41).
 - [ ] [LANDCMD-28] Settings allowing neither refuse `pull request #<n> cannot land: this repository allows neither a merge commit nor a squash merge`, exit `2`, before any write (E-LANDCMD-28).

@@ -1209,6 +1209,33 @@ def test_github_adapter_fails_loud_on_malformed_merge_answers(
         read(client)
 
 
+def _branch_rules_refused_with(message: str) -> GitHubForge:
+    def refuse(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        raise forge.ForgePermissionDeniedError(f"gh: {message} (HTTP 403)")
+
+    return GitHubForge(github.repository_id(REPOSITORY), run=refuse)
+
+
+def test_github_adapter_reads_no_merge_rules_on_a_plan_without_rulesets() -> None:
+    """Issue #615 line 5: a private repository on a plan without rulesets
+    answers the branch-rules read with GitHub's own upgrade 403, which means
+    no rule narrows the settings."""
+    client = _branch_rules_refused_with(
+        "Upgrade to GitHub Pro or make this repository public to enable this feature."
+    )
+
+    assert client.branch_merge_rules("main") == ()
+
+
+def test_github_adapter_fails_loud_on_any_other_branch_rules_refusal() -> None:
+    """Issue #615 line 5: every other refusal of the branch-rules read fails
+    loud rather than reading as no rules."""
+    client = _branch_rules_refused_with("Resource not accessible by integration")
+
+    with pytest.raises(forge.ForgePermissionDeniedError, match="not accessible"):
+        client.branch_merge_rules("main")
+
+
 @pytest.mark.parametrize(
     ("answer", "rules"),
     [

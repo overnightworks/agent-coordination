@@ -107,6 +107,9 @@ _HTTP_SERVER_ERROR_PATTERN = re.compile(r"HTTP 5\d\d")
 # required review, an unmergeable state, which no re-run repairs (issue #603).
 _MERGE_HEAD_MOVED_STATUS = "HTTP 409"
 _MERGE_REFUSED_STATUS = "HTTP 405"
+# GitHub's own 403 message where the repository's plan offers no rulesets (a
+# private repository on the Free plan); such a branch carries no rules.
+_RULESETS_UNAVAILABLE_ON_PLAN = "Upgrade to GitHub Pro or make this repository public"
 
 
 def _branch_already_absent(error_text: str) -> bool:
@@ -1013,16 +1016,22 @@ class GitHubForge:
         (issue #615), one set per rule, read through the branch-rules
         endpoint that resolves every ruleset applying to it: GitHub refuses a
         method any one rule excludes, even where the repository settings
-        allow it. A branch without such a rule answers an empty tuple."""
-        raw = self._run(
-            [
-                "api",
-                "--paginate",
-                f"repos/{self.repository}/rules/branches/{branch}?per_page=100",
-                "--jq",
-                '.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods',
-            ]
-        )
+        allow it. A branch without such a rule, or on a plan without
+        rulesets, answers an empty tuple."""
+        try:
+            raw = self._run(
+                [
+                    "api",
+                    "--paginate",
+                    f"repos/{self.repository}/rules/branches/{branch}?per_page=100",
+                    "--jq",
+                    '.[] | select(.type == "pull_request") | .parameters.allowed_merge_methods',
+                ]
+            )
+        except forge.ForgePermissionDeniedError as error:
+            if _RULESETS_UNAVAILABLE_ON_PLAN in str(error):
+                return ()
+            raise
         return tuple(
             self._rule_merge_methods(value)
             for value in self._json_lines(raw, "branch rules")
