@@ -1,8 +1,0 @@
-claim_id = "239f71c9881244b79b5ad3fb64e066f1"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "c59a7333a3224bdead18eba553fea3321d6b7bf2"
-branch = "claude/issue-601-delete-migration-script"
-scope = ["scripts/migrate_protocol_names.py", "scripts/test_inventory.py", "tests/script_fixtures.py", "tests/test_migrate_protocol_names.py", "tests/test_root_layout.py", "tests/test_spec_lint.py", "tests/test_test_inventory.py"]
-opened_commit = "d9329380f545f71889ae30b810bed3ce9b1f6b8f"
-whole_reason = "delete the one-time migration script; the test-inventory gate accepts a deleted module; one shared script loader for the script tests"
