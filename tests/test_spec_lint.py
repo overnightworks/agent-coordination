@@ -11,33 +11,17 @@ already be clean under this gate.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
-from types import ModuleType
 from typing import Any, NamedTuple
 
 import pytest
+from script_fixtures import load_script
 
-_MODULE_PATH = Path(__file__).parent.parent / "scripts" / "spec_lint.py"
 _REPOSITORY_SPEC_DIR = Path(__file__).parent.parent / "specs"
 
 
-def _load_spec_lint() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("spec_lint", _MODULE_PATH)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # Registered before exec: the module's own frozen dataclasses resolve their
-    # annotations (`from __future__ import annotations`) against `sys.modules`
-    # while the class body executes, which needs the entry to already exist.
-    sys.modules["spec_lint"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-spec_lint = _load_spec_lint()
+spec_lint = load_script("spec_lint")
 analyze = spec_lint.analyze
 load_spec_file = spec_lint.load_spec_file
 load_spec_dir = spec_lint.load_spec_dir

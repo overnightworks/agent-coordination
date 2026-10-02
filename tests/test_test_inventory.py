@@ -7,28 +7,13 @@ faking its output would test the wrong layer.
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
+from script_fixtures import load_script
 
-_MODULE_PATH = Path(__file__).parent.parent / "scripts" / "test_inventory.py"
-
-
-def _load_test_inventory() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("test_inventory", _MODULE_PATH)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("test_inventory", module)
-    spec.loader.exec_module(module)
-    return module
-
-
-rewritten_modules = _load_test_inventory().rewritten_modules
+rewritten_modules = load_script("test_inventory").rewritten_modules
 
 _MODULE = "tests/test_example.py"
 _TEN_LINES = "".join(f"assert {number} == {number}\n" for number in range(10))
