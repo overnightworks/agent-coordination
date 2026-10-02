@@ -43,7 +43,7 @@ other printable space are text.
 | a container qualifies to be cut | NEXT-05, NEXT-31 | NEXT-12 |
 | an advice command carries an option value | NEXT-27, NEXT-31 | NEXT-11, NEXT-12 |
 | a title, `Next`, slice title or `SKIPPED` reason holds a display control | NEXT-37 | NEXT-11..14 |
-| its first uncut row's title holds a line break or control character | NEXT-32 | NEXT-14 |
+| its first uncut row's title or `done_when` holds a line break or control character | NEXT-32 | NEXT-14 |
 | a state-ref item the store cannot read | NEXT-36 | NEXT-14 |
 | a container whose every open child is such an item | NEXT-38 | NEXT-14 |
 | a second cuttable container behind the top action | NEXT-34 | NEXT-14 |
@@ -82,7 +82,7 @@ other printable space are text.
 - [ ] [NEXT-05] A childless container with an undispatched `[[slice]]` row prints `cut_slice <label>: <next>`, then `Next: aco cut <n>`, which cuts that row under its own title (CUT-06), exit `0` (E-NEXT-03).
 - [ ] [NEXT-27] Every argument an advice line prints inside a command is quoted for a POSIX shell, so it runs as printed: scope path `docs/my notes.md` prints `--scope='docs/my notes.md'`.
 - [ ] [NEXT-31] An advice command attaches each option's value as `--<option>=<quoted>`, so a value starting with `-` still reaches it; a cut advice carries no title at all (see E-NEXT-10).
-- [ ] [NEXT-32] A first uncut row whose title NEXT-37 escapes gets no `cut`; `SKIPPED` reads `slice row <i> title holds a line break or control character; make it one printable line` (E-NEXT-10).
+- [ ] [NEXT-32] A display control in the first uncut row's title or `done_when` withholds `cut`; `SKIPPED`: `slice row <i> <field> holds a line break or control character; make it one printable line` (E-NEXT-10).
 - [ ] [NEXT-36] An item PIN-14/PIN-15 refuses is named under `SKIPPED` as `<item-id>: body malformed: <field>: <message>`; every other item still reads, one it blocks stays blocked (see E-NEXT-11).
 - [ ] [NEXT-38] A container whose every open child, ITEM-54's included, is such an item reads `container; its open children do not read: <item-ids>` under `SKIPPED`, never `close:` (see E-NEXT-12).
 - [ ] [NEXT-06] A childless container with no slice row whose `Next` names work prints `check_container <label>: no open children; check done_when`, then `Next: <next>`; never close or cut (E-NEXT-04).
