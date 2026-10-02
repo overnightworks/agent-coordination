@@ -1191,7 +1191,11 @@ def test_protect_primary_checkout_denies_not_main_without_github(
         ("main", "refs/remotes/origin/main", "not main"),
         ("master", "refs/remotes/origin/master", "not main"),
         ("trunk", "refs/remotes/origin/trunk", "not main"),
-        ("codex/issue-72-claims", None, checkout.DEFAULT_BRANCH_UNKNOWN_REASON),
+        (
+            "codex/issue-72-claims",
+            None,
+            "default branch unknown; run git remote set-head origin --auto",
+        ),
     ],
     ids=["main", "master", "trunk", "unresolved-origin-head"],
 )
@@ -3371,6 +3375,7 @@ _CLAIM_ON_THE_DEFAULT_BRANCH = (
 
 
 _UNCONFIGURED_UPSTREAM = "cannot determine the trunk: canonical remote 'upstream' is not configured"
+_HUB_DEFAULT_BRANCH_UNKNOWN = "default branch unknown; run git remote set-head hub --auto"
 
 
 @pytest.mark.usefixtures("isolated_global_git_config")
@@ -3410,7 +3415,7 @@ _UNCONFIGURED_UPSTREAM = "cannot determine the trunk: canonical remote 'upstream
             "hub",
             None,
             "codex/issue-72-widget",
-            checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
+            _HUB_DEFAULT_BRANCH_UNKNOWN,
             id="protect-hub-unrecorded",
         ),
         pytest.param(
@@ -3418,7 +3423,7 @@ _UNCONFIGURED_UPSTREAM = "cannot determine the trunk: canonical remote 'upstream
             "hub",
             None,
             "codex/issue-72-widget",
-            checkout.DEFAULT_BRANCH_UNKNOWN_REASON,
+            _HUB_DEFAULT_BRANCH_UNKNOWN,
             id="rescope-hub-unrecorded",
         ),
         pytest.param(

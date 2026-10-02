@@ -208,7 +208,6 @@ class FakeForge:
     merge_remote: Path | None = None
     closes_on_merge: bool = False
     allowed_methods: frozenset[board.MergeMethod] | None = None
-    fail_merge: ClaimError | None = None
     deleted_branches: list[str] = field(default_factory=list)
     head_board_config: str | None = ""
     file_reads: list[tuple[Path, str]] = field(default_factory=list)
@@ -345,8 +344,6 @@ class FakeForge:
         GitHub does (issue #590)."""
         self._run()
         self.merge_calls.append((number, head_sha, method, title, body))
-        if self.fail_merge is not None:
-            raise self.fail_merge
         sha = self.merge_sha
         landing = self.landings[number]
         if self.closes_on_merge:
@@ -2571,6 +2568,19 @@ def _git_keeps_the_raced_branch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> 
     )
 
 
+def _the_raced_branch_delete_fails_to_finish(
+    failure: Exception,
+) -> Callable[[pytest.MonkeyPatch, Path], None]:
+    """The raced claim refuses the build, and the git deleting its branch
+    raises `failure` instead of running."""
+
+    def arrange(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
+        _claim_lands_before_the_commit(monkeypatch, repo)
+        _fail_the_git_launch(["branch", "-d"], failure)(monkeypatch, repo, repo)
+
+    return arrange
+
+
 def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -> None:
     """The ledger write fails before anything is written, with a refusal
     that is no claim conflict."""
@@ -2627,6 +2637,20 @@ _REMOVED_BOTH = "removed worktree {worktree} and branch '{branch}' this start cr
             id="git-keeps-the-branch",
         ),
         pytest.param(
+            _the_raced_branch_delete_fails_to_finish(PermissionError("permission denied")),
+            "issue #314 is claimed by Grok sess-9",
+            "removed worktree {worktree} this start created; "
+            "branch '{branch}' kept: git failure: git failed to launch: permission denied",
+            id="branch-delete-fails-to-launch",
+        ),
+        pytest.param(
+            _the_raced_branch_delete_fails_to_finish(process.ProcessTimedOutError()),
+            "issue #314 is claimed by Grok sess-9",
+            "removed worktree {worktree} this start created; "
+            "branch '{branch}' unknown: git branch timed out; check git branch --list {branch}",
+            id="branch-delete-timed-out",
+        ),
+        pytest.param(
             _trunk_moves_after_the_fetch,
             "the trunk moved after start checked it; run start again\n",
             _REMOVED_BOTH,
@@ -2660,7 +2684,8 @@ def test_a_claim_refused_after_the_build_removes_what_start_built(
     live claim's rebuilt worktree included -- removes exactly the worktree
     and branch this call built, and says so; when git
     will not delete the branch the safe way, it says which branch stays and
-    why."""
+    why, and a delete that timed out reads the branch unknown with the check
+    that tells (issue #603, START-30)."""
     repo = _start_scenario(monkeypatch, tmp_path)
     arrange(monkeypatch, repo)
     monkeypatch.chdir(repo)
@@ -16796,12 +16821,7 @@ def test_release_merged_json_carries_the_worktree_cleanup_outcome(
     assert json.loads(capsys.readouterr().out)["worktree"] == "removed"
 
 
-def test_release_merged_removes_the_worktree_and_reports_the_branch_kept(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    """Issue #322 review/gate finding 4: a branch-deletion failure after the
-    worktree is already gone must never read as a bare `kept`."""
-    worktree = _release_cleanup_scenario(monkeypatch, tmp_path)
+def _refuse_the_branch_delete(monkeypatch: pytest.MonkeyPatch, _worktree: Path) -> None:
     _stub_one_git_call(
         monkeypatch,
         ["branch", "-d", _CLEANUP_BRANCH],
@@ -16809,13 +16829,58 @@ def test_release_merged_removes_the_worktree_and_reports_the_branch_kept(
         stderr="error: branch not fully merged",
     )
 
+
+def _fail_the_branch_delete_launch(
+    failure: Exception,
+) -> Callable[[pytest.MonkeyPatch, Path], None]:
+    def arrange(monkeypatch: pytest.MonkeyPatch, worktree: Path) -> None:
+        _fail_the_git_launch(["branch", "-d"], failure)(monkeypatch, worktree, worktree)
+
+    return arrange
+
+
+@pytest.mark.parametrize(
+    ("arrange", "worktree_line"),
+    [
+        pytest.param(
+            _refuse_the_branch_delete,
+            "worktree: removed; branch kept -- git failure: error: branch not fully merged\n",
+            id="refused",
+        ),
+        pytest.param(
+            _fail_the_branch_delete_launch(PermissionError("permission denied")),
+            "worktree: removed; branch kept -- git failure: git failed to launch: "
+            "permission denied\n",
+            id="failed-to-launch",
+        ),
+        pytest.param(
+            _fail_the_branch_delete_launch(process.ProcessTimedOutError()),
+            "worktree: removed; branch unknown -- git branch timed out; "
+            f"check git branch --list {_CLEANUP_BRANCH}\n",
+            id="timed-out",
+        ),
+    ],
+)
+def test_release_merged_removes_the_worktree_and_names_what_the_branch_delete_left(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    arrange: Callable[[pytest.MonkeyPatch, Path], None],
+    worktree_line: str,
+) -> None:
+    """Issue #322 review/gate finding 4: a branch-deletion failure after the
+    worktree is already gone must never read as a bare `kept`; a delete git
+    that never launched keeps the branch, and one that timed out may have
+    deleted it, so it reads unknown with the check that tells (issue #603)."""
+    worktree = _release_cleanup_scenario(monkeypatch, tmp_path)
+    arrange(monkeypatch, worktree)
+
     status = issue_claim.main(["--repo", REPOSITORY, "release", "72", "--merged", "12"])
 
     assert status == 0
     assert not worktree.exists()
     assert checkout.branch_exists(_CLEANUP_BRANCH) is True
-    out = capsys.readouterr().out
-    assert "worktree: removed; branch kept -- git failure: error: branch not fully merged\n" in out
+    assert worktree_line in capsys.readouterr().out
 
 
 def test_release_merged_json_carries_the_removed_worktree_branch_kept_outcome(
@@ -17878,12 +17943,19 @@ def _branch_configuration(repo: Path) -> list[str]:
             id="deletion-failed-to-start",
         ),
         pytest.param(
+            _fail_the_git_launch(["update-ref", "-d"], process.ProcessTimedOutError()),
+            "worktree: removed; branch unknown -- git update-ref timed out; "
+            f"check git branch --list {LANDING_BRANCH}\n",
+            True,
+            id="deletion-timed-out",
+        ),
+        pytest.param(
             _fail_the_git_launch(
                 ["config", "--local", "--null", "--name-only", "--get-regexp"],
                 process.ProcessTimedOutError(),
             ),
             f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
-            "git failure: git timed out while validating the build checkout\n",
+            "git failure: git config timed out\n",
             True,
             id="configuration-listing-timed-out",
         ),
@@ -17892,7 +17964,7 @@ def _branch_configuration(repo: Path) -> list[str]:
                 ["config", "--local", "--remove-section"], process.ProcessTimedOutError()
             ),
             f"worktree: removed; branch.{LANDING_BRANCH} section kept -- "
-            "git failure: git timed out while validating the build checkout\n",
+            "git failure: git config timed out\n",
             True,
             id="section-removal-timed-out",
         ),
@@ -17929,7 +18001,8 @@ def test_land_cleans_up_a_squashed_lane_branch_by_compare_and_delete(
     section goes only once no branch of that name exists. A commit made in
     the lane after cleanup judged its tip keeps the branch on that commit;
     a compare-and-delete git never ran keeps the branch beside the removed
-    worktree; a section listing or removal git refuses, or never runs to
+    worktree, and one that timed out reads it unknown (issue #603); a
+    timed-out git names its own step; a section listing or removal git refuses, or never runs to
     completion, after the delete keeps the section beside the removed
     branch, named on its own; a same-name branch
     recreated after the delete keeps the section, and a dotted sibling's
@@ -18199,21 +18272,49 @@ def test_land_refuses_under_the_state_ref_pin(
     )
 
 
-def test_land_reports_a_merge_conflict_when_the_pull_request_changed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+@pytest.mark.parametrize(
+    ("gh_failure", "printed"),
+    [
+        pytest.param(
+            "gh: Head branch was modified. Review and try the merge again. (HTTP 409)",
+            "ERROR: pull request #12 changed while it was checked; re-run land\n",
+            id="head-moved-409",
+        ),
+        pytest.param(
+            "gh: Repository rule violations found (HTTP 405)",
+            "ERROR: GitHub refused the merge of pull request #12: "
+            "gh: Repository rule violations found (HTTP 405)\n",
+            id="refused-405",
+        ),
+    ],
+)
+def test_land_names_the_forges_merge_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    gh_failure: str,
+    printed: str,
 ) -> None:
-    """Issue #405: a 405/409 from the merge endpoint means the pull request
-    changed since preflight read it -- refused by name, before any
-    follow-up step, with the one recovery this refusal ever names: re-run."""
+    """Issue #405: a 409 from the merge endpoint means the pull request's
+    head moved since preflight read it -- refused by name, before any
+    follow-up step, with its one recovery: re-run. A 405 is GitHub refusing
+    to perform the merge at all, which no re-run repairs, so it names the
+    forge's own reason instead (issue #603). The merge runs through the real
+    GitHub adapter, so its status mapping is proven at `land`'s entry point."""
+    merge_requests: list[list[str]] = []
+
+    def gh_answers_the_merge(arguments: list[str], *, input_data: bytes | None = None) -> str:
+        merge_requests.append(arguments)
+        raise forge.ForgeError(gh_failure)
+
+    github_merge = github.GitHubForge(github.repository_id(REPOSITORY), run=gh_answers_the_merge)
     _repo, client = _land_scenario(monkeypatch, tmp_path)
-    client.fail_merge = forge.ForgeMergeConflictError("HTTP 409 head changed")
+    monkeypatch.setattr(client, "merge_landing", github_merge.merge_landing)
 
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 2
 
-    assert capsys.readouterr().err == (
-        "ERROR: pull request #12 changed while it was checked; re-run land\n"
-    )
-    assert len(client.merge_calls) == 1
+    assert capsys.readouterr().err == printed
+    assert len(merge_requests) == 1
     assert client.deleted_branches == []
 
 
@@ -18602,7 +18703,9 @@ def _refused_trailer_read(
             "fatal: bad trailer",
             id="nonzero-exit",
         ),
-        pytest.param(process.ProcessTimedOutError(), "git timed out", id="launch-failure"),
+        pytest.param(
+            process.ProcessTimedOutError(), "git interpret-trailers timed out", id="launch-failure"
+        ),
     ],
 )
 def test_land_refuses_before_the_merge_when_git_cannot_read_the_trailers(

@@ -59,6 +59,7 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | the repository allows neither a merge commit nor a squash merge | LANDCMD-28 |
 | every precondition holds | LANDCMD-12, LANDCMD-13, LANDCMD-27, LANDCMD-29, LANDCMD-34, LANDCMD-35, LANDCMD-36 |
 | the pull request changed since it was read | LANDCMD-14 |
+| GitHub refuses the merge | LANDCMD-37 |
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
 | this repository's own pull request | LANDCMD-17 |
 | a pull request already merged (rerun) | LANDCMD-18 |
@@ -102,7 +103,8 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-34] When that body ends in a trailer paragraph as git's trailer parsing reads it, the classification joins it as its last line, no blank line between, where git then reads both.
 - [ ] [LANDCMD-36] Any other body takes a blank line, then the classification alone as its last paragraph.
 - [ ] [LANDCMD-35] Removing the classification line leaves no run of blank lines where it stood: a paragraph it alone made goes with it, and a whitespace-only line counts as blank.
-- [ ] [LANDCMD-14] A pull request whose head sha changed since preflight refuses the pinned merge with `pull request #<n> changed while it was checked; re-run land`, exit `2`; nothing merges.
+- [ ] [LANDCMD-14] A pull request whose head sha changed since preflight (HTTP 409) refuses the pinned merge with `pull request #<n> changed while it was checked; re-run land`, exit `2`; nothing merges.
+- [ ] [LANDCMD-37] A merge GitHub refuses to perform (HTTP 405) refuses `GitHub refused the merge of pull request #<n>: <forge message>`, exit `2`; nothing merges (see E-LANDCMD-37).
 
 ## After the merge
 
@@ -273,6 +275,16 @@ Setup: bare-remote, fake `gh`, pull request `#57` open and green during prefligh
 ```console
 $ aco land 57
 2> ERROR: pull request #57 changed while it was checked; re-run land
+exit 2
+```
+
+### E-LANDCMD-37 — a merge GitHub refuses names the forge's own reason
+
+Setup: bare-remote, fake `gh`, pull request `#57` open and green during preflight, the pinned merge request answered `Repository rule violations found (HTTP 405)`
+
+```console
+$ aco land 57
+2> ERROR: GitHub refused the merge of pull request #57: gh: Repository rule violations found (HTTP 405)
 exit 2
 ```
 

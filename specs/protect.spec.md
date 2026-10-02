@@ -117,7 +117,7 @@ session; a new gated tool joins both the table and that matcher.
 - [ ] [PROT-32] A write path outside every repository -- any tool's payload path or a recognized Bash pattern's -- allows before identity or the store is read, except a checkout's own root (PROT-14) (see E-PROT-11).
 - [ ] [PROT-11] A checkout with no commit yet (an unborn branch) denies `no commit on this branch`.
 - [ ] [PROT-12] The shared main checkout, or a linked worktree on the default branch its canonical remote's `HEAD` records, denies `not main` (see E-PROT-03); PROT-29 comes first for that worktree.
-- [ ] [PROT-13] A linked worktree whose canonical remote records no `HEAD`, or one naming no branch that resolves, denies `default branch unknown`, never falling back to a `main`/`master` guess.
+- [ ] [PROT-13] A linked worktree whose canonical `<remote>` records no resolving `HEAD` denies `default branch unknown; run git remote set-head <remote> --auto`, never a `main`/`master` guess (see E-PROT-18).
 - [ ] [PROT-45] A canonical `<remote>` with no URL configured denies where PROT-13 would, in every command's sentence `cannot determine the trunk: canonical remote '<remote>' is not configured` (see E-PROT-15).
 - [ ] [PROT-14] A payload path that resolves to exactly the checkout root denies `<path> is the checkout root itself`, the sentence `rescope` refuses it with (see E-PROT-14).
 - [ ] [PROT-38] A path under the checkout's own `.claude/` that git ignores allows in any checkout, main included, before identity or the store is read (see E-PROT-12).
@@ -463,5 +463,16 @@ Setup: bare-remote, bootstrapped, the trunk's committed `.aco/board.toml` naming
 $ echo '{"toolName": "Write", "toolInput": {"file_path": "<worktree>/src/x.py"}}' | aco protect
 {"decision": "deny", "reason": "claim first"}
 2> claim first
+exit 2
+```
+
+### E-PROT-18 -- an unrecorded default branch names its repair
+
+Setup: bare-remote, bootstrapped, a linked worktree on `ada/issue-42`, `refs/remotes/origin/HEAD` deleted
+
+```console
+$ echo '{"tool_name": "Write", "tool_input": {"file_path": "<worktree>/README.md"}}' | aco protect
+{"decision": "deny", "reason": "default branch unknown; run git remote set-head origin --auto"}
+2> default branch unknown; run git remote set-head origin --auto
 exit 2
 ```

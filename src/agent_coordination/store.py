@@ -417,9 +417,10 @@ def claim_ages(
 _CLAIM_LIFECYCLE_LOG_FORMAT = "%H%x00%cI%x00%B"
 _CLAIM_LIFECYCLE_FIELD_COUNT = 3
 
-# The commit message's own terminal trailer block, `git interpret-trailers`
-# style (issue #357 R2): the last blank-line-separated paragraph of
-# `_transition_message`'s output, read here as `key: value` pairs rather
+# The commit message's own terminal trailer block (issue #357 R2): the last
+# blank-line-separated paragraph of `_transition_message`'s output, every
+# line of it one `key: value` pair -- this module's own stricter grammar, not
+# what `git interpret-trailers` accepts -- read here as such pairs rather
 # than a second commit-message grammar scanned across the whole body --
 # a human subject line can never accidentally shape a false match this way.
 # `re.ASCII` keeps `\w` matching only `[A-Za-z0-9_]`, the same ASCII-only key
