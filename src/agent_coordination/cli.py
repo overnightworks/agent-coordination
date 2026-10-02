@@ -6589,7 +6589,7 @@ def _report_nothing_left_to_release(
     happened closes nothing and writes no claim state; it reports that, then
     its lane's cleanup, which may still be due in this checkout."""
     worktree = worktree_cleanup_outcome_text(
-        _cleanup_landed_worktree(parsed, lane, context, fetched_trunk_ref)
+        _cleanup_unless_claimed_again(parsed, context, lane, fetched_trunk_ref)
     )
     if parsed.json:
         _emit_json(
@@ -6603,6 +6603,25 @@ def _report_nothing_left_to_release(
         return
     print(f"LANDED {landing} already; {NOTHING_LEFT_TO_RELEASE}")
     print(f"worktree: {worktree}")
+
+
+def _cleanup_unless_claimed_again(
+    parsed: argparse.Namespace,
+    context: RunContext,
+    lane: _LandedLane,
+    fetched_trunk_ref: Callable[[], str],
+) -> checkout.WorktreeCleanupOutcome:
+    """REL-55 (issue #605): the missing claim REL-47 acts on was read before
+    the landing's verification; a claim taken meanwhile -- `start` reopening
+    the lane on its clean worktree (START-11) -- would lose that worktree to
+    this cleanup, so the claim state is read afresh right before it. A claim
+    taken between that read and the removal is the accepted residual: the
+    worktree removed is clean and merged, and `start` builds it again."""
+    if not parsed.keep_worktree:
+        fresh = context.observed_afresh().observation
+        if _unclaimed_rerun_branch(parsed, fresh, lane.identity, lane.branch) is None:
+            return checkout.worktree_cleanup_kept(WORKTREE_KEPT_CLAIMED_AGAIN_REASON)
+    return _cleanup_landed_worktree(parsed, lane, context, fetched_trunk_ref)
 
 
 @dataclass(frozen=True)
@@ -6641,6 +6660,7 @@ def _landed_lane(
 
 WORKTREE_KEPT_FLAG_REASON = "--keep-worktree was given"
 WORKTREE_KEPT_RAN_FROM_INSIDE_REASON = "release ran from inside it"
+WORKTREE_KEPT_CLAIMED_AGAIN_REASON = "claimed again while this release ran"
 # Names the repair (issues #578, #605): a landing from a separate clone holds
 # no lane worktree, which stays where it lives for that checkout to remove.
 WORKTREE_KEPT_NO_WORKTREE_REASON = (

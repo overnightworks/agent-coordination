@@ -55,7 +55,7 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 | landing board read hits an unreachable forge | — | REL-22 | — |
 | no landing to report | — | — | REL-21 |
 | any refusal past the parser, with `--json` | REL-24 | REL-24 | REL-24 |
-| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42..REL-46, REL-52 | REL-33 |
+| a successful outcome's own worktree/branch cleanup | — | REL-25..REL-32, REL-34, REL-42..REL-46, REL-52, REL-55 | REL-33 |
 
 ## Flags and outcome
 
@@ -98,6 +98,12 @@ GitHub closes the item at merge time through `Closes #<n>`.
 - [ ] [REL-49] Its text is `LANDED <landing> already; nothing left to release`, `<landing>` `pull request #<n>` or, under `storage = "state-ref"`, `commit <sha>`, then its `worktree:` line.
 - [ ] [REL-50] Its cleanup (REL-25..REL-34) acts on the pull request's own source branch, or under `storage = "state-ref"` on the release's own branch (REL-04, REL-06).
 - [ ] [REL-51] Its `--json` prints `specs/output.spec.md`'s envelope, `reason` `merged`, then `outcome` `"nothing left to release"`, `issue`, `lane`, `branch`, `worktree`.
+- [ ] [REL-55] It reads the claim state afresh right before that cleanup; a claim on the identity found then keeps both: `worktree: kept -- claimed again while this release ran`.
+
+Accepted residual: a claim taken between that read and the removal is not seen; the worktree
+removed is clean and merged into the default branch, so nothing is lost, and `aco start` builds it
+again for that claim.
+
 - [ ] [REL-48] A live claim off the pull request's branch refuses `<identity> is claimed on '<branch>', not on pull request #<n>'s branch '<source>'; release that claim by itself`, exit `2` (see E-REL-25).
 - [ ] [REL-53] A claim on that branch based on the merge commit or a later trunk commit (START-11) refuses `<identity> was claimed on '<branch>' after pull request #<n> landed; release that claim by itself`.
 

@@ -18950,6 +18950,22 @@ def _land_from_a_separate_clone(
     _use_real_store(monkeypatch)
     remote = tmp_path / "remote.git"
     store.bootstrap(worktree=repo, remote=str(remote))
+    _claim_the_landing_issue(repo, remote, "landing-claim")
+    _real_git(repo, "worktree", "add", "-q", str(tmp_path / "lane"), LANDING_BRANCH)
+    clone = tmp_path / "landing-clone"
+    _real_git(tmp_path, "clone", "-q", str(remote), str(clone))
+    _without_git_identity(monkeypatch, clone)
+    if git_identity:
+        _real_git(clone, "config", "user.name", "Lander")
+        _real_git(clone, "config", "user.email", "lander@example.com")
+    _redirect_toplevel(monkeypatch, clone)
+    monkeypatch.chdir(clone)
+    return repo, clone, client
+
+
+def _claim_the_landing_issue(repo: Path, remote: Path, claim_id: str) -> None:
+    """Ada's claim `claim_id` on the landing issue and branch, written to
+    `refs/aco/state` from `repo`."""
     store.commit_transition(
         observed=fresh_observation(repo, remote),
         subject=store.ClaimTransitionSubject(
@@ -18962,20 +18978,10 @@ def _land_from_a_separate_clone(
             base=protocol.ObjectId("c" * 40),
             branch=LANDING_BRANCH,
             scope=("src",),
-            claim_id=protocol.ClaimId("landing-claim"),
-            operation_id="landing-claim-op",
+            claim_id=protocol.ClaimId(claim_id),
+            operation_id=f"{claim_id}-op",
         ),
     )
-    _real_git(repo, "worktree", "add", "-q", str(tmp_path / "lane"), LANDING_BRANCH)
-    clone = tmp_path / "landing-clone"
-    _real_git(tmp_path, "clone", "-q", str(remote), str(clone))
-    _without_git_identity(monkeypatch, clone)
-    if git_identity:
-        _real_git(clone, "config", "user.name", "Lander")
-        _real_git(clone, "config", "user.email", "lander@example.com")
-    _redirect_toplevel(monkeypatch, clone)
-    monkeypatch.chdir(clone)
-    return repo, clone, client
 
 
 def _without_git_identity(monkeypatch: pytest.MonkeyPatch, checkout_path: Path) -> None:
@@ -19048,15 +19054,31 @@ def test_land_from_a_separate_clone_releases_or_refuses_before_the_merge(
 
 
 @pytest.mark.usefixtures("isolated_global_git_config")
+@pytest.mark.parametrize(
+    ("claimed_meanwhile", "worktree"),
+    [
+        pytest.param(False, "removed", id="removes-the-lane"),
+        pytest.param(
+            True,
+            "kept -- claimed again while this release ran",
+            id="a-claim-taken-meanwhile-keeps-the-lane",
+        ),
+    ],
+)
 def test_land_rerun_after_its_release_finishes_and_names_the_release_that_removes_the_lane(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    claimed_meanwhile: bool,
+    worktree: str,
 ) -> None:
     """Issue #605 lines 1, 3 and 4 (E-LANDCMD-18a, E-REL-24): once a landing
     clone released the claim of a squashed pull request, rerunning `aco
     land` there no longer loops on `follow-up incomplete`: it verifies the
     merge, writes nothing, and names the `aco release` line that, run as
     printed in the checkout holding the clean lane at the recorded head,
-    removes it."""
+    removes it. A claim taken while that release verifies the landing keeps
+    the lane (REL-55)."""
     repo, clone, client = _land_from_a_separate_clone(monkeypatch, tmp_path, git_identity=True)
     client.allowed_methods = frozenset({_SQUASH})
     recorded_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
@@ -19079,6 +19101,14 @@ def test_land_rerun_after_its_release_finishes_and_names_the_release_that_remove
     )
     _redirect_toplevel(monkeypatch, repo)
     monkeypatch.chdir(repo)
+    if claimed_meanwhile:
+        verified_landing = client.landing
+
+        def landing_while_start_claims_again(number: int) -> forge.Landing:
+            _claim_the_landing_issue(repo, remote, "reopened-claim")
+            return verified_landing(number)
+
+        monkeypatch.setattr(client, "landing", landing_while_start_claims_again)
 
     release_status = issue_claim.main(["--repo", REPOSITORY, *shlex.split(rerun)[1:]])
 
@@ -19086,11 +19116,13 @@ def test_land_rerun_after_its_release_finishes_and_names_the_release_that_remove
     assert (release_status, release_output.err, release_output.out) == (
         0,
         "",
-        "LANDED pull request #12 already; nothing left to release\nworktree: removed\n",
+        f"LANDED pull request #12 already; nothing left to release\nworktree: {worktree}\n",
     )
-    assert not (tmp_path / "lane").exists()
-    assert checkout.branch_exists(LANDING_BRANCH) is False
-    assert (len(client.merge_calls), _state_ref_tip(clone, remote)) == (1, state_after_release)
+    assert (tmp_path / "lane").exists() is claimed_meanwhile
+    assert checkout.branch_exists(LANDING_BRANCH) is claimed_meanwhile
+    claims = store.fetch_state(worktree=repo, remote=str(remote)).claims
+    assert (len(client.merge_calls), bool(claims)) == (1, claimed_meanwhile)
+    assert (_state_ref_tip(clone, remote) == state_after_release) is not claimed_meanwhile
 
 
 @pytest.mark.parametrize(
