@@ -63,6 +63,7 @@ prints `ERROR: <sentence>` on stderr, exit `2`, exactly as
 | a step after the merge fails | LANDCMD-15, LANDCMD-16 |
 | this repository's own pull request | LANDCMD-17 |
 | a pull request already merged (rerun) | LANDCMD-18 |
+| a rerun whose release already succeeded | LANDCMD-38 |
 
 ## Preflight, read-only, in order
 
@@ -114,6 +115,11 @@ preflight, refused or not, exactly as `reset`'s own read does.
 - [ ] [LANDCMD-16] Deleting the merged branch is idempotent: a forge already reporting it absent is success, not a refusal.
 - [ ] [LANDCMD-17] In this package's own repository, a successful landing's last line is `reinstall: uv tool install --force --from . agent-coordination`; any other repository prints nothing further.
 - [ ] [LANDCMD-18] A rerun skips every preflight check but LANDCMD-11, LANDCMD-19, LANDCMD-25, and LANDCMD-33, verifies the trailer as `release --merged` does (LAND-62, LAND-64), and resumes -- never a second merge.
+- [ ] [LANDCMD-38] A rerun whose delegated release meets REL-47 exits `0` with REL-49's lines, never LANDCMD-15, and no LANDCMD-17 line follows (see E-LANDCMD-18a).
+
+Accepted residual: a squash-landed local branch behind or ahead of the pull request's recorded
+head is no clean lane on it (REL-42, REL-43), so its worktree still reads `kept -- not merged into
+the default branch` on every rerun; it is removed by hand.
 
 ## Never
 
@@ -309,3 +315,19 @@ freed: none
 next: none
 exit 0
 ```
+
+### E-LANDCMD-18a — a rerun after a completed release finishes, naming where the lane lives
+
+Setup: bare-remote, fake `gh`, pull request `#57` from `ada/issue-42` merged and released by an
+earlier `aco land 57` from this landing clone, which holds no worktree; the lane worktree on
+`ada/issue-42` lives in the original checkout
+
+```console
+$ aco land 57
+LANDED pull request #57 already; nothing left to release
+worktree: kept -- no linked worktree on ada/issue-42 in this checkout; run aco release 42 --merged 57 --branch ada/issue-42 in the checkout that holds it
+exit 0
+```
+
+That `aco release` line, run in the original checkout, prints REL-49's line and `worktree: removed`
+(E-REL-24).
