@@ -3220,7 +3220,9 @@ class _MergedLandingClose:
     closing on the spot, so `_cmd_release` can call `close_landed_item`
     itself once the claim is resolved and the claimant already authorized --
     an unauthorized or mismatched-claim `--merged` release then never
-    reaches a forge write, or even this read, at all."""
+    reaches a forge write, or even this read, at all. The one exception is
+    REL-47 (issue #605): with no live claim there is none to authorize, so
+    its landing verifies first, and the close this names never runs."""
 
     issue: int
     pull_request: int
@@ -3290,7 +3292,9 @@ def _verify_merged_release(
     this only after the claim is already resolved and the claimant already
     authorized, and performs the actual close itself afterward, so a defect
     or a transient forge failure there never runs ahead of authorization
-    and never lands on an unauthorized attempt. `state_board.py`'s own
+    and never lands on an unauthorized attempt -- except REL-47's release
+    with no live claim (issue #605), which has no claimant to authorize and
+    verifies here without ever closing anything. `state_board.py`'s own
     `LandingIntent` path is `storage = state-ref`'s equivalent, so this only
     ever runs under `storage = github` (see `_cmd_release`).
 

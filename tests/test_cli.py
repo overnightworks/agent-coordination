@@ -19077,8 +19077,9 @@ def test_land_rerun_after_its_release_finishes_and_names_the_release_that_remove
     land` there no longer loops on `follow-up incomplete`: it verifies the
     merge, writes nothing, and names the `aco release` line that, run as
     printed in the checkout holding the clean lane at the recorded head,
-    removes it. A claim taken while that release verifies the landing keeps
-    the lane (REL-55)."""
+    removes it. The trigger is the missing claim, never a closed item: a
+    reopened item stays open and uncommented (REL-47). A claim taken while
+    that release verifies the landing keeps the lane (REL-55)."""
     repo, clone, client = _land_from_a_separate_clone(monkeypatch, tmp_path, git_identity=True)
     client.allowed_methods = frozenset({_SQUASH})
     recorded_head = _real_git(repo, "rev-parse", LANDING_BRANCH).stdout.strip()
@@ -19087,6 +19088,8 @@ def test_land_rerun_after_its_release_finishes_and_names_the_release_that_remove
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
     capsys.readouterr()
     state_after_release = _state_ref_tip(clone, remote)
+    comments_after_release = dict(client.landing_comments)
+    client.closed_issues.discard(WORK_ITEM_ISSUE)
     rerun = f"aco release {WORK_ITEM_ISSUE} --merged 12 --branch {LANDING_BRANCH}"
 
     land_status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
@@ -19122,6 +19125,10 @@ def test_land_rerun_after_its_release_finishes_and_names_the_release_that_remove
     assert checkout.branch_exists(LANDING_BRANCH) is claimed_meanwhile
     claims = store.fetch_state(worktree=repo, remote=str(remote)).claims
     assert (len(client.merge_calls), bool(claims)) == (1, claimed_meanwhile)
+    assert (WORK_ITEM_ISSUE in client.closed_issues, client.landing_comments) == (
+        False,
+        comments_after_release,
+    )
     assert (_state_ref_tip(clone, remote) == state_after_release) is not claimed_meanwhile
 
 
