@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "c59a7333a3224bdead18eba553fea3321d6b7bf2"
 branch = "claude/issue-603-failure-wording"
-scope = ["specs/land.spec.md", "specs/protect.spec.md", "specs/release.spec.md", "specs/rescope.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/github.py", "src/agent_coordination/store.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_protect.py"]
+scope = ["specs/land.spec.md", "specs/protect.spec.md", "specs/release.spec.md", "specs/rescope.spec.md", "specs/start.spec.md", "src/agent_coordination/checkout.py", "src/agent_coordination/cli.py", "src/agent_coordination/forge.py", "src/agent_coordination/github.py", "src/agent_coordination/store.py", "tests/test_checkout.py", "tests/test_cli.py", "tests/test_github.py", "tests/test_protect.py"]
 opened_commit = "335fd512eb337871ff8accf7b292eeddfb842148"
 whole_reason = "one owner of failure wording across checkout, forge and land"
