@@ -18177,11 +18177,25 @@ _SQUASH_OR_REBASE_RULE = (frozenset({_SQUASH, _REBASE}),)
             id="pinned-merge-the-settings-exclude-refuses-before-the-merge",
         ),
         pytest.param(
+            "merge",
+            frozenset(board.MergeMethod),
+            (frozenset({_REBASE}),),
+            "board.toml merge_method merge is not allowed on main: GitHub allows rebase",
+            id="pinned-merge-a-rebase-only-ruleset-excludes-refuses-before-the-merge",
+        ),
+        pytest.param(
             None,
             frozenset({_MERGE}),
             _SQUASH_OR_REBASE_RULE,
             "GitHub allows no merge method aco can use on main",
             id="ruleset-leaving-no-usable-method-refuses-before-the-merge",
+        ),
+        pytest.param(
+            "squash",
+            frozenset({_MERGE}),
+            _SQUASH_OR_REBASE_RULE,
+            "GitHub allows no merge method aco can use on main",
+            id="pinned-squash-a-ruleset-leaving-no-method-refuses-before-the-merge",
         ),
     ],
 )

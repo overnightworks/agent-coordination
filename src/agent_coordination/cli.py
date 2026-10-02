@@ -7141,33 +7141,35 @@ def _land_merge_method(
 ) -> board.MergeMethod:
     """The method `aco land` merges pull request `number` into `branch` with
     (issues #578, #615): the board configuration's own pin, refused where
-    the forge would refuse it; otherwise a merge commit wherever the forge
-    allows one, and a squash where it allows a squash but no merge commit --
-    never a rebase, even where the forge allows only that."""
+    the forge's allowed methods exclude it; otherwise a merge commit wherever
+    the forge allows one, and a squash where it allows a squash but no merge
+    commit -- never a rebase, so a forge allowing no method at all, or only a
+    rebase to an unpinned land, refuses."""
     allowed = _forge_allowed_merge_methods(client, number, branch)
-    if pinned is None:
-        return (
-            board.MergeMethod.MERGE
-            if board.MergeMethod.MERGE in allowed
-            else (board.MergeMethod.SQUASH)
-        )
-    if pinned not in allowed:
-        allowed_list = ", ".join(method.value for method in board.MergeMethod if method in allowed)
-        raise protocol.ClaimUnavailableError(
-            f"board.toml merge_method {pinned.value} is not allowed on {branch}: "
-            f"GitHub allows {allowed_list}"
-        )
-    return pinned
+    if pinned is not None and allowed:
+        if pinned not in allowed:
+            allowed_list = ", ".join(
+                method.value for method in board.MergeMethod if method in allowed
+            )
+            raise protocol.ClaimUnavailableError(
+                f"board.toml merge_method {pinned.value} is not allowed on {branch}: "
+                f"GitHub allows {allowed_list}"
+            )
+        return pinned
+    for method in (board.MergeMethod.MERGE, board.MergeMethod.SQUASH):
+        if method in allowed:
+            return method
+    raise protocol.ClaimUnavailableError(f"GitHub allows no merge method aco can use on {branch}")
 
 
 def _forge_allowed_merge_methods(
     client: github.GitHubForge, number: int, branch: str
 ) -> frozenset[board.MergeMethod]:
-    """Every method the forge allows on `branch`, refused before any write
-    unless one `aco land` can use remains: the repository's own settings --
-    every method where it withholds them from a token without push rights --
-    narrowed by each `pull_request` rule on `branch`, since GitHub refuses
-    a method any one of them excludes."""
+    """Every method the forge allows on `branch`: the repository's own
+    settings -- every method where it withholds them from a token without
+    push rights, refused before any write unless they allow one `aco land`
+    can use -- narrowed by each `pull_request` rule on `branch`, since GitHub
+    refuses a method any one of them excludes."""
     settings = client.allowed_merge_methods()
     allowed = frozenset(board.MergeMethod) if settings is None else settings
     if not allowed & board.LANDING_MERGE_METHODS:
@@ -7177,10 +7179,6 @@ def _forge_allowed_merge_methods(
         )
     for rule in client.branch_merge_rules(branch):
         allowed &= rule
-    if not allowed & board.LANDING_MERGE_METHODS:
-        raise protocol.ClaimUnavailableError(
-            f"GitHub allows no merge method aco can use on {branch}"
-        )
     return allowed
 
 
