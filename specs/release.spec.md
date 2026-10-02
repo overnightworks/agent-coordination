@@ -119,11 +119,14 @@ again for that claim.
 ## The `RELEASED` line and `--json`
 
 `specs/landing-grammar.spec.md` LAND-49 owns `freed`/`next`'s exact shape;
-this file owns only when they appear at all.
+this file owns only when they appear at all. A release that releases a claim
+follows this section; one with nothing left to release (REL-47) prints no
+`RELEASED` line, no `claim_id`, `agent` or `role`, and REL-49..REL-51's shape
+instead.
 
-- [ ] [REL-18] Without `--json`, a successful release always prints `RELEASED <subject>: <claim-id>` first; `--abandoned`, that line is the whole output (see E-REL-01).
+- [ ] [REL-18] Without `--json`, a successful release of a claim always prints `RELEASED <subject>: <claim-id>` first; `--abandoned`, that line is the whole output (see E-REL-01).
 - [ ] [REL-19] `--json` on a success prints `specs/output.spec.md`'s envelope, `reason` `merged`/`abandoned`, then `outcome`, `issue`, `lane`, `branch`, `claim_id`, `agent`, `role` (see E-REL-05).
-- [ ] [REL-36] `outcome` is this release's own prose: `"merged #<n>"`, `"abandoned: <explanation>"`, or `"landed <sha>"` (`storage = "state-ref"`) -- `reason` still reads `merged` for that last one too.
+- [ ] [REL-36] `outcome` is `"merged #<n>"`, `"abandoned: <explanation>"`, `"landed <sha>"` (`storage = "state-ref"`), or REL-51's -- `reason` still reads `merged` for the last two.
 - [ ] [REL-35] A `--merged` release's `--json` object also carries `worktree`, the identical text its printed `worktree:` line shows (REL-25..REL-34), present only for `--merged` (see E-REL-17).
 - [ ] [REL-20] A resolved `--merged` landing adds LAND-49's `freed:`/`next:` lines after `RELEASED` in text, or its keys to `--json`, present only then (see E-REL-02).
 - [ ] [REL-40] The text `next:` line shows `<title>` with each display control escaped (NEXT-37): `a\u202eb` prints as typed, `Größe` and TAB as they are.
