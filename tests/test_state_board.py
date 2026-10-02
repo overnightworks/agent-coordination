@@ -2264,13 +2264,6 @@ class TestCliStateRefForge:
                 id="missing-row",
             ),
             pytest.param(
-                _item_files_with_container_block({"slice": [{"index": 1, "title": "X"}]}),
-                [],
-                f"slice row 1 of {CONTAINER_ID} carries no done_when; "
-                f"add it with aco item edit {CONTAINER_ID}",
-                id="row-without-done-when",
-            ),
-            pytest.param(
                 {
                     **_item_files(),
                     "aco-0000aa.md": _state_ref_body(
@@ -2315,6 +2308,13 @@ class TestCliStateRefForge:
         after = store.fetch_state(worktree=worktree, remote=remote_url)
         assert after.tip == before.tip
 
+    @pytest.mark.parametrize(
+        ("row_done_when", "child_done_when"),
+        [
+            pytest.param({"done_when": "Slice C is merged."}, "Slice C is merged.", id="copied"),
+            pytest.param({}, "", id="row-without-done-when"),
+        ],
+    )
     def test_cut_fills_the_childs_block_and_keeps_an_emptied_container_body_ok(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -2322,18 +2322,20 @@ class TestCliStateRefForge:
         tmp_path: Path,
         bare_remote: Path,
         worktree: Path,
+        row_done_when: dict[str, str],
+        child_done_when: str,
     ) -> None:
-        """CUT-25 and BODY-67 under state-ref (issue #606, #310 finding
-        350): the fresh child's block names the container it was cut from
-        and takes the row's own `done_when`; the container whose last row
-        was cut, a ruled `[[expectation]]` beside it, still passes `aco body
-        --check`."""
+        """CUT-25, CUT-36 and BODY-67 under state-ref (issue #606, #310
+        finding 350): the fresh child's block names the container it was cut
+        from and takes the row's own `done_when`, empty when the row carries
+        none -- never a refusal; the container whose last row was cut, a
+        ruled `[[expectation]]` beside it, still passes `aco body --check`."""
         item_files = _item_files_with_container_block(
             {
                 "expectation": [
                     {"text": EXPECTATION_TEXT, "ruling": "yes", "ruled_on": date(2026, 10, 2)}
                 ],
-                "slice": [{"index": 1, "title": "Slice C", "done_when": "Slice C is merged."}],
+                "slice": [{"index": 1, "title": "Slice C", **row_done_when}],
             }
         )
         self._live_state_ref_checkout(monkeypatch, tmp_path, bare_remote, worktree, item_files)
@@ -2347,7 +2349,7 @@ class TestCliStateRefForge:
         child_contract = parse_body(child_body, storage=Storage.STATE_REF).contract
         assert (child_contract.now, child_contract.done_when) == (
             f"Cut from {CONTAINER_ID}",
-            "Slice C is merged.",
+            child_done_when,
         )
         container_body = files_after[f"{CONTAINER_ID}.md"].decode()
         monkeypatch.setattr(sys, "stdin", io.StringIO(container_body))

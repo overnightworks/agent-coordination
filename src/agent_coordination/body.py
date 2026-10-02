@@ -793,8 +793,8 @@ def _block_slice_entry_defects(
 
 
 # A `[[slice]]` row's two one-line text fields (BODY-47, BODY-63; issue
-# #606): `title` is required, `done_when` optional -- absent, `cut` refuses
-# the row instead of writing an empty child `done_when`.
+# #606): `title` is required, `done_when` optional -- absent, `cut` leaves
+# the child's `done_when` empty.
 SLICE_LINE_KEYS = ("title", "done_when")
 
 

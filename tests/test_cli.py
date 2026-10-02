@@ -5383,27 +5383,37 @@ def test_cut_refuses_a_title_mismatch_before_any_write(
     assert client.item_bodies == {}
 
 
-def test_cut_refuses_a_row_without_done_when_before_any_write(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+@pytest.mark.parametrize(
+    ("toml_text", "title"),
+    [
+        pytest.param(
+            f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n',
+            [],
+            id="row_without_done_when",
+        ),
+        pytest.param(MINIMAL_BLOCK_TOML, ["--title", "Untied"], id="no_linked_row"),
+    ],
+)
+def test_cut_leaves_the_childs_done_when_empty_without_a_row_done_when(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    toml_text: str,
+    title: list[str],
 ) -> None:
-    """CUT-36 (issue #606): a linked row carrying no `done_when` refuses
-    by name before anything is created or rewritten -- `cut` never writes
-    an empty child `done_when` for a planned slice."""
-    container = _cut_container_issue(
-        f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Scheibe 1"\n'
-    )
+    """CUT-36 (issue #606 line 3): a linked row carrying no `done_when`,
+    or no linked row at all, still cuts -- never a refusal -- and the
+    written child's `done_when` stays empty while `now` is filled."""
+    container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
 
-    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER)])
+    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), *title])
 
-    assert exit_code == 2
-    assert capsys.readouterr().err == (
-        f"ERROR: slice row 1 of #{CUT_CONTAINER} carries no done_when; "
-        f"add it with aco item edit {CUT_CONTAINER}\n"
-    )
-    assert client.created_children == []
-    assert client.item_bodies == {}
+    assert (exit_code, capsys.readouterr().err) == (0, "")
+    [(_parent, _title, child_body, _kind)] = client.created_children
+    child_contract = body.parse_body(child_body).contract
+    assert (child_contract.now, child_contract.done_when) == (f"Cut from #{CUT_CONTAINER}", "")
 
 
 def test_cut_fills_the_childs_block_and_keeps_an_emptied_container_body_ok(

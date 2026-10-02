@@ -40,8 +40,8 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 | no linked row, `--title` omitted | CUT-35 | — | CUT-35 | CUT-35 |
 | `--row N`, no slice table at all | — | CUT-08 | — | CUT-08 |
 | `--row N`, no such row | — | CUT-09 | — | CUT-09 |
-| no slice table, or `slice = []` | CUT-10, CUT-37 | — | CUT-23, CUT-24 | CUT-10 |
-| the linked row carries no `done_when` | CUT-36 | CUT-36 | CUT-36 | CUT-36 |
+| no slice table, or `slice = []` | CUT-10, CUT-36 | — | CUT-23, CUT-24 | CUT-10 |
+| the linked row carries no `done_when` | CUT-36 | CUT-36 | — | CUT-12 |
 | an open child already matches the title | CUT-13 | CUT-13 | — | CUT-13 |
 | a closed child matches, none open | CUT-14 | — | — | CUT-14 |
 | two or more open matches | CUT-15 | — | — | CUT-15 |
@@ -88,8 +88,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 - [ ] [CUT-11] A successful cut prints `CUT #<n>[ row <idx>] -> #<child>`, the `row <idx>` clause present only when a row was linked, exit `0` (see E-CUT-02, E-CUT-04).
 - [ ] [CUT-12] `aco cut ... --json` prints `specs/output.spec.md`'s envelope, `reason` `cut` or `adopted` (CUT-13), then `container`, `row`, `child` (see E-CUT-02).
 - [ ] [CUT-25] The fresh child's body is a `Parent: <label>` line, a blank line, a block with `now = "Cut from <label>"`, `next = ""`, the linked row's `done_when`, plus CUT-20/CUT-23's `scope` (see E-CUT-07).
-- [ ] [CUT-36] A linked row with no `done_when` refuses `slice row <idx> of #<n> carries no done_when; add it with aco item edit <n>`, exit `2`, before any write (see E-CUT-10).
-- [ ] [CUT-37] With no linked row (CUT-10) the fresh child's `done_when` stays `""`: there is no row to take one from, so its body stays incomplete (BODY-51) until it is filled.
+- [ ] [CUT-36] A linked row with no `done_when`, or no linked row at all (CUT-10), leaves the fresh child's `done_when` `""`, never a refusal; the child stays outside `next` (BODY-51) until it is filled.
 
 ## Adopting instead of duplicating
 
@@ -129,7 +128,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 - `aco cut` never creates a second child for a row already linked to an open issue: CUT-13's adoption always runs before a fresh child is ever considered.
 - `aco cut` never reaches CUT-17's own relation-write failure under `storage = "state-ref"`: the child's own mint is one CAS write that can fail before any child exists -- a plain re-run then starts over as a fresh cut, nothing to adopt -- and CUT-18's row-removal step can fail once the child exists.
-- `aco cut` never writes an empty `done_when` for a linked row: the row's own is copied into the child, and the row is removed with the cut (CUT-26), so the done-when stands in one place.
+- `aco cut` never drops a linked row's `done_when` from the fresh child it creates: the row's own is copied into that child, and the row is removed with the cut (CUT-26), so the done-when stands in one place.
 - `aco cut` never touches the container's own `now`, `next`, or `done_when` fields, or any `[[slice]]` row but the one linked: a row removal's own rewrite carries every other field forward unchanged (CUT-26).
 - `aco cut` never re-parents an issue by title alone: an orphan is adopted only through CUT-16's own recovery-shape check, never a bare string match.
 - `aco cut`'s own `--json` object never uses the storage-aware `<label>` form (`specs/landing-grammar.spec.md`): `container`, `child`, and `written` are always the bare number, under either storage pin.
@@ -143,8 +142,7 @@ bare repository with `main` at one commit, a git identity, `origin/HEAD`,
 and `ACO_AGENT` set to `Ada`. A session under `storage = "github"` (the
 default, no `storage` key tracked) also names a fixed, deterministic fake
 `gh` as a setup precondition; a session under `storage = "state-ref"` names
-no `gh` at all -- `PATH` carries none. Every `[[slice]]` row a setup names
-carries a `done_when` (BODY-65) unless the example says otherwise.
+no `gh` at all -- `PATH` carries none.
 
 ### E-CUT-01 -- refused before any write: not open, not a container, already parented
 
@@ -315,22 +313,3 @@ $ aco cut 90 --title "Import ledger" --json
 2> ERROR: possible twin #85; pass --not-a-twin
 exit 2
 ```
-
-### E-CUT-10 -- a row without `done_when` is refused before any write
-
-Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90` with one
-`[[slice]]` row `index = 1` titled `Slice A` and no `done_when`
-
-```console
-$ aco cut 90
-2> ERROR: slice row 1 of #90 carries no done_when; add it with aco item edit 90
-exit 2
-$ aco cut 90 --json
-{"ok": false, "reason": "precondition_failed", "message": "slice row 1 of #90 carries no done_when; add it with aco item edit 90"}
-2> ERROR: slice row 1 of #90 carries no done_when; add it with aco item edit 90
-exit 2
-```
-
-Under `storage = "state-ref"` the same row of container `aco-000001` reads
-`slice row 1 of aco-000001 carries no done_when; add it with aco item edit
-aco-000001`.

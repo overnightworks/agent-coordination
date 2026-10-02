@@ -7506,8 +7506,9 @@ def _cut_child_body(
     block whose `now` names the container it was cut from and whose
     `done_when` is the linked row's own (issue #606), plus the cut slice's
     own top-level `scope = [...]` (issue #337) when the cut carries one --
-    the linked row's own scope, or a filled `--scope`. An untied cut has no
-    row to take a `done_when` from, so that key stays empty. A repeat `cut`
+    the linked row's own scope, or a filled `--scope`. With no row
+    `done_when` to take -- the row carries none, or the cut is untied --
+    that key stays empty, never a refusal. A repeat `cut`
     after a partial failure reads the parent line back
     (`_orphan_names_container`) to tell `container`'s own orphan apart from
     an unrelated open issue that merely shares the row's title (#260)."""
@@ -7744,24 +7745,6 @@ def _cut_row_scope(
     return requested
 
 
-def _cut_row_done_when(
-    number: int, link: body.SliceRow | None, storage: body.Storage
-) -> str | None:
-    """The `done_when` `cut`'s fresh child takes (issue #606): the linked
-    row's own, refusing before any write when the row carries none, so a cut
-    never writes an empty `done_when` for a slice its container planned;
-    `None` for an untied cut, which has no row to take one from."""
-    if link is None:
-        return None
-    if link.done_when is None:
-        edit = board.advice_command("item", "edit", board.item_argument(number, storage))
-        raise protocol.ClaimUnavailableError(
-            f"slice row {link.index} of {board.item_label(number, storage)} carries no "
-            f"done_when; add it with {edit}"
-        )
-    return link.done_when
-
-
 CUT_RERUN_RECOVERY = "re-run the same cut -- it adopts the child"
 CUT_TYPE_RECOVERY = f"set that type on the forge by hand, then {CUT_RERUN_RECOVERY}"
 
@@ -7780,7 +7763,7 @@ def _cut_slice(
     link = _cut_link(label, located.data, parsed.row)
     title = _child_title(label, link, parsed.title)
     child_scope = _cut_row_scope(link, _requested_body_scope(parsed.scope))
-    child_done_when = _cut_row_done_when(number, link, storage)
+    child_done_when = None if link is None else link.done_when
     adopted = _adoptable_child(client, number, title, config, open_issues)
     if adopted is None and not parsed.not_a_twin:
         _refuse_possible_twin(
