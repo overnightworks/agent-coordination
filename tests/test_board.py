@@ -33,11 +33,11 @@ from board_fixtures import (
     request,
     ruled_expectation,
     slice_entries,
+    unfilled_block_body,
 )
 
 from agent_coordination import board, checkout, metrics, protocol
 from agent_coordination.body import (
-    BLOCK_CHILD_SKELETON,
     BLOCK_FENCE_INFO,
     EXPECTATION_LINE_TEXT_MAXIMUM,
     EXPECTATION_PICTURE_MAXIMUM_BYTES,
@@ -785,15 +785,30 @@ def test_replace_block_preserves_crlf_and_surrounding_bytes() -> None:
     assert parse_body(new_body).contract.now == "Changed"
 
 
-def test_render_block_emits_an_empty_slice_array_after_removing_the_final_entry() -> None:
-    toml_text = f'{MINIMAL_BLOCK_TOML}[[slice]]\nindex = 1\ntitle = "Only slice"\n'
+@pytest.mark.parametrize(
+    "tables_before_slice",
+    [
+        pytest.param("", id="no-expectation"),
+        pytest.param(
+            '[[expectation]]\ntext = "A line"\nruling = "yes"\nruled_on = 2026-10-02\n',
+            id="ruled-expectation",
+        ),
+    ],
+)
+def test_render_block_keeps_an_emptied_slice_array_a_top_level_key(
+    tables_before_slice: str,
+) -> None:
+    toml_text = (
+        f"{MINIMAL_BLOCK_TOML}{tables_before_slice}"
+        '[[slice]]\nindex = 1\ntitle = "Only slice"\ndone_when = "It ships."\n'
+    )
     located = locate_block(block_body(toml_text))
     new_data = {**located.data, "slice": []}
 
     rendered = render_block(new_data)
 
-    assert "slice = []" in rendered
     assert tomllib.loads(rendered)["slice"] == []
+    assert parse_body(block_body(rendered)).read_state is BodyReadState.VALID
 
 
 def test_uncut_is_empty_when_the_block_carries_no_slice_entry() -> None:
@@ -847,8 +862,10 @@ def test_timestamp_fails_loud_on_a_malformed_github_timestamp(raw_timestamp: str
         board._timestamp(raw_timestamp)
 
 
-def test_child_skeleton_is_an_incomplete_contract_with_no_defects() -> None:
-    parsed = parse_body(BLOCK_CHILD_SKELETON)
+def test_a_fresh_unfilled_block_is_an_incomplete_contract_with_no_defects() -> None:
+    """A fresh block with no fields written keeps every projection key
+    present and empty: valid, but incomplete."""
+    parsed = parse_body(unfilled_block_body())
 
     assert parsed.read_state is BodyReadState.VALID
     assert parsed.contract_complete is False
@@ -1784,7 +1801,8 @@ def test_board_json_carries_a_scoped_uncut_slice_row_canonically() -> None:
     board projection -> JSON. Here it survives as that row's canonical
     (sorted, deduplicated) array; a row without one still omits the key
     entirely -- the public shape before this lane, proven by the sibling
-    test above."""
+    test above. The row's own `done_when` (issue #606) is `cut`'s to read
+    and never joins the JSON row."""
     container = board.Issue(
         160,
         "Container",
@@ -1795,6 +1813,7 @@ def test_board_json_carries_a_scoped_uncut_slice_row_canonically() -> None:
                 {
                     "index": 1,
                     "title": "Undispatched slice",
+                    "done_when": "The widget ships.",
                     "scope": ["src/widget.py", "docs/plan.md"],
                 }
             ],
@@ -1811,7 +1830,15 @@ def test_board_json_carries_a_scoped_uncut_slice_row_canonically() -> None:
 
     assert projected.uncut == (
         board.UncutSlices(
-            160, (SliceRow(1, "Undispatched slice", ("docs/plan.md", "src/widget.py")),)
+            160,
+            (
+                SliceRow(
+                    1,
+                    "Undispatched slice",
+                    ("docs/plan.md", "src/widget.py"),
+                    "The widget ships.",
+                ),
+            ),
         ),
     )
     payload = board.board_payload(projected)

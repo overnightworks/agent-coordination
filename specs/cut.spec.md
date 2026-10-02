@@ -34,14 +34,16 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 | `<n>` itself has a parent | CUT-03 | CUT-03 | CUT-03 | CUT-03 |
 | a required forge write is unsupported | CUT-04 | CUT-04 | CUT-04 | CUT-04 |
 | `<n>`'s body is malformed | CUT-05 | CUT-05 | — | CUT-05 |
+| the linked row's `done_when` holds a display control | CUT-39 | CUT-39 | — | CUT-05 |
 | a slice table, no `--row` | CUT-06, CUT-11 | — | — | CUT-12 |
 | a slice table, `--row N` present | — | CUT-06, CUT-11 | — | CUT-12 |
 | `--title` mismatches the linked row | CUT-07 | CUT-07 | — | CUT-07 |
 | no linked row, `--title` omitted | CUT-35 | — | CUT-35 | CUT-35 |
 | `--row N`, no slice table at all | — | CUT-08 | — | CUT-08 |
 | `--row N`, no such row | — | CUT-09 | — | CUT-09 |
-| no slice table, or `slice = []` | CUT-10 | — | CUT-23, CUT-24 | CUT-10 |
-| an open child already matches the title | CUT-13 | CUT-13 | — | CUT-13 |
+| no slice table, or `slice = []` | CUT-10, CUT-37 | — | CUT-23, CUT-24 | CUT-10 |
+| the linked row carries no `done_when` | CUT-25 | CUT-25 | — | CUT-12 |
+| an open child already matches the title | CUT-13, CUT-38 | CUT-13, CUT-38 | — | CUT-13 |
 | a closed child matches, none open | CUT-14 | — | — | CUT-14 |
 | two or more open matches | CUT-15 | — | — | CUT-15 |
 | an orphan shares the title, wrong shape | CUT-16 | — | — | — |
@@ -72,6 +74,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 ## The body precondition
 
 - [ ] [CUT-05] `<n>` with a malformed body (BODY-50) refuses `#<n> body malformed: <field>: <message>; cut needs a valid aco block`, exit `2`; an incomplete body (BODY-51) is accepted.
+- [ ] [CUT-39] If the row cut selects has a `done_when` with a display control (BODY-66), `cut` refuses in CUT-05's form with `body --check`'s sentence before any write; no other row refuses (issue #606, E-CUT-03).
 
 ## Row selection
 
@@ -86,7 +89,9 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 - [ ] [CUT-11] A successful cut prints `CUT #<n>[ row <idx>] -> #<child>`, the `row <idx>` clause present only when a row was linked, exit `0` (see E-CUT-02, E-CUT-04).
 - [ ] [CUT-12] `aco cut ... --json` prints `specs/output.spec.md`'s envelope, `reason` `cut` or `adopted` (CUT-13), then `container`, `row`, `child` (see E-CUT-02).
-- [ ] [CUT-25] The fresh child's body is a `Parent: <label>` line naming `<n>`, a blank line, the same unfilled `task` skeleton `item new` writes (ITEM-01), plus `scope` from CUT-20/CUT-23 (see E-CUT-02, E-CUT-06).
+- [ ] [CUT-25] A fresh child's block: `now = "Cut from <label>"`, `next = "Build this slice; claim it with aco start."`, the row's `done_when` or `""`, `scope` (CUT-20), below a `Parent: <label>` line (E-CUT-07).
+- [ ] [CUT-37] With no linked row (CUT-10) the child's block keeps CUT-25's `now` and `next`, and its `done_when` stays `""` -- no row to take one from -- so `next` skips it (BODY-51) until it is filled.
+- CUT-36 (removed 02.10.2026, issue #606): its refusal of a linked row without `done_when` never landed; such a row cuts, and its child's `done_when` stays `""` (CUT-25).
 
 ## Adopting instead of duplicating
 
@@ -106,6 +111,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 - [ ] [CUT-17] GitHub's own failed sub-issue relation write refuses `created #<child> but failed to record #<child> as a sub-issue of #<n>: <cause>; re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-18] A failed row-removal write, either storage, refuses `created #<child> but failed to remove row <idx> from #<n>'s aco block: <cause>; re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-19] An identical re-run after CUT-17, CUT-18, or -- once its type is set -- CUT-32 prints `ADOPTED` (CUT-13) instead of a second child, then finishes the row removal when a row was linked (see E-CUT-06).
+- [ ] [CUT-38] An adoption (CUT-13, CUT-19) never writes the child's body. Accepted residual: a row `done_when` edited between a lost race and its retry is not copied; the container's edit history keeps it.
 - [ ] [CUT-32] A child created without its `Task` type refuses `created #<child> but GitHub did not set its type Task; set that type on the forge by hand, then re-run the same cut -- it adopts the child`, exit `2`.
 - [ ] [CUT-28] CUT-17/CUT-18/CUT-32's partial write reports `reason: "partial_write"`, `written` (`<child>`) and `failed` (the step) as siblings, exit `2` (see E-CUT-08).
 
@@ -126,10 +132,12 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 
 - `aco cut` never creates a second child for a row already linked to an open issue: CUT-13's adoption always runs before a fresh child is ever considered.
 - `aco cut` never reaches CUT-17's own relation-write failure under `storage = "state-ref"`: the child's own mint is one CAS write that can fail before any child exists -- a plain re-run then starts over as a fresh cut, nothing to adopt -- and CUT-18's row-removal step can fail once the child exists.
+- `aco cut` never refuses a row for lacking a `done_when`: such a row cuts like any other, and its child's `done_when` stays `""` until someone fills it (CUT-25).
+- `aco cut` never drops a linked row's `done_when` from the fresh child it creates: the row's own is copied into that child, and the row is removed with the cut (CUT-26), so the done-when stands in one place.
 - `aco cut` never touches the container's own `now`, `next`, or `done_when` fields, or any `[[slice]]` row but the one linked: a row removal's own rewrite carries every other field forward unchanged (CUT-26).
 - `aco cut` never re-parents an issue by title alone: an orphan is adopted only through CUT-16's own recovery-shape check, never a bare string match.
 - `aco cut`'s own `--json` object never uses the storage-aware `<label>` form (`specs/landing-grammar.spec.md`): `container`, `child`, and `written` are always the bare number, under either storage pin.
-- CUT-25's own body shape differs between the storage pins only in its `Parent:` line's `<label>`; only `storage = "state-ref"` additionally sets `[record].parent` (CUT-27) -- GitHub carries no such field, so its own retry (CUT-19) reads the `Parent:` prose line instead, while a state-ref retry reads `record.parent` alone.
+- CUT-25's own body shape differs between the storage pins only in `<label>`, in its `Parent:` line and its `now`; only `storage = "state-ref"` additionally sets `[record].parent` (CUT-27) -- GitHub carries no such field, so its own retry (CUT-19) reads the `Parent:` prose line instead, while a state-ref retry reads `record.parent` alone.
 - Under `storage = "state-ref"`, a CUT-19 retry caused by a competing write names CAS-20's own "written since it was read" sentence as CUT-18's own `<cause>`.
 
 ## Examples
@@ -160,7 +168,8 @@ exit 2
 ### E-CUT-02 -- a tied cut, text and `--json`, then row selection by number
 
 Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90` with two
-`[[slice]]` rows, `index = 1` titled `Slice A`, `index = 2` titled `Slice B`
+`[[slice]]` rows, `index = 1` titled `Slice A` with `done_when = "Slice A is
+merged."`, `index = 2` titled `Slice B` with no `done_when`
 
 ```console
 $ aco cut 90
@@ -171,17 +180,25 @@ $ aco cut 90 --row 2 --json
 exit 0
 ```
 
+`#<child-a>`'s block reads `now = "Cut from #90"`, `next = "Build this
+slice; claim it with aco start."`, `done_when = "Slice A is merged."`;
+`#<child-b>`'s is the same but for `done_when = ""` (CUT-25).
+
 ### E-CUT-03 -- row refusals
 
-Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90`, one
-`[[slice]]` row `index = 1` titled `Slice A`
+Setup: bare-remote, `storage = "github"`, fake `gh`, container `#90` with two
+`[[slice]]` rows, `index = 1` titled `Slice A`, `index = 2` titled `Slice B`
+with `done_when = "one\u000Btwo"`
 
 ```console
 $ aco cut 90 --row 9
-2> ERROR: #90 has no row 9; cuttable rows: 1
+2> ERROR: #90 has no row 9; cuttable rows: 1, 2
 exit 2
 $ aco cut 90 --title "Wrong title"
 2> ERROR: #90's slice 1 is titled 'Slice A'; --title must match it exactly
+exit 2
+$ aco cut 90 --row 2
+2> ERROR: #90 body malformed: slice[1].done_when: slice[1].done_when of row 2 holds U+000B; a slice done_when stays on one line; cut needs a valid aco block
 exit 2
 ```
 
@@ -239,6 +256,9 @@ CUT #90 row 1 -> #<child>
 exit 0
 ```
 
+`#<child>`'s block reads CUT-25's `now` and `next`, `done_when = ""` (row 1
+carries none, CUT-25), and `scope = ["src/a.py"]`.
+
 A second container `#91`'s row already names `scope = ["src/b.py"]`:
 
 ```console
@@ -254,7 +274,7 @@ exit 0
 
 Setup: bare-remote, `storage = "state-ref"` tracked, bootstrapped, container
 `aco-000001` (`#<n>`) with two `[[slice]]` rows, `index = 1` titled `Slice
-C`, `index = 2` titled `Slice D`
+C` with `done_when = "Slice C is merged."`, `index = 2` titled `Slice D`
 
 ````console
 $ aco cut <n> --title "Slice C"
@@ -266,9 +286,9 @@ Parent: aco-000001
 
 ```aco
 version = 1
-now = ""
-next = ""
-done_when = ""
+now = "Cut from aco-000001"
+next = "Build this slice; claim it with aco start."
+done_when = "Slice C is merged."
 
 [record]
 title = "Slice C"
