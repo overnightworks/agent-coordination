@@ -2321,8 +2321,10 @@ def _project_uncut_row_scope(finding: dict[str, object]) -> None:
     `{"index", "title"}` with no third key, and `board --json` still owes
     that to a row that names no scope of its own -- only a row that
     actually carries one gains the extra `"scope"` key, canonical and
-    non-empty."""
+    non-empty. A row's `done_when` (issue #606) is `cut`'s to read, never
+    part of `board --json`'s row shape (BOARD-14)."""
     for row in cast(_JsonRows, finding["rows"]):
+        del row["done_when"]
         if row["scope"] is None:
             del row["scope"]
 
@@ -2539,8 +2541,8 @@ OUT_OF_ORDER_PLACEHOLDER = "--out-of-order <reason>"
 class AdviceOption:
     """One option and its value in an advice command, printed attached as
     `--name=<quoted value>` (issue #513): argparse then takes the value
-    whatever it starts with, where `--title -draft` refuses with `expected
-    one argument`."""
+    whatever it starts with, where a scope path written apart from its
+    option, `--scope -notes.md`, refuses with `expected one argument`."""
 
     name: str
     value: str
@@ -2552,8 +2554,8 @@ class AdviceOption:
 def shell_command(program: str, *arguments: str | AdviceOption) -> str:
     """The one rendering of a command a piece of advice names (issue #510):
     every argument quoted for a POSIX shell, so the line runs unchanged in
-    the agent's real shell -- a title such as `Say "hi" to $HOME` reaches
-    the command as written, never split or expanded."""
+    the agent's real shell -- a scope path such as `docs/my $HOME notes.md`
+    reaches the command as written, never split or expanded."""
     return " ".join(
         argument.rendered() if isinstance(argument, AdviceOption) else shlex.quote(argument)
         for argument in (program, *arguments)

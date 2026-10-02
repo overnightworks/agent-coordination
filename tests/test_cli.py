@@ -6538,10 +6538,10 @@ def test_next_prints_a_cut_command_block_mode_accepts_a_differing_next_line(
     its own words, while its first uncut `[[slice]]` entry carries a
     different title, must still print a `cut` command that `cut` itself
     accepts and that links exactly that entry. Without `--row`, `cut` links
-    the first uncut entry and refuses unless `--title` matches its title
-    exactly (atelier-2, seven live containers), so the printed command must
-    carry the entry's title, never the `next` line's prose -- while the
-    action line above it keeps naming the container's own words. `next
+    the first uncut entry and takes that entry's own title (#604), so the
+    printed command names the container alone -- no title, so the `next`
+    line's prose can never reach the child -- while the action line above
+    it keeps naming the container's own words. `next
     --json` carries the same split as two fields: `slice` is that human
     step, `cut_title` is the title `cut` accepts -- a JSON consumer must
     build `--title` from `cut_title`, never `slice` (the README used to say
@@ -19912,10 +19912,21 @@ def body_check_main(*, extra: tuple[str, ...] = ()) -> int:
     return issue_claim.main(["body", "--check", *extra])
 
 
+@pytest.mark.parametrize(
+    "toml_text",
+    [
+        pytest.param(MINIMAL_BLOCK_TOML, id="minimal"),
+        pytest.param(
+            f'{MINIMAL_BLOCK_TOML}\n[[slice]]\nindex = 1\ntitle = "Slice A"\n'
+            'done_when = "The parser reads the new key."\n',
+            id="slice-row-done-when",
+        ),
+    ],
+)
 def test_body_check_accepts_a_complete_block_with_no_defects(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], toml_text: str
 ) -> None:
-    body_file = io.StringIO(block_body(MINIMAL_BLOCK_TOML))
+    body_file = io.StringIO(block_body(toml_text))
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(sys, "stdin", body_file)
         assert body_check_main() == 0
@@ -20000,6 +20011,21 @@ def test_body_check_names_a_body_with_no_recognized_block_as_malformed(
                 id=f"slice-title-{codepoint}",
             )
             for control, codepoint in _BIDI_AND_ZERO_WIDTH_CONTROLS
+        ),
+        *(
+            pytest.param(
+                f'{MINIMAL_BLOCK_TOML}\n[[slice]]\nindex = 1\ntitle = "A"\ndone_when = {value}\n',
+                "slice[0].done_when: slice[0].done_when must be a non-empty string",
+                id=f"slice-done-when-{shape}",
+            )
+            for shape, value in (("blank", '"  "'), ("not-a-string", "1"))
+        ),
+        pytest.param(
+            f'{MINIMAL_BLOCK_TOML}\n[[slice]]\nindex = 1\ntitle = "A"\n'
+            'done_when = "One\\u000bTwo"\n',
+            "slice[0].done_when: slice[0].done_when of row 1 holds U+000B; "
+            "a slice done_when stays on one line",
+            id="slice-done-when-control",
         ),
     ],
 )

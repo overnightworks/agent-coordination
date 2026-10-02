@@ -157,11 +157,14 @@ class SliceRow:
     names it by, `title` exactly what `cut --title` must match. `scope`
     (issue #331) is the row's own optional `scope = [...]`, validated and
     canonicalized like the block's top-level field; `None` when the row
-    names no paths of its own."""
+    names no paths of its own. `done_when` (issue #606) is the row's own
+    one-line done-when, the child's `done_when` once `cut` creates it;
+    `None` when the row carries none."""
 
     index: int
     title: str
     scope: tuple[str, ...] | None = None
+    done_when: str | None = None
 
 
 @dataclass(frozen=True)
@@ -777,20 +780,31 @@ def _block_slice_entry_defects(
         )
     else:
         seen_indices[slice_index] = index
-    title = entry.get("title")
-    if not isinstance(title, str) or not title.strip():
-        defects.append(
-            ContractDefect(f"{prefix}.title", f"{prefix}.title must be a non-empty string")
-        )
+    defects.extend(_slice_text_defects(prefix, entry))
     if "scope" in entry:
         scope_defect = _scope_value_defect(f"{prefix}.scope", entry["scope"])
         if scope_defect is not None:
             defects.append(scope_defect)
-    unknown = sorted(set(entry) - {"index", "title", "scope"})
+    unknown = sorted(set(entry) - {"index", *SLICE_LINE_KEYS, "scope"})
     defects.extend(
         ContractDefect(f"{prefix}.{key}", f"unknown key {prefix}.{key}") for key in unknown
     )
     return defects
+
+
+# A `[[slice]]` row's two one-line text fields (BODY-47, BODY-63; issue
+# #606): `title` is required, `done_when` optional -- absent, `cut` refuses
+# the row instead of writing an empty child `done_when`.
+SLICE_LINE_KEYS = ("title", "done_when")
+
+
+def _slice_text_defects(prefix: str, entry: dict[str, object]) -> list[ContractDefect]:
+    return [
+        ContractDefect(f"{prefix}.{key}", f"{prefix}.{key} must be a non-empty string")
+        for key in SLICE_LINE_KEYS
+        if (key == "title" or key in entry)
+        and not (isinstance(entry.get(key), str) and cast(str, entry[key]).strip())
+    ]
 
 
 def _block_slice_defects(entries: list[object]) -> list[ContractDefect]:
@@ -897,17 +911,25 @@ def _block_frozen_trigger(data: dict[str, object]) -> str | None:
     return trigger if isinstance(trigger, str) else None
 
 
+def slice_row(entry: Mapping[str, object]) -> SliceRow:
+    """One schema-valid `[[slice]]` entry as a `SliceRow` -- the one reader
+    `parse_body` and `cut` share, so a row field `cut` acts on is never read
+    a second way."""
+    return SliceRow(
+        cast(int, entry["index"]),
+        cast(str, entry["title"]),
+        _canonical_scope(entry["scope"]) if "scope" in entry else None,
+        cast(str, entry["done_when"]) if "done_when" in entry else None,
+    )
+
+
 def _block_slices(data: dict[str, object]) -> tuple[SliceRow, ...]:
     """Every still-undispatched `[[slice]]` entry: `cut` removes an entry
     from the block at the moment it links a child to it, so whatever is left
     here is exactly what is still uncut. Each row's own `scope` (issue #331)
     is canonicalized the same way the block's top-level one is."""
     return tuple(
-        SliceRow(
-            cast(int, entry["index"]),
-            cast(str, entry["title"]),
-            _canonical_scope(entry["scope"]) if "scope" in entry else None,
-        )
+        slice_row(entry)
         for entry in _block_array(data, "slice")
         if isinstance(entry, dict)
         and isinstance(entry.get("index"), int)
@@ -1144,14 +1166,18 @@ def _render_expectations(data: Mapping[str, object]) -> list[str]:
     return lines
 
 
-def _render_slices(data: Mapping[str, object]) -> list[str]:
-    if "slice" not in data:
-        return []
-    slices = cast(_JsonRows, data["slice"])
-    if not slices:
+def _render_empty_slice_table(data: Mapping[str, object]) -> list[str]:
+    """`slice = []` (BODY-49), the typed "nothing left to cut", among the
+    top-level keys: written after any `[[expectation]]` table, TOML would
+    bind it to that table as `expectation[N].slice` (#310 finding 350)."""
+    if data.get("slice") == []:
         return ["", "slice = []"]
+    return []
+
+
+def _render_slices(data: Mapping[str, object]) -> list[str]:
     lines: list[str] = []
-    for entry in slices:
+    for entry in cast(_JsonRows, data.get("slice", [])):
         lines.extend(
             (
                 "",
@@ -1160,6 +1186,8 @@ def _render_slices(data: Mapping[str, object]) -> list[str]:
                 f"title = {protocol.toml_string(entry['title'])}",
             )
         )
+        if "done_when" in entry:
+            lines.append(f"done_when = {protocol.toml_string(entry['done_when'])}")
         if "scope" in entry:
             lines.append(f"scope = {_render_scope_array(entry['scope'])}")
     return lines
@@ -1213,6 +1241,7 @@ def render_block(data: Mapping[str, object], newline: str = "\n") -> str:
     lines.extend(_render_scope(data))
     lines.extend(_render_size(data))
     lines.extend(_render_whole(data))
+    lines.extend(_render_empty_slice_table(data))
     lines.extend(_render_expectations(data))
     lines.extend(_render_slices(data))
     lines.extend(_render_record(data))
@@ -1501,25 +1530,28 @@ def missing_or_empty_sections(contract: Contract) -> tuple[str, ...]:
     return tuple(name for name, value in contract_fields(contract) if not value)
 
 
-def _slice_title_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, ...]:
+def _slice_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, ...]:
     """The rule wherever a body's shape is judged -- `body --check`,
     `check`, `item new`/`item edit` (issue #517 line 2): a slice title is
     one line, since `next` prints it inside a runnable `cut`, so every
-    `protocol.is_display_control` character is a defect (issue #538).
-    `board` and `next` keep reading a body stored before this rule, and
-    `next` names such a row instead of printing its `cut`."""
+    `protocol.is_display_control` character is a defect (issue #538); a
+    row's `done_when` keeps the same rule, since `cut` copies it into the
+    child's one-line `done_when` (issue #606). `board` and `next` keep
+    reading a body stored before this rule, and `next` names a row with
+    such a title instead of printing its `cut`."""
     defects: list[ContractDefect] = []
     for position, row in enumerate(slices):
-        breaking = next(filter(protocol.is_display_control, row.title), None)
-        if breaking is not None:
-            field = f"slice[{position}].title"
-            defects.append(
-                ContractDefect(
-                    field,
-                    f"{field} of row {row.index} holds U+{ord(breaking):04X}; "
-                    "a slice title stays on one line",
+        for key, text in zip(SLICE_LINE_KEYS, (row.title, row.done_when or ""), strict=True):
+            breaking = next(filter(protocol.is_display_control, text), None)
+            if breaking is not None:
+                field = f"slice[{position}].{key}"
+                defects.append(
+                    ContractDefect(
+                        field,
+                        f"{field} of row {row.index} holds U+{ord(breaking):04X}; "
+                        f"a slice {key} stays on one line",
+                    )
                 )
-            )
     return tuple(defects)
 
 
@@ -1557,7 +1589,7 @@ def body_shape_check(body: str, *, storage: Storage = Storage.GITHUB) -> BodySha
     malformed = (
         parsed.contract.defects
         if parsed.read_state is BodyReadState.MALFORMED
-        else _slice_title_line_defects(parsed.slices)
+        else _slice_line_defects(parsed.slices)
     )
     if malformed:
         defects = tuple(body_defect_text(defect) for defect in malformed)
