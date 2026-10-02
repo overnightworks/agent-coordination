@@ -6311,12 +6311,12 @@ def _refuse_a_claim_the_landing_did_not_land(
 ) -> None:
     """REL-48/REL-53 (issues #605, #611), the one judge under both storage
     pins of whether `selected` belongs to `landing` -- `pull request #<n>`
-    from its source branch, or `commit <sha>` from the release's own branch
-    (REL-56). An issue's claim is keyed by the issue alone, so an old
-    landing's rerun would otherwise release a newer claim on the same issue
-    -- a lane on another branch (REL-48), or one a fresh `start` built on
-    the same branch from a trunk that already holds this landing (START-01,
-    REL-53). That claim is never released and never skipped. A same-branch
+    from its source branch, or `commit <sha>` from an explicit `--branch`,
+    else the claim's own branch (REL-56). An issue's claim is keyed by the
+    issue alone, so an old landing's rerun would otherwise release a newer
+    claim on the same issue -- a lane on another branch (REL-48), or one a
+    fresh `start` built on the same branch from a trunk that already holds
+    this landing (START-01, REL-53). That claim is never released and never skipped. A same-branch
     claim based off the trunk, such as START-11 or `aco claim` in a lane
     worktree still standing, passes both: the residual #310 finding 356
     owns."""
@@ -7435,12 +7435,12 @@ def _cmd_release_landed(
     observed = context.observation
     _require_state_ref(observed)
     unclaimed_branch = _unclaimed_rerun_branch(parsed, observed, identity, release_branch)
-    landing = f"commit {commit}"
+    landing_label = f"commit {commit}"
     if unclaimed_branch is not None:
         _report_nothing_left_to_release(
             parsed,
             context,
-            landing,
+            landing_label,
             _landed_lane(identity, storage, commit, unclaimed_branch, None),
             context.fetched_trunk_ref,
         )
@@ -7448,7 +7448,7 @@ def _cmd_release_landed(
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     _refuse_a_claim_the_landing_did_not_land(
         resolved.selected,
-        landing,
+        landing_label,
         resolved.selected.branch if parsed.branch is None else parsed.branch,
         _trunk_since(landings, commit),
         storage,
