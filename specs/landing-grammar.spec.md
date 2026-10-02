@@ -136,7 +136,7 @@ sentence>`, not restated.
 
 ## What `release --merged` requires
 
-- [ ] [LAND-29] `release <n> --merged <pr>` succeeds once the pull request is merged into default and its merge commit's own `Work-Item:` trailer names this item (issue #397); LAND-55 closes a still-open one first.
+- [ ] [LAND-29] `release <n> --merged <pr>` succeeds once the pull request merged into default and its merge commit's `Work-Item:` trailer names this item (issue #397); LAND-55 closes an open one first unless REL-47.
 - [ ] [LAND-69] A pull request's merge commit is the commit GitHub recorded for its merge: a merge commit, or the one squash commit `aco land` lands with LANDCMD-27; LAND-29, 62, and 64 read either alike.
 - [ ] [LAND-49] A successful `--merged` release prints `freed: <label>, <label>` (or `none`) and `next: <label> score <s>: <title>` (or `none`); `--json` carries `"freed": [n,...]` and `"next": n`/`null`.
 - [ ] [LAND-30] A pull request that is not merged refuses `pull request #<n> is not merged`, exit `2`, before anything is written.
@@ -149,7 +149,7 @@ sentence>`, not restated.
 - [ ] [LAND-64] For a lane release, a merge commit off the trunk, with no trailer, or with a malformed `No-Item:` trailer refuses `merge commit <sha> of pull request #<n> <that defect sentence>`, exit `2`.
 - [ ] [LAND-66] For a lane release, a merge commit whose trailer carries `Work-Item:`, valid or malformed, refuses `merge commit <sha> of pull request #<n> carries \`Work-Item: <value>\`; <LAND-67>`, exit `2`.
 - [ ] [LAND-67] LAND-66's rule and way out read `an issue-less lane needs a \`No-Item: <docs|fix>\` trailer; release it with --abandoned "landed as PR #<n> with a malformed trailer"`.
-- [ ] [LAND-55] A still-open work item, once its landing pull request verifies, is closed by this release: a comment `landed by PR #<n>`, then the close — never a refusal (replaces retired LAND-36).
+- [ ] [LAND-55] Unless REL-47 applies, a still-open work item whose landing pull request verifies is closed by this release: a comment `landed by PR #<n>`, then the close — never a refusal (replaces retired LAND-36).
 - [ ] [LAND-63] A rerun of LAND-55's own close that finds its `landed by PR #<n>` comment already posted skips it and closes straight away, never posting it twice (issue #397).
 - LAND-36 (retired 19.09.2026, issue #359): "work item #<n> is open, not closed" no longer exists; a still-open item is closed instead (LAND-55).
 - [ ] [LAND-37] `release --merged <pr>` for a lane, against a merge commit trailer carrying only `No-Item: docs`, releases the claim without reading any closing reference or pull request body.
