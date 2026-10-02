@@ -19088,8 +19088,8 @@ def test_land_rerun_after_its_release_finishes_and_names_the_release_that_remove
     assert issue_claim.main(["--repo", REPOSITORY, "land", "12"]) == 0
     capsys.readouterr()
     state_after_release = _state_ref_tip(clone, remote)
-    comments_after_release = dict(client.landing_comments)
     client.closed_issues.discard(WORK_ITEM_ISSUE)
+    client.landing_comments.clear()
     rerun = f"aco release {WORK_ITEM_ISSUE} --merged 12 --branch {LANDING_BRANCH}"
 
     land_status = issue_claim.main(["--repo", REPOSITORY, "land", "12"])
@@ -19125,10 +19125,7 @@ def test_land_rerun_after_its_release_finishes_and_names_the_release_that_remove
     assert checkout.branch_exists(LANDING_BRANCH) is claimed_meanwhile
     claims = store.fetch_state(worktree=repo, remote=str(remote)).claims
     assert (len(client.merge_calls), bool(claims)) == (1, claimed_meanwhile)
-    assert (WORK_ITEM_ISSUE in client.closed_issues, client.landing_comments) == (
-        False,
-        comments_after_release,
-    )
+    assert (WORK_ITEM_ISSUE in client.closed_issues, client.landing_comments) == (False, {})
     assert (_state_ref_tip(clone, remote) == state_after_release) is not claimed_meanwhile
 
 

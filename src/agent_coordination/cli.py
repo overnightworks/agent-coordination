@@ -3215,14 +3215,12 @@ def _release_outcome(merged: int | None, abandoned: str | None) -> protocol.Rele
 
 @dataclass(frozen=True)
 class _MergedLandingClose:
-    """The still-open issue `_verify_merged_release` found and the pull
-    request that landed it (issue #359 R1): naming both, rather than
-    closing on the spot, so `_cmd_release` can call `close_landed_item`
-    itself once the claim is resolved and the claimant already authorized --
-    an unauthorized or mismatched-claim `--merged` release then never
-    reaches a forge write, or even this read, at all. The one exception is
-    REL-47 (issue #605): with no live claim there is none to authorize, so
-    its landing verifies first, and the close this names never runs."""
+    """The still-open issue `_pending_landing_close` found and the pull
+    request that landed it (issue #359 R1): read only once the claim is
+    resolved and the claimant authorized, so an unauthorized or
+    mismatched-claim `--merged` release never reaches a forge write, or even
+    this read, at all. A REL-47 release with no live claim (issue #605)
+    never reads it: it has nothing to close."""
 
     issue: int
     pull_request: int
@@ -3236,13 +3234,11 @@ class _VerifiedMerge:
     a rerun alike (issue #590) -- the branch it was merged from, which the
     released claim must sit on (issue #605), the first-parent trunk commits
     from its merge onward, none of which the released claim may be based on
-    (issue #605: such a claim was opened after this landing), and the
-    still-open item to close, if any."""
+    (issue #605: such a claim was opened after this landing)."""
 
     landed_head: str
     source_branch: str
     trunk_since_landing: frozenset[str]
-    pending_close: _MergedLandingClose | None
 
 
 def _trunk_no_item_landing_defect(
@@ -3286,15 +3282,14 @@ def _verify_merged_release(
     merged: protocol.MergedRelease,
 ) -> _VerifiedMerge:
     """Refuse a `--merged` release the landing itself does not support, and
-    report -- without yet closing anything -- whether the named work item is
-    still open and needs to be (issue #359 Card 1/R1), and the head the
-    forge recorded as landed (issue #590): `_cmd_release` calls
-    this only after the claim is already resolved and the claimant already
-    authorized, and performs the actual close itself afterward, so a defect
-    or a transient forge failure there never runs ahead of authorization
-    and never lands on an unauthorized attempt -- except REL-47's release
-    with no live claim (issue #605), which has no claimant to authorize and
-    verifies here without ever closing anything. `state_board.py`'s own
+    report the head the forge recorded as landed (issue #590): `_cmd_release`
+    calls this only after the claim is already resolved and the claimant
+    already authorized, so a defect or a transient forge failure there never
+    runs ahead of authorization -- except REL-47's release with no live
+    claim (issue #605), which has no claimant to authorize and verifies
+    here. Whether the work item is still open to close is
+    `_pending_landing_close`'s read, which only a release of a claim makes
+    (issue #359 Card 1/R1), so REL-47 never reads it. `state_board.py`'s own
     `LandingIntent` path is `storage = state-ref`'s equivalent, so this only
     ever runs under `storage = github` (see `_cmd_release`).
 
@@ -3326,7 +3321,6 @@ def _verify_merged_release(
         landed_head=detail.head_sha,
         source_branch=detail.source_branch,
         trunk_since_landing=_trunk_since(landings, detail.merge_commit),
-        pending_close=_pending_landing_close(client, identity, detail.number),
     )
 
 
@@ -6295,9 +6289,12 @@ def _unclaimed_rerun_branch(
     to release (issue #605, REL-47): no `--claim-id` and no live claim on its
     identity, the state a rerun after a completed release finds. The missing
     claim is the trigger, never a closed item: GitHub closes the item at
-    merge time through `Closes #<n>`. A `--claim-id` names one claim, so its
-    absence stays `_select_release_claim`'s refusal; `None` hands every other
-    release to that selection."""
+    merge time through `Closes #<n>`. For an issue-less lane the result is
+    not final: its claim is keyed by its branch, so once the merge verifies,
+    `_report_merged_pull_request_left_nothing` still refuses REL-09 when the
+    pull request came from another branch (REL-54). A `--claim-id` names one
+    claim, so its absence stays `_select_release_claim`'s refusal; `None`
+    hands every other release to that selection."""
     if parsed.merged is None or parsed.claim_id is not None or not release_branch:
         return None
     if protocol.claim_key(identity, release_branch) in observed.claims:
@@ -6538,7 +6535,7 @@ def _verify_and_close_merged_release(
     storage = context.config.storage
     verified = _verify_merged_release(context, client, identity, merged)
     _refuse_a_claim_the_pull_request_did_not_land(selected, merged, verified, storage)
-    pending_close = verified.pending_close
+    pending_close = _pending_landing_close(client, identity, merged.pull_request)
     if pending_close is not None:
         client.close_landed_item(pending_close.issue, pull_request=pending_close.pull_request)
     return _landed_lane(
