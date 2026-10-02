@@ -5472,21 +5472,86 @@ def test_cut_refuses_a_blockless_container_before_any_write(
     assert client.created_children == []
 
 
+@pytest.mark.parametrize(
+    "toml_text,cut_arguments,defect",
+    [
+        pytest.param(
+            'version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n',
+            ["--title", "X"],
+            "version: version must be exactly 1",
+            id="malformed-version",
+        ),
+        *(
+            pytest.param(
+                f"{MINIMAL_BLOCK_TOML}"
+                '[[slice]]\nindex = 1\ntitle = "Clean"\ndone_when = "D"\n'
+                f'[[slice]]\nindex = 2\ntitle = "Dirty"\ndone_when = "one{escape}two"\n',
+                ["--row", "2"],
+                f"slice[1].done_when: slice[1].done_when of row 2 holds {codepoint}; "
+                "a slice done_when stays on one line",
+                id=f"selected-row-done-when-{codepoint}",
+            )
+            for escape, codepoint in (("\\u000B", "U+000B"), ("\\u001B", "U+001B"))
+        ),
+    ],
+)
 def test_cut_refuses_a_malformed_container_before_any_write(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    toml_text: str,
+    cut_arguments: list[str],
+    defect: str,
 ) -> None:
-    container = _cut_container_issue('version = 2\nnow = "N"\nnext = "X"\ndone_when = "D"\n')
+    """CUT-05 and CUT-39 (issue #606 line 3): a malformed block, or a
+    selected row whose `done_when` breaks BODY-66, refuses in CUT-05's form
+    with `body --check`'s sentence, and nothing is written."""
+    container = _cut_container_issue(toml_text)
     client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
     _write_block_pin(tmp_path)
 
-    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), "--title", "X"])
+    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER), *cut_arguments])
 
-    assert exit_code == 2
-    assert (
-        f"ERROR: #{CUT_CONTAINER} body malformed: version: version must be exactly 1; "
-        "cut needs a valid aco block" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert (exit_code, captured.err) == (
+        2,
+        f"ERROR: #{CUT_CONTAINER} body malformed: {defect}; cut needs a valid aco block\n",
     )
-    assert client.created_children == []
+    assert (client.created_children, client.item_bodies) == ([], {})
+
+
+@pytest.mark.parametrize(
+    "other_row",
+    [
+        pytest.param('title = "Bad\\u000Btitle"\n', id="title"),
+        pytest.param('title = "Other"\ndone_when = "a\\u001B[2Jb"\n', id="done-when"),
+    ],
+)
+def test_cut_takes_a_clean_row_while_another_row_holds_a_display_control(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    other_row: str,
+) -> None:
+    """CUT-39 (issue #606 line 3): `cut` checks only the row it selects, so
+    the first row `next` advises still cuts while a later row's `title` or
+    `done_when` holds a display control, and that row stays in the block."""
+    container = _cut_container_issue(
+        f"{MINIMAL_BLOCK_TOML}"
+        '[[slice]]\nindex = 1\ntitle = "Good row"\ndone_when = "Clean."\n'
+        f"[[slice]]\nindex = 2\n{other_row}"
+    )
+    client = _configured_board_client(monkeypatch, tmp_path, open_issues=(container,))
+    _write_block_pin(tmp_path)
+
+    exit_code = issue_claim.main(["--repo", REPOSITORY, "cut", str(CUT_CONTAINER)])
+
+    captured = capsys.readouterr()
+    assert (exit_code, captured.err) == (0, "")
+    [(_parent, title, child_body, _kind)] = client.created_children
+    assert (title, body.parse_body(child_body).contract.done_when) == ("Good row", "Clean.")
+    remaining = body.parse_body(client.item_bodies[CUT_CONTAINER]).slices
+    assert [row.index for row in remaining] == [2]
 
 
 def test_cut_names_the_created_child_when_linking_fails(
@@ -6327,6 +6392,38 @@ def test_ask_refuses_a_blockless_item_before_any_write(
     assert "body malformed: aco: no aco block; ask needs a valid aco block" in captured.err
     assert client.item_bodies == {}
     _assert_json_refusal_object(captured.err, captured.out, reason="invalid_item")
+
+
+@pytest.mark.parametrize(
+    "command_arguments,written",
+    [
+        pytest.param(["ask", "--text", "New question?"], "ASKED", id="ask"),
+        pytest.param(["rule", "--line", "1", "--yes"], "RULED", id="rule"),
+    ],
+)
+def test_ask_and_rule_accept_a_stored_body_whose_slice_title_holds_a_display_control(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    command_arguments: list[str],
+    written: str,
+) -> None:
+    """ASK-05 and RULE keep `parse_body`'s gate (issue #606 line 3): BODY-63/
+    BODY-66 refuse at `body --check` and the item writers, so a body stored
+    before that rule still takes a question or a ruling."""
+    toml_text = (
+        f'{MINIMAL_BLOCK_TOML}[[expectation]]\ntext = "Ship it?"\ndefault = "later"\n'
+        '[[slice]]\nindex = 1\ntitle = "Bad\\u000Btitle"\n'
+    )
+    client = _client_with_item(monkeypatch, tmp_path, RULE_ITEM, block_body(toml_text))
+    command, *options = command_arguments
+
+    exit_code = issue_claim.main(["--repo", REPOSITORY, command, str(RULE_ITEM), *options])
+
+    captured = capsys.readouterr()
+    assert (exit_code, captured.err) == (0, "")
+    assert captured.out.startswith(f"{written} #{RULE_ITEM} line ")
+    assert list(client.item_bodies) == [RULE_ITEM]
 
 
 def test_ask_refuses_when_the_forge_cannot_update_item_body(

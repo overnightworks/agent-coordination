@@ -33,7 +33,8 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 | `<n>` open but not a container | CUT-02 | CUT-02 | CUT-02 | CUT-02 |
 | `<n>` itself has a parent | CUT-03 | CUT-03 | CUT-03 | CUT-03 |
 | a required forge write is unsupported | CUT-04 | CUT-04 | CUT-04 | CUT-04 |
-| `<n>`'s body is malformed | CUT-05, CUT-39 | CUT-05, CUT-39 | — | CUT-05 |
+| `<n>`'s body is malformed | CUT-05 | CUT-05 | — | CUT-05 |
+| the linked row's `done_when` holds a display control | CUT-39 | CUT-39 | — | CUT-05 |
 | a slice table, no `--row` | CUT-06, CUT-11 | — | — | CUT-12 |
 | a slice table, `--row N` present | — | CUT-06, CUT-11 | — | CUT-12 |
 | `--title` mismatches the linked row | CUT-07 | CUT-07 | — | CUT-07 |
@@ -73,7 +74,7 @@ with `--json` also `specs/output.spec.md`'s envelope, `reason`
 ## The body precondition
 
 - [ ] [CUT-05] `<n>` with a malformed body (BODY-50) refuses `#<n> body malformed: <field>: <message>; cut needs a valid aco block`, exit `2`; an incomplete body (BODY-51) is accepted.
-- [ ] [CUT-39] A `[[slice]]` row whose `done_when` holds a display control is such a body (BODY-66): `cut` refuses it in CUT-05's form before any write, never copying it into a child (issue #606).
+- [ ] [CUT-39] When the row cut selects has a `done_when` holding a display control (BODY-66), `cut` refuses in CUT-05's form with `body --check`'s sentence before any write; another row never refuses (issue #606).
 
 ## Row selection
 

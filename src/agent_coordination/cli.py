@@ -7720,21 +7720,26 @@ def _located_block_or_refuse(
     number: int, raw_body: str, *, command: str, storage: body.Storage = body.Storage.GITHUB
 ) -> body.LocatedBlock:
     """`raw_body`'s located `aco` block, or a by-name refusal before
-    any write: `cut`, `rule`, and `ask` all need a body that is not
-    malformed before they touch it, and share this one gate so the message
-    is the same shape for all three. The verdict is `body.body_shape_check`'s,
-    the one `body --check` prints, so a `[[slice]]` row whose `title` or
-    `done_when` holds a display control refuses here too and `cut` never
-    copies it into a child (issue #606 line 3). `storage` is forwarded
-    unchanged (issue #283): a state-ref item's own `[record]` table must
-    read as a known key, not a malformed one."""
-    shape = body.body_shape_check(raw_body, storage=storage)
-    if shape.verdict is body.BodyShapeVerdict.MALFORMED:
-        raise protocol.ClaimUnavailableError(
-            f"{board.item_label(number, storage)} {shape.defects[0]}; "
-            f"{command} needs a valid {body.BLOCK_FENCE_INFO} block"
+    any write: `cut`, `rule`, `ask`, `rescope`, and `item edit --size`/
+    `--whole` all need a body `parse_body` reads as VALID before they touch
+    it, and share this one gate so the message has one shape. `storage` is
+    forwarded to `parse_body` unchanged (issue #283): a state-ref item's own
+    `[record]` table must read as a known key, not a malformed one."""
+    parsed = body.parse_body(raw_body, storage=storage)
+    if parsed.read_state is body.BodyReadState.MALFORMED:
+        _refuse_malformed_block(
+            number, body.body_defect_text(parsed.contract.defects[0]), command, storage
         )
     return body.locate_block(raw_body)
+
+
+def _refuse_malformed_block(
+    number: int, defect_text: str, command: str, storage: body.Storage
+) -> NoReturn:
+    raise protocol.ClaimUnavailableError(
+        f"{board.item_label(number, storage)} {defect_text}; "
+        f"{command} needs a valid {body.BLOCK_FENCE_INFO} block"
+    )
 
 
 CUT_ROW_SCOPE_ALREADY_SET = "slice {index} already names a scope; edit the container instead"
@@ -7755,6 +7760,20 @@ def _cut_row_scope(
     return requested
 
 
+def _cut_row_done_when(
+    number: int, located: body.LocatedBlock, link: body.SliceRow | None, storage: body.Storage
+) -> str | None:
+    """The `done_when` `cut`'s fresh child inherits (issue #606 line 2):
+    the linked row's own, refused in CUT-05's form before any write when it
+    breaks BODY-66 (CUT-39)."""
+    if link is None:
+        return None
+    defect = body.slice_done_when_defect(located, link)
+    if defect is not None:
+        _refuse_malformed_block(number, defect, "cut", storage)
+    return link.done_when
+
+
 CUT_RERUN_RECOVERY = "re-run the same cut -- it adopts the child"
 CUT_TYPE_RECOVERY = f"set that type on the forge by hand, then {CUT_RERUN_RECOVERY}"
 
@@ -7773,7 +7792,7 @@ def _cut_slice(
     link = _cut_link(label, located.data, parsed.row)
     title = _child_title(label, link, parsed.title)
     child_scope = _cut_row_scope(link, _requested_body_scope(parsed.scope))
-    child_done_when = None if link is None else link.done_when
+    child_done_when = _cut_row_done_when(number, located, link, storage)
     adopted = _adoptable_child(client, number, title, config, open_issues)
     if adopted is None and not parsed.not_a_twin:
         _refuse_possible_twin(

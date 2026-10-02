@@ -1530,20 +1530,35 @@ def _slice_line_defects(slices: tuple[SliceRow, ...]) -> tuple[ContractDefect, .
     child's one-line `done_when` (issue #606). `board` and `next` keep
     reading a body stored before this rule, and `next` names a row with
     such a title instead of printing its `cut`."""
-    defects: list[ContractDefect] = []
-    for position, row in enumerate(slices):
-        for key, text in zip(SLICE_LINE_KEYS, (row.title, row.done_when or ""), strict=True):
-            breaking = next(filter(protocol.is_display_control, text), None)
-            if breaking is not None:
-                field = f"slice[{position}].{key}"
-                defects.append(
-                    ContractDefect(
-                        field,
-                        f"{field} of row {row.index} holds U+{ord(breaking):04X}; "
-                        f"a slice {key} stays on one line",
-                    )
-                )
-    return tuple(defects)
+    return tuple(
+        defect
+        for position, row in enumerate(slices)
+        for key, text in zip(SLICE_LINE_KEYS, (row.title, row.done_when), strict=True)
+        if (defect := _slice_line_defect(position, row.index, key, text)) is not None
+    )
+
+
+def _slice_line_defect(
+    position: int, index: int, key: str, text: str | None
+) -> ContractDefect | None:
+    breaking = next(filter(protocol.is_display_control, text or ""), None)
+    if breaking is None:
+        return None
+    field = f"slice[{position}].{key}"
+    return ContractDefect(
+        field,
+        f"{field} of row {index} holds U+{ord(breaking):04X}; a slice {key} stays on one line",
+    )
+
+
+def slice_done_when_defect(located: LocatedBlock, row: SliceRow) -> str | None:
+    """BODY-66 for the one row of `located` that `cut` selects (issue #606
+    line 3), in the sentence `body --check` prints for it: `cut` copies only
+    that row's `done_when` into a child, so no other row's line can refuse
+    the cut."""
+    position = _block_slices(located.data).index(row)
+    defect = _slice_line_defect(position, row.index, "done_when", row.done_when)
+    return None if defect is None else body_defect_text(defect)
 
 
 class BodyShapeVerdict(StrEnum):
