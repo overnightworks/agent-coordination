@@ -1,8 +1,0 @@
-claim_id = "0b36ee2ca286432cb6d310ddea755301"
-agent = "Claude head (coordinator)"
-role = "builder"
-base = "3d072d75f4509880911aac8a4ebfdc345909e50a"
-branch = "fix/aco-folder"
-scope = [".aco/board.toml", ".aco/brief.toml", ".agent-claim/board.toml", ".agent-claim/brief.toml", "scripts/check_root_layout.py", "tests/test_root_layout.py"]
-opened_commit = "e08719789e285618b2ef1c3bce1e38eded349f9c"
-whole_reason = "protocol rename, #441"
