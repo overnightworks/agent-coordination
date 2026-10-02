@@ -16113,21 +16113,33 @@ def test_release_merged_unauthorized_makes_no_forge_call_close_or_comment(
 _OLD_LANE_BRANCH = "codex/issue-72-old"
 
 
+_UNCLAIMED_LANE_BRANCH = "docs/unclaimed"
+
+
 @pytest.mark.parametrize(
-    ("args", "source_branch", "refusal"),
+    ("args", "lane", "source_branch", "refusal"),
     [
         pytest.param(
             ("999",),
+            False,
             LANDING_BRANCH,
             f"merge commit {MERGE_COMMIT_SHA} of pull request #12 does not name work item #999",
             id="no-claim-and-a-merge-naming-another-item",
         ),
         pytest.param(
             ("72", "--branch", _OLD_LANE_BRANCH),
+            False,
             _OLD_LANE_BRANCH,
             f"issue #72 is claimed on '{LANDING_BRANCH}', not on pull request #12's branch "
             f"'{_OLD_LANE_BRANCH}'; release that claim by itself",
             id="claim-off-the-pull-requests-branch",
+        ),
+        pytest.param(
+            ("--branch", _UNCLAIMED_LANE_BRANCH),
+            True,
+            LANE_BRANCH,
+            f"lane '{_UNCLAIMED_LANE_BRANCH}' has no active build claim",
+            id="unclaimed-lane-off-the-pull-requests-claimed-branch",
         ),
     ],
 )
@@ -16135,6 +16147,7 @@ def test_release_merged_refuses_what_its_landing_does_not_back_and_keeps_every_c
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     args: tuple[str, ...],
+    lane: bool,
     source_branch: str,
     refusal: str,
 ) -> None:
@@ -16143,8 +16156,14 @@ def test_release_merged_refuses_what_its_landing_does_not_back_and_keeps_every_c
     item refuses (REL-47). An issue's claim is keyed by the issue alone, so
     an old pull request's release, `aco land`'s rerun included, meets a
     newer lane's claim on that issue: it refuses by name and that claim is
-    neither released nor skipped (REL-48, E-REL-25)."""
-    client = merged_release_client(monkeypatch, body="Work-Item: #72\n\nCloses #72")
+    neither released nor skipped (REL-48, E-REL-25). An issue-less lane's
+    claim is keyed by its branch, so an unclaimed lane says nothing about
+    the claimed lane its pull request came from: REL-09 refuses as before."""
+    client = merged_release_client(
+        monkeypatch,
+        body="No-Item: docs" if lane else "Work-Item: #72\n\nCloses #72",
+        lane=lane,
+    )
     client.landings[12] = replace(client.landings[12], source_branch=source_branch)
 
     status = issue_claim.main(["--repo", REPOSITORY, "release", *args, "--merged", "12"])

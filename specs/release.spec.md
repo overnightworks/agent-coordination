@@ -92,7 +92,7 @@ rerun, or REL-52's `<rerun>` from the checkout that holds the lane -- finds
 no live claim. Its trigger is that missing claim, never a closed item:
 GitHub closes the item at merge time through `Closes #<n>`.
 
-- [ ] [REL-47] A `--merged` release without `--claim-id` whose identity has no live claim, once its landing verifies (REL-16, REL-17), closes nothing, releases nothing, and exits `0` (see E-REL-24).
+- [ ] [REL-47] A `--merged` release without `--claim-id` whose identity has no live claim, once its landing verifies (REL-16, REL-17), closes nothing, releases nothing, and exits `0` (see E-REL-24); an issue-less lane's pull request from another branch than the release's own still refuses REL-09.
 - [ ] [REL-49] Its text is `LANDED <landing> already; nothing left to release`, `<landing>` `pull request #<n>` or, under `storage = "state-ref"`, `commit <sha>`, then its `worktree:` line.
 - [ ] [REL-50] Its cleanup (REL-25..REL-34) acts on the pull request's own source branch, or under `storage = "state-ref"` on the release's own branch (REL-04, REL-06).
 - [ ] [REL-51] Its `--json` prints `specs/output.spec.md`'s envelope, `reason` `merged`, then `outcome` `"nothing left to release"`, `issue`, `lane`, `branch`, `worktree`.

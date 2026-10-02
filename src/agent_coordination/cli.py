@@ -4306,9 +4306,16 @@ def _selected_store_claim(
         )
     selected = observed.claims.get(protocol.claim_key(identity, branch or ""))
     if selected is None or (claim_id is not None and selected.claim_id != claim_id):
-        subject = protocol.identity_summary(identity, branch or "", board.item_labeller(storage))
-        raise protocol.ClaimUnavailableError(f"{subject} has no active build claim")
+        raise _no_active_build_claim(identity, branch or "", storage)
     return selected
+
+
+def _no_active_build_claim(
+    identity: protocol.ClaimIdentity, branch: str, storage: body.Storage
+) -> protocol.ClaimUnavailableError:
+    """REL-09's refusal, naming the item in `storage`'s form (issue #471)."""
+    subject = protocol.identity_summary(identity, branch, board.item_labeller(storage))
+    return protocol.ClaimUnavailableError(f"{subject} has no active build claim")
 
 
 def _hook_payload() -> dict[str, object] | None:
@@ -6425,11 +6432,11 @@ def _release_transition(
     outcome = _release_outcome(merged, parsed.abandoned)
     observed = context.observation
     _require_state_ref(observed)
-    if (
-        isinstance(outcome, protocol.MergedRelease)
-        and _unclaimed_rerun_branch(parsed, observed, identity, release_branch) is not None
-    ):
-        _report_merged_pull_request_left_nothing(parsed, context, identity, outcome)
+    unclaimed_branch = _unclaimed_rerun_branch(parsed, observed, identity, release_branch)
+    if isinstance(outcome, protocol.MergedRelease) and unclaimed_branch is not None:
+        _report_merged_pull_request_left_nothing(
+            parsed, context, identity, outcome, unclaimed_branch
+        )
         return ReleaseEnding.NOTHING_LEFT
     resolved = _resolve_release_claimant(parsed, observed, identity, release_branch, storage)
     lane = (
@@ -6511,14 +6518,21 @@ def _report_merged_pull_request_left_nothing(
     context: RunContext,
     identity: protocol.ClaimIdentity,
     merged: protocol.MergedRelease,
+    unclaimed_branch: str,
 ) -> None:
     """REL-47 under `storage = "github"` (issue #605): the merge verifies
     exactly as a release's would, then only its lane is cleaned up -- on
     the pull request's own source branch, the one fact the forge records
-    about where the lane lived (REL-50)."""
+    about where the lane lived (REL-50). An issue-less lane's claim is keyed
+    by its branch, so `unclaimed_branch` -- the branch found unclaimed --
+    says nothing about another lane's claim unless the pull request came
+    from it: otherwise REL-09 refuses as before, and that lane is never
+    cleaned up behind its live claim."""
     client = cast(github.GitHubForge, context.forge)
     storage = context.config.storage
     verified = _verify_merged_release(context, client, identity, merged)
+    if isinstance(identity, protocol.LaneIdentity) and unclaimed_branch != verified.source_branch:
+        raise _no_active_build_claim(identity, unclaimed_branch, storage)
     _report_nothing_left_to_release(
         parsed,
         context,
