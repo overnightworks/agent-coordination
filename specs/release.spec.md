@@ -105,7 +105,11 @@ removed is clean and merged into the default branch, so nothing is lost, and `ac
 again for that claim.
 
 - [ ] [REL-48] A live claim off the pull request's branch refuses `<identity> is claimed on '<branch>', not on pull request #<n>'s branch '<source>'; release that claim by itself`, exit `2` (see E-REL-25).
-- [ ] [REL-53] A claim on that branch based on the merge commit or a later trunk commit (START-11) refuses `<identity> was claimed on '<branch>' after pull request #<n> landed; release that claim by itself`.
+- [ ] [REL-53] A claim on that branch based on the merge commit or a later trunk commit (START-01) refuses `<identity> was claimed on '<branch>' after pull request #<n> landed; release that claim by itself`.
+
+Residual, owned by #310 finding 356: a claim START-11 takes in a lane worktree still standing at
+the pull request's recorded head is based off the trunk, so neither REL-48 nor REL-53 sees it; a
+rerun releases that claim and closes its reopened item.
 
 ## What a `--merged` release verifies and never checks
 

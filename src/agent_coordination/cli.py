@@ -6313,10 +6313,12 @@ def _refuse_a_claim_the_pull_request_did_not_land(
 ) -> None:
     """REL-48/REL-53 (issue #605): an issue's claim is keyed by the issue
     alone, so an old pull request's rerun would otherwise release a newer
-    claim on the same issue -- a lane on another branch (REL-48), or one
-    `start` opened afresh on the same branch once the item reopened (START-11),
-    whose base already holds this landing (REL-53). That claim is never
-    released and never skipped."""
+    claim on the same issue -- a lane on another branch (REL-48), or one a
+    fresh `start` built on the same branch from a trunk that already holds
+    this landing (START-01, REL-53). That claim is never released and never
+    skipped. A START-11 claim in a lane worktree still standing at the
+    recorded head is based off the trunk and passes both: the residual
+    #310 finding 356 owns."""
     subject = protocol.identity_summary(
         selected.identity, selected.branch, board.item_labeller(storage)
     )
