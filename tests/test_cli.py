@@ -2346,7 +2346,7 @@ def _serve_a_container(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _serve_an_incomplete_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    _serve_start_board(monkeypatch, _start_item(body.BLOCK_CHILD_SKELETON))
+    _serve_start_board(monkeypatch, _start_item(body.prose_above_fresh_block("", {})))
 
 
 def _serve_a_higher_priority_item(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4802,10 +4802,14 @@ def test_claim_refuses_a_freshly_cut_childs_incomplete_skeleton(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """`cut`'s fresh child (`body.BLOCK_CHILD_SKELETON`) is defect-free but
-    incomplete -- invisible to `next`, and now refused here too, exactly as
+    """`cut`'s fresh child from a row without `done_when` (CUT-36) is
+    defect-free but incomplete -- `now` and `next` filled, `done_when`
+    empty -- so it is invisible to `next`, and refused here too, exactly as
     ruled: `claim` requires a complete projection."""
-    child = board_issue(101, "Scheibe 1", body.BLOCK_CHILD_SKELETON)
+    cut_child_body = body.prose_above_fresh_block(
+        "Parent: #90", {"now": "Cut from #90", "next": issue_claim.CUT_CHILD_NEXT}
+    )
+    child = board_issue(101, "Scheibe 1", cut_child_body)
     _configured_board_client(monkeypatch, tmp_path, open_issues=(child,))
     monkeypatch.setattr(
         issue_claim,
@@ -4829,7 +4833,7 @@ def test_claim_refuses_a_freshly_cut_childs_incomplete_skeleton(
     assert exit_code == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "ERROR: #101 body incomplete: Now, Next, Done when" in captured.err
+    assert "ERROR: #101 body incomplete: Done when" in captured.err
 
 
 def test_claim_names_an_incomplete_body_even_when_the_item_is_also_blocked(
@@ -11204,7 +11208,8 @@ def test_every_output_names_a_github_item_by_its_number(
     `TestCliStateRefForge`'s id proof: the same commands name an item
     `#<n>`, and a pasteable argument its bare `n`. `item edit`/`close` have
     no twin: under `github` they refuse outright (PIN-10, PIN-11)."""
-    incomplete = board_issue(10, "Fresh work", body.BLOCK_CHILD_SKELETON)
+    unfilled_body = body.prose_above_fresh_block("", {})
+    incomplete = board_issue(10, "Fresh work", unfilled_body)
     actionable = board_issue(11, "Slice A", complete_contract("Ship slice A."))
     blocked, dependencies = blocked_issue(12, "Slice B", block_dependency(11))
     client = _configured_board_client(
@@ -11214,7 +11219,7 @@ def test_every_output_names_a_github_item_by_its_number(
         dependencies=dependencies,
     )
     client.issue_references[10] = forge.ItemReference(
-        forge.ItemState.OPEN, "Fresh work", body.BLOCK_CHILD_SKELETON
+        forge.ItemState.OPEN, "Fresh work", unfilled_body
     )
     monkeypatch.setattr(
         issue_claim,

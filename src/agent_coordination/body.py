@@ -1295,15 +1295,6 @@ def _first_line_ending(text: str) -> str:
     )
 
 
-# An unfilled block in the one grammar the tool reads: every projection key
-# present and empty, so `parse_body` reads it as `VALID` but
-# `contract_complete=False` -- invisible to `next`, refused by `claim` --
-# until the head fills it in. Empty strings, not omitted keys, which the
-# block schema would refuse. `cut` fills its child's `now` and `done_when`
-# (issue #606), so no production path writes this shape whole any more.
-BLOCK_CHILD_SKELETON = prose_above_fresh_block("", {})
-
-
 def body_with_block_fields(body: str, fields: Mapping[str, object]) -> str:
     """`body` with each field of `fields` its one schema-valid `aco`
     block lacks written in, the block re-rendered canonically and every byte

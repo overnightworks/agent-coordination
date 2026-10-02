@@ -50,7 +50,6 @@ from test_store import _blob, _push_raw_state_tree, _raw_tree, _state_ref_listin
 from agent_coordination import board, checkout, forge, items, process, protocol, store
 from agent_coordination import cli as issue_claim
 from agent_coordination.body import (
-    BLOCK_CHILD_SKELETON,
     BLOCK_FENCE_INFO,
     CONTAINER_SKELETON_PROSE,
     ExpectationLine,
@@ -59,6 +58,7 @@ from agent_coordination.body import (
     expectation_lines,
     locate_block,
     parse_body,
+    prose_above_fresh_block,
     render_block,
 )
 from agent_coordination.protocol import ClaimUnavailableError, MalformedStateTreeError
@@ -1672,7 +1672,7 @@ class TestStateRefBoardWrites:
         _push_item_tree(bare_remote, worktree, _item_files())
         writer = self._writer(bare_remote, worktree)
         adapter = _fetch_state_ref_board(bare_remote, worktree, writer=writer)
-        body = f"Parent: #{CONTAINER_NUMBER}\n\n{BLOCK_CHILD_SKELETON}"
+        body = prose_above_fresh_block(f"Parent: #{CONTAINER_NUMBER}", {})
 
         child_number = adapter.create_child(
             parent=CONTAINER_NUMBER, title="Slice C", body=body, kind=ItemKind.TASK
@@ -5249,7 +5249,7 @@ class TestCliStateRefForge:
         assert items.ITEM_ID_PATTERN.fullmatch(container_id)
 
         container_body = _filled_body(
-            f"{CONTAINER_SKELETON_PROSE}\n\n{BLOCK_CHILD_SKELETON}",
+            prose_above_fresh_block(CONTAINER_SKELETON_PROSE, {}),
             now="Land every slice.",
             next_step="Cut the first slice.",
             done_when="Both slices are closed.",
@@ -5269,7 +5269,7 @@ class TestCliStateRefForge:
         child_number = items.item_number(child_id)
 
         child_body = _filled_body(
-            BLOCK_CHILD_SKELETON,
+            prose_above_fresh_block("", {}),
             now="Build slice one.",
             next_step="Ship slice one.",
             done_when="Slice one is merged.",
