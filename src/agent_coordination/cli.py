@@ -7168,7 +7168,7 @@ def _forge_allowed_merge_methods(
     """Every method the forge allows on `branch`: the repository's own
     settings -- every method where it withholds them from a token without
     push rights, refused before any write unless they allow one `aco land`
-    can use -- narrowed by each `pull_request` rule on `branch`, since GitHub
+    can use -- narrowed by each rule on `branch` (LANDCMD-42), since GitHub
     refuses a method any one of them excludes."""
     settings = client.allowed_merge_methods()
     allowed = frozenset(board.MergeMethod) if settings is None else settings
