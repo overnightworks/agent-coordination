@@ -3,6 +3,6 @@ agent = "Claude head (coordinator)"
 role = "builder"
 base = "589e1c87dd34ab4376c2edee83a1e00c61267fd1"
 branch = "claude/issue-605-land-rerun-finishes"
-scope = ["README.md", "specs/land.spec.md", "specs/release.spec.md", "src/agent_coordination/cli.py", "tests/test_cli.py"]
+scope = ["README.md", "specs/land.spec.md", "specs/landing-grammar.spec.md", "specs/release.spec.md", "src/agent_coordination/cli.py", "tests/test_cli.py"]
 opened_commit = "c50a6c0631951aabe21bf5721d63743978eccc3f"
 whole_reason = "the release re-run decision, its land wrapper, their specs and README"
