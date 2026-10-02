@@ -9717,7 +9717,7 @@ def _state_ref_item_state(repo: Path, tip: str, number: int) -> items.RecordStat
     return items.parse_item_record(item_id, parsed.record).state
 
 
-def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_closed(
+def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_whose_claim_is_gone(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
@@ -9725,7 +9725,7 @@ def test_release_merged_under_state_ref_commits_once_then_refuses_a_replay_as_cl
     """Issue #359 R3: a real `file://` proof of Beweis 1 -- one landing is
     exactly one new commit on `refs/aco/state` whose tree closes the item
     and drops the claim -- and of the replay case `_FakeStore` cannot see: a
-    second `release` naming the released claim refuses it as gone (REL-10),
+    second `release` naming the released claim refuses it as gone (REL-09),
     through the real state re-read from the real ref, and moves the ref not
     at all."""
     repo, remote = _real_landing_scenario(monkeypatch, tmp_path, numbers=(10,))
