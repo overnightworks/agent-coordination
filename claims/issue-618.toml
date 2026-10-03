@@ -1,8 +1,0 @@
-claim_id = "e812362defa142a5ab97274cecd13779"
-agent = "Claude 255c9087-94fa-477f-af88-8eb64e5acd39"
-role = "builder"
-base = "5c912429ba1d22c9b3d4320e3b9f012b6a23fa31"
-branch = "claude/issue-618-board-mockup"
-scope = ["docs/board"]
-opened_commit = "06c04739d63cbf26a5a3aed19c6dd20e83468fa5"
-whole_reason = "Ein neuer Ordner mit dem eingefrorenen Mockup und seiner Owner-Seite, nichts sonst"
