@@ -24,7 +24,7 @@ from .ports import (
 )
 
 ACO_EXECUTABLE = "aco"
-_TIMEOUT_SECONDS = 120
+DEFAULT_TIMEOUT_SECONDS = 120.0
 """`aco rulings` builds the whole board projection, which can take tens of
 seconds against a forge; a call still running after this is treated as hung."""
 _ALREADY_RULED_REASON = "already_ruled"
@@ -42,6 +42,7 @@ class _Completed:
 @dataclass(frozen=True)
 class AcoCli:
     directory: Path
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
 
     def expectation_lines(self) -> tuple[ExpectationLine, ...]:
         completed = self._run(["rulings", "--json"])
@@ -61,7 +62,8 @@ class AcoCli:
             f"--{decision.outcome.value}",
         ]
         if decision.note is not None:
-            arguments += ["--note", decision.note]
+            # One argument: a note starting with "-" would otherwise read as an option.
+            arguments.append(f"--note={decision.note}")
         try:
             completed = self._run([*arguments, "--json"])
         except DecisionSourceUnavailableError as error:
@@ -82,14 +84,14 @@ class AcoCli:
                 cwd=self.directory,
                 capture_output=True,
                 text=True,
-                timeout=_TIMEOUT_SECONDS,
+                timeout=self.timeout_seconds,
                 check=False,
             )
         except FileNotFoundError as error:
             raise DecisionSourceUnavailableError("aco is not installed on PATH") from error
         except subprocess.TimeoutExpired as error:
             raise DecisionSourceUnavailableError(
-                f"aco {arguments[0]} did not answer within {_TIMEOUT_SECONDS} seconds"
+                f"aco {arguments[0]} did not answer within {self.timeout_seconds:g} seconds"
             ) from error
         return _Completed(completed.returncode, completed.stdout, completed.stderr)
 

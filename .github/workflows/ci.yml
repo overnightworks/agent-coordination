@@ -43,7 +43,7 @@ jobs:
         run: uv run --locked pytest -n auto
       - if: matrix.python == '3.12'
         run: >-
-          uv run --locked pytest -n auto --cov=agent_coordination --cov-report=xml:coverage.xml
+          uv run --locked pytest -n auto --cov=agent_coordination --cov=aco_board --cov-report=xml:coverage.xml
           --cov-report=term-missing --cov-fail-under=100
       # pytest-cov's --cov-fail-under evaluates the combined line+branch number
       # once --cov-branch is on, so the blocking step above stays line-only.
@@ -55,7 +55,7 @@ jobs:
         if: matrix.python == '3.12'
         continue-on-error: true
         run: |
-          uv run --locked pytest -n auto --cov=agent_coordination --cov-branch \
+          uv run --locked pytest -n auto --cov=agent_coordination --cov=aco_board --cov-branch \
             --cov-report=json:coverage-branch.json
           python3 - <<'PYTHON'
           import json

@@ -11,6 +11,18 @@ from pathlib import Path
 from .aco_cli import AcoCli
 from .server import LOOPBACK_HOST, start_board
 
+_HIGHEST_PORT = 65535
+
+
+def _port(text: str) -> int:
+    try:
+        port = int(text)
+    except ValueError:
+        port = -1
+    if not 0 <= port <= _HIGHEST_PORT:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a port between 0 and {_HIGHEST_PORT}")
+    return port
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -26,7 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     serve.add_argument(
         "--port",
-        type=int,
+        type=_port,
         default=0,
         metavar="N",
         help=f"{LOOPBACK_HOST} port to listen on; 0 (default) picks a free one",

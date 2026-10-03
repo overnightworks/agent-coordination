@@ -41,8 +41,8 @@ box-shadow:var(--shadow);padding:20px;margin:0 0 20px}
 .card .text{color:var(--fg-2);margin:0 0 8px}
 .card .example{color:var(--fg-2);border-left:3px solid var(--line-strong);padding-left:12px;
 margin:0 0 12px}
-.card img{display:block;max-width:100%;border:1px solid var(--line);border-radius:8px;
-margin:0 0 12px}
+.card img{display:block;max-width:100%;max-height:60vh;object-fit:contain;
+border:1px solid var(--line);border-radius:8px;margin:0 0 12px}
 .card textarea{width:100%;font:inherit;padding:8px;border:1px solid var(--line-strong);
 border-radius:8px;background:var(--surface);color:var(--fg);margin:0 0 12px;resize:vertical}
 .choices{display:flex;gap:12px}
@@ -93,7 +93,8 @@ async function send(card, outcome) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({token, item: Number(card.dataset.item),
-                            line: Number(card.dataset.line), outcome, note: note || null}),
+                            line: Number(card.dataset.line),
+                            fingerprint: card.dataset.fingerprint, outcome, note: note || null}),
     });
     answer = response.ok ? await response.json()
                          : {status: 'failed', message: await response.text()};
@@ -198,7 +199,8 @@ def _card(line: ExpectationLine) -> str:
         for outcome, label in ((Outcome.YES, "Ja"), (Outcome.NO, "Nein"))
     )
     return (
-        f'<article class="card" data-item="{line.item}" data-line="{line.index}">'
+        f'<article class="card" data-item="{line.item}" data-line="{line.index}" '
+        f'data-fingerprint="{line.fingerprint}">'
         f'<p class="item">#{line.item} · {escape(line.item_title)} · Zeile {line.index}</p>'
         f'<p class="question">{escape(heading)}</p>{sentence}{example}{picture}'
         f'<textarea rows="2" maxlength="{NOTE_MAX_LENGTH}" '

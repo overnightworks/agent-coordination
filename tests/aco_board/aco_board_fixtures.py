@@ -1,9 +1,11 @@
 """A fake `aco` on PATH and a client for the decision board.
 
-The fake answers `aco rulings --json` from `rulings.json` in its working
-directory and applies `aco rule` to that same file, the way aco itself moves
-a line to ruled, so a test drives the board's real adapter and server against
-state it controls. Every invocation is appended to `aco-calls.jsonl`.
+The fake parses its arguments with argparse the way aco does, answers
+`aco rulings --json` from `rulings.json` in its working directory, and applies
+`aco rule` to that same file with aco's own refusals (specs/rule.spec.md:
+already ruled, out of range, unknown item), so a test drives the board's real
+adapter and server against state it controls. Every invocation is appended to
+`aco-calls.jsonl`.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import socket
 import stat
 import sys
 from dataclasses import dataclass, field
@@ -19,44 +22,78 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 _FAKE_ACO = """\
-import json, pathlib, sys
+import argparse, json, pathlib, sys, time
 
 repository = pathlib.Path.cwd()
-arguments = sys.argv[1:]
 with (repository / "aco-calls.jsonl").open("a", encoding="utf-8") as calls:
-    calls.write(json.dumps(arguments) + "\\n")
+    calls.write(json.dumps(sys.argv[1:]) + "\\n")
 rulings = repository / "rulings.json"
 
-if arguments == ["rulings", "--json"]:
+parser = argparse.ArgumentParser(prog="aco")
+commands = parser.add_subparsers(dest="command", required=True)
+listing = commands.add_parser("rulings")
+listing.add_argument("--json", action="store_true")
+rule = commands.add_parser("rule")
+rule.add_argument("item")
+rule.add_argument("--line", type=int, required=True)
+outcomes = rule.add_mutually_exclusive_group(required=True)
+for outcome in ("yes", "no", "later"):
+    outcomes.add_argument("--" + outcome, dest="ruling", action="store_const", const=outcome)
+rule.add_argument("--note")
+rule.add_argument("--json", action="store_true")
+arguments = parser.parse_args()
+
+
+def refuse(reason, message):
+    print("ERROR: " + message, file=sys.stderr)
+    print(json.dumps({"ok": False, "reason": reason, "message": message}))
+    sys.exit(2)
+
+
+def wait_if_asked(name):
+    delay = repository / name
+    if delay.exists():
+        time.sleep(float(delay.read_text(encoding="utf-8")))
+
+
+if arguments.command == "rulings":
+    wait_if_asked("rulings-delay-seconds")
     failure = repository / "rulings-failure.txt"
     if failure.exists():
         print(failure.read_text(encoding="utf-8"), file=sys.stderr)
         sys.exit(2)
+    stdout = repository / "rulings-stdout.txt"
+    if stdout.exists():
+        print(stdout.read_text(encoding="utf-8"))
+        sys.exit(0)
     rows = json.loads(rulings.read_text(encoding="utf-8"))
     print(json.dumps({"ok": True, "reason": "listed", "rulings": rows}))
     sys.exit(0)
 
-if arguments[0] == "rule":
-    refusal = repository / "rule-refusal.json"
-    if refusal.exists():
-        print(refusal.read_text(encoding="utf-8"))
-        sys.exit(2)
-    item, index, ruling = int(arguments[1]), int(arguments[3]), arguments[4][2:]
-    note = arguments[arguments.index("--note") + 1] if "--note" in arguments else None
-    rows = json.loads(rulings.read_text(encoding="utf-8"))
-    for row in rows:
-        for line in row["lines"]:
-            if row["number"] == item and line["index"] == index:
-                line["ruling"], line["ruled_on"] = ruling, "2026-10-03"
-                if note is not None:
-                    line["text"] += " Anmerkung: " + note
-    rulings.write_text(json.dumps(rows), encoding="utf-8")
-    envelope = {"ok": True, "reason": "ruled", "item": item, "index": index,
-                "ruling": ruling, "ruled_on": "2026-10-03", "open": 0}
-    print(json.dumps(envelope))
-    sys.exit(0)
-
-sys.exit(2)
+refusal = repository / "rule-refusal.json"
+if refusal.exists():
+    envelope = json.loads(refusal.read_text(encoding="utf-8"))
+    refuse(envelope["reason"], envelope["message"])
+rows = json.loads(rulings.read_text(encoding="utf-8"))
+wait_if_asked("rule-delay-seconds")
+row = next((row for row in rows if str(row["number"]) == arguments.item), None)
+if row is None:
+    refuse("invalid_item", "#" + arguments.item + " does not exist")
+line = next((line for line in row["lines"] if line["index"] == arguments.line), None)
+if line is None:
+    refuse("line_out_of_range", "line %d out of range: this item has %d expectation line(s)"
+           % (arguments.line, len(row["lines"])))
+if line["ruling"] is not None:
+    refuse("already_ruled",
+           "line %d is already ruled; a changed ruling is a new line" % arguments.line)
+line["ruling"], line["ruled_on"] = arguments.ruling, "2026-10-03"
+if arguments.note is not None:
+    line["text"] += " Anmerkung: " + arguments.note
+rulings.write_text(json.dumps(rows), encoding="utf-8")
+still_open = sum(1 for entry in row["lines"] if entry["ruling"] is None)
+print(json.dumps({"ok": True, "reason": "ruled", "item": row["number"],
+                  "index": arguments.line, "ruling": arguments.ruling,
+                  "ruled_on": "2026-10-03", "open": still_open}))
 """
 
 
@@ -101,6 +138,26 @@ class FakeAcoRepository:
     def fail_rulings(self, stderr: str) -> None:
         (self.directory / "rulings-failure.txt").write_text(stderr, encoding="utf-8")
 
+    def answer_rulings_with(self, stdout: str) -> None:
+        (self.directory / "rulings-stdout.txt").write_text(stdout, encoding="utf-8")
+
+    def delay(self, command: str, seconds: float) -> None:
+        """Hold every later `aco <command>` for `seconds` (rule: between read and write)."""
+        (self.directory / f"{command}-delay-seconds").write_text(str(seconds), encoding="utf-8")
+
+    def rulings_state(self) -> bytes:
+        return (self.directory / "rulings.json").read_bytes()
+
+    def stored_line(self, item: int, index: int) -> dict[str, object]:
+        rows = json.loads(self.rulings_state())
+        return next(
+            line
+            for row in rows
+            if row["number"] == item
+            for line in row["lines"]
+            if line["index"] == index
+        )
+
     def calls(self) -> list[list[str]]:
         log = self.directory / "aco-calls.jsonl"
         if not log.exists():
@@ -144,21 +201,32 @@ class BoardClient:
 
     def decide(
         self,
-        item: int,
-        line: int,
+        card: Card,
         outcome: str,
         *,
         note: str | None = None,
         token: str | None = None,
     ) -> Response:
+        """Click Ja or Nein on `card` the way the page script posts it."""
         payload = {
             "token": self.token if token is None else token,
-            "item": item,
-            "line": line,
+            "item": card.item,
+            "line": card.line,
+            "fingerprint": card.fingerprint,
             "outcome": outcome,
             "note": note,
         }
         return self.post_raw(json.dumps(payload))
+
+    def send_raw(self, request: bytes) -> bytes:
+        """Send bytes as they are, beneath any HTTP client's own checks."""
+        with socket.create_connection((self.host, self.port), timeout=30) as connection:
+            connection.sendall(request)
+            connection.shutdown(socket.SHUT_WR)
+            received = b""
+            while chunk := connection.recv(65536):
+                received += chunk
+            return received
 
     def post_raw(self, body: str) -> Response:
         return self._request("POST", "/rule", body)
@@ -181,6 +249,7 @@ class BoardClient:
 class Card:
     item: int
     line: int
+    fingerprint: str
     texts: dict[str, str] = field(default_factory=dict)
     image_sources: list[str] = field(default_factory=list)
 
@@ -206,7 +275,8 @@ class BoardPage(HTMLParser):
             self.script_count += 1
         if tag == "article" and css_class == "card":
             item, line = attributes.get("data-item"), attributes.get("data-line")
-            self.cards.append(Card(int(item or 0), int(line or 0)))
+            fingerprint = attributes.get("data-fingerprint") or ""
+            self.cards.append(Card(int(item or 0), int(line or 0), fingerprint))
             self._in_card = True
         if tag == "img" and self._in_card:
             self.cards[-1].image_sources.append(attributes.get("src") or "")
@@ -227,3 +297,6 @@ class BoardPage(HTMLParser):
 
     def card_keys(self) -> list[tuple[int, int]]:
         return [(card.item, card.line) for card in self.cards]
+
+    def card(self, item: int, line: int) -> Card:
+        return next(card for card in self.cards if (card.item, card.line) == (item, line))

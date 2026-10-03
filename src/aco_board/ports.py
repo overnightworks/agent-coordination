@@ -7,6 +7,8 @@ source: the board keeps no copy of a line or a ruling.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -27,6 +29,12 @@ class ExpectationLine:
     question: str | None
     example: str | None
     picture: str | None
+
+    @property
+    def fingerprint(self) -> str:
+        """Names exactly the expectation a card shows: item, line, and its text."""
+        shown = json.dumps([self.item, self.index, self.text], ensure_ascii=False)
+        return hashlib.sha256(shown.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -62,5 +70,6 @@ class DecisionPort(Protocol):
         ...
 
     def rule(self, decision: Decision) -> DecisionResult:
-        """Write one decision; the source itself refuses an already-ruled line."""
+        """Write one decision; the source itself refuses an already-ruled line,
+        an unknown item, or a line the item does not have."""
         ...
