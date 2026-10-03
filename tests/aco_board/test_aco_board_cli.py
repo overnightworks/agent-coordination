@@ -11,7 +11,6 @@ import io
 import socket
 import sys
 import threading
-import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -28,7 +27,9 @@ from aco_board_fixtures import (
 )
 
 from aco_board import cli
-from aco_board.server import LOOPBACK_HOST
+from aco_board.aco_cli import AcoCli
+from aco_board.ports import Decision, DecisionPort, DecisionResult
+from aco_board.server import LOOPBACK_HOST, RunningBoard, start_board
 
 _URL_WAIT_SECONDS = 30
 
@@ -111,31 +112,78 @@ def test_serve_shows_its_own_repository_on_a_tokened_loopback_url_until_interrup
     assert board.token
 
 
+class _ShutdownWatchedLock:
+    """A stand-in for the board's write lock, reporting when the main thread --
+    the one that shuts the server down -- starts waiting on it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.shutdown_waits = threading.Event()
+
+    def acquire(self) -> bool:
+        if threading.current_thread() is threading.main_thread():
+            self.shutdown_waits.set()
+        return self._lock.acquire()
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, *_: object) -> None:
+        self.release()
+
+
 @pytest.mark.usefixtures("fake_aco_on_path")
 def test_interrupting_serve_during_a_ruling_waits_until_the_ruling_is_stored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository = _repository(tmp_path / "here", row(42, "Share page", line(1, "Guests?")))
-    repository.delay("rule", 0.5)
+    ruling_entered = threading.Event()
+    ruling_may_finish = threading.Event()
+    watched_locks: list[_ShutdownWatchedLock] = []
 
+    class HeldRuling(AcoCli):
+        def rule(self, decision: Decision) -> DecisionResult:
+            ruling_entered.set()
+            assert ruling_may_finish.wait(_URL_WAIT_SECONDS)
+            return super().rule(decision)
+
+    def start_watched_board(port: int, decisions: DecisionPort) -> RunningBoard:
+        board = start_board(port, decisions)
+        watched = _ShutdownWatchedLock()
+        # Swapped before serving starts, so no request has taken the real lock.
+        monkeypatch.setattr(board.httpd, "write_lock", watched)
+        watched_locks.append(watched)
+        return board
+
+    monkeypatch.setattr(cli, "AcoCli", HeldRuling)
+    monkeypatch.setattr(cli, "start_board", start_watched_board)
+    seen_while_shutdown_waited: list[list[list[str]]] = []
+
+    def release_once_shutdown_waits() -> None:
+        [watched] = watched_locks
+        if watched.shutdown_waits.wait(_URL_WAIT_SECONDS):
+            seen_while_shutdown_waited.append(repository.rule_calls())
+        ruling_may_finish.set()
+
+    releaser = threading.Thread(target=release_once_shutdown_waits)
     with ThreadPoolExecutor(max_workers=1) as clicks:
 
         def click_then_interrupt(board: BoardClient) -> None:
             card = BoardPage(board.get_page().body).card(42, 1)
             clicks.submit(board.decide, card, "yes")
-            _wait_until(lambda: repository.rule_calls() != [])
+            assert ruling_entered.wait(_URL_WAIT_SECONDS)
+            releaser.start()
 
         assert _serve_until_done(monkeypatch, repository.directory, click_then_interrupt) == 0
         # Checked before the click's own answer is awaited: `main` returning
         # must already mean the ruling is stored.
         assert repository.stored_line(42, 1)["ruling"] == "yes"
-
-
-def _wait_until(condition: Callable[[], bool]) -> None:
-    deadline = time.monotonic() + _URL_WAIT_SECONDS
-    while not condition():
-        assert time.monotonic() < deadline
-        time.sleep(0.01)
+    releaser.join(_URL_WAIT_SECONDS)
+    # Shutdown was already waiting while the held ruling had not yet called `aco rule`.
+    assert seen_while_shutdown_waited == [[]]
 
 
 def test_serve_offers_no_way_to_listen_beyond_loopback(capsys: pytest.CaptureFixture[str]) -> None:
