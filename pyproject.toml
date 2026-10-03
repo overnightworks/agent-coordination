@@ -13,6 +13,7 @@ authors = [{name = "agent-coordination contributors"}]
 
 [project.scripts]
 aco = "agent_coordination.cli:main"
+aco-board = "aco_board.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -51,7 +52,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "PL", "FURB", "N"]
 "tests/**" = ["PLR2004", "PLR0913", "PLR0917"]
 
 [tool.importlinter]
-root_package = "agent_coordination"
+root_packages = ["agent_coordination", "aco_board"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -82,6 +83,22 @@ layers = [
 # `body` (the body-block codec) reach `metrics.Size` for its own
 # `size`/`[[expectation]]` schema, while `items` may still import `body`,
 # never the reverse.
+
+[[tool.importlinter.contracts]]
+name = "aco does not import the decision board"
+type = "forbidden"
+source_modules = ["agent_coordination"]
+forbidden_modules = ["aco_board"]
+allow_indirect_imports = false
+
+[[tool.importlinter.contracts]]
+name = "The decision board reaches aco only through its command line"
+type = "forbidden"
+# Issue #617: the board talks to aco through the installed `aco` CLI and its
+# specified JSON, never through aco's internal modules.
+source_modules = ["aco_board"]
+forbidden_modules = ["agent_coordination"]
+allow_indirect_imports = false
 
 [[tool.importlinter.contracts]]
 name = "items does not import metrics"

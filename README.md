@@ -318,6 +318,10 @@ landed; fewer measurements, including zero, show `schwach` instead. The
 exact text sections, JSON keys, HTML layout, and estimate derivation are
 `specs/board.spec.md`'s own.
 
+`aco-board serve [--port N]` serves this repository's open expectation lines
+as yes/no cards on 127.0.0.1; the access token is in the printed URL. A
+choice can be undone for 8 seconds, then it is written through `aco rule`.
+
 ## Scope and boundaries
 
 GitHub through the `gh` CLI is the one forge adapter that exists today. A
