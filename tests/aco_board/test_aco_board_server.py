@@ -12,7 +12,7 @@ import json
 import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import pytest
@@ -29,6 +29,7 @@ from aco_board_fixtures import (
 
 from aco_board.aco_cli import AcoCli
 from aco_board.page import NOTE_MAX_LENGTH
+from aco_board.ports import Decision, DecisionPort, DecisionResult, ExpectationLine
 from aco_board.server import LINE_CHANGED, LOOPBACK_HOST, start_board
 
 
@@ -44,8 +45,8 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeAcoReposi
 
 
 @contextmanager
-def serving(decisions: AcoCli) -> Iterator[BoardClient]:
-    running = start_board(0, decisions)
+def serving(decisions: DecisionPort, **board_options: float) -> Iterator[BoardClient]:
+    running = start_board(0, decisions, **board_options)
     server_thread = threading.Thread(
         target=running.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
     )
@@ -297,24 +298,24 @@ def test_a_hung_aco_shows_that_it_did_not_answer(repository: FakeAcoRepository) 
     repository.set_rulings(row(42, "Share page", line(1, "Guests?")))
     repository.delay("rulings", 30)
 
-    with serving(AcoCli(directory=repository.directory, timeout_seconds=0.5)) as board:
+    with serving(AcoCli(directory=repository.directory, timeout_seconds=5)) as board:
         response = board.get_page()
 
     assert response.status == 502
-    assert "aco rulings did not answer within 0.5 seconds" in response.body
+    assert "aco rulings did not answer within 5 seconds" in response.body
 
 
 def test_a_hung_aco_rule_keeps_the_card_undecided(repository: FakeAcoRepository) -> None:
     repository.set_rulings(row(42, "Share page", line(1, "Guests?")))
     repository.delay("rule", 30)
 
-    with serving(AcoCli(directory=repository.directory, timeout_seconds=0.5)) as board:
+    with serving(AcoCli(directory=repository.directory, timeout_seconds=5)) as board:
         answer = board.decide(_page(board).card(42, 1), "yes")
         page_after = _page(board)
 
     assert answer.json() == {
         "status": "failed",
-        "message": "aco rule did not answer within 0.5 seconds",
+        "message": "aco rule did not answer within 5 seconds",
     }
     assert page_after.card_keys() == [(42, 1)]
 
@@ -359,12 +360,38 @@ def test_a_line_aco_does_not_know_is_refused_with_acos_sentence(
     assert repository.rulings_state() == state_before
 
 
+_SHOWN_FIELDS = {
+    "title": "Share page",
+    "text": "Guests may comment.",
+    "question": "Darf Ben kommentieren?",
+    "example": "Ben schreibt",
+    "picture": '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>',
+}
+
+
+def _shown_row(**changes: str) -> dict[str, object]:
+    card = {**_SHOWN_FIELDS, **changes}
+    title, text = card.pop("title"), card.pop("text")
+    return row(42, title, line(1, text, **card))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"title": "Share link"},
+        {"text": "Guests may delete."},
+        {"question": "Darf Ben löschen?"},
+        {"example": "Ben löscht"},
+        {"picture": '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'},
+    ],
+    ids=["title", "text", "question", "example", "picture"],
+)
 def test_a_card_whose_line_changed_since_rendering_is_refused_without_writing(
-    repository: FakeAcoRepository, board: BoardClient
+    repository: FakeAcoRepository, board: BoardClient, change: dict[str, str]
 ) -> None:
-    repository.set_rulings(row(42, "Share page", line(1, "Guests may comment.")))
+    repository.set_rulings(_shown_row())
     stale = _page(board).card(42, 1)
-    repository.set_rulings(row(42, "Share page", line(1, "Guests may delete.")))
+    repository.set_rulings(_shown_row(**change))
     state_before = repository.rulings_state()
 
     answer = board.decide(stale, "yes")
@@ -531,6 +558,91 @@ def test_a_malformed_request_gets_a_fixed_answer_without_a_traceback(
     assert str(Path(__file__).parents[2]).encode() not in rest
     assert "Traceback" not in capsys.readouterr().err
     assert repository.rule_calls() == []
+
+
+_SHORT_DEADLINE_SECONDS = 0.2
+
+
+@pytest.mark.parametrize(
+    ("unfinished", "status"),
+    [
+        (b"POST /rule HTTP/1.1\r\nHost: x\r\n", None),
+        (_post(b'{"item": 42}', b"40"), b"408"),
+    ],
+    ids=["headers-unfinished", "body-unfinished"],
+)
+def test_a_stalled_request_is_dropped_after_the_deadline_without_a_traceback(
+    repository: FakeAcoRepository,
+    capsys: pytest.CaptureFixture[str],
+    unfinished: bytes,
+    status: bytes | None,
+) -> None:
+    decisions = AcoCli(directory=repository.directory)
+    with serving(decisions, request_deadline_seconds=_SHORT_DEADLINE_SECONDS) as board:
+        answer = board.send_unfinished(unfinished)
+
+    assert (answer.split(b" ")[1] if answer else None) == status
+    assert "Traceback" not in capsys.readouterr().err
+    assert repository.calls() == []
+
+
+def test_a_stalled_request_does_not_hold_up_shutdown(repository: FakeAcoRepository) -> None:
+    def serve_and_stop_beneath(stalled_clients: ExitStack) -> None:
+        with serving(AcoCli(directory=repository.directory)) as board:
+            stalled_clients.enter_context(board.holding_unfinished(b"GET /?t="))
+            # Connections are accepted in order, so this answer means the
+            # stalled one already holds a handler.
+            board.send_raw(b"GET /elsewhere HTTP/1.1\r\nHost: x\r\n\r\n")
+
+    with ExitStack() as stalled_clients:
+        stopping = threading.Thread(
+            target=serve_and_stop_beneath, args=(stalled_clients,), daemon=True
+        )
+        stopping.start()
+        stopping.join(timeout=5)
+
+        assert not stopping.is_alive()
+
+
+def test_a_browser_leaving_mid_answer_prints_no_traceback(
+    repository: FakeAcoRepository, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repository.set_rulings(row(42, "Share page", line(1, "Guests?")))
+    repository.delay("rulings", 0.3)
+
+    with serving(AcoCli(directory=repository.directory)) as board:
+        board.send_and_reset(f"GET /?t={board.token} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        _wait_for_request_handlers()
+
+    assert repository.calls() == [["rulings", "--json"]]
+    assert "Traceback" not in capsys.readouterr().err
+
+
+class _BrokenPipeSource:
+    """A decision source whose own pipe breaks: a server defect, not a client leaving."""
+
+    def expectation_lines(self) -> tuple[ExpectationLine, ...]:
+        raise BrokenPipeError("aco's pipe broke")
+
+    def rule(self, decision: Decision) -> DecisionResult:
+        raise AssertionError("the board must not write after a failed read")
+
+
+def test_a_broken_pipe_inside_the_board_still_prints_its_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with serving(_BrokenPipeSource()) as board:
+        board.send_raw(f"GET /?t={board.token} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        _wait_for_request_handlers()
+
+    assert "BrokenPipeError: aco's pipe broke" in capsys.readouterr().err
+
+
+def _wait_for_request_handlers() -> None:
+    # `socketserver.ThreadingMixIn` names every handler thread after its target.
+    for thread in threading.enumerate():
+        if thread.name.endswith("(process_request_thread)"):
+            thread.join(timeout=10)
 
 
 def test_the_board_listens_on_loopback_only(board: BoardClient) -> None:

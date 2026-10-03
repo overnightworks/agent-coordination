@@ -15,7 +15,10 @@ import json
 import os
 import socket
 import stat
+import struct
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -179,6 +182,13 @@ class Response:
         return parsed
 
 
+def _received_until_closed(connection: socket.socket) -> bytes:
+    received = b""
+    while chunk := connection.recv(65536):
+        received += chunk
+    return received
+
+
 @dataclass(frozen=True)
 class BoardClient:
     host: str
@@ -220,13 +230,33 @@ class BoardClient:
 
     def send_raw(self, request: bytes) -> bytes:
         """Send bytes as they are, beneath any HTTP client's own checks."""
-        with socket.create_connection((self.host, self.port), timeout=30) as connection:
+        with self._connection() as connection:
             connection.sendall(request)
             connection.shutdown(socket.SHUT_WR)
-            received = b""
-            while chunk := connection.recv(65536):
-                received += chunk
-            return received
+            return _received_until_closed(connection)
+
+    def send_unfinished(self, request: bytes) -> bytes:
+        """Send the start of a request, keep the connection open, and return
+        whatever the board answers before it closes the connection."""
+        with self._connection() as connection:
+            connection.sendall(request)
+            return _received_until_closed(connection)
+
+    @contextmanager
+    def holding_unfinished(self, request: bytes) -> Iterator[None]:
+        """Keep a connection open on the start of a request while inside."""
+        with self._connection() as connection:
+            connection.sendall(request)
+            yield
+
+    def send_and_reset(self, request: bytes) -> None:
+        """Send a whole request, then hang up with a reset before any answer."""
+        with self._connection() as connection:
+            connection.sendall(request)
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+
+    def _connection(self) -> socket.socket:
+        return socket.create_connection((self.host, self.port), timeout=30)
 
     def post_raw(self, body: str) -> Response:
         return self._request("POST", "/rule", body)

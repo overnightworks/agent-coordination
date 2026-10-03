@@ -3,7 +3,7 @@
 Binds `127.0.0.1` only -- there is no host option -- and answers only a
 request carrying the per-start access token: `GET /?t=TOKEN` renders the page
 from a fresh read of the decision source, `POST /rule` submits one decision.
-A malformed request gets a fixed 4xx answer, never a traceback.
+A malformed or stalled request gets a fixed 4xx answer, never a traceback.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ from __future__ import annotations
 import hmac
 import json
 import secrets
+import socket
+import sys
 import threading
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -35,6 +37,10 @@ RULE_PATH = "/rule"
 _MAX_REQUEST_BYTES = 16 * 1024
 """A decision is two numbers, an outcome, a fingerprint, and a short note;
 anything larger is refused before it is read."""
+REQUEST_DEADLINE_SECONDS = 10.0
+"""How long one socket read or write on a connection may wait; a browser
+sends its small request at once, so a client still silent after this is
+dropped rather than holding a handler thread."""
 LINE_CHANGED = "Diese Zeile hat sich geändert, bitte neu laden"
 
 
@@ -45,14 +51,35 @@ class _DecisionRequest:
     decision: Decision
 
 
+class _ClientDisconnectedError(Exception):
+    """Raised only by `_BoardRequestHandler._respond`'s own socket write: the
+    one place a broken or reset connection is honestly the client hanging up
+    rather than a server defect raising the same exception elsewhere."""
+
+
 class _BoardServer(ThreadingHTTPServer):
-    def __init__(self, port: int, token: str, decisions: DecisionPort) -> None:
+    # `ThreadingHTTPServer` runs handlers as daemon threads, so `server_close`
+    # never waits for one a stalled client holds.
+
+    def __init__(
+        self, port: int, token: str, decisions: DecisionPort, request_deadline_seconds: float
+    ) -> None:
         super().__init__((LOOPBACK_HOST, port), _BoardRequestHandler)
         self.token = token
         self.decisions = decisions
+        self.request_deadline_seconds = request_deadline_seconds
         # `aco rule` rewrites the whole item body, so two writes at once could
         # each drop the other's ruling; this server writes one at a time.
         self.write_lock = threading.Lock()
+
+    def handle_error(
+        self, request: socket.socket | tuple[bytes, socket.socket], client_address: tuple[str, int]
+    ) -> None:
+        """A browser that leaves mid-response is no defect: stay quiet for it
+        and keep the stdlib's traceback for everything else."""
+        if isinstance(sys.exc_info()[1], _ClientDisconnectedError):
+            return
+        super().handle_error(request, client_address)
 
 
 @dataclass(frozen=True)
@@ -61,10 +88,15 @@ class RunningBoard:
     url: str
 
 
-def start_board(port: int, decisions: DecisionPort) -> RunningBoard:
+def start_board(
+    port: int,
+    decisions: DecisionPort,
+    *,
+    request_deadline_seconds: float = REQUEST_DEADLINE_SECONDS,
+) -> RunningBoard:
     """Bind `127.0.0.1:port` (0 picks a free port) with a fresh token."""
     token = secrets.token_urlsafe(32)
-    httpd = _BoardServer(port, token, decisions)
+    httpd = _BoardServer(port, token, decisions, request_deadline_seconds)
     bound_port = httpd.server_address[1]
     url = f"http://{LOOPBACK_HOST}:{bound_port}{PAGE_PATH}?{TOKEN_FIELD}={token}"
     return RunningBoard(httpd=httpd, url=url)
@@ -76,9 +108,11 @@ def submit_decision(
     """Write `decision` unless the open line it names no longer reads as shown.
 
     The fingerprint comparison is the board's only own check: the card was
-    rendered from an earlier read, and a changed text must not be ruled
-    blind. Whether the line is already ruled, out of range, or its item
-    unknown is the source's own refusal, which `rule` reports.
+    rendered from an earlier read, and an open line whose title, text,
+    question, example, or picture changed since must not be ruled blind. A
+    line that is no longer open skips the comparison on purpose: whether it
+    is already ruled, out of range, or its item unknown is the source's own
+    refusal, which `rule` reports.
     """
     try:
         lines = decisions.expectation_lines()
@@ -164,6 +198,12 @@ class _BoardRequestHandler(BaseHTTPRequestHandler):
         # `_BoardServer.__init__` is this handler's only constructor.
         return cast(_BoardServer, self.server)
 
+    def setup(self) -> None:
+        # The per-server form of `StreamRequestHandler.timeout`, whose class
+        # attribute every board would share; set before the request is read.
+        super().setup()
+        self.connection.settimeout(self._board().request_deadline_seconds)
+
     def _authorized(self, candidate: str | None) -> bool:
         # The token is ASCII, so a non-ASCII candidate (a lone surrogate
         # included) is simply wrong; `compare_digest` raises on one.
@@ -177,14 +217,17 @@ class _BoardRequestHandler(BaseHTTPRequestHandler):
         self, status: HTTPStatus, body: str, content_type: str, *, nonce: str | None = None
     ) -> None:
         encoded = body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(encoded)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", page.content_security_policy(nonce))
-        self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", page.content_security_policy(nonce))
+            self.end_headers()
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as error:
+            raise _ClientDisconnectedError from error
 
     def _respond_text(self, status: HTTPStatus, body: str) -> None:
         self._respond(status, body, "text/plain; charset=utf-8")
@@ -218,7 +261,12 @@ class _BoardRequestHandler(BaseHTTPRequestHandler):
         if length is None:
             self._respond_text(HTTPStatus.BAD_REQUEST, "bad request: Content-Length")
             return
-        request = _parsed_decision_request(self.rfile.read(length))
+        try:
+            raw = self.rfile.read(length)
+        except TimeoutError:
+            self._respond_text(HTTPStatus.REQUEST_TIMEOUT, "request timeout: body incomplete")
+            return
+        request = _parsed_decision_request(raw)
         if request is not None and not self._authorized(request.token):
             self._respond_text(HTTPStatus.FORBIDDEN, "forbidden: missing or wrong token")
             return

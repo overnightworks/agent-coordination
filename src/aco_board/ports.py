@@ -32,8 +32,19 @@ class ExpectationLine:
 
     @property
     def fingerprint(self) -> str:
-        """Names exactly the expectation a card shows: item, line, and its text."""
-        shown = json.dumps([self.item, self.index, self.text], ensure_ascii=False)
+        """Names exactly what a card shows the operator: every field it renders."""
+        shown = json.dumps(
+            [
+                self.item,
+                self.item_title,
+                self.index,
+                self.text,
+                self.question,
+                self.example,
+                self.picture,
+            ],
+            ensure_ascii=False,
+        )
         return hashlib.sha256(shown.encode("utf-8", "surrogatepass")).hexdigest()
 
 
