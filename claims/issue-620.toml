@@ -3,6 +3,6 @@ agent = "Claude 255c9087-94fa-477f-af88-8eb64e5acd39"
 role = "builder"
 base = "cd99caa9b0b4e979a1b755dfac920de1f34d4daa"
 branch = "claude/issue-620-board-first-slice"
-scope = ["pyproject.toml", "src/aco_board", "tests/aco_board"]
+scope = [".github/workflows/ci.yml", "README.md", "pyproject.toml", "sonar-project.properties", "src/aco_board", "tests/aco_board"]
 opened_commit = "3820d5f9bc852fd45585e427f8c45d1c381d28d1"
 whole_reason = "Erster vertikaler Schnitt des Boards: neues Paket, seine Tests und der Skript- und Import-Linter-Eintrag gehören zusammen"
