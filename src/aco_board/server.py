@@ -120,11 +120,11 @@ def submit_decision(
     """Write `decision` unless the open line it names no longer reads as shown.
 
     The fingerprint comparison is the board's only own check: the card was
-    rendered from an earlier read, and an open line whose title, text,
-    question, example, or picture changed since must not be ruled blind. A
-    line that is no longer open skips the comparison on purpose: whether it
-    is already ruled, out of range, or its item unknown is the source's own
-    refusal, which `rule` reports.
+    rendered from an earlier read, and an open line whose item, title,
+    index, text, question, example, or picture changed since must not be
+    ruled blind. A line that is no longer open skips the comparison on
+    purpose: whether it is already ruled, out of range, or its item unknown
+    is the source's own refusal, which `rule` reports.
     """
     try:
         lines = decisions.expectation_lines()
