@@ -249,6 +249,17 @@ class BoardClient:
             connection.sendall(request)
             yield
 
+    @contextmanager
+    def holding_unread(self, request: bytes) -> Iterator[None]:
+        """Send a whole request, then read none of the answer while inside."""
+        with socket.socket() as connection:
+            # A small receive window set before connecting, so the board's
+            # write blocks instead of filling the kernel's buffers.
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            connection.connect((self.host, self.port))
+            connection.sendall(request)
+            yield
+
     def send_and_reset(self, request: bytes) -> None:
         """Send a whole request, then hang up with a reset before any answer."""
         with self._connection() as connection:

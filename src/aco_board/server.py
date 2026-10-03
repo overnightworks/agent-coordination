@@ -59,18 +59,19 @@ class _ClientDisconnectedError(Exception):
 
 class _BoardServer(ThreadingHTTPServer):
     # `ThreadingHTTPServer` runs handlers as daemon threads, so `server_close`
-    # never waits for one a stalled client holds.
+    # never waits for one a stalled client holds -- only for a ruling write.
 
     def __init__(
         self, port: int, token: str, decisions: DecisionPort, request_deadline_seconds: float
     ) -> None:
+        # `aco rule` rewrites the whole item body, so two writes at once could
+        # each drop the other's ruling; this server writes one at a time. Made
+        # before binding: a failed bind already calls `server_close`.
+        self.write_lock = threading.Lock()
         super().__init__((LOOPBACK_HOST, port), _BoardRequestHandler)
         self.token = token
         self.decisions = decisions
         self.request_deadline_seconds = request_deadline_seconds
-        # `aco rule` rewrites the whole item body, so two writes at once could
-        # each drop the other's ruling; this server writes one at a time.
-        self.write_lock = threading.Lock()
 
     def handle_error(
         self, request: socket.socket | tuple[bytes, socket.socket], client_address: tuple[str, int]
@@ -80,6 +81,17 @@ class _BoardServer(ThreadingHTTPServer):
         if isinstance(sys.exc_info()[1], _ClientDisconnectedError):
             return
         super().handle_error(request, client_address)
+
+    def server_close(self) -> None:
+        """Stop listening, then wait for a ruling already being written.
+
+        Handler threads are daemons, so the process may exit while one is
+        inside `aco rule`, leaving the ruling's outcome unknown. Taking the
+        write lock waits for that write -- as long as the source's own timeout
+        lets it run -- and is never released, so no later write starts.
+        """
+        super().server_close()
+        self.write_lock.acquire()
 
 
 @dataclass(frozen=True)

@@ -401,6 +401,24 @@ def test_a_card_whose_line_changed_since_rendering_is_refused_without_writing(
     assert repository.rulings_state() == state_before
 
 
+@pytest.mark.parametrize("twin", [(43, 1), (42, 2)], ids=["item", "index"])
+def test_a_card_shown_for_another_line_with_the_same_words_is_refused_without_writing(
+    repository: FakeAcoRepository, board: BoardClient, twin: tuple[int, int]
+) -> None:
+    repository.set_rulings(
+        row(42, "Share page", line(1, "Guests?"), line(2, "Guests?")),
+        row(43, "Share page", line(1, "Guests?")),
+    )
+    twin_card = _page(board).card(*twin)
+    state_before = repository.rulings_state()
+
+    answer = board.decide(Card(42, 1, fingerprint=twin_card.fingerprint), "yes")
+
+    assert answer.json() == {"status": "failed", "message": LINE_CHANGED}
+    assert repository.rule_calls() == []
+    assert repository.rulings_state() == state_before
+
+
 def test_simultaneous_decisions_on_one_item_are_all_stored(
     repository: FakeAcoRepository, board: BoardClient
 ) -> None:
@@ -615,6 +633,32 @@ def test_a_browser_leaving_mid_answer_prints_no_traceback(
         _wait_for_request_handlers()
 
     assert repository.calls() == [["rulings", "--json"]]
+    assert "Traceback" not in capsys.readouterr().err
+
+
+class _HugeLineSource:
+    """One open line far larger than the socket buffers between board and client."""
+
+    def expectation_lines(self) -> tuple[ExpectationLine, ...]:
+        huge_text = "x" * (32 * 1024 * 1024)
+        return (ExpectationLine(42, "Share page", 1, huge_text, True, None, None, None),)
+
+    def rule(self, decision: Decision) -> DecisionResult:
+        raise AssertionError("loading the page must not write")
+
+
+def test_a_browser_that_stops_reading_is_dropped_without_a_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        serving(_HugeLineSource(), request_deadline_seconds=_SHORT_DEADLINE_SECONDS) as board,
+        board.holding_unread(f"GET /?t={board.token} HTTP/1.1\r\nHost: x\r\n\r\n".encode()),
+    ):
+        # Connections are accepted in order, so this answer means the
+        # unread one already holds a handler.
+        board.send_raw(b"GET /elsewhere HTTP/1.1\r\nHost: x\r\n\r\n")
+        _wait_for_request_handlers()
+
     assert "Traceback" not in capsys.readouterr().err
 
 

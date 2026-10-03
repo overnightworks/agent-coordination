@@ -11,7 +11,9 @@ import io
 import socket
 import sys
 import threading
+import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -107,6 +109,33 @@ def test_serve_shows_its_own_repository_on_a_tokened_loopback_url_until_interrup
     [board] = seen
     assert board.host == LOOPBACK_HOST
     assert board.token
+
+
+@pytest.mark.usefixtures("fake_aco_on_path")
+def test_interrupting_serve_during_a_ruling_waits_until_the_ruling_is_stored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _repository(tmp_path / "here", row(42, "Share page", line(1, "Guests?")))
+    repository.delay("rule", 0.5)
+
+    with ThreadPoolExecutor(max_workers=1) as clicks:
+
+        def click_then_interrupt(board: BoardClient) -> None:
+            card = BoardPage(board.get_page().body).card(42, 1)
+            clicks.submit(board.decide, card, "yes")
+            _wait_until(lambda: repository.rule_calls() != [])
+
+        assert _serve_until_done(monkeypatch, repository.directory, click_then_interrupt) == 0
+        # Checked before the click's own answer is awaited: `main` returning
+        # must already mean the ruling is stored.
+        assert repository.stored_line(42, 1)["ruling"] == "yes"
+
+
+def _wait_until(condition: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + _URL_WAIT_SECONDS
+    while not condition():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
 
 
 def test_serve_offers_no_way_to_listen_beyond_loopback(capsys: pytest.CaptureFixture[str]) -> None:
