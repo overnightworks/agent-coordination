@@ -251,7 +251,7 @@ dev = [
     "build>=1",
     "ruff==0.16.2",
     "vulture==2.16",
-    "import-linter==2.13",
+    "import-linter==2.15",
     "pyright==1.1.411",
     "pytest-xdist>=3.8.0",
 ]
