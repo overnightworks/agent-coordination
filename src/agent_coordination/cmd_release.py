@@ -426,7 +426,11 @@ def release_transition(
     ago, a rerun resumes it, or a standalone release follows a merge made
     elsewhere: a merged pull request's head no longer moves."""
     issue = protocol.optional_issue_number(parsed.issue)
-    identity = protocol.resolved_identity(issue, release_branch or "")
+    identity = protocol.lookup_identity(
+        issue,
+        release_branch or "",
+        holders=lambda: protocol.claims_on_branch(context.observation.claims, release_branch or ""),
+    )
     storage = context.config.storage
     if parsed.merged is not None and storage is body.Storage.STATE_REF:
         return _cmd_release_landed(parsed, context, identity, storage, release_branch)

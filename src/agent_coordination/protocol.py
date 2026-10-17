@@ -20,8 +20,8 @@ MISSING_STATE_REF = (
     "the claim state ref does not exist yet; run bootstrap before claim, rescope, "
     "release, or item write"
 )
-# Coordination-contract convention: the only branch prefixes an issueless lane claim
-# may use, so a builder that forgot its issue number never gets a silent, unlabeled,
+# Coordination-contract convention: the branch prefixes `claim` accepts for an issue-less
+# lane, so a builder that forgot its issue number never gets a silent, unlabeled,
 # non-projected claim instead of a loud refusal.
 ISSUELESS_LANE_BRANCH_PREFIXES = ("docs/", "fix/")
 CLAIM_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -115,7 +115,7 @@ class IssueIdentity:
 
 @dataclass(frozen=True)
 class LaneIdentity:
-    """A claim scoped to one issueless `docs/`/`fix/` lane.
+    """A claim scoped to one issue-less lane.
 
     Carries no branch of its own: the lane name is owned entirely by the enclosing
     claim record's `branch`, which every lane claim already has. A second
@@ -1690,6 +1690,35 @@ def parse_resource_toml(content: str, *, name: str, tip: ObjectId) -> ResourceRe
     return ResourceRecord(name=name, occupied=tuple(occupied))
 
 
+def is_issueless_lane_branch(branch: str) -> bool:
+    return branch.startswith(ISSUELESS_LANE_BRANCH_PREFIXES)
+
+
+def claims_on_branch(claims: Mapping[str, ActiveClaim], branch: str) -> tuple[ActiveClaim, ...]:
+    return tuple(claim for claim in claims.values() if claim.branch == branch)
+
+
+def lookup_identity(
+    issue: int | None, branch: str, *, holders: Callable[[], tuple[ActiveClaim, ...]]
+) -> ClaimIdentity:
+    """Resolve an existing lane without relaxing claim acquisition's prefix rule."""
+    if (
+        issue is None
+        and not is_issueless_lane_branch(branch)
+        and any(isinstance(claim.identity, LaneIdentity) for claim in holders())
+    ):
+        return LaneIdentity()
+    return resolved_identity(issue, branch)
+
+
+def _issueless_lane_refusal(branch: str) -> str:
+    prefixes = " or ".join(repr(prefix) for prefix in ISSUELESS_LANE_BRANCH_PREFIXES)
+    return (
+        f"branch {branch!r} is not an issueless lane; pass an issue number, or "
+        f"check out a branch prefixed {prefixes}"
+    )
+
+
 def resolved_identity(issue: int | None, branch: str) -> ClaimIdentity:
     """Resolve the CLI's discriminated identity: an explicit issue, or a lane.
 
@@ -1701,12 +1730,8 @@ def resolved_identity(issue: int | None, branch: str) -> ClaimIdentity:
     """
     if issue is not None:
         return IssueIdentity(issue)
-    if not branch.startswith(ISSUELESS_LANE_BRANCH_PREFIXES):
-        prefixes = " or ".join(repr(prefix) for prefix in ISSUELESS_LANE_BRANCH_PREFIXES)
-        raise ClaimError(
-            f"branch {branch!r} is not an issueless lane; pass an issue number, or "
-            f"check out a branch prefixed {prefixes}"
-        )
+    if not is_issueless_lane_branch(branch):
+        raise ClaimError(_issueless_lane_refusal(branch))
     return LaneIdentity()
 
 

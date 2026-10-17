@@ -21,7 +21,8 @@ the sentence naming a canonical remote with no URL configured (PROT-45),
 and the sentences for a path no claim can ever cover (PROT-14, PROT-42,
 PROT-43) that `rescope` shares verbatim, `protect`'s own docstring names the
 sharing; `specs/claim.spec.md` owns the issueless-lane branch refusal
-(CLM-07) that the identity resolution shares with `rescope` too. This file cites
+(CLM-07), which rescope shares; this file owns RESC-27's exception for a
+live lane claim. This file cites
 those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 `<path>` a path, `<claim-id>` the selected claim's own id; `<subject>` and
 `<identity>` are `specs/release.spec.md`'s own, naming an item `<label>`.
@@ -44,6 +45,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 | the path is below a file or a dangling symlink, or the checkout root | RESC-19 | RESC-19 | — | — |
 | the path resolves outside the checkout | RESC-05 | RESC-05 | — | — |
 | no live claim on this identity/branch | RESC-14 | RESC-14 | RESC-14 | — |
+| lane mode, branch outside `docs/`/`fix/` | RESC-27 | RESC-27 | RESC-27 | — |
 | a different agent than the claimant | CLAIM-37 | CLAIM-37 | CLAIM-37 | — |
 | a comma-bearing value matching nothing | RESC-06 | — (never checked) | — | — |
 | dropping a path not in the claim's scope | — | RESC-07 | — | — |
@@ -72,6 +74,7 @@ those IDs rather than restating them. `<flag>` is `--add` or `--drop`,
 
 ## Selecting the live claim
 
+- [ ] [RESC-27] A lane-mode rescope on a branch outside `docs/`/`fix/` resolves the lane when that branch holds a live lane claim; otherwise CLM-07's sentence refuses, exit `2`.
 - [ ] [RESC-14] No live claim on this identity/branch, or a `--claim-id` not matching the one live claim, refuses `<identity> has no active build claim`, exit `2`; `rescope` and `release` share this lookup.
 
 ## Combining the scope

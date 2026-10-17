@@ -29,7 +29,8 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 |---|---|---|---|
 | neither or both outcome flags given | REL-01 | REL-01 | REL-01 |
 | `REASON` blank, padded, multiline, or over 512 characters | — | — | REL-02 |
-| lane mode, branch not `docs/`/`fix/` | REL-03 | REL-03 | REL-03 |
+| lane mode, branch outside `docs/`/`fix/`, no live lane claim | REL-03 | REL-03 | REL-03 |
+| lane mode, branch holds a live lane claim | REL-57 | REL-57 | REL-57 |
 | explicit `--branch` | REL-04 | REL-04 | REL-04 |
 | `--branch` omitted, issue + `--claim-id` both given | REL-05 | REL-05 | REL-05 |
 | `--branch` omitted, no issue, empty checkout branch | REL-06 | REL-06 | REL-06 |
@@ -64,11 +65,11 @@ in quoting the lane's branch: `issue <label>` or `lane '<branch>'`. A refusal re
 
 ## Identity and branch resolution
 
-Omitting the positional issue number and an explicit `--branch` both select
-lane mode the same way `aco claim`'s own lane mode does; a future `claim`
-spec would cite REL-03 rather than restate it.
+Omitting the positional issue number selects lane mode; REL-03 and REL-57
+resolve it from the explicit `--branch` or the checkout branch.
 
-- [ ] [REL-03] A lane-mode branch not prefixed `docs/` or `fix/` refuses `branch '<branch>' is not an issueless lane; pass an issue number, or check out a branch prefixed 'docs/' or 'fix/'`, exit `2`.
+- [ ] [REL-03] A lane branch outside `docs/`/`fix/` refuses `branch '<branch>' is not an issueless lane; pass an issue number, or check out a branch prefixed 'docs/' or 'fix/'`, exit `2`, except as REL-57 says.
+- [ ] [REL-57] A lane-mode release on a branch holding a live lane claim selects that claim whatever the branch's prefix; `aco claim` still refuses that branch (CLM-07).
 - [ ] [REL-04] An explicit `--branch <branch>` selects that claim by name and never reads the checkout's current branch at all (see E-REL-01).
 - [ ] [REL-05] `--branch` omitted together with an issue number and `--claim-id` skips reading the checkout branch entirely, the same as an explicit `--branch` would.
 - [ ] [REL-06] `--branch` omitted, no issue, empty branch refuses `lane release requires a non-empty current branch; check out the docs/ or fix/ lane branch, or pass an issue number`, exit `2`.

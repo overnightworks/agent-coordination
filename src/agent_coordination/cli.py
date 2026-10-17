@@ -87,6 +87,7 @@ OUT_OF_ORDER_HELP = (
 
 
 LANE_ISSUE_HELP = "omit for lane mode, derived from a docs/ or fix/ checkout branch"
+LANE_LOOKUP_HELP = "omit for lane mode: a docs/ or fix/ branch, or one holding a live lane claim"
 LONG_OPTION_PREFIX = "--"
 JSON_HELP = "print the result as JSON instead of the human lines"
 AGENT_HELP = (
@@ -267,7 +268,7 @@ def _add_release_parser(commands: _Subcommands, name: str) -> None:
         "issue",
         type=board.parse_item_reference,
         nargs="?",
-        help=LANE_ISSUE_HELP,
+        help=LANE_LOOKUP_HELP,
     )
     release.add_argument("--agent", help=AGENT_HELP)
     release.add_argument("--role", help=ROLE_ON_LIVE_CLAIM_HELP)
@@ -361,7 +362,7 @@ def _add_rescope_parser(commands: _Subcommands, name: str) -> None:
         "issue",
         type=board.parse_item_reference,
         nargs="?",
-        help=LANE_ISSUE_HELP,
+        help=LANE_LOOKUP_HELP,
     )
     rescope.add_argument("--agent", help=AGENT_HELP)
     rescope.add_argument(
