@@ -48,7 +48,7 @@ jobs:
           uv run --locked pytest -n auto --cov=agent_coordination --cov=aco_board --cov-branch
           --cov-report=xml:coverage.xml --cov-report=term-missing:skip-covered --cov-fail-under=100
       - if: ${{ !cancelled() && matrix.python == '3.12' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: coverage
           path: coverage.xml
@@ -140,7 +140,7 @@ jobs:
           test -z "$changed" || { printf '%s\n' "$changed"; echo "::error::static assets differ from frontend/ build"; exit 1; }
       - name: Audit production dependencies
         run: pnpm audit --prod
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: frontend-coverage
           path: reports
@@ -175,7 +175,7 @@ jobs:
       - name: Run E2E specs (bootstrap, empty, unavailable, no-access -- desktop)
         working-directory: frontend
         run: pnpm exec playwright test
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: failure()
         with:
           name: playwright-traces
