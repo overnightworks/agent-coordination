@@ -1992,15 +1992,15 @@ def _the_store_cannot_be_reached(monkeypatch: pytest.MonkeyPatch, _repo: Path) -
 def _trunk_moves_after_the_fetch(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     """Another push moves the trunk after `start` fetched and checked it,
     so the worktree it builds stands on a commit it never checked."""
-    real_trunk_commit = checkout.trunk_commit
+    real_commit_at = checkout.commit_at
 
     def check_then_the_trunk_moves(trunk: str, *, directory: Path) -> str:
-        checked = real_trunk_commit(trunk, directory=directory)
+        checked = real_commit_at(trunk, directory=directory)
         real_git(repo, "commit", "-q", "--allow-empty", "-m", "moved")
         real_git(repo, "push", "-q", "origin", "HEAD:main")
         return checked
 
-    monkeypatch.setattr(checkout, "trunk_commit", check_then_the_trunk_moves)
+    monkeypatch.setattr(checkout, "commit_at", check_then_the_trunk_moves)
 
 
 def _trunk_moves_while_a_gone_worktree_is_rebuilt(
@@ -3167,9 +3167,9 @@ def _close_after_starts_build(monkeypatch: pytest.MonkeyPatch, close: Callable[[
     real_build = checkout.create_linked_worktree
 
     def build_then_close(
-        path: Path, *, branch: str, trunk: str, directory: Path | None = None
+        path: Path, *, branch: str, start_point: str, directory: Path | None = None
     ) -> None:
-        real_build(path, branch=branch, trunk=trunk, directory=directory)
+        real_build(path, branch=branch, start_point=start_point, directory=directory)
         close()
 
     monkeypatch.setattr(checkout, "create_linked_worktree", build_then_close)

@@ -1318,7 +1318,7 @@ def test_branch_exists_reads_real_local_refs(
 
 
 def _build_start_worktree(worktree: Path, branch: str) -> None:
-    checkout.create_linked_worktree(worktree, branch=branch, trunk="refs/remotes/origin/main")
+    checkout.create_linked_worktree(worktree, branch=branch, start_point="refs/remotes/origin/main")
 
 
 def test_create_linked_worktree_builds_from_the_trunk_ref(
@@ -1520,7 +1520,7 @@ def test_main_checkout_root_is_the_main_checkout_from_any_of_its_worktrees(
     caller = _linked_lane_of(main, tmp_path) if runs_in_linked_lane else main
     monkeypatch.chdir(caller)
 
-    assert checkout.main_checkout_root(toplevel=caller) == main.resolve()
+    assert checkout.main_checkout_root(toplevel=caller, command="start") == main.resolve()
 
 
 def _linked_to_a_git_directory_kept_elsewhere(
@@ -1566,7 +1566,7 @@ def test_main_checkout_root_refuses_a_linked_worktree_it_cannot_trace_back(
     monkeypatch.chdir(lane)
 
     with pytest.raises(ClaimError, match=refusal):
-        checkout.main_checkout_root(toplevel=lane)
+        checkout.main_checkout_root(toplevel=lane, command="start")
 
 
 def test_worktree_on_branch_finds_the_one_matching_path(tmp_path: Path) -> None:
@@ -1691,7 +1691,7 @@ def test_create_linked_worktree_fails_loud_when_worktree_add_itself_fails(
     )
 
     with pytest.raises(ClaimError, match="fatal: already exists"):
-        checkout.create_linked_worktree(worktree, branch=branch, trunk=trunk)
+        checkout.create_linked_worktree(worktree, branch=branch, start_point=trunk)
 
 
 def test_remove_linked_worktree_fails_loud_when_worktree_remove_itself_fails(

@@ -313,7 +313,7 @@ def test_a_fetched_trunk_is_resolved_after_the_fetch_never_from_a_trunk_held_bef
     fetched = context.fetched_trunk_ref()
 
     assert (held, fetched, context.trunk_ref) == ("main", "refs/remotes/origin/main", fetched)
-    assert checkout.trunk_commit(fetched, directory=repository) == remote_tip
+    assert checkout.commit_at(fetched, directory=repository) == remote_tip
 
 
 def test_a_default_branch_held_before_the_fetch_never_names_the_fetched_ref(
@@ -412,7 +412,7 @@ def test_a_fresh_context_whose_configuration_names_another_remote_fetches_that_r
 
     fetched = context.fresh().fetched_trunk_ref()
 
-    assert (fetched, checkout.trunk_commit(fetched, directory=repository)) == (
+    assert (fetched, checkout.commit_at(fetched, directory=repository)) == (
         "refs/remotes/hub/main",
         landed,
     )

@@ -1260,28 +1260,26 @@ def fetch_remote(remote: str, *, directory: Path) -> None:
         raise ClaimError(process.git_failure_detail(fetch))
 
 
-def trunk_commit(trunk: str, *, directory: Path) -> str:
-    """The commit `trunk` names now in `directory` (issue #479): `start`
+def commit_at(ref: str, *, directory: Path) -> str:
+    """The commit `ref` names now in `directory` (issue #479): `start`
     checks its claim against this one commit -- the claim's base and the
     tree its scope is measured against -- before it builds."""
-    return git_output(["rev-parse", "--verify", f"{trunk}^{{commit}}"], directory=directory)
+    return git_output(["rev-parse", "--verify", f"{ref}^{{commit}}"], directory=directory)
 
 
 def create_linked_worktree(
-    path: Path, *, branch: str, trunk: str, directory: Path | None = None
+    path: Path, *, branch: str, start_point: str, directory: Path | None = None
 ) -> None:
-    """Create a linked worktree at `path` on a fresh `branch` from `trunk`,
-    the canonical remote's trunk ref as the caller's fetch left it (issue
-    #322; issue #479): the `git worktree add` step
-    `ISOLATED_WORKTREE_RECIPE` used to spell out for a person to type by
-    hand, run through this module's own `_git_run` chokepoint so `start`
-    opens no new subprocess call site. Built from the trunk's ref, so the
-    branch tracks it wherever git's own `branch.autoSetupMerge` says so.
+    """Create a linked worktree at `path` on a fresh `branch` from `start_point`,
+    a ref or commit selected by the caller. Git's own `branch.autoSetupMerge`
+    determines whether the new branch tracks that start point.
     Reads and writes `directory`'s own checkout via `-C` when given (issue
     #394: `protect.judge`'s own direct tests build a worktree fixture from
     an explicit repository path, never the test process's cwd) or the
     calling process's own checkout otherwise."""
-    result = _git_run(["worktree", "add", str(path), "-b", branch, trunk], directory=directory)
+    result = _git_run(
+        ["worktree", "add", str(path), "-b", branch, start_point], directory=directory
+    )
     if result.exit_status != 0:
         raise ClaimError(process.git_failure_detail(result))
 
@@ -1299,7 +1297,12 @@ def _own_common_directory() -> Path:
     return Path(git_output(["rev-parse", "--path-format=absolute", "--git-common-dir"])).resolve()
 
 
-def main_checkout_root(*, toplevel: Path) -> Path:
+def sibling_worktree_path(main_checkout: Path, name: str) -> Path:
+    """Place a named lane beside the repository's main checkout."""
+    return main_checkout.parent / f"{main_checkout.name}-worktrees" / name
+
+
+def main_checkout_root(*, toplevel: Path, command: str) -> Path:
     """The repository's main checkout, whichever of its worktrees the
     caller stands in (issue #479): `start` places a lane's worktree beside
     it, so a call from inside a linked worktree never nests the new one
@@ -1323,7 +1326,7 @@ def main_checkout_root(*, toplevel: Path) -> Path:
         return common_directory.parent
     raise ClaimError(
         f"main checkout unknown: git directory {common_directory} names no checkout; "
-        "run start from the main checkout"
+        f"run {command} from the main checkout"
     )
 
 

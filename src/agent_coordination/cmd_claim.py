@@ -940,3 +940,127 @@ def report_claim(
         )
     )
     return 0
+
+
+@dataclass(frozen=True)
+class LaneWorktree:
+    """The lane worktree and its branch."""
+
+    path: Path
+    branch: str
+
+
+@dataclass(frozen=True)
+class LaneBuild:
+    """The worktree build and its caller-owned refusal wording."""
+
+    worktree: LaneWorktree
+    start_point: str
+    command: str
+    moved_refusal: str
+
+
+def print_lane_worktree(target: LaneWorktree) -> None:
+    print(f"worktree: {target.path}")
+    print(f"branch: {target.branch}")
+
+
+def _remove_refused_worktree(target: LaneWorktree, *, command: str) -> None:
+    """Undo a build whose claim was refused after the check
+    phase passed (issue #479), saying so: a refusal must leave no worktree
+    or branch behind. When git will not remove the worktree, that is said
+    too, beside the refusal rather than in its place."""
+    try:
+        outcome = checkout.remove_linked_worktree(target.path, branch=target.branch)
+    except protocol.ClaimError as error:
+        print(
+            f"worktree {target.path} and branch '{target.branch}' this {command} created "
+            f"kept: git failure: {error}",
+            file=sys.stderr,
+        )
+        return
+    if outcome.branch.fate is checkout.BranchFate.REMOVED:
+        print(
+            f"removed worktree {target.path} and branch '{target.branch}' this {command} created",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"removed worktree {target.path} this {command} created; "
+        f"branch '{target.branch}' {outcome.branch.fate}: {outcome.branch.reason}",
+        file=sys.stderr,
+    )
+
+
+def validate_built_worktree(
+    request: protocol.ClaimRequest,
+    target: LaneWorktree,
+    context: session.RunContext,
+    *,
+    moved_refusal: str,
+) -> None:
+    """Validate the built checkout against the checked request and the main
+    checkout's recorded default branch. The caller owns the repair message
+    when the start point moved between checking and building (START-26)."""
+    try:
+        checkout.validate_checkout(
+            request,
+            default_branch=lambda: context.recorded_default_branch,
+            directory=target.path,
+        )
+    except checkout.CheckoutBaseMismatchError as error:
+        raise protocol.ClaimUnavailableError(moved_refusal) from error
+
+
+def report_uncertain_worktree_claim(
+    error: protocol.ClaimError, target: LaneWorktree, *, command: str
+) -> int:
+    """A claim write whose outcome the store cannot tell after its push was
+    sent: the claim may have landed, so the worktree it may name stays, and
+    the next invocation resumes whichever it finds (START-25)."""
+    status = report.refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
+    print(
+        f"the claim's push was sent, its outcome unknown; worktree {target.path} and "
+        f"branch '{target.branch}' kept; run {command} again to resume it",
+        file=sys.stderr,
+    )
+    return status
+
+
+def refuse_built_worktree(error: protocol.ClaimError, target: LaneWorktree, *, command: str) -> int:
+    try:
+        return report.refuse(ClaimReason.UNAVAILABLE, error, as_json=False)
+    finally:
+        # A refusal that cannot be written (a closed stderr) must still
+        # leave nothing behind (START-18).
+        _remove_refused_worktree(target, command=command)
+
+
+def claim_in_new_worktree(
+    plan: _ClaimPlan,
+    requested: protocol.ClaimRequest,
+    context: session.RunContext,
+    build: LaneBuild,
+) -> tuple[protocol.ActiveClaim, tuple[protocol.ActiveClaim, ...]] | int:
+    """Build around a checked claim, retaining the pair only for an uncertain write."""
+    worktree = build.worktree
+    checkout.create_linked_worktree(
+        worktree.path,
+        branch=worktree.branch,
+        start_point=build.start_point,
+        directory=context.toplevel,
+    )
+    print_lane_worktree(worktree)
+    print_claim_checks(plan, as_json=False)
+    try:
+        validate_built_worktree(requested, worktree, context, moved_refusal=build.moved_refusal)
+        # The lane's own lineage stamp and fetch anchor start at its claim (CAS-09).
+        return committed_claim(plan, context.for_lane_worktree(worktree.path))
+    except protocol.UncertainWriteError as error:
+        return report_uncertain_worktree_claim(
+            board.named_refusal(error, context.config.storage), worktree, command=build.command
+        )
+    except protocol.ClaimError as error:
+        return refuse_built_worktree(
+            board.named_refusal(error, context.config.storage), worktree, command=build.command
+        )

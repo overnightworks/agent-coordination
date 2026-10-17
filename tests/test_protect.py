@@ -2569,7 +2569,7 @@ def _judge_worktree(tmp_path: Path, *, branch: str) -> Path:
     push_repository_trunk(repo, "origin")
     worktree = tmp_path / "repo-worktrees" / branch.replace("/", "-")
     checkout.create_linked_worktree(
-        worktree, branch=branch, trunk="refs/remotes/origin/main", directory=repo
+        worktree, branch=branch, start_point="refs/remotes/origin/main", directory=repo
     )
     return worktree
 
