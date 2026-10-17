@@ -334,7 +334,7 @@ aco-2620d6: body incomplete: Now, Next, Done when
 aco-4470c5: body malformed: aco: aco block is not valid TOML: Illegal character '\x0b' (at line 8, column 18)
 exit 3
 $ aco item show aco-4470c5
-2> ERROR: item aco-4470c5 has a malformed aco block; repair it with aco item edit aco-4470c5 and a body whose aco block carries a valid [record]
+2> ERROR: item aco-4470c5 has a malformed aco block (body malformed: aco: aco block is not valid TOML: Illegal character '\x0b' (at line 8, column 18)); repair it with aco item edit aco-4470c5 and a body whose aco block carries a valid [record]
 exit 2
 ```
 
@@ -354,7 +354,7 @@ aco-3e26d9: body malformed: aco: no aco block
 aco-000001: container; its open children do not read: aco-3e26d9
 exit 3
 $ aco item close aco-000001
-2> ERROR: item aco-3e26d9 has a malformed aco block; repair it with aco item edit aco-3e26d9 and a body whose aco block carries a valid [record]
+2> ERROR: item aco-3e26d9 has a malformed aco block (body malformed: aco: no aco block); repair it with aco item edit aco-3e26d9 and a body whose aco block carries a valid [record]
 exit 2
 ```
 

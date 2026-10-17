@@ -111,7 +111,7 @@ PIN-30's two exceptions keep `#<n>`: `item show`'s header (ITEM-07), which print
 - [ ] [PIN-35] A command on one item goes past such an entry, which stays byte for byte (CAS-61): `item show`, `item edit`, `item close`, `ask`, `rule`, `brief`, `check`, and `start` up to its fresh claim (PIN-36).
 - [ ] [PIN-36] A command over the whole store refuses with PIN-13's sentence: `board`, `next`, `rulings`, `cut`, `item new` (`--not-a-twin` too), a fresh `claim`, `release --merged`.
 - [ ] [PIN-14] A read of an `items/<id>.md` entry whose bytes are not valid UTF-8 refuses `item <id> is not valid UTF-8`, then ITEM-38's repair clause.
-- [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `aco` block and `[record]` refuses `item <id> has a malformed aco block`, then ITEM-38's repair clause (see E-PIN-07).
+- [ ] [PIN-15] A read of an `items/<id>.md` entry with no valid `aco` block and `[record]` refuses `item <id> has a malformed aco block (<defect>)`, then ITEM-38's repair clause (see E-PIN-07).
 - [ ] [PIN-16] An item whose own `record.parent` names an id no `items/` entry carries refuses `item <parent-id> is referenced as a parent but does not exist`.
 - [ ] [PIN-17] An item whose own `record.blocked_by` names an id no `items/` entry carries refuses `item <item-id> lists blocker <blocker-id>, which does not exist`, naming the listing item as PIN-34 does.
 - [ ] [PIN-34] An item whose own `record.blocked_by` names one id twice refuses ITEM-43's `item <item-id> lists blocker <blocker-id> more than once` (see E-PIN-38).
@@ -316,10 +316,10 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-00
 
 ```console
 $ aco item show aco-000001
-2> ERROR: item aco-000001 has a malformed aco block; repair it with aco item edit aco-000001 and a body whose aco block carries a valid [record]
+2> ERROR: item aco-000001 has a malformed aco block (body malformed: aco: no aco block); repair it with aco item edit aco-000001 and a body whose aco block carries a valid [record]
 exit 2
 $ aco item close <child-id>
-2> ERROR: item aco-000001 has a malformed aco block; repair it with aco item edit aco-000001 and a body whose aco block carries a valid [record]
+2> ERROR: item aco-000001 has a malformed aco block (body malformed: aco: no aco block); repair it with aco item edit aco-000001 and a body whose aco block carries a valid [record]
 exit 2
 $ aco item close <item-id>
 CLOSED <item-id>

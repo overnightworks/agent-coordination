@@ -269,9 +269,10 @@ def _decode_item(item_id: str, content: bytes, oid: ObjectId) -> _DecodedItem | 
         return _MalformedItem(problem="is not valid UTF-8", defect=_NOT_UTF8, oid=oid)
     parsed = parse_body(text, storage=Storage.STATE_REF)
     if parsed.read_state is not BodyReadState.VALID or parsed.record is None:
+        defect = (parsed.contract.defects or (_NO_RECORD,))[0]
         return _MalformedItem(
-            problem=f"has a malformed {BLOCK_FENCE_INFO} block",
-            defect=(parsed.contract.defects or (_NO_RECORD,))[0],
+            problem=f"has a malformed {BLOCK_FENCE_INFO} block ({body_defect_text(defect)})",
+            defect=defect,
             oid=oid,
             text=text,
             title=readable_record_title(text),

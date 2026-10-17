@@ -331,12 +331,20 @@ def _item_files_with_container_block(fields: Mapping[str, object]) -> dict[str, 
 
 
 MALFORMED_ID = "aco-3e26d9"
+BLANK_TITLE_DEFECT = "record.title: record.title must be a non-empty string"
+WHOLE_DEFECT = "whole: whole reason must be one bounded non-empty line"
 MALFORMED_NUMBER = items.item_number(MALFORMED_ID)
 
 
-def _malformed_item_refusal(
-    problem: str = "has a malformed aco block", item_id: str = MALFORMED_ID
-) -> str:
+NOT_UTF8_PROBLEM = "is not valid UTF-8"
+
+
+def _malformed_block(defect: str) -> str:
+    """PIN-15's `problem` for an item whose first `defect` reads `<field>: <message>`."""
+    return f"has a malformed aco block (body malformed: {defect})"
+
+
+def _malformed_item_refusal(problem: str, item_id: str = MALFORMED_ID) -> str:
     return (
         f"item {item_id} {problem}; repair it with aco item edit {item_id} "
         "and a body whose aco block carries a valid [record]"
@@ -382,7 +390,7 @@ def _malformed_item_refusal_case(
         arguments,
         piped_body,
         _item_files_with_a_malformed_item(_blank_title_item(planted_under), planted),
-        _malformed_item_refusal(item_id=planted),
+        _malformed_item_refusal(_malformed_block(BLANK_TITLE_DEFECT), planted),
         id=case_id,
     )
 
@@ -413,7 +421,7 @@ def _plant_whole_state_item(worktree: Path, remote: str, content: bytes) -> None
 
 def _assert_whole_state_result(cell: int, status: int | str | None, out: str, err: str) -> None:
     sentence = "whole reason must be one bounded non-empty line"
-    defect = f"body malformed: whole: {sentence}"
+    defect = f"body malformed: {WHOLE_DEFECT}"
     if cell == 24:
         assert status == 0
         assert out.startswith(f"CLAIMED issue {MALFORMED_ID}: whole-proof\n")
@@ -427,7 +435,7 @@ def _assert_whole_state_result(cell: int, status: int | str | None, out: str, er
     elif cell in {35, 36, 37, 39}:
         assert err == f"ERROR: {sentence}\n"
     else:
-        assert err == f"ERROR: {_malformed_item_refusal()}\n"
+        assert err == f"ERROR: {_malformed_item_refusal(_malformed_block(WHOLE_DEFECT))}\n"
     assert "worktree:" not in out
 
 
@@ -442,18 +450,20 @@ def _unplaced_malformed_child_cases() -> list[object]:
     read: its parent is unknown, so it may be the container's open child (issue
     #536, ITEM-48, ITEM-54), and each refuses by that item's repair."""
     unreadable_contents = {
-        "no-block": (b"no block at all\n", "has a malformed aco block"),
+        "no-block": (b"no block at all\n", _malformed_block("aco: no aco block")),
         "broken-toml": (
             _task_item(CONTAINER_ID).replace(b"version = 1", b"version = = 1"),
-            "has a malformed aco block",
+            _malformed_block(
+                "aco: aco block is not valid TOML: Invalid value (at line 1, column 11)"
+            ),
         ),
         "not-utf8": (
             _task_item(CONTAINER_ID).replace(b"Slice A", b"Slice \xff A"),
-            "is not valid UTF-8",
+            NOT_UTF8_PROBLEM,
         ),
         "non-string-parent": (
             _task_item(CONTAINER_ID).replace(f'parent = "{CONTAINER_ID}"'.encode(), b"parent = 1"),
-            "has a malformed aco block",
+            _malformed_block("record.parent: record.parent must be an item id string"),
         ),
     }
     return [
@@ -757,24 +767,28 @@ _MALFORMED_CONTENTS = (
             block_body(
                 f'{MINIMAL_BLOCK_TOML}\n[record]\ntitle = "Bare"', before="", after=""
             ).encode(),
-            "has a malformed aco block",
+            _malformed_block("record.state: record.state must be open or closed"),
             id="record-missing-required-fields",
         ),
         pytest.param(
             CONTAINER_BODY.encode(),
-            "has a malformed aco block",
+            _malformed_block("record: no [record] table"),
             id="no-record-table",
         ),
-        pytest.param(_blank_title_item(), "has a malformed aco block", id="blank-record-title"),
+        pytest.param(
+            _blank_title_item(), _malformed_block(BLANK_TITLE_DEFECT), id="blank-record-title"
+        ),
         pytest.param(
             _blank_title_item(parent=CONTAINER_ID),
-            "has a malformed aco block",
+            _malformed_block(BLANK_TITLE_DEFECT),
             id="blank-record-title-under-a-readable-parent",
         ),
-        pytest.param(b"\xff\xfe not utf-8", "is not valid UTF-8", id="not-utf8"),
+        pytest.param(b"\xff\xfe not utf-8", NOT_UTF8_PROBLEM, id="not-utf8"),
         pytest.param(
             _container_body_with_slices(((1, "Line one|Line two"),)).replace("|", "\v").encode(),
-            "has a malformed aco block",
+            _malformed_block(
+                "aco: aco block is not valid TOML: Illegal character '\\x0b' (at line 8, column 18)"
+            ),
             id="raw-vertical-tab-in-a-slice-title",
         ),
     ],
@@ -805,6 +819,28 @@ class TestMalformedItem:
             adapter.item_reference(MALFORMED_NUMBER)
 
         assert str(refusal.value) == _malformed_item_refusal(problem)
+
+    @pytest.mark.parametrize(
+        ("content", "defect"),
+        [
+            pytest.param(b"prose, no block\n", "aco: no aco block", id="body-without-an-aco-block"),
+            pytest.param(
+                CONTAINER_BODY.encode(),
+                "record: no [record] table",
+                id="valid-block-without-record",
+            ),
+            pytest.param(_whole_state_item("x" * 513), WHOLE_DEFECT, id="invalid-whole"),
+        ],
+    )
+    def test_the_refusal_names_the_items_first_defect(self, content: bytes, defect: str) -> None:
+        """PIN-15 (issue #155): the sentence ends in the first defect, so a
+        reader is sent to the field that is wrong."""
+        adapter = _state_ref_board(_item_files_with_a_malformed_item(content))
+
+        with pytest.raises(MalformedStateTreeError) as refusal:
+            adapter.item_reference(MALFORMED_NUMBER)
+
+        assert str(refusal.value) == _malformed_item_refusal(_malformed_block(defect))
 
     @pytest.mark.parametrize(*_MALFORMED_CONTENTS)
     def test_the_open_board_lists_it_unreadable_beside_every_other_item(
@@ -867,7 +903,7 @@ class TestMalformedItem:
             ),
             pytest.param(
                 _record(title="Repaired", state="open", kind="task", parent=MALFORMED_ID),
-                _malformed_item_refusal(),
+                _malformed_item_refusal(_malformed_block(BLANK_TITLE_DEFECT)),
                 id="itself-as-parent",
             ),
             pytest.param(
@@ -907,7 +943,7 @@ class TestMalformedItem:
         with pytest.raises(MalformedStateTreeError) as refused:
             adapter.update_item_body(CHILD_A_NUMBER, edit)
 
-        assert str(refused.value) == _malformed_item_refusal()
+        assert str(refused.value) == _malformed_item_refusal(_malformed_block(BLANK_TITLE_DEFECT))
 
     def test_a_malformed_item_whose_title_still_reads_stays_a_twin_candidate(self) -> None:
         """Issue #447: an item malformed only by another field keeps its
@@ -3996,13 +4032,18 @@ class TestCliStateRefForge:
         )
 
     @pytest.mark.parametrize(
-        "unplaced_content",
+        ("unplaced_content", "problem"),
         [
-            pytest.param(b"no block at all\n", id="record-does-not-read"),
+            pytest.param(
+                b"no block at all\n",
+                _malformed_block("aco: no aco block"),
+                id="record-does-not-read",
+            ),
             pytest.param(
                 _task_item(CONTAINER_ID).replace(
                     f'parent = "{CONTAINER_ID}"'.encode(), b"parent = 1"
                 ),
+                _malformed_block("record.parent: record.parent must be an item id string"),
                 id="parent-does-not-read",
             ),
         ],
@@ -4015,6 +4056,7 @@ class TestCliStateRefForge:
         bare_remote: Path,
         worktree: Path,
         unplaced_content: bytes,
+        problem: str,
     ) -> None:
         """Issue #550 line 2 (ITEM-54): the container's one readable child is
         closed, and an item whose record, or its parent, does not read may be
@@ -4052,7 +4094,7 @@ class TestCliStateRefForge:
             f"\n{CONTAINER_ID}: container; its open children do not read: {MALFORMED_ID}\n"
             in next_out
         )
-        assert close_err == f"ERROR: {_malformed_item_refusal()}\n"
+        assert close_err == f"ERROR: {_malformed_item_refusal(problem)}\n"
 
     def test_item_edit_with_a_valid_record_repairs_a_malformed_item(
         self,

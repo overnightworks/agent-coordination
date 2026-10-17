@@ -382,7 +382,7 @@ Setup: bare-remote, bootstrapped, `storage = "state-ref"` tracked, `items/aco-3e
 
 ```console
 $ aco item show aco-3e26d9
-2> ERROR: item aco-3e26d9 has a malformed aco block; repair it with aco item edit aco-3e26d9 and a body whose aco block carries a valid [record]
+2> ERROR: item aco-3e26d9 has a malformed aco block (body malformed: record.title: record.title must be a non-empty string); repair it with aco item edit aco-3e26d9 and a body whose aco block carries a valid [record]
 exit 2
 $ aco item new --title "Fresh item"
 <item-id>
